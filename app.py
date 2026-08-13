@@ -38,37 +38,37 @@ TEAM_NAME_MAP = {
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
 }
 
-# 100% 깨짐 없는 고화질 직접 엠블럼 매핑 (깨진 API 이미지 완전 대체)
+# 100% 안정적인 API-Sports CDN 기반 구단 엠블럼 매핑
 DIRECT_LOGO_MAP = {
-    "광주FC": "https://upload.wikimedia.org/wikipedia/en/f/f3/Gwangju_FC_logo.png",
-    "포항스틸": "https://upload.wikimedia.org/wikipedia/en/e/eb/Pohang_Steelers_logo.png",
-    "제주SKFC": "https://upload.wikimedia.org/wikipedia/en/1/18/Jeju_United_FC_logo.png",
-    "FC안양": "https://upload.wikimedia.org/wikipedia/en/1/14/FC_Anyang_Logo.png",
-    "FC서울": "https://upload.wikimedia.org/wikipedia/en/c/c7/FC_Seoul_logo.png",
-    "대전하나": "https://upload.wikimedia.org/wikipedia/en/2/22/Daejeon_Hana_Citizen_logo.png",
+    "광주FC": "https://media.api-sports.io/football/teams/2836.png",
+    "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
+    "제주SKFC": "https://media.api-sports.io/football/teams/2839.png",
+    "FC안양": "https://media.api-sports.io/football/teams/2848.png",
+    "FC서울": "https://media.api-sports.io/football/teams/2844.png",
+    "대전하나": "https://media.api-sports.io/football/teams/2835.png",
     "충북청주": "https://media.api-sports.io/football/teams/18525.png",
-    "전남드래": "https://upload.wikimedia.org/wikipedia/en/e/e0/Jeonnam_Dragons_logo.png",
-    "김해FC": "https://upload.wikimedia.org/wikipedia/commons/d/dc/Gimhae_FC_logo.png",
-    "경남FC": "https://upload.wikimedia.org/wikipedia/en/7/73/Gyeongnam_FC_logo.png",
-    "수원삼성": "https://upload.wikimedia.org/wikipedia/en/8/82/Suwon_Samsung_Bluewings_logo.png",
-    "수원FC": "https://upload.wikimedia.org/wikipedia/en/8/87/Suwon_FC_logo.png",
-    "부산아이": "https://upload.wikimedia.org/wikipedia/en/a/a2/Busan_IPark_logo.png",
-    "화성FC": "https://upload.wikimedia.org/wikipedia/commons/e/e2/Hwaseong_FC_logo.png",
-    "인천유나": "https://upload.wikimedia.org/wikipedia/en/f/f7/Incheon_United_FC_logo.png",
-    "김천상무": "https://upload.wikimedia.org/wikipedia/en/1/15/Gimcheon_Sangmu_FC_logo.png",
-    "부천FC": "https://upload.wikimedia.org/wikipedia/en/e/e0/Bucheon_FC_1995_logo.png",
-    "전북현대": "https://upload.wikimedia.org/wikipedia/en/2/23/Jeonbuk_Hyundai_Motors_logo.png",
-    "울산HDFC": "https://upload.wikimedia.org/wikipedia/en/1/1d/Ulsan_HD_FC_logo.png",
-    "강원FC": "https://upload.wikimedia.org/wikipedia/en/1/12/Gangwon_FC_logo.png",
-    "서울이랜드": "https://upload.wikimedia.org/wikipedia/en/4/43/Seoul_E-Land_FC_logo.png",
-    "서울이랜": "https://upload.wikimedia.org/wikipedia/en/4/43/Seoul_E-Land_FC_logo.png",
-    "안산그리": "https://upload.wikimedia.org/wikipedia/en/2/2c/Ansan_Greeners_FC_logo.png",
-    "대구FC": "https://upload.wikimedia.org/wikipedia/en/2/2b/Daegu_FC_logo.png",
-    "충남아산": "https://upload.wikimedia.org/wikipedia/en/9/91/Chungnam_Asan_FC_logo.png",
-    "김포FC": "https://upload.wikimedia.org/wikipedia/commons/0/0f/Gimpo_FC_logo.png",
-    "천안시티": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Cheonan_City_FC_logo.png",
-    "파주프런": "https://upload.wikimedia.org/wikipedia/commons/f/f6/Paju_Citizen_FC_logo.png",
-    "성남FC": "https://upload.wikimedia.org/wikipedia/en/e/e1/Seongnam_FC_logo.png",
+    "전남드래": "https://media.api-sports.io/football/teams/2847.png",
+    "김해FC": "https://media.api-sports.io/football/teams/18027.png",
+    "경남FC": "https://media.api-sports.io/football/teams/2837.png",
+    "수원삼성": "https://media.api-sports.io/football/teams/2845.png",
+    "수원FC": "https://media.api-sports.io/football/teams/2846.png",
+    "부산아이": "https://media.api-sports.io/football/teams/2834.png",
+    "화성FC": "https://media.api-sports.io/football/teams/18031.png",
+    "인천유나": "https://media.api-sports.io/football/teams/2838.png",
+    "김천상무": "https://media.api-sports.io/football/teams/2842.png",
+    "부천FC": "https://media.api-sports.io/football/teams/2849.png",
+    "전북현대": "https://media.api-sports.io/football/teams/2840.png",
+    "울산HDFC": "https://media.api-sports.io/football/teams/2841.png",
+    "강원FC": "https://media.api-sports.io/football/teams/2833.png",
+    "서울이랜드": "https://media.api-sports.io/football/teams/2850.png",
+    "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
+    "안산그리": "https://media.api-sports.io/football/teams/2851.png",
+    "대구FC": "https://media.api-sports.io/football/teams/2832.png",
+    "충남아산": "https://media.api-sports.io/football/teams/8282.png",
+    "김포FC": "https://media.api-sports.io/football/teams/18029.png",
+    "천안시티": "https://media.api-sports.io/football/teams/18028.png",
+    "파주프런": "https://media.api-sports.io/football/teams/18030.png",
+    "성남FC": "https://media.api-sports.io/football/teams/2843.png",
     "미라솔": "https://media.api-sports.io/football/teams/1023.png",
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
     "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
@@ -76,6 +76,9 @@ DIRECT_LOGO_MAP = {
     "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
     "가시와 레이솔": "https://media.api-sports.io/football/teams/2960.png"
 }
+
+# 기본 백업 고화질 축구공 아이콘
+FALLBACK_LOGO = "https://cdn-icons-png.flaticon.com/512/53/53283.png"
 
 def init_db():
     conn = sqlite3.connect("ai_predictions.db")
@@ -105,11 +108,10 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (엠블럼 최선책 적용)
+# 1. 해외 API 연동 (이미지 에러 예외 처리 강화)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
-    # DIRECT_LOGO_MAP에 명시된 이미지 우선 사용
     logo = DIRECT_LOGO_MAP.get(team_name)
     if logo:
         return {"id": None, "logo": logo}
@@ -129,8 +131,7 @@ def fetch_team_info_api(team_name):
     except Exception:
         pass
         
-    # 축구공 디자인 아이콘으로 대체
-    return {"id": None, "logo": "https://cdn-icons-png.flaticon.com/512/53/53283.png"}
+    return {"id": None, "logo": FALLBACK_LOGO}
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
@@ -245,7 +246,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
     finally: conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. CSS 스타일링
+# 3. CSS 스타일링 (깨짐 없는 HTML 이미지 태그 적용)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -411,9 +412,9 @@ with main_tab1:
                 <div class='match-card'>
                     <div class='league-title'>🏆 {m['league']}</div>
                     <div class='vs-row'>
-                        <div class='team-box home'><span class='team-name-text'>{m['home']}</span><img src='{item["home_logo"]}' class='team-logo'></div>
+                        <div class='team-box home'><span class='team-name-text'>{m['home']}</span><img src='{item["home_logo"]}' class='team-logo' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"></div>
                         <div class='center-time-box'><span class='match-time-badge'>⚽ {item["final_match_time"]}</span><span class='deadline-badge'>({m.get("deadline_time", "23:00 마감")})</span></div>
-                        <div class='team-box away'><img src='{item["away_logo"]}' class='team-logo'><span class='team-name-text'>{m['away']}</span></div>
+                        <div class='team-box away'><img src='{item["away_logo"]}' class='team-logo' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"><span class='team-name-text'>{m['away']}</span></div>
                     </div>
                     <div class='odd-info'><b style='color:#f1c40f;'>승무패</b> {m['odd_h']} · {m['odd_d']} · {m['odd_a']} | <b style='color:#f1c40f;'>핸디캡</b> {m.get('handi_h', 3.05)} · {m.get('handi_d', 3.05)} · {m.get('handi_a', 2.03)} | <b style='color:#f1c40f;'>언오버</b> {m.get('uo_under', 1.50)} · {m.get('uo_over', 2.13)}</div>
                     <div class='detail-info-box'>
@@ -465,9 +466,9 @@ with main_tab2:
                     <span style='color:#ffffff; font-size:15px;'>🎯 AI 최고 가치 마킹: <b style='color:#f1c40f; font-size:17px;'>{best_pick}</b> <b style='color:#2ecc71;'>({best_pct}%)</b></span>
                 </div>
                 <div class='vs-row'>
-                    <div class='team-box home'><span class='team-name-text' style='font-size:18px;'>{m['home']}</span><img src='{home_info["logo"]}' class='team-logo' style='width:42px; height:42px;'></div>
+                    <div class='team-box home'><span class='team-name-text' style='font-size:18px;'>{m['home']}</span><img src='{home_info["logo"]}' class='team-logo' style='width:42px; height:42px;' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"></div>
                     <div class='center-time-box' style='width:90px;'><b style='color:#ffffff; font-size:16px;'>VS</b></div>
-                    <div class='team-box away'><img src='{away_info["logo"]}' class='team-logo' style='width:42px; height:42px;'><span class='team-name-text' style='font-size:18px;'>{m['away']}</span></div>
+                    <div class='team-box away'><img src='{away_info["logo"]}' class='team-logo' style='width:42px; height:42px;' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"><span class='team-name-text' style='font-size:18px;'>{m['away']}</span></div>
                 </div>
                 <div class='odd-info' style='margin-top:10px; padding:6px; font-size:13px;'>
                     📊 <b>AI 확률 분포</b> | 승 {p_h}% · 무 {p_d}% · 패 {p_a}%
@@ -499,7 +500,7 @@ with main_tab3:
             """, unsafe_allow_html=True)
 
 # [메뉴 4: 📈 AI 적중률 리포트 (카드시각화)]
-with main_tab3 if False else main_tab4:
+with main_tab4:
     st.subheader("📈 AI 머신러닝 누적 적중률 & 오답 노트")
     stats = get_accuracy_stats()
     
