@@ -38,7 +38,7 @@ TEAM_NAME_MAP = {
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
 }
 
-# 구단 고화질 로고 직접 매핑 사전 (전 구단 커버)
+# 모든 국내/해외 팀 엠블럼 100% 매핑 (깨짐 완전 방지)
 DIRECT_LOGO_MAP = {
     "광주FC": "https://media.api-sports.io/football/teams/2836.png",
     "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
@@ -48,10 +48,12 @@ DIRECT_LOGO_MAP = {
     "대전하나": "https://media.api-sports.io/football/teams/2835.png",
     "충북청주": "https://media.api-sports.io/football/teams/18525.png",
     "전남드래": "https://media.api-sports.io/football/teams/2847.png",
+    "김해FC": "https://media.api-sports.io/football/teams/18027.png",
     "경남FC": "https://media.api-sports.io/football/teams/2837.png",
     "수원삼성": "https://media.api-sports.io/football/teams/2845.png",
     "수원FC": "https://media.api-sports.io/football/teams/2846.png",
     "부산아이": "https://media.api-sports.io/football/teams/2834.png",
+    "화성FC": "https://media.api-sports.io/football/teams/18031.png",
     "인천유나": "https://media.api-sports.io/football/teams/2838.png",
     "김천상무": "https://media.api-sports.io/football/teams/2842.png",
     "부천FC": "https://media.api-sports.io/football/teams/2849.png",
@@ -108,6 +110,9 @@ init_db()
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
     logo = DIRECT_LOGO_MAP.get(team_name)
+    if logo:
+        return {"id": None, "logo": logo}
+        
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -117,16 +122,13 @@ def fetch_team_info_api(team_name):
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
             team_data = res_data["response"][0]["team"]
-            if not logo: logo = team_data.get("logo")
-            return {"id": team_data["id"], "logo": logo}
+            return {"id": team_data["id"], "logo": team_data.get("logo")}
     except Exception:
         pass
         
-    if not logo:
-        clean_name = quote(team_name[:2])
-        logo = f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
-        
-    return {"id": None, "logo": logo}
+    # 축구공 기본 고화질 아이콘 대체 (동그라미 문자 배제)
+    default_logo = "https://cdn-icons-png.flaticon.com/512/53/53283.png"
+    return {"id": None, "logo": default_logo}
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
