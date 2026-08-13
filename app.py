@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
-# ★ 회원님의 API-Football 키를 입력하세요
 API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
 
@@ -72,7 +71,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (팀 정보 & 한국 기준 경기시간 & 상대전적 H2H)
+# 1. 해외 API 연동 및 자동 채점 엔진
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -100,7 +99,6 @@ def fetch_team_info_api(team_name):
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
-    """해외 API에서 양 팀의 실제 경기 날짜 및 시각(한국시간 UTC+9) 수집"""
     if not home_id or not away_id:
         return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
         
@@ -119,14 +117,11 @@ def fetch_fixture_details_api(home_id, away_id):
             latest_match = matches[0]
             utc_date_str = latest_match.get("fixture", {}).get("date")
             if utc_date_str:
-                # pytz 없이 표준 datetime 기능으로 한국 시간(UTC+9) 정밀 변환
                 utc_dt = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
                 kst_tz = timezone(timedelta(hours=9))
                 kst_dt = utc_dt.astimezone(kst_tz)
-                
                 weekdays = ['월', '화', '수', '목', '금', '토', '일']
-                weekday_str = weekdays[kst_dt.weekday()]
-                match_time_str = kst_dt.strftime(f"%m.%d ({weekday_str}) %H:%M")
+                match_time_str = kst_dt.strftime(f"%m.%d ({weekdays[kst_dt.weekday()]}) %H:%M")
         
         for m in matches[:10]:
             is_home_winner = m.get("teams", {}).get("home", {}).get("winner")
@@ -149,6 +144,49 @@ def fetch_fixture_details_api(home_id, away_id):
         }
     except Exception:
         return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+
+# 종료된 경기 결과 자동 채점 함수
+def update_completed_match_results():
+    conn = sqlite3.connect("ai_predictions.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
+    pending = cursor.fetchall()
+    
+    for m_id, home_team, away_team, pick in pending:
+        home_info = fetch_team_info_api(home_team)
+        away_info = fetch_team_info_api(away_team)
+        
+        if home_info["id"] and away_info["id"]:
+            url = f"https://{API_HOST}/fixtures"
+            params = {"h2h": f"{home_info['id']}-{away_info['id']}"}
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=5).json()
+                matches = res.get("response", [])
+                if matches:
+                    latest = matches[0]
+                    status = latest.get("fixture", {}).get("status", {}).get("short")
+                    if status in ["FT", "AET", "PEN"]: # 경기 종료
+                        goals_h = latest.get("goals", {}).get("home", 0)
+                        goals_a = latest.get("goals", {}).get("away", 0)
+                        score_str = f"{goals_h}:{goals_a}"
+                        
+                        is_correct = 0
+                        if goals_h > goals_a and "승" in pick and home_team in pick:
+                            is_correct = 1
+                        elif goals_a > goals_h and "승" in pick and away_team in pick:
+                            is_correct = 1
+                        elif goals_h == goals_a and "무승부" in pick:
+                            is_correct = 1
+                            
+                        cursor.execute("""
+                            UPDATE predictions 
+                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
+                            WHERE match_id = ?
+                        """, (score_str, is_correct, m_id))
+            except Exception:
+                pass
+    conn.commit()
+    conn.close()
 
 @st.cache_data(ttl=3600)
 def analyze_team_news_sentiment(team_name):
@@ -285,7 +323,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 복합 머신러닝 AI 분석 엔진
+# 4. 메인 분석 가동
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -300,6 +338,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("🌐 **상태**: 24시간 해외 API 자동 연동 중")
 
+# 경기 결과 자동 채점 실행
+update_completed_match_results()
+
 live_matches = load_betman_data()
 analyzed_matches = []
 
@@ -312,8 +353,7 @@ if live_matches:
         away_info = fetch_team_info_api(away_team)
         
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
-        
-        final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "08.14 예정"
+        final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "시간 미정"
         
         news_h = analyze_team_news_sentiment(home_team)
         news_a = analyze_team_news_sentiment(away_team)
