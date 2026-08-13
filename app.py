@@ -7,11 +7,11 @@ import pandas as pd
 from urllib.parse import quote
 
 # -----------------------------------------------------------------------------
-# 0. API-Football 설정
+# 0. API-Football 및 기본 설정
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
-# ★ 회원님의 API-Football 키 입력
+# ★ 여기에 발급받으신 API-Football 키를 입력하세요!
 API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
 
@@ -23,7 +23,7 @@ headers = {
 # 베트맨 한글 팀명 ➔ 해외 API 영문 팀명 매핑 사전
 TEAM_NAME_MAP = {
     "미라솔": "Mirassol",
-    "LDU키토": "LDU Quito",
+    "LDU키토": "Liga Dep. Universitaria de Quito",
     "로사리오 센트랄": "Rosario Central",
     "SC코린티안스": "Corinthians",
     "도쿄 베르디": "Tokyo Verdy",
@@ -32,6 +32,11 @@ TEAM_NAME_MAP = {
     "뉴캐슬 유나이티드": "Newcastle",
     "맨체스터 유나이티드": "Manchester United",
     "파리 생제르맹": "Paris Saint Germain"
+}
+
+# 예외 처리용 고화질 직접 URL 매핑 사전 (백업)
+DIRECT_LOGO_MAP = {
+    "LDU키토": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/LDU_Quito_logo.svg/120px-LDU_Quito_logo.svg.png"
 }
 
 def init_db():
@@ -62,11 +67,15 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. API-Football을 활용한 고화질 로고 가져오기
+# 1. API-Football 및 백업을 활용한 고화질 로고 추출
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_logo_api(team_name):
-    # 매핑 사전에 있으면 영문명으로 검색, 없으면 한글명 검색
+    # 1. 직접 매핑 URL이 있으면 최우선 적용
+    if team_name in DIRECT_LOGO_MAP:
+        return DIRECT_LOGO_MAP[team_name]
+        
+    # 2. API-Football 검색
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -79,12 +88,12 @@ def fetch_team_logo_api(team_name):
     except Exception:
         pass
     
-    # 실패 시 예쁜 이니셜 뱃지 생성
+    # 3. 최종 실패 시 예쁜 이니셜 뱃지 생성
     clean_name = quote(team_name[:2])
     return f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
 
 # -----------------------------------------------------------------------------
-# 2. GitHub 수집 데이터 읽기
+# 2. GitHub 수집 데이터 로드 및 DB 관리
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def load_betman_data():
@@ -175,7 +184,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 메인 화면
+# 4. 사이드바 및 분석 계산
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -242,6 +251,10 @@ if live_matches:
             "best_score": best_score
         })
 
+# -----------------------------------------------------------------------------
+# 5. 메뉴별 화면 출력
+# -----------------------------------------------------------------------------
+
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
@@ -277,6 +290,14 @@ if menu == "⚽ 프로토 LIVE":
                     unsafe_allow_html=True
                 )
                 st.markdown("---")
+        else:
+            st.warning("⚠️ 아직 내 PC에서 'collector.py'를 실행해 데이터를 GitHub에 올리지 않았거나 수집 중입니다.")
+
+    with tab_baseball:
+        st.info("⚾ 야구 프로토 모듈 준비 중...")
+
+    with tab_basketball:
+        st.info("🏀 농구 프로토 모듈 준비 중...")
 
 # [메뉴 2: 🔥 오늘의 TOP 3 픽]
 elif menu == "🔥 오늘의 TOP 3 픽":
@@ -300,6 +321,8 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                     </div>
                 </div>
             """, unsafe_allow_html=True)
+    else:
+        st.info("분석할 경기 데이터가 아직 준비되지 않았습니다.")
 
 # [메뉴 3: 📈 AI 적중률 리포트]
 elif menu == "📈 AI 적중률 리포트":
