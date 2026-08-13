@@ -34,9 +34,9 @@ TEAM_NAME_MAP = {
     "파리 생제르맹": "Paris Saint Germain"
 }
 
-# 예외 처리용 고화질 직접 URL 매핑 사전 (백업)
+# 차단 없는 100% 안정적인 고화질 로고 직접 매핑 (핫링크 차단 방지)
 DIRECT_LOGO_MAP = {
-    "LDU키토": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/LDU_Quito_logo.svg/120px-LDU_Quito_logo.svg.png"
+    "LDU키토": "https://media.api-sports.io/football/teams/1148.png"
 }
 
 def init_db():
@@ -67,11 +67,11 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. API-Football 및 백업을 활용한 고화질 로고 추출
+# 1. API-Football 및 고화질 로고 추출 (에러 방지 강화)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_logo_api(team_name):
-    # 1. 직접 매핑 URL이 있으면 최우선 적용
+    # 1. 차단 없는 직접 매핑 URL 우선 적용
     if team_name in DIRECT_LOGO_MAP:
         return DIRECT_LOGO_MAP[team_name]
         
@@ -84,11 +84,13 @@ def fetch_team_logo_api(team_name):
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
-            return res_data["response"][0]["team"]["logo"]
+            logo_url = res_data["response"][0]["team"]["logo"]
+            if logo_url:
+                return logo_url
     except Exception:
         pass
     
-    # 3. 최종 실패 시 예쁜 이니셜 뱃지 생성
+    # 3. 실패 시 예쁜 이니셜 뱃지 생성
     clean_name = quote(team_name[:2])
     return f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
 
@@ -184,7 +186,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 사이드바 및 분석 계산
+# 4. 메인 화면
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -251,10 +253,6 @@ if live_matches:
             "best_score": best_score
         })
 
-# -----------------------------------------------------------------------------
-# 5. 메뉴별 화면 출력
-# -----------------------------------------------------------------------------
-
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
@@ -290,14 +288,6 @@ if menu == "⚽ 프로토 LIVE":
                     unsafe_allow_html=True
                 )
                 st.markdown("---")
-        else:
-            st.warning("⚠️ 아직 내 PC에서 'collector.py'를 실행해 데이터를 GitHub에 올리지 않았거나 수집 중입니다.")
-
-    with tab_baseball:
-        st.info("⚾ 야구 프로토 모듈 준비 중...")
-
-    with tab_basketball:
-        st.info("🏀 농구 프로토 모듈 준비 중...")
 
 # [메뉴 2: 🔥 오늘의 TOP 3 픽]
 elif menu == "🔥 오늘의 TOP 3 픽":
@@ -321,8 +311,6 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                     </div>
                 </div>
             """, unsafe_allow_html=True)
-    else:
-        st.info("분석할 경기 데이터가 아직 준비되지 않았습니다.")
 
 # [메뉴 3: 📈 AI 적중률 리포트]
 elif menu == "📈 AI 적중률 리포트":
