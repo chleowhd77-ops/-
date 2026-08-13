@@ -4,6 +4,8 @@ import json
 import requests
 import sqlite3
 import pandas as pd
+from datetime import datetime
+import pytz
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 
@@ -71,7 +73,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 및 뉴스 분석 엔진
+# 1. 해외 API 연동 (팀 정보 & 한국 기준 경기시간 & 상대전적 H2H)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -98,19 +100,32 @@ def fetch_team_info_api(team_name):
     return {"id": None, "logo": logo}
 
 @st.cache_data(ttl=43200)
-def fetch_head_to_head_api(home_id, away_id):
+def fetch_fixture_details_api(home_id, away_id):
+    """해외 API에서 양 팀의 실제 경기 날짜 및 시각(한국시간)과 H2H 수집"""
     if not home_id or not away_id:
-        return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
         
     url = f"https://{API_HOST}/fixtures/headtohead"
     params = {"h2h": f"{home_id}-{away_id}"}
+    
+    match_time_str = None
+    h_wins, draws, a_wins = 0, 0, 0
     
     try:
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
         matches = res_data.get("response", [])
         
-        h_wins, draws, a_wins = 0, 0, 0
+        # 가장 최근/예정 경기 시각 추출
+        if len(matches) > 0:
+            latest_match = matches[0]
+            utc_date_str = latest_match.get("fixture", {}).get("date")
+            if utc_date_str:
+                # ISO 시간을 한국 시각(KST)으로 정밀 변환
+                utc_dt = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
+                kst_dt = utc_dt.astimezone(pytz.timezone("Asia/Seoul"))
+                match_time_str = kst_dt.strftime("%m.%d (%a) %H:%M")
+        
         for m in matches[:10]:
             is_home_winner = m.get("teams", {}).get("home", {}).get("winner")
             is_away_winner = m.get("teams", {}).get("away", {}).get("winner")
@@ -125,9 +140,13 @@ def fetch_head_to_head_api(home_id, away_id):
             else:
                 draws += 1
                 
-        return {"h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+        return {
+            "match_time": match_time_str,
+            "h_wins": h_wins, "draws": draws, "a_wins": a_wins, 
+            "total": len(matches[:10])
+        }
     except Exception:
-        return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
 
 @st.cache_data(ttl=3600)
 def analyze_team_news_sentiment(team_name):
@@ -165,7 +184,7 @@ def analyze_team_news_sentiment(team_name):
 # -----------------------------------------------------------------------------
 # 2. GitHub 수집 데이터 로드
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60) # 최신 데이터 반영을 위해 캐시 주기를 1분으로 단축
 def load_betman_data():
     raw_url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json"
     try:
@@ -268,7 +287,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
-    st.caption("배당 + 상대전적 + 뉴스 이슈 결합 완전체 AI 엔진")
+    st.caption("배당 + 해외 API + 뉴스 이슈 결합 완전체 AI 엔진")
     
     menu = st.radio(
         "NAVIGATION",
@@ -277,7 +296,7 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("🤖 **AI 모델**: 뉴스 감성 분석 모드 가동 중")
+    st.markdown("🌐 **상태**: 24시간 해외 API 자동 연동 중")
 
 live_matches = load_betman_data()
 analyzed_matches = []
@@ -289,7 +308,12 @@ if live_matches:
         
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
-        h2h = fetch_head_to_head_api(home_info["id"], away_info["id"])
+        
+        # 해외 API로부터 정밀 KST 경기 시간 및 H2H 수집
+        fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
+        
+        # 해외 API 시간 우선 적용, 없을 경우 수집기 시간 백업 적용
+        final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "08.14 예정"
         
         news_h = analyze_team_news_sentiment(home_team)
         news_a = analyze_team_news_sentiment(away_team)
@@ -300,8 +324,9 @@ if live_matches:
         except Exception:
             p_h, p_a = 0.33, 0.33
             
-        h_h2h_bonus = (h2h["h_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
-        a_h2h_bonus = (h2h["a_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
+        h2h_total = fixture_details["total"]
+        h_h2h_bonus = (fixture_details["h_wins"] / h2h_total * 0.4) if h2h_total > 0 else 0
+        a_h2h_bonus = (fixture_details["a_wins"] / h2h_total * 0.4) if h2h_total > 0 else 0
         
         exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus + news_h["mod"]), 2)
         exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus + news_a["mod"]), 2)
@@ -335,9 +360,10 @@ if live_matches:
 
         analyzed_matches.append({
             "match": m,
+            "final_match_time": final_match_time,
             "home_logo": home_info["logo"],
             "away_logo": away_info["logo"],
-            "h2h": h2h,
+            "h2h": fixture_details,
             "news_h": news_h,
             "news_a": news_a,
             "best_option": best_option,
@@ -367,10 +393,8 @@ if menu == "⚽ 프로토 LIVE":
                 h2h = item['h2h']
                 news_h = item['news_h']
                 news_a = item['news_a']
-
-                # 구버전 json과 신버전 json 완벽 호완 처리
-                m_time = m.get('match_time') or m.get('time') or '시간 미정'
-                d_time = m.get('deadline_time', '마감 예정')
+                m_time = item['final_match_time']
+                d_time = m.get('deadline_time', '23:00 마감')
 
                 st.markdown(f"""
                 <div class='match-card'>
@@ -417,7 +441,7 @@ elif menu == "🔥 오늘의 TOP 3 픽":
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
-            m_time = m.get('match_time') or m.get('time') or '시간 미정'
+            m_time = item['final_match_time']
             st.markdown(f"""
                 <div class='top3-card'>
                     <div style='color:#ff4b4b; font-weight:bold; font-size:18px; margin-bottom:8px;'>RANK {idx}</div>
