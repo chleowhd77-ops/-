@@ -35,9 +35,14 @@ TEAM_NAME_MAP = {
     "파리 생제르맹": "Paris Saint Germain"
 }
 
-# 차단 방지용 직접 매핑
+# 100% 안 깨지는 HD 고화질 팀 로고 직접 매핑 (Direct Logo Fallback)
 DIRECT_LOGO_MAP = {
-    "LDU키토": "https://media.api-sports.io/football/teams/1148.png"
+    "미라솔": "https://media.api-sports.io/football/teams/1023.png",
+    "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
+    "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
+    "SC코린티안스": "https://media.api-sports.io/football/teams/131.png",
+    "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
+    "가시와 레이솔": "https://media.api-sports.io/football/teams/2960.png"
 }
 
 def init_db():
@@ -72,6 +77,12 @@ init_db()
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
+    # 1. 직접 매핑 로고가 있으면 1순위 적용 (속도 & 안정성 극대화)
+    if team_name in DIRECT_LOGO_MAP:
+        logo = DIRECT_LOGO_MAP[team_name]
+    else:
+        logo = None
+
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -81,14 +92,17 @@ def fetch_team_info_api(team_name):
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
             team_data = res_data["response"][0]["team"]
-            logo = DIRECT_LOGO_MAP.get(team_name, team_data.get("logo"))
+            if not logo:
+                logo = team_data.get("logo")
             return {"id": team_data["id"], "logo": logo}
     except Exception:
         pass
         
-    clean_name = quote(team_name[:2])
-    fallback_logo = f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
-    return {"id": None, "logo": DIRECT_LOGO_MAP.get(team_name, fallback_logo)}
+    if not logo:
+        clean_name = quote(team_name[:2])
+        logo = f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
+        
+    return {"id": None, "logo": logo}
 
 @st.cache_data(ttl=43200)
 def fetch_head_to_head_api(home_id, away_id):
@@ -122,9 +136,9 @@ def fetch_head_to_head_api(home_id, away_id):
     except Exception:
         return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
 
-@st.cache_data(ttl=3600) # 1시간마다 뉴스 분석
+@st.cache_data(ttl=3600)
 def analyze_team_news_sentiment(team_name):
-    """네이버 스포츠 뉴스 헤드라인 기반 부상/로테이션/체력 감성 분석"""
+    """뉴스 헤드라인 기반 부상/결장/로테이션 감성 분석"""
     keywords_negative = ["부상", "결장", "로테이션", "체력 부담", "징계", "불화", "부진", "결장 우려"]
     keywords_positive = ["복귀", "연승", "사기 충천", "주전 총출동", "대승", "호조", "완승"]
     
@@ -143,12 +157,14 @@ def analyze_team_news_sentiment(team_name):
             for t in titles[:8]:
                 for kw in keywords_negative:
                     if kw in t:
-                        score_mod -= 0.15 # 악재 1개당 기대득점 -0.15 감산
-                        if kw not in detected_issues: detected_issues.append(f"⚠️ {kw}")
+                        score_mod -= 0.15
+                        if f"⚠️ {kw}" not in detected_issues: 
+                            detected_issues.append(f"⚠️ {kw}")
                 for kw in keywords_positive:
                     if kw in t:
-                        score_mod += 0.10 # 호재 1개당 기대득점 +0.10 가산
-                        if kw not in detected_issues: detected_issues.append(f"🔥 {kw}")
+                        score_mod += 0.10
+                        if f"🔥 {kw}" not in detected_issues: 
+                            detected_issues.append(f"🔥 {kw}")
     except Exception:
         pass
         
@@ -201,19 +217,19 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. CSS 스타일링
+# 3. 프리미엄 CSS 스타일링 (UI 다듬기)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
-    .stApp { background-color: #121418; }
+    .stApp { background-color: #0d0f12; }
     [data-testid="stSidebar"] {
-        background-color: #1a1d24 !important;
-        border-right: 1px solid #2a2e39;
+        background-color: #14171d !important;
+        border-right: 1px solid #232731;
     }
     div[data-testid="stTabs"] { width: 100% !important; }
     .stTabs [data-baseweb="tab-list"], div[role="tablist"] {
         width: 100% !important; display: flex !important; justify-content: space-between !important;
-        background-color: transparent !important; border: none !important; border-bottom: 1px solid #333333 !important;
+        background-color: transparent !important; border: none !important; border-bottom: 1px solid #232731 !important;
         margin-bottom: 25px !important; gap: 0px !important; padding: 0px !important;
     }
     .stTabs [data-baseweb="tab"], button[role="tab"] {
@@ -228,27 +244,34 @@ st.markdown("""
     .stTabs [data-baseweb="tab-border"], .stTabs [data-baseweb="tab-highlight-title"], div[data-baseweb="tab-highlight"] {
         display: none !important; background-color: transparent !important;
     }
-    .top3-card {
-        background-color: #1e222d; border: 1px solid #2a2e39; border-radius: 10px;
-        padding: 16px; margin-bottom: 12px;
+    
+    .match-card {
+        background: linear-gradient(135deg, #181b22 0%, #12141a 100%);
+        border: 1px solid #252934; border-radius: 12px;
+        padding: 18px; margin-bottom: 18px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    .team-name { color: #ffffff !important; font-size: 16px; font-weight: bold; display: flex; align-items: center; gap: 10px; }
+    .top3-card {
+        background: linear-gradient(135deg, #1f2430 0%, #151821 100%);
+        border: 1px solid #2e3445; border-radius: 12px;
+        padding: 18px; margin-bottom: 14px;
+    }
+    .team-name { color: #ffffff !important; font-size: 17px; font-weight: bold; display: flex; align-items: center; gap: 12px; }
     .team-name.home { justify-content: flex-end; }
     .team-name.away { justify-content: flex-start; }
-    .score-wait { color: #ffffff; font-size: 14px; font-weight: bold; }
-    .odd-info { color: #d1d5db !important; font-size: 13px; }
-    .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 4px; }
-    .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 2px; }
+    .score-wait { color: #f1c40f; font-size: 14px; font-weight: bold; background: #222616; padding: 4px 10px; border-radius: 20px; display: inline-block; }
+    .odd-info { color: #b0b5c1 !important; font-size: 13px; margin-top: 6px; }
+    .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 6px; }
+    .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 3px; }
     .value-pick {
-        background-color: #1a3323; color: #2ecc71; border: 1px solid #276738;
-        padding: 10px 14px; border-radius: 8px; font-size: 14px; margin-top: 12px;
+        background-color: #12291b; color: #2ecc71; border: 1px solid #1e4d2b;
+        padding: 12px 16px; border-radius: 8px; font-size: 15px; margin-top: 14px; text-align: center;
     }
-    .team-logo { width: 36px; height: 36px; object-fit: contain; }
+    .team-logo { width: 38px; height: 38px; object-fit: contain; }
     </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 복합 머신러닝 AI 분석 엔진 (배당 + 상대전적 + 뉴스 감성 분석)
+# 4. 복합 머신러닝 AI 분석 엔진
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -271,12 +294,12 @@ if live_matches:
         odd_h, odd_d, odd_a = m["odd_h"], m["odd_d"], m["odd_a"]
         home_team, away_team = m["home"], m["away"]
         
-        # 1. 해외 API 데이터 (팀 ID & 상대전적 H2H)
+        # 1. 해외 API 데이터 (팀 ID & 로고 & 상대전적 H2H)
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
         h2h = fetch_head_to_head_api(home_info["id"], away_info["id"])
         
-        # 2. 뉴스 감성 분석 (부상/로테이션 이슈 감지)
+        # 2. 뉴스 감성 분석
         news_h = analyze_team_news_sentiment(home_team)
         news_a = analyze_team_news_sentiment(away_team)
         
@@ -287,7 +310,7 @@ if live_matches:
         except Exception:
             p_h, p_a = 0.33, 0.33
             
-        # 4. 상대전적 + 뉴스 이슈 가중치 합산 (4대 엔진 결합 공식)
+        # 4. 상대전적 + 뉴스 이슈 가중치 합산
         h_h2h_bonus = (h2h["h_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
         a_h2h_bonus = (h2h["a_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
         
@@ -357,19 +380,23 @@ if menu == "⚽ 프로토 LIVE":
                 news_h = item['news_h']
                 news_a = item['news_a']
 
-                with st.container():
-                    st.markdown(f"<span style='color:#a0a0a0;'>🏆 {m['league']}</span>", unsafe_allow_html=True)
-                    c1, c2, c3 = st.columns([5, 3, 5])
-                    
-                    with c1: 
-                        st.markdown(f"<div class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></div>", unsafe_allow_html=True)
-                    with c2: 
-                        st.markdown(f"<div class='score-wait' style='text-align: center;'>{m['time']} 마감<br>VS</div>", unsafe_allow_html=True)
-                    with c3: 
-                        st.markdown(f"<div class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</div>", unsafe_allow_html=True)
-
-                st.write("")
-                st.markdown(f"<div class='odd-info' style='text-align:center;'><b style='color:#ffffff;'>승무패 배당률</b> | 승 {m['odd_h']} · 무 {m['odd_d']} · 패 {m['odd_a']}</div>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class='match-card'>
+                    <div style='color:#a0a0a0; font-size:13px; margin-bottom:8px;'>🏆 {m['league']}</div>
+                    <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div style='flex:1; text-align:right;'>
+                            <span class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></span>
+                        </div>
+                        <div style='width:120px; text-align:center;'>
+                            <span class='score-wait'>{m['time']} 마감</span><br>
+                            <span style='color:#ffffff; font-weight:bold; font-size:12px;'>VS</span>
+                        </div>
+                        <div style='flex:1; text-align:left;'>
+                            <span class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</span>
+                        </div>
+                    </div>
+                    <div class='odd-info' style='text-align:center;'><b style='color:#ffffff;'>승무패 배당률</b> | 승 {m['odd_h']} · 무 {m['odd_d']} · 패 {m['odd_a']}</div>
+                """, unsafe_allow_html=True)
                 
                 # 상대 전적 요약
                 if h2h['total'] > 0:
@@ -384,10 +411,11 @@ if menu == "⚽ 프로토 LIVE":
 
                 st.markdown(
                     f"<div class='value-pick'>🎯 <b>AI 최고 가치 픽</b>: <span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> "
-                    f"(예상 확률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b></div>",
+                    f"(예상 확률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b></div>"
+                    f"</div>",
                     unsafe_allow_html=True
                 )
-                st.markdown("---")
+                st.write("")
 
 # [메뉴 2: 🔥 오늘의 TOP 3 픽]
 elif menu == "🔥 오늘의 TOP 3 픽":
@@ -406,7 +434,7 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                         <span style='color:#ffffff; font-size:16px; font-weight:bold;'>{m['home']} vs {m['away']}</span>
                         <span style='color:#a0a0a0; font-size:13px;'>{m['time']} 마감</span>
                     </div>
-                    <div style='background-color:#1a3323; color:#2ecc71; border:1px solid #276738; padding:12px; border-radius:8px; font-size:15px;'>
+                    <div style='background-color:#12291b; color:#2ecc71; border:1px solid #1e4d2b; padding:12px; border-radius:8px; font-size:15px;'>
                         🎯 <b>추천 픽</b>: <b style='color:#ffffff;'>{item['best_option']}</b> (예상 승률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b>
                     </div>
                 </div>
