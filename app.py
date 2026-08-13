@@ -38,7 +38,6 @@ TEAM_NAME_MAP = {
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
 }
 
-# 100% 안정적인 API-Sports CDN 기반 구단 엠블럼 매핑
 DIRECT_LOGO_MAP = {
     "광주FC": "https://media.api-sports.io/football/teams/2836.png",
     "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
@@ -65,10 +64,6 @@ DIRECT_LOGO_MAP = {
     "안산그리": "https://media.api-sports.io/football/teams/2851.png",
     "대구FC": "https://media.api-sports.io/football/teams/2832.png",
     "충남아산": "https://media.api-sports.io/football/teams/8282.png",
-    "김포FC": "https://media.api-sports.io/football/teams/18029.png",
-    "천안시티": "https://media.api-sports.io/football/teams/18028.png",
-    "파주프런": "https://media.api-sports.io/football/teams/18030.png",
-    "성남FC": "https://media.api-sports.io/football/teams/2843.png",
     "미라솔": "https://media.api-sports.io/football/teams/1023.png",
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
     "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
@@ -76,9 +71,6 @@ DIRECT_LOGO_MAP = {
     "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
     "가시와 레이솔": "https://media.api-sports.io/football/teams/2960.png"
 }
-
-# 기본 백업 고화질 축구공 아이콘
-FALLBACK_LOGO = "https://cdn-icons-png.flaticon.com/512/53/53283.png"
 
 def init_db():
     conn = sqlite3.connect("ai_predictions.db")
@@ -108,7 +100,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (이미지 에러 예외 처리 강화)
+# 1. 해외 API 연동 (팀 정보 & 상대 전적)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -125,13 +117,11 @@ def fetch_team_info_api(team_name):
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
             team_data = res_data["response"][0]["team"]
-            api_logo = team_data.get("logo")
-            if api_logo:
-                return {"id": team_data["id"], "logo": api_logo}
+            return {"id": team_data["id"], "logo": team_data.get("logo")}
     except Exception:
         pass
         
-    return {"id": None, "logo": FALLBACK_LOGO}
+    return {"id": None, "logo": None}
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
@@ -246,7 +236,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
     finally: conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. CSS 스타일링 (깨짐 없는 HTML 이미지 태그 적용)
+# 3. CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -313,6 +303,12 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# HTML 이미지 렌더링 헬퍼 (로고가 없거나 에러 시 미출력)
+def render_logo_html(logo_url):
+    if logo_url:
+        return f"<img src='{logo_url}' class='team-logo' onerror=\"this.style.display='none';\">"
+    return ""
 
 # -----------------------------------------------------------------------------
 # 4. 헤더 및 메인 메뉴
@@ -408,13 +404,16 @@ with main_tab1:
             st.success(f"✅ 현재 베트맨 발매 중인 축구 {len(analyzed_proto)}경기 라이브 분석 중")
             for item in analyzed_proto:
                 m = item['match']
+                logo_h_tag = render_logo_html(item["home_logo"])
+                logo_a_tag = render_logo_html(item["away_logo"])
+                
                 st.markdown(f"""
                 <div class='match-card'>
                     <div class='league-title'>🏆 {m['league']}</div>
                     <div class='vs-row'>
-                        <div class='team-box home'><span class='team-name-text'>{m['home']}</span><img src='{item["home_logo"]}' class='team-logo' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"></div>
+                        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
                         <div class='center-time-box'><span class='match-time-badge'>⚽ {item["final_match_time"]}</span><span class='deadline-badge'>({m.get("deadline_time", "23:00 마감")})</span></div>
-                        <div class='team-box away'><img src='{item["away_logo"]}' class='team-logo' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"><span class='team-name-text'>{m['away']}</span></div>
+                        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
                     </div>
                     <div class='odd-info'><b style='color:#f1c40f;'>승무패</b> {m['odd_h']} · {m['odd_d']} · {m['odd_a']} | <b style='color:#f1c40f;'>핸디캡</b> {m.get('handi_h', 3.05)} · {m.get('handi_d', 3.05)} · {m.get('handi_a', 2.03)} | <b style='color:#f1c40f;'>언오버</b> {m.get('uo_under', 1.50)} · {m.get('uo_over', 2.13)}</div>
                     <div class='detail-info-box'>
@@ -441,6 +440,9 @@ with main_tab2:
             home_info = fetch_team_info_api(m['home'])
             away_info = fetch_team_info_api(m['away'])
             
+            logo_h_tag = render_logo_html(home_info["logo"])
+            logo_a_tag = render_logo_html(away_info["logo"])
+            
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             
             p_h = 32.0 + (base_seed % 35)
@@ -466,9 +468,9 @@ with main_tab2:
                     <span style='color:#ffffff; font-size:15px;'>🎯 AI 최고 가치 마킹: <b style='color:#f1c40f; font-size:17px;'>{best_pick}</b> <b style='color:#2ecc71;'>({best_pct}%)</b></span>
                 </div>
                 <div class='vs-row'>
-                    <div class='team-box home'><span class='team-name-text' style='font-size:18px;'>{m['home']}</span><img src='{home_info["logo"]}' class='team-logo' style='width:42px; height:42px;' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"></div>
+                    <div class='team-box home'><span class='team-name-text' style='font-size:18px;'>{m['home']}</span>{logo_h_tag}</div>
                     <div class='center-time-box' style='width:90px;'><b style='color:#ffffff; font-size:16px;'>VS</b></div>
-                    <div class='team-box away'><img src='{away_info["logo"]}' class='team-logo' style='width:42px; height:42px;' onerror="this.onerror=null; this.src='{FALLBACK_LOGO}';"><span class='team-name-text' style='font-size:18px;'>{m['away']}</span></div>
+                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text' style='font-size:18px;'>{m['away']}</span></div>
                 </div>
                 <div class='odd-info' style='margin-top:10px; padding:6px; font-size:13px;'>
                     📊 <b>AI 확률 분포</b> | 승 {p_h}% · 무 {p_d}% · 패 {p_a}%
