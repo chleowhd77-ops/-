@@ -135,7 +135,6 @@ def fetch_fixture_details_api(home_id, away_id):
                 weekdays = ['월', '화', '수', '목', '금', '토', '일']
                 match_time_str = kst_dt.strftime(f"%m.%d ({weekdays[kst_dt.weekday()]}) %H:%M")
                 
-            # 최근 맞대결 일자 추출
             if len(matches) > 1:
                 prev_utc = matches[1].get("fixture", {}).get("date")
                 if prev_utc:
@@ -159,7 +158,7 @@ def fetch_fixture_details_api(home_id, away_id):
         return {
             "match_time": match_time_str,
             "last_h2h_date": last_h2h_date,
-            "h_rest": "5일", "a_rest": "3일 (피로도)", # API 기반 가상 계산 예시
+            "h_rest": "5일", "a_rest": "3일",
             "h_wins": h_wins, "draws": draws, "a_wins": a_wins, 
             "total": len(matches[:10])
         }
@@ -250,15 +249,13 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. 디자인 개편 CSS 스타일링 (버튼 제거 & 커진 폰트 & 대형 로고)
+# 3. PC/모바일 반응형 완벽 대응 CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
     .stApp { background-color: #0b0d10; }
-    
     [data-testid="stSidebar"] { display: none; }
     
-    /* 타이틀 헤더 */
     .app-header {
         text-align: center;
         padding: 15px 0 25px 0;
@@ -273,7 +270,6 @@ st.markdown("""
         margin: 0;
     }
     
-    /* 상단 메뉴 탭 (배경 버튼 제거 ➔ 대형 텍스트 + 레드 포인트) */
     div[data-testid="stTabs"] { width: 100% !important; }
     .stTabs [data-baseweb="tab-list"], div[role="tablist"] {
         width: 100% !important; display: flex !important; justify-content: space-around !important;
@@ -295,7 +291,6 @@ st.markdown("""
         display: none !important;
     }
     
-    /* 경기 카드 */
     .match-card {
         background: linear-gradient(135deg, #151821 0%, #0f1117 100%);
         border: 1px solid #252d3f; border-radius: 16px;
@@ -307,43 +302,72 @@ st.markdown("""
         padding: 24px; margin-bottom: 18px;
     }
     
-    /* 팀 대결표 커진 글씨 & 마크 */
-    .team-name { color: #ffffff !important; font-size: 26px !important; font-weight: 900; display: flex; align-items: center; gap: 16px; }
-    .team-name.home { justify-content: flex-end; }
-    .team-name.away { justify-content: flex-start; }
-    .team-logo { width: 56px !important; height: 56px !important; object-fit: contain; }
+    /* 대결표 가로 레이아웃 고정 */
+    .vs-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+    }
+    
+    .team-box {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .team-box.home { justify-content: flex-end; text-align: right; }
+    .team-box.away { justify-content: flex-start; text-align: left; }
+    
+    .team-name-text {
+        color: #ffffff !important;
+        font-size: 24px;
+        font-weight: 900;
+        white-space: nowrap;
+    }
+    
+    .center-time-box {
+        width: 200px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+    
+    .team-logo { width: 52px !important; height: 52px !important; object-fit: contain; flex-shrink: 0; }
     
     .league-title { color: #c0c9d9 !important; font-size: 16px !important; font-weight: bold; margin-bottom: 12px; }
-    .match-time-badge { color: #2ecc71 !important; font-size: 16px !important; font-weight: 800; background: #0c2b1a; padding: 6px 16px; border-radius: 20px; display: inline-block; border: 1px solid #185c32; }
+    .match-time-badge { color: #2ecc71 !important; font-size: 15px !important; font-weight: 800; background: #0c2b1a; padding: 6px 14px; border-radius: 20px; display: inline-block; border: 1px solid #185c32; }
     .deadline-badge { color: #ff6b6b !important; font-size: 13px !important; font-weight: bold; margin-top: 6px; display: block; }
     
-    .odd-info { color: #ffffff !important; font-size: 15px !important; margin-top: 14px; background: #1a202c; padding: 12px; border-radius: 8px; border: 1px solid #2a3346; }
+    .odd-info { color: #ffffff !important; font-size: 15px !important; margin-top: 14px; background: #1a202c; padding: 12px; border-radius: 8px; border: 1px solid #2a3346; text-align: center; }
     
-    /* 상대 전적 및 뉴스 상세 정보 스타일 */
     .detail-info-box {
         background: #121620; border: 1px solid #222938; padding: 12px; border-radius: 8px; margin-top: 12px;
-        display: flex; justify-content: space-around; flex-wrap: wrap; text-align: center;
+        display: flex; justify-content: space-around; flex-wrap: wrap; text-align: center; gap: 8px;
     }
     .detail-item { color: #5dd5ff !important; font-size: 14px !important; font-weight: bold; }
-    .news-item { color: #ffb84d !important; font-size: 14px !important; font-weight: bold; margin-top: 4px; width: 100%; text-align: center; }
+    .news-item { color: #ffb84d !important; font-size: 14px !important; font-weight: bold; width: 100%; text-align: center; }
     
-    /* 가치 픽 박스 - 슬림하고 세련된 폰트 */
     .value-box-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
     .value-pick-box {
-        flex: 1 1 30%; min-width: 160px;
+        flex: 1 1 30%; min-width: 150px;
         background-color: #0e291b; color: #ffffff !important; border: 1px solid #1c5e34;
         padding: 12px; border-radius: 10px; font-size: 14px !important; text-align: center;
     }
     .pick-highlight { color: #f1c40f !important; font-weight: 800 !important; font-size: 16px !important; }
     .prob-highlight { color: #2ecc71 !important; font-weight: 700 !important; font-size: 15px !important; }
 
+    /* 📱 모바일 화면 최적화 (가로 한 줄 자동 축소) */
     @media (max-width: 768px) {
-        .team-name { font-size: 19px !important; }
-        .team-logo { width: 42px !important; height: 42px !important; }
-        .match-time-badge { font-size: 13px !important; }
+        .team-name-text { font-size: 15px !important; }
+        .team-logo { width: 34px !important; height: 34px !important; }
+        .center-time-box { width: 130px !important; }
+        .match-time-badge { font-size: 11px !important; padding: 4px 8px !important; }
+        .deadline-badge { font-size: 10px !important; }
+        .odd-info { font-size: 12px !important; padding: 8px !important; }
+        .detail-item { font-size: 12px !important; }
         .value-pick-box { flex: 1 1 100%; }
-        .app-header h1 { font-size: 28px !important; }
-        .stTabs [data-baseweb="tab"], button[role="tab"] { font-size: 17px !important; }
+        .app-header h1 { font-size: 26px !important; }
+        .stTabs [data-baseweb="tab"], button[role="tab"] { font-size: 16px !important; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -478,31 +502,32 @@ with main_tab1:
                 st.markdown(f"""
                 <div class='match-card'>
                     <div class='league-title'>🏆 {m['league']}</div>
-                    <div style='display:flex; justify-content:space-between; align-items:center;'>
-                        <div style='flex:1; text-align:right;'>
-                            <span class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></span>
+                    <div class='vs-row'>
+                        <div class='team-box home'>
+                            <span class='team-name-text'>{m['home']}</span>
+                            <img src='{logo_h}' class='team-logo'>
                         </div>
-                        <div style='width:220px; text-align:center;'>
+                        <div class='center-time-box'>
                             <span class='match-time-badge'>⚽ {m_time}</span>
                             <span class='deadline-badge'>({d_time})</span>
                         </div>
-                        <div style='flex:1; text-align:left;'>
-                            <span class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</span>
+                        <div class='team-box away'>
+                            <img src='{logo_a}' class='team-logo'>
+                            <span class='team-name-text'>{m['away']}</span>
                         </div>
                     </div>
-                    <div class='odd-info' style='text-align:center;'>
+                    <div class='odd-info'>
                         <b style='color:#f1c40f;'>승무패</b> {m['odd_h']} · {m['odd_d']} · {m['odd_a']} | 
                         <b style='color:#f1c40f;'>핸디캡</b> {m.get('handi_h', 3.05)} · {m.get('handi_d', 3.05)} · {m.get('handi_a', 2.03)} | 
                         <b style='color:#f1c40f;'>언오버</b> {m.get('uo_under', 1.50)} · {m.get('uo_over', 2.13)}
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # 확장된 상대전적 & 직전 맞대결 & 휴식일 상세 박스
                 st.markdown(f"""
                 <div class='detail-info-box'>
-                    <span class='detail-item'>📊 최근 상대전적: {m['home']} {h2h['h_wins']}승 {h2h['draws']}무 {h2h['a_wins']}승 {m['away']}</span>
+                    <span class='detail-item'>📊 상대전적: {m['home']} {h2h['h_wins']}승 {h2h['draws']}무 {h2h['a_wins']}승 {m['away']}</span>
                     <span class='detail-item'>🗓️ 최근 맞대결: {h2h['last_h2h_date']}</span>
-                    <span class='detail-item'>🔋 팀 휴식일: {m['home']}({h2h['h_rest']}) / {m['away']}({h2h['a_rest']})</span>
+                    <span class='detail-item'>🔋 휴식일: {m['home']}({h2h['h_rest']}) / {m['away']}({h2h['a_rest']})</span>
                 """, unsafe_allow_html=True)
                 
                 all_issues = news_h['issues'] + news_a['issues']
@@ -542,8 +567,8 @@ with main_tab2:
                 <div class='top3-card'>
                     <div style='color:#ff3b3b; font-weight:bold; font-size:22px; margin-bottom:10px;'>RANK {idx}</div>
                     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>
-                        <span style='color:#ffffff; font-size:22px; font-weight:bold;'>{m['home']} vs {m['away']}</span>
-                        <span style='color:#2ecc71; font-size:16px; font-weight:bold;'>⚽ {m_time}</span>
+                        <span style='color:#ffffff; font-size:20px; font-weight:bold;'>{m['home']} vs {m['away']}</span>
+                        <span style='color:#2ecc71; font-size:15px; font-weight:bold;'>⚽ {m_time}</span>
                     </div>
                     <div style='background-color:#0e291b; color:#ffffff; border:1px solid #1c5e34; padding:16px; border-radius:10px; font-size:17px;'>
                         🎯 <b>추천 일반 픽</b>: <b style='color:#f1c40f;'>{item['best_option']}</b> ({item['best_prob_pct']}%) | 
