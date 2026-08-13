@@ -250,8 +250,8 @@ st.markdown("""
     .team-name { color: #ffffff !important; font-size: 17px; font-weight: bold; display: flex; align-items: center; gap: 12px; }
     .team-name.home { justify-content: flex-end; }
     .team-name.away { justify-content: flex-start; }
-    .match-time-badge { color: #2ecc71; font-size: 13px; font-weight: bold; background: #132b1d; padding: 4px 10px; border-radius: 20px; display: inline-block; }
-    .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 4px; }
+    .match-time-badge { color: #2ecc71; font-size: 13px; font-weight: bold; background: #132b1d; padding: 4px 12px; border-radius: 20px; display: inline-block; }
+    .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 4px; display: block; }
     .odd-info { color: #b0b5c1 !important; font-size: 13px; margin-top: 6px; }
     .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 6px; }
     .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 3px; }
@@ -368,9 +368,9 @@ if menu == "⚽ 프로토 LIVE":
                 news_h = item['news_h']
                 news_a = item['news_a']
 
-                # 시간 표기 안전 처리
-                m_time = m.get('match_time', '시간 미정')
-                d_time = m.get('deadline_time', '')
+                # 구버전 json과 신버전 json 완벽 호완 처리
+                m_time = m.get('match_time') or m.get('time') or '시간 미정'
+                d_time = m.get('deadline_time', '마감 예정')
 
                 st.markdown(f"""
                 <div class='match-card'>
@@ -379,8 +379,8 @@ if menu == "⚽ 프로토 LIVE":
                         <div style='flex:1; text-align:right;'>
                             <span class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></span>
                         </div>
-                        <div style='width:160px; text-align:center;'>
-                            <span class='match-time-badge'>⚽ {m_time}</span><br>
+                        <div style='width:180px; text-align:center;'>
+                            <span class='match-time-badge'>⚽ {m_time}</span>
                             <span class='deadline-badge'>({d_time})</span>
                         </div>
                         <div style='flex:1; text-align:left;'>
@@ -417,7 +417,7 @@ elif menu == "🔥 오늘의 TOP 3 픽":
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
-            m_time = m.get('match_time', '시간 미정')
+            m_time = m.get('match_time') or m.get('time') or '시간 미정'
             st.markdown(f"""
                 <div class='top3-card'>
                     <div style='color:#ff4b4b; font-weight:bold; font-size:18px; margin-bottom:8px;'>RANK {idx}</div>
