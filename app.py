@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
 # ★ 회원님의 API-Football 키를 입력하세요
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
 
 headers = {
