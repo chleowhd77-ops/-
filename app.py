@@ -4,16 +4,16 @@ import time
 import re
 import sqlite3
 import pandas as pd
-from datetime import datetime
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
-from webdriver_manager.microsoft import EdgeChromiumDriverManager
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 
 # -----------------------------------------------------------------------------
-# 0. 데이터베이스(DB) 및 오답 노트 자동 채점 시스템
+# 0. 데이터베이스(DB) 및 설정
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
@@ -43,46 +43,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-def update_match_results(match_id, h_score, a_score, is_finished=True):
-    """실시간 점수를 DB에 업데이트하고 경기 종료 시 자동 채점합니다."""
-    conn = sqlite3.connect("ai_predictions.db")
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT predicted_pick, home_team, away_team FROM predictions WHERE match_id = ?", (match_id,))
-    row = cursor.fetchone()
-    
-    if row:
-        predicted_pick, home, away = row
-        actual_score = f"{h_score}:{a_score}"
-        
-        # 실제 결과 판정 (승/무/패)
-        if h_score > a_score:
-            actual_res = "HOME_WIN"
-        elif h_score == a_score:
-            actual_res = "DRAW"
-        else:
-            actual_res = "AWAY_WIN"
-            
-        # AI 예측 적중 여부 채점
-        is_correct = 0
-        if "승" in predicted_pick and home in predicted_pick and actual_res == "HOME_WIN":
-            is_correct = 1
-        elif "무승부" in predicted_pick and actual_res == "DRAW":
-            is_correct = 1
-        elif "승" in predicted_pick and away in predicted_pick and actual_res == "AWAY_WIN":
-            is_correct = 1
-            
-        status = "FINISHED" if is_finished else "LIVE"
-        
-        cursor.execute("""
-            UPDATE predictions 
-            SET actual_score = ?, actual_result = ?, is_correct = ?
-            WHERE match_id = ?
-        """, (actual_score, status if is_finished else "LIVE", is_correct, match_id))
-        conn.commit()
-        
-    conn.close()
 
 def get_accuracy_stats():
     conn = sqlite3.connect("ai_predictions.db")
@@ -163,10 +123,6 @@ st.markdown("""
         display: none !important; background-color: transparent !important;
     }
     
-    .metric-card {
-        background: linear-gradient(135deg, #1e222d 0%, #14171f 100%);
-        border: 1px solid #2a2e39; border-radius: 12px; padding: 20px; margin-bottom: 20px;
-    }
     .top3-card {
         background-color: #1e222d; border: 1px solid #2a2e39; border-radius: 10px;
         padding: 16px; margin-bottom: 12px;
@@ -186,7 +142,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. 투 트랙 수집 로봇 (베트맨 연동 + 라이브 스코어 추적)
+# 3. 클라우드 서버 맞춤형 수집 로봇 (Headless Chrome)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def scrape_betman():
@@ -195,9 +151,21 @@ def scrape_betman():
     
     try:
         options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
         options.add_argument('--log-level=3')
-        service = Service(EdgeChromiumDriverManager().install())
-        driver = webdriver.Edge(service=service, options=options)
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        try:
+            # 클라우드 리눅스 환경 크롬 드라이버
+            service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
+            driver = webdriver.Chrome(service=service, options=options)
+        except Exception:
+            # 로컬 PC 환경 예비 실행
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
         
         driver.get(url)
         time.sleep(6)
@@ -254,19 +222,19 @@ def scrape_betman():
                             "odd_h": odds[0],
                             "odd_d": odds[1],
                             "odd_a": odds[2],
-                            "live_score": None, # 라이브 스코어 추가 영역
-                            "status": "UPCOMING" # UPCOMING, LIVE, FINISHED
+                            "live_score": None,
+                            "status": "UPCOMING"
                         })
                         seen_matches.add(match_id)
                         break 
                         
-    except Exception:
+    except Exception as e:
         pass
     
     return matches
 
 # -----------------------------------------------------------------------------
-# 4. 좌측 사이드바 메뉴 생성
+# 4. 좌측 사이드바 및 UI
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -279,7 +247,7 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("💡 **Tip**: 경기 진행 상황 및 스코어는 실시간으로 감지되어 기록됩니다.")
+    st.markdown("💡 **Tip**: 24시간 실시간 AI 연동 모드 작동 중")
 
 live_matches = scrape_betman()
 analyzed_matches = []
@@ -333,10 +301,6 @@ if live_matches:
             "best_score": best_score
         })
 
-# -----------------------------------------------------------------------------
-# 5. 메뉴별 화면 렌더링
-# -----------------------------------------------------------------------------
-
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
@@ -359,7 +323,6 @@ if menu == "⚽ 프로토 LIVE":
                     with c1: 
                         st.markdown(f"<div class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></div>", unsafe_allow_html=True)
                     
-                    # 스코어 및 진행 상황 표시
                     with c2: 
                         if m['status'] == 'LIVE':
                             st.markdown(f"<div class='score-live' style='text-align: center;'>⚽ {m['live_score']}<br><span style='font-size:12px; color:#2ecc71;'>LIVE 진행 중</span></div>", unsafe_allow_html=True)
