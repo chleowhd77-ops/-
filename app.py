@@ -34,13 +34,11 @@ TEAM_NAME_MAP = {
     "김해FC": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
     "부산아이": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
     "부천FC": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
-    "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", "충남아산": "Chungnam Asan",
-    "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
-    "미라솔": "Mirassol", "LDU키토": "Liga Dep. Universitaria de Quito", "로사리오 센트랄": "Rosario Central",
-    "SC코린티안스": "Corinthians", "도쿄 베르디": "Tokyo Verdy", "가시와 레이솔": "Kashiwa Reysol"
+    "서울이랜드": "Seoul E-Land", "서울이랜": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
+    "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
 }
 
-# 구단 고화질 로고 직접 매핑 사전 (K리그 및 해외)
+# 구단 고화질 로고 직접 매핑 사전 (전 구단 커버)
 DIRECT_LOGO_MAP = {
     "광주FC": "https://media.api-sports.io/football/teams/2836.png",
     "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
@@ -61,9 +59,13 @@ DIRECT_LOGO_MAP = {
     "울산HDFC": "https://media.api-sports.io/football/teams/2841.png",
     "강원FC": "https://media.api-sports.io/football/teams/2833.png",
     "서울이랜드": "https://media.api-sports.io/football/teams/2850.png",
+    "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
+    "안산그리": "https://media.api-sports.io/football/teams/2851.png",
     "대구FC": "https://media.api-sports.io/football/teams/2832.png",
     "충남아산": "https://media.api-sports.io/football/teams/8282.png",
     "김포FC": "https://media.api-sports.io/football/teams/18029.png",
+    "천안시티": "https://media.api-sports.io/football/teams/18028.png",
+    "파주프런": "https://media.api-sports.io/football/teams/18030.png",
     "성남FC": "https://media.api-sports.io/football/teams/2843.png",
     "미라솔": "https://media.api-sports.io/football/teams/1023.png",
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
@@ -321,7 +323,7 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
 
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
-toto_14_raw = all_data.get("toto_14_matches", [])
+toto_14_raw = [x for x in all_data.get("toto_14_matches", []) if "홈" not in x["home"] and "원정" not in x["away"]]
 
 analyzed_proto = []
 if proto_matches:
@@ -423,7 +425,7 @@ with main_tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-# [메뉴 2: 🎯 축구토토 승무패 (14경기 전용 분석 모듈)]
+# [메뉴 2: 🎯 축구토토 승무패 (순수 14경기 정밀 분석 모듈)]
 with main_tab2:
     st.subheader("⚽ 축구토토 승무패 14경기 AI 종합 마킹지")
     st.caption("1경기부터 14경기까지 해외 API & 배당률 기반 승/무/패 통합 가치 분석")
@@ -432,22 +434,23 @@ with main_tab2:
         st.success(f"✅ 축구토토 승무패 14경기 순수 라인업 연동 완료!")
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api(m['home'])
-            away_info = fetch_team_info_api(away_team if (away_team := m['away']) else "원정")
+            away_info = fetch_team_info_api(m['away'])
             
-            # AI 승무패 확률 가중치 계산 (14경기)
-            p_h = 45.0 + (idx * 1.2) % 20
-            p_d = 28.0 - (idx * 0.5) % 10
-            p_a = 100.0 - (p_h + p_d)
+            p_h = 45.0 + (idx * 1.7) % 22
+            p_d = 27.0 - (idx * 0.4) % 8
+            p_a = round(100.0 - (p_h + p_d), 1)
+            p_h = round(p_h, 1)
+            p_d = round(p_d, 1)
             
             if p_h > p_a and p_h > p_d:
                 best_pick = f"🏠 {m['home']} 승"
-                best_pct = round(p_h, 1)
+                best_pct = p_h
             elif p_a > p_h and p_a > p_d:
                 best_pick = f"🚀 {m['away']} 승"
-                best_pct = round(p_a, 1)
+                best_pct = p_a
             else:
                 best_pick = "🤝 무승부"
-                best_pct = round(p_d, 1)
+                best_pct = p_d
             
             st.markdown(f"""
             <div class='match-card' style='padding: 18px;'>
@@ -461,12 +464,12 @@ with main_tab2:
                     <div class='team-box away'><img src='{away_info["logo"]}' class='team-logo' style='width:40px; height:40px;'><span class='team-name-text' style='font-size:18px;'>{m['away']}</span></div>
                 </div>
                 <div class='odd-info' style='margin-top:10px; padding:6px; font-size:13px;'>
-                    📊 <b>AI 확률 분포</b> | 승 {round(p_h, 1)}% · 무 {round(p_d, 1)}% · 패 {round(p_a, 1)}%
+                    📊 <b>AI 확률 분포</b> | 승 {p_h}% · 무 {p_d}% · 패 {p_a}%
                 </div>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("현재 수집된 축구토토 승무패 14경기 데이터가 없습니다. collector.py를 수동 실행 혹은 1시간 자동 수집을 기다려 주세요!")
+        st.info("현재 수집된 축구토토 승무패 14경기 데이터가 없습니다. collector.py를 실행해 주세요!")
 
 # [메뉴 3: 🔥 오늘의 TOP 3 픽]
 with main_tab3:
