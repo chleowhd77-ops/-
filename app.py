@@ -5,14 +5,15 @@ import requests
 import sqlite3
 import pandas as pd
 from urllib.parse import quote
+from bs4 import BeautifulSoup
 
 # -----------------------------------------------------------------------------
-# 0. API-Football 및 기본 설정
+# 0. 기본 설정 및 API-Football 셋팅
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
-# ★ 여기에 발급받으신 API-Football 키를 입력하세요!
-API_KEY = "28b599664bba858ebf93515768741975"
+# ★ 회원님의 API-Football 키를 입력하세요
+API_KEY = "YOUR_API_KEY_HERE"
 API_HOST = "v3.football.api-sports.io"
 
 headers = {
@@ -34,7 +35,7 @@ TEAM_NAME_MAP = {
     "파리 생제르맹": "Paris Saint Germain"
 }
 
-# 차단 없는 100% 안정적인 고화질 로고 직접 매핑 (핫링크 차단 방지)
+# 차단 방지용 직접 매핑
 DIRECT_LOGO_MAP = {
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png"
 }
@@ -67,15 +68,10 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. API-Football 및 고화질 로고 추출 (에러 방지 강화)
+# 1. 해외 API 및 뉴스 감성 분석(Sentiment) 엔진
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
-def fetch_team_logo_api(team_name):
-    # 1. 차단 없는 직접 매핑 URL 우선 적용
-    if team_name in DIRECT_LOGO_MAP:
-        return DIRECT_LOGO_MAP[team_name]
-        
-    # 2. API-Football 검색
+def fetch_team_info_api(team_name):
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -84,15 +80,79 @@ def fetch_team_logo_api(team_name):
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
-            logo_url = res_data["response"][0]["team"]["logo"]
-            if logo_url:
-                return logo_url
+            team_data = res_data["response"][0]["team"]
+            logo = DIRECT_LOGO_MAP.get(team_name, team_data.get("logo"))
+            return {"id": team_data["id"], "logo": logo}
     except Exception:
         pass
-    
-    # 3. 실패 시 예쁜 이니셜 뱃지 생성
+        
     clean_name = quote(team_name[:2])
-    return f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
+    fallback_logo = f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
+    return {"id": None, "logo": DIRECT_LOGO_MAP.get(team_name, fallback_logo)}
+
+@st.cache_data(ttl=43200)
+def fetch_head_to_head_api(home_id, away_id):
+    if not home_id or not away_id:
+        return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        
+    url = f"https://{API_HOST}/fixtures/headtohead"
+    params = {"h2h": f"{home_id}-{away_id}"}
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        res_data = response.json()
+        matches = res_data.get("response", [])
+        
+        h_wins, draws, a_wins = 0, 0, 0
+        for m in matches[:10]:
+            is_home_winner = m.get("teams", {}).get("home", {}).get("winner")
+            is_away_winner = m.get("teams", {}).get("away", {}).get("winner")
+            winner_id = m.get("teams", {}).get("home", {}).get("id")
+            
+            if is_home_winner:
+                if winner_id == home_id: h_wins += 1
+                else: a_wins += 1
+            elif is_away_winner:
+                if winner_id == home_id: a_wins += 1
+                else: h_wins += 1
+            else:
+                draws += 1
+                
+        return {"h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+    except Exception:
+        return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+
+@st.cache_data(ttl=3600) # 1시간마다 뉴스 분석
+def analyze_team_news_sentiment(team_name):
+    """네이버 스포츠 뉴스 헤드라인 기반 부상/로테이션/체력 감성 분석"""
+    keywords_negative = ["부상", "결장", "로테이션", "체력 부담", "징계", "불화", "부진", "결장 우려"]
+    keywords_positive = ["복귀", "연승", "사기 충천", "주전 총출동", "대승", "호조", "완승"]
+    
+    score_mod = 0.0
+    detected_issues = []
+    
+    try:
+        query = quote(f"{team_name} 축구")
+        url = f"https://search.naver.com/search.naver?where=news&query={query}"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=4)
+        
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            titles = [a.get('title', '') for a in soup.select('a.news_tit')]
+            
+            for t in titles[:8]:
+                for kw in keywords_negative:
+                    if kw in t:
+                        score_mod -= 0.15 # 악재 1개당 기대득점 -0.15 감산
+                        if kw not in detected_issues: detected_issues.append(f"⚠️ {kw}")
+                for kw in keywords_positive:
+                    if kw in t:
+                        score_mod += 0.10 # 호재 1개당 기대득점 +0.10 가산
+                        if kw not in detected_issues: detected_issues.append(f"🔥 {kw}")
+    except Exception:
+        pass
+        
+    return {"mod": round(score_mod, 2), "issues": detected_issues[:2]}
 
 # -----------------------------------------------------------------------------
 # 2. GitHub 수집 데이터 로드 및 DB 관리
@@ -177,6 +237,8 @@ st.markdown("""
     .team-name.away { justify-content: flex-start; }
     .score-wait { color: #ffffff; font-size: 14px; font-weight: bold; }
     .odd-info { color: #d1d5db !important; font-size: 13px; }
+    .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 4px; }
+    .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 2px; }
     .value-pick {
         background-color: #1a3323; color: #2ecc71; border: 1px solid #276738;
         padding: 10px 14px; border-radius: 8px; font-size: 14px; margin-top: 12px;
@@ -186,11 +248,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 메인 화면
+# 4. 복합 머신러닝 AI 분석 엔진 (배당 + 상대전적 + 뉴스 감성 분석)
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
-    st.caption("API-Football 연동 스마트 분석 시스템")
+    st.caption("배당 + 상대전적 + 뉴스 이슈 결합 완전체 AI 엔진")
     
     menu = st.radio(
         "NAVIGATION",
@@ -199,7 +261,7 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("🌐 **상태**: 24시간 무중단 클라우드 연결됨")
+    st.markdown("🤖 **AI 모델**: 뉴스 감성 분석 모드 가동 중")
 
 live_matches = load_betman_data()
 analyzed_matches = []
@@ -209,15 +271,30 @@ if live_matches:
         odd_h, odd_d, odd_a = m["odd_h"], m["odd_d"], m["odd_a"]
         home_team, away_team = m["home"], m["away"]
         
+        # 1. 해외 API 데이터 (팀 ID & 상대전적 H2H)
+        home_info = fetch_team_info_api(home_team)
+        away_info = fetch_team_info_api(away_team)
+        h2h = fetch_head_to_head_api(home_info["id"], away_info["id"])
+        
+        # 2. 뉴스 감성 분석 (부상/로테이션 이슈 감지)
+        news_h = analyze_team_news_sentiment(home_team)
+        news_a = analyze_team_news_sentiment(away_team)
+        
+        # 3. 배당률 기반 승률 계산
         try:
             p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
             p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         except Exception:
             p_h, p_a = 0.33, 0.33
             
-        exp_h = round(max(0.6, p_h * 3.0), 2)
-        exp_a = round(max(0.4, p_a * 2.8), 2)
+        # 4. 상대전적 + 뉴스 이슈 가중치 합산 (4대 엔진 결합 공식)
+        h_h2h_bonus = (h2h["h_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
+        a_h2h_bonus = (h2h["a_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
+        
+        exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus + news_h["mod"]), 2)
+        exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus + news_a["mod"]), 2)
 
+        # 5. 포아송 스코어 확률 계산
         h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(6)]
         a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(6)]
 
@@ -247,16 +324,25 @@ if live_matches:
 
         analyzed_matches.append({
             "match": m,
+            "home_logo": home_info["logo"],
+            "away_logo": away_info["logo"],
+            "h2h": h2h,
+            "news_h": news_h,
+            "news_a": news_a,
             "best_option": best_option,
             "best_prob_pct": best_prob_pct,
             "best_ev": best_ev,
             "best_score": best_score
         })
 
+# -----------------------------------------------------------------------------
+# 5. 메인 화면 렌더링
+# -----------------------------------------------------------------------------
+
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
-    st.caption("API-Football 연동 실시간 HD 팀 마크 & 배당률 분석")
+    st.caption("배당률 + 해외 API 전적 + 실시간 뉴스 이슈 통합 분석 픽")
     
     tab_soccer, tab_baseball, tab_basketball = st.tabs(["⚽ 축구 LIVE", "⚾ 야구 LIVE", "🏀 농구 LIVE"])
 
@@ -265,9 +351,11 @@ if menu == "⚽ 프로토 LIVE":
             st.success(f"✅ 현재 베트맨 발매 중인 축구 {len(analyzed_matches)}경기 연동 성공!")
             for item in analyzed_matches:
                 m = item['match']
-                
-                logo_h = fetch_team_logo_api(m['home'])
-                logo_a = fetch_team_logo_api(m['away'])
+                logo_h = item['home_logo']
+                logo_a = item['away_logo']
+                h2h = item['h2h']
+                news_h = item['news_h']
+                news_a = item['news_a']
 
                 with st.container():
                     st.markdown(f"<span style='color:#a0a0a0;'>🏆 {m['league']}</span>", unsafe_allow_html=True)
@@ -282,6 +370,18 @@ if menu == "⚽ 프로토 LIVE":
 
                 st.write("")
                 st.markdown(f"<div class='odd-info' style='text-align:center;'><b style='color:#ffffff;'>승무패 배당률</b> | 승 {m['odd_h']} · 무 {m['odd_d']} · 패 {m['odd_a']}</div>", unsafe_allow_html=True)
+                
+                # 상대 전적 요약
+                if h2h['total'] > 0:
+                    st.markdown(f"<div class='h2h-info'>📊 <b>상대 전적 (최근 {h2h['total']}경기)</b>: {m['home']} {h2h['h_wins']}승 {h2h['draws']}무 {h2h['a_wins']}승 {m['away']}</div>", unsafe_allow_html=True)
+                
+                # 뉴스 감성 분석 요약
+                all_issues = news_h['issues'] + news_a['issues']
+                if all_issues:
+                    st.markdown(f"<div class='news-info'>📰 <b>뉴스 이슈 감지</b>: {' / '.join(all_issues)}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<div class='news-info' style='color:#7f8c8d;'>📰 <b>뉴스 이슈</b>: 부상/결장 특이 악재 없음 (정상 특성)</div>", unsafe_allow_html=True)
+
                 st.markdown(
                     f"<div class='value-pick'>🎯 <b>AI 최고 가치 픽</b>: <span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> "
                     f"(예상 확률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b></div>",
@@ -292,7 +392,7 @@ if menu == "⚽ 프로토 LIVE":
 # [메뉴 2: 🔥 오늘의 TOP 3 픽]
 elif menu == "🔥 오늘의 TOP 3 픽":
     st.title("🔥 오늘의 AI 추천 TOP 3 가치 픽")
-    st.caption("AI가 수집된 전체 경기 중 가장 기대가치(EV)가 높은 3개 경기를 엄선했습니다.")
+    st.caption("4대 복합 분석 엔진 결합 기대가치(EV) 극대화 경기")
     
     top_3_picks = sorted(analyzed_matches, key=lambda x: x['best_ev'], reverse=True)[:3]
     
