@@ -71,7 +71,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 및 자동 채점 엔진
+# 1. 해외 API 연동 엔진
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -144,49 +144,6 @@ def fetch_fixture_details_api(home_id, away_id):
         }
     except Exception:
         return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
-
-# 종료된 경기 결과 자동 채점 함수
-def update_completed_match_results():
-    conn = sqlite3.connect("ai_predictions.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
-    pending = cursor.fetchall()
-    
-    for m_id, home_team, away_team, pick in pending:
-        home_info = fetch_team_info_api(home_team)
-        away_info = fetch_team_info_api(away_team)
-        
-        if home_info["id"] and away_info["id"]:
-            url = f"https://{API_HOST}/fixtures"
-            params = {"h2h": f"{home_info['id']}-{away_info['id']}"}
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=5).json()
-                matches = res.get("response", [])
-                if matches:
-                    latest = matches[0]
-                    status = latest.get("fixture", {}).get("status", {}).get("short")
-                    if status in ["FT", "AET", "PEN"]: # 경기 종료
-                        goals_h = latest.get("goals", {}).get("home", 0)
-                        goals_a = latest.get("goals", {}).get("away", 0)
-                        score_str = f"{goals_h}:{goals_a}"
-                        
-                        is_correct = 0
-                        if goals_h > goals_a and "승" in pick and home_team in pick:
-                            is_correct = 1
-                        elif goals_a > goals_h and "승" in pick and away_team in pick:
-                            is_correct = 1
-                        elif goals_h == goals_a and "무승부" in pick:
-                            is_correct = 1
-                            
-                        cursor.execute("""
-                            UPDATE predictions 
-                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
-                            WHERE match_id = ?
-                        """, (score_str, is_correct, m_id))
-            except Exception:
-                pass
-    conn.commit()
-    conn.close()
 
 @st.cache_data(ttl=3600)
 def analyze_team_news_sentiment(team_name):
@@ -311,23 +268,25 @@ st.markdown("""
     .team-name.away { justify-content: flex-start; }
     .match-time-badge { color: #2ecc71; font-size: 13px; font-weight: bold; background: #132b1d; padding: 4px 12px; border-radius: 20px; display: inline-block; }
     .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 4px; display: block; }
-    .odd-info { color: #b0b5c1 !important; font-size: 13px; margin-top: 6px; }
+    .odd-info { color: #b0b5c1 !important; font-size: 12px; margin-top: 6px; }
     .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 6px; }
     .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 3px; }
-    .value-pick {
-        background-color: #12291b; color: #2ecc71; border: 1px solid #1e4d2b;
-        padding: 12px 16px; border-radius: 8px; font-size: 15px; margin-top: 14px; text-align: center;
+    
+    .value-box-grid { display: flex; gap: 10px; margin-top: 14px; }
+    .value-pick-box {
+        flex: 1; background-color: #12291b; color: #2ecc71; border: 1px solid #1e4d2b;
+        padding: 10px; border-radius: 8px; font-size: 13px; text-align: center;
     }
     .team-logo { width: 38px; height: 38px; object-fit: contain; }
     </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 메인 분석 가동
+# 4. 복합 머신러닝 AI 분석 엔진 (승무패 + 핸디캡 + 언더오버 계산)
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
-    st.caption("배당 + 해외 API + 뉴스 이슈 결합 완전체 AI 엔진")
+    st.caption("일반 승무패 / 핸디캡 / 언더오버 3종 AI 픽 엔진")
     
     menu = st.radio(
         "NAVIGATION",
@@ -338,15 +297,14 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("🌐 **상태**: 24시간 해외 API 자동 연동 중")
 
-# 경기 결과 자동 채점 실행
-update_completed_match_results()
-
 live_matches = load_betman_data()
 analyzed_matches = []
 
 if live_matches:
     for m in live_matches:
         odd_h, odd_d, odd_a = m["odd_h"], m["odd_d"], m["odd_a"]
+        handi_h, handi_d, handi_a = m.get("handi_h", 3.05), m.get("handi_d", 3.05), m.get("handi_a", 2.03)
+        uo_under, uo_over = m.get("uo_under", 1.50), m.get("uo_over", 2.13)
         home_team, away_team = m["home"], m["away"]
         
         home_info = fetch_team_info_api(home_team)
@@ -371,10 +329,13 @@ if live_matches:
         exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus + news_h["mod"]), 2)
         exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus + news_a["mod"]), 2)
 
+        # 1. 포아송 스코어 확률 계산
         h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(6)]
         a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(6)]
 
         h_win, draw, a_win = 0.0, 0.0, 0.0
+        prob_under_2_5, prob_over_2_5 = 0.0, 0.0
+        prob_handi_h, prob_handi_a = 0.0, 0.0
         best_score, max_p = (0, 0), 0.0
 
         for h in range(6):
@@ -383,18 +344,43 @@ if live_matches:
                 if h > a: h_win += p
                 elif h == a: draw += p
                 else: a_win += p
+                
+                # 언더 오버 계산
+                if (h + a) < 2.5: prob_under_2_5 += p
+                else: prob_over_2_5 += p
+                
+                # 핸디캡(-1.0 기준) 계산
+                if (h - 1) > a: prob_handi_h += p
+                elif (h - 1) < a: prob_handi_a += p
+
                 if p > max_p:
                     max_p = p
                     best_score = (h, a)
 
+        # 2. 일반 승무패 픽
         candidates = [
             (f"🏠 {home_team} 승", h_win, h_win * odd_h),
             (f"🚀 {away_team} 승", a_win, a_win * odd_a),
             (f"🤝 무승부", draw, draw * odd_d),
         ]
-
         best_option, best_prob, best_ev = max(candidates, key=lambda x: x[2])
         best_prob_pct = round(best_prob * 100, 1)
+
+        # 3. 핸디캡 픽
+        if prob_handi_h * handi_h > prob_handi_a * handi_a:
+            best_handi = f"🛡️ {home_team} 마핸승"
+            best_handi_prob = round(prob_handi_h * 100, 1)
+        else:
+            best_handi = f"🛡️ {away_team} 플핸승"
+            best_handi_prob = round(prob_handi_a * 100, 1)
+
+        # 4. 언더오버 2.5 픽
+        if prob_under_2_5 * uo_under > prob_over_2_5 * uo_over:
+            best_uo = "🔽 언더(U 2.5)"
+            best_uo_prob = round(prob_under_2_5 * 100, 1)
+        else:
+            best_uo = "🔼 오버(O 2.5)"
+            best_uo_prob = round(prob_over_2_5 * 100, 1)
 
         save_prediction(m, best_option, best_prob_pct, best_score)
 
@@ -408,6 +394,10 @@ if live_matches:
             "news_a": news_a,
             "best_option": best_option,
             "best_prob_pct": best_prob_pct,
+            "best_handi": best_handi,
+            "best_handi_prob": best_handi_prob,
+            "best_uo": best_uo,
+            "best_uo_prob": best_uo_prob,
             "best_ev": best_ev,
             "best_score": best_score
         })
@@ -419,7 +409,7 @@ if live_matches:
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
-    st.caption("배당률 + 해외 API 전적 + 실시간 뉴스 이슈 통합 분석 픽")
+    st.caption("승무패 / 핸디캡 / 언더오버 결합 AI 멀티 가치 픽")
     
     tab_soccer, tab_baseball, tab_basketball = st.tabs(["⚽ 축구 LIVE", "⚾ 야구 LIVE", "🏀 농구 LIVE"])
 
@@ -451,7 +441,11 @@ if menu == "⚽ 프로토 LIVE":
                             <span class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</span>
                         </div>
                     </div>
-                    <div class='odd-info' style='text-align:center;'><b style='color:#ffffff;'>승무패 배당률</b> | 승 {m['odd_h']} · 무 {m['odd_d']} · 패 {m['odd_a']}</div>
+                    <div class='odd-info' style='text-align:center;'>
+                        <b style='color:#ffffff;'>승무패</b> {m['odd_h']} · {m['odd_d']} · {m['odd_a']} | 
+                        <b style='color:#ffffff;'>핸디캡</b> {m.get('handi_h', 3.05)} · {m.get('handi_d', 3.05)} · {m.get('handi_a', 2.03)} | 
+                        <b style='color:#ffffff;'>언오버</b> {m.get('uo_under', 1.50)} · {m.get('uo_over', 2.13)}
+                    </div>
                 """, unsafe_allow_html=True)
                 
                 if h2h['total'] > 0:
@@ -463,12 +457,14 @@ if menu == "⚽ 프로토 LIVE":
                 else:
                     st.markdown("<div class='news-info' style='color:#7f8c8d;'>📰 <b>뉴스 이슈</b>: 부상/결장 특이 악재 없음 (정상 특성)</div>", unsafe_allow_html=True)
 
-                st.markdown(
-                    f"<div class='value-pick'>🎯 <b>AI 최고 가치 픽</b>: <span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> "
-                    f"(예상 확률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b></div>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"""
+                <div class='value-box-grid'>
+                    <div class='value-pick-box'>🎯 <b>승무패 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> ({item['best_prob_pct']}%)</div>
+                    <div class='value-pick-box'>🛡️ <b>핸디캡 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_handi']}</span> ({item['best_handi_prob']}%)</div>
+                    <div class='value-pick-box'>📊 <b>언더/오버 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_uo']}</span> ({item['best_uo_prob']}%)</div>
+                </div>
+                </div>
+                """, unsafe_allow_html=True)
                 st.write("")
 
 # [메뉴 2: 🔥 오늘의 TOP 3 픽]
@@ -490,7 +486,8 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                         <span style='color:#2ecc71; font-size:13px; font-weight:bold;'>⚽ {m_time}</span>
                     </div>
                     <div style='background-color:#12291b; color:#2ecc71; border:1px solid #1e4d2b; padding:12px; border-radius:8px; font-size:15px;'>
-                        🎯 <b>추천 픽</b>: <b style='color:#ffffff;'>{item['best_option']}</b> (예상 승률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b>
+                        🎯 <b>추천 일반 픽</b>: <b style='color:#ffffff;'>{item['best_option']}</b> ({item['best_prob_pct']}%) | 
+                        📊 <b>언오버 픽</b>: <b style='color:#ffffff;'>{item['best_uo']}</b> ({item['best_uo_prob']}%)
                     </div>
                 </div>
             """, unsafe_allow_html=True)
