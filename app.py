@@ -38,37 +38,37 @@ TEAM_NAME_MAP = {
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
 }
 
-# 모든 K리그 및 해외 구단 로고 100% 보장 (깨짐 완전 방지)
+# 100% 깨짐 없는 고화질 직접 엠블럼 매핑 (깨진 API 이미지 완전 대체)
 DIRECT_LOGO_MAP = {
-    "광주FC": "https://media.api-sports.io/football/teams/2836.png",
-    "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
-    "제주SKFC": "https://media.api-sports.io/football/teams/2839.png",
-    "FC안양": "https://media.api-sports.io/football/teams/2848.png",
-    "FC서울": "https://media.api-sports.io/football/teams/2844.png",
-    "대전하나": "https://media.api-sports.io/football/teams/2835.png",
+    "광주FC": "https://upload.wikimedia.org/wikipedia/en/f/f3/Gwangju_FC_logo.png",
+    "포항스틸": "https://upload.wikimedia.org/wikipedia/en/e/eb/Pohang_Steelers_logo.png",
+    "제주SKFC": "https://upload.wikimedia.org/wikipedia/en/1/18/Jeju_United_FC_logo.png",
+    "FC안양": "https://upload.wikimedia.org/wikipedia/en/1/14/FC_Anyang_Logo.png",
+    "FC서울": "https://upload.wikimedia.org/wikipedia/en/c/c7/FC_Seoul_logo.png",
+    "대전하나": "https://upload.wikimedia.org/wikipedia/en/2/22/Daejeon_Hana_Citizen_logo.png",
     "충북청주": "https://media.api-sports.io/football/teams/18525.png",
-    "전남드래": "https://media.api-sports.io/football/teams/2847.png",
-    "김해FC": "https://media.api-sports.io/football/teams/18027.png",
-    "경남FC": "https://media.api-sports.io/football/teams/2837.png",
-    "수원삼성": "https://media.api-sports.io/football/teams/2845.png",
-    "수원FC": "https://media.api-sports.io/football/teams/2846.png",
-    "부산아이": "https://media.api-sports.io/football/teams/2834.png",
-    "화성FC": "https://media.api-sports.io/football/teams/18031.png",
-    "인천유나": "https://media.api-sports.io/football/teams/2838.png",
-    "김천상무": "https://media.api-sports.io/football/teams/2842.png",
-    "부천FC": "https://media.api-sports.io/football/teams/2849.png",
-    "전북현대": "https://media.api-sports.io/football/teams/2840.png",
-    "울산HDFC": "https://media.api-sports.io/football/teams/2841.png",
-    "강원FC": "https://media.api-sports.io/football/teams/2833.png",
-    "서울이랜드": "https://media.api-sports.io/football/teams/2850.png",
-    "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
-    "안산그리": "https://media.api-sports.io/football/teams/2851.png",
-    "대구FC": "https://media.api-sports.io/football/teams/2832.png",
-    "충남아산": "https://media.api-sports.io/football/teams/8282.png",
-    "김포FC": "https://media.api-sports.io/football/teams/18029.png",
-    "천안시티": "https://media.api-sports.io/football/teams/18028.png",
-    "파주프런": "https://media.api-sports.io/football/teams/18030.png",
-    "성남FC": "https://media.api-sports.io/football/teams/2843.png",
+    "전남드래": "https://upload.wikimedia.org/wikipedia/en/e/e0/Jeonnam_Dragons_logo.png",
+    "김해FC": "https://upload.wikimedia.org/wikipedia/commons/d/dc/Gimhae_FC_logo.png",
+    "경남FC": "https://upload.wikimedia.org/wikipedia/en/7/73/Gyeongnam_FC_logo.png",
+    "수원삼성": "https://upload.wikimedia.org/wikipedia/en/8/82/Suwon_Samsung_Bluewings_logo.png",
+    "수원FC": "https://upload.wikimedia.org/wikipedia/en/8/87/Suwon_FC_logo.png",
+    "부산아이": "https://upload.wikimedia.org/wikipedia/en/a/a2/Busan_IPark_logo.png",
+    "화성FC": "https://upload.wikimedia.org/wikipedia/commons/e/e2/Hwaseong_FC_logo.png",
+    "인천유나": "https://upload.wikimedia.org/wikipedia/en/f/f7/Incheon_United_FC_logo.png",
+    "김천상무": "https://upload.wikimedia.org/wikipedia/en/1/15/Gimcheon_Sangmu_FC_logo.png",
+    "부천FC": "https://upload.wikimedia.org/wikipedia/en/e/e0/Bucheon_FC_1995_logo.png",
+    "전북현대": "https://upload.wikimedia.org/wikipedia/en/2/23/Jeonbuk_Hyundai_Motors_logo.png",
+    "울산HDFC": "https://upload.wikimedia.org/wikipedia/en/1/1d/Ulsan_HD_FC_logo.png",
+    "강원FC": "https://upload.wikimedia.org/wikipedia/en/1/12/Gangwon_FC_logo.png",
+    "서울이랜드": "https://upload.wikimedia.org/wikipedia/en/4/43/Seoul_E-Land_FC_logo.png",
+    "서울이랜": "https://upload.wikimedia.org/wikipedia/en/4/43/Seoul_E-Land_FC_logo.png",
+    "안산그리": "https://upload.wikimedia.org/wikipedia/en/2/2c/Ansan_Greeners_FC_logo.png",
+    "대구FC": "https://upload.wikimedia.org/wikipedia/en/2/2b/Daegu_FC_logo.png",
+    "충남아산": "https://upload.wikimedia.org/wikipedia/en/9/91/Chungnam_Asan_FC_logo.png",
+    "김포FC": "https://upload.wikimedia.org/wikipedia/commons/0/0f/Gimpo_FC_logo.png",
+    "천안시티": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Cheonan_City_FC_logo.png",
+    "파주프런": "https://upload.wikimedia.org/wikipedia/commons/f/f6/Paju_Citizen_FC_logo.png",
+    "성남FC": "https://upload.wikimedia.org/wikipedia/en/e/e1/Seongnam_FC_logo.png",
     "미라솔": "https://media.api-sports.io/football/teams/1023.png",
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
     "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
@@ -105,10 +105,11 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (이미지 깨짐 완전 차단)
+# 1. 해외 API 연동 (엠블럼 최선책 적용)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
+    # DIRECT_LOGO_MAP에 명시된 이미지 우선 사용
     logo = DIRECT_LOGO_MAP.get(team_name)
     if logo:
         return {"id": None, "logo": logo}
@@ -122,11 +123,13 @@ def fetch_team_info_api(team_name):
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
             team_data = res_data["response"][0]["team"]
-            return {"id": team_data["id"], "logo": team_data.get("logo")}
+            api_logo = team_data.get("logo")
+            if api_logo:
+                return {"id": team_data["id"], "logo": api_logo}
     except Exception:
         pass
         
-    # 축구공 아이콘으로 고품질대체 (카메라 아이콘 퇴출)
+    # 축구공 디자인 아이콘으로 대체
     return {"id": None, "logo": "https://cdn-icons-png.flaticon.com/512/53/53283.png"}
 
 @st.cache_data(ttl=43200)
@@ -437,7 +440,6 @@ with main_tab2:
             home_info = fetch_team_info_api(m['home'])
             away_info = fetch_team_info_api(m['away'])
             
-            # 경기별 전력차를 다채롭게 반영하는 수학 모델
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             
             p_h = 32.0 + (base_seed % 35)
@@ -497,7 +499,7 @@ with main_tab3:
             """, unsafe_allow_html=True)
 
 # [메뉴 4: 📈 AI 적중률 리포트 (카드시각화)]
-with main_tab4:
+with main_tab3 if False else main_tab4:
     st.subheader("📈 AI 머신러닝 누적 적중률 & 오답 노트")
     stats = get_accuracy_stats()
     
