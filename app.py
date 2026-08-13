@@ -1,22 +1,26 @@
 import streamlit as st
 import math
-import time
-import re
+import json
+import requests
 import sqlite3
 import pandas as pd
 from urllib.parse import quote
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 
 # -----------------------------------------------------------------------------
-# 0. 데이터베이스(DB) 및 설정
+# 0. API-Football 설정 및 기본 세팅
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
 
+# ★ 여기에 발급받으신 API-Football 키를 입력하세요!
+API_KEY = "28b599664bba858ebf93515768741975"
+API_HOST = "v3.football.api-sports.io"
+
+headers = {
+    'x-rapidapi-host': API_HOST,
+    'x-rapidapi-key': API_KEY
+}
+
+# DB 초기화
 def init_db():
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
@@ -43,6 +47,41 @@ def init_db():
     conn.close()
 
 init_db()
+
+# -----------------------------------------------------------------------------
+# 1. API-Football을 활용한 고화질 로고 가져오기 (캐싱 적용)
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=86400) # 팀 로고는 하루에 한 번만 받아와 요청 수 아낌
+def fetch_team_logo_api(team_name):
+    """API-Football 검색으로 팀의 공식 고화질 엠블럼 URL을 당겨옵니다."""
+    url = f"https://{API_HOST}/teams"
+    params = {"search": team_name}
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        res_data = response.json()
+        if res_data.get("response") and len(res_data["response"]) > 0:
+            return res_data["response"][0]["team"]["logo"]
+    except Exception:
+        pass
+    
+    # 실패 시 이니셜 예쁜 뱃지 생성
+    clean_name = quote(team_name[:2])
+    return f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
+
+# -----------------------------------------------------------------------------
+# 2. GitHub에 올라온 내 PC 수집 데이터 읽기
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=300)
+def load_betman_data():
+    """GitHub에 저장된 최신 배당률 json 파일을 읽어옵니다."""
+    raw_url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json"
+    try:
+        res = requests.get(raw_url, timeout=5)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return []
 
 def get_accuracy_stats():
     conn = sqlite3.connect("ai_predictions.db")
@@ -77,25 +116,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 1. 팀 로고 처리 모듈
-# -----------------------------------------------------------------------------
-TEAM_LOGOS = {
-    "에버턴": "https://upload.wikimedia.org/wikipedia/en/thumb/7/7c/Everton_FC_logo.svg/120px-Everton_FC_logo.svg.png",
-    "뉴캐슬 유나이티드": "https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Newcastle_United_Logo.svg/120px-Newcastle_United_Logo.svg.png",
-    "맨체스터 유나이티드": "https://upload.wikimedia.org/wikipedia/en/thumb/7/7a/Manchester_United_FC_crest.svg/120px-Manchester_United_FC_crest.svg.png",
-    "리즈 유나이티드": "https://upload.wikimedia.org/wikipedia/en/thumb/5/54/Leeds_United_F.C._logo.svg/120px-Leeds_United_F.C._logo.svg.png",
-    "파리 생제르맹": "https://upload.wikimedia.org/wikipedia/en/thumb/a/a7/Paris_Saint-Germain_F.C..svg/120px-Paris_Saint-Germain_F.C..svg.png",
-    "애스턴 빌라": "https://upload.wikimedia.org/wikipedia/en/thumb/9/9f/Aston_Villa_logo.svg/120px-Aston_Villa_logo.svg.png"
-}
-
-def get_team_logo(team_name):
-    if team_name in TEAM_LOGOS:
-        return TEAM_LOGOS[team_name]
-    clean_name = quote(team_name[:2])
-    return f"https://ui-avatars.com/api/?name={clean_name}&background=2A2E39&color=FF4B4B&bold=true&rounded=true&size=64"
-
-# -----------------------------------------------------------------------------
-# 2. 커스텀 CSS 스타일링
+# 3. CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -122,7 +143,6 @@ st.markdown("""
     .stTabs [data-baseweb="tab-border"], .stTabs [data-baseweb="tab-highlight-title"], div[data-baseweb="tab-highlight"] {
         display: none !important; background-color: transparent !important;
     }
-    
     .top3-card {
         background-color: #1e222d; border: 1px solid #2a2e39; border-radius: 10px;
         padding: 16px; margin-bottom: 12px;
@@ -131,114 +151,21 @@ st.markdown("""
     .team-name.home { justify-content: flex-end; }
     .team-name.away { justify-content: flex-start; }
     .score-wait { color: #ffffff; font-size: 14px; font-weight: bold; }
-    .score-live { color: #ff4b4b; font-size: 20px; font-weight: bold; }
     .odd-info { color: #d1d5db !important; font-size: 13px; }
     .value-pick {
         background-color: #1a3323; color: #2ecc71; border: 1px solid #276738;
         padding: 10px 14px; border-radius: 8px; font-size: 14px; margin-top: 12px;
     }
-    .team-logo { width: 32px; height: 32px; object-fit: contain; border-radius: 50%; }
+    .team-logo { width: 36px; height: 36px; object-fit: contain; }
     </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. 클라우드 서버 맞춤형 수집 로봇 (Headless Chrome)
-# -----------------------------------------------------------------------------
-@st.cache_data(ttl=300)
-def scrape_betman():
-    url = "https://www.betman.co.kr/main/mainPage/gamebuy/gameSlip.do?gmId=G101&gmTs=260095"
-    matches = []
-    
-    try:
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--log-level=3')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        try:
-            # 클라우드 리눅스 환경 크롬 드라이버
-            service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
-            driver = webdriver.Chrome(service=service, options=options)
-        except Exception:
-            # 로컬 PC 환경 예비 실행
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
-        
-        driver.get(url)
-        time.sleep(6)
-        
-        for _ in range(15):
-            driver.execute_script("window.scrollBy(0, 800);")
-            time.sleep(1)
-            
-        time.sleep(3)
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        driver.quit() 
-        
-        strings = list(soup.stripped_strings)
-        seen_matches = set()
-        
-        for i, s in enumerate(strings):
-            if s.lower() in ['vs', 'v s']:
-                home = strings[i-1].strip() if i > 0 else "홈"
-                away = strings[i+1].strip() if i < len(strings)-1 else "원정"
-                
-                match_id = f"{home[:2]}vs{away[:2]}"
-                if match_id in seen_matches:
-                    continue
-                    
-                is_soccer = False
-                match_time = "예정"
-                
-                for k in range(max(0, i-15), min(len(strings), i+15)):
-                    if '축구' in strings[k]:
-                        is_soccer = True
-                    if re.search(r'\d{2}:\d{2}', strings[k]):
-                        match_time = strings[k]
-                        
-                if not is_soccer:
-                    continue
-                    
-                odds = []
-                for j in range(i+1, min(i+50, len(strings))):
-                    nxt = strings[j]
-                    if nxt.lower() in ['vs', 'v s'] or '야구' in nxt or '농구' in nxt:
-                        break
-                    if '핸디캡' in nxt or '언더오버' in nxt or 'sum' in nxt.lower():
-                        break
-                    if re.match(r'^[1-9]\d*\.\d{2}$', nxt):
-                        odds.append(float(nxt))
-                        
-                    if len(odds) == 3:
-                        matches.append({
-                            "id": match_id,
-                            "league": "축구",
-                            "time": match_time,
-                            "home": home,
-                            "away": away,
-                            "odd_h": odds[0],
-                            "odd_d": odds[1],
-                            "odd_a": odds[2],
-                            "live_score": None,
-                            "status": "UPCOMING"
-                        })
-                        seen_matches.add(match_id)
-                        break 
-                        
-    except Exception as e:
-        pass
-    
-    return matches
-
-# -----------------------------------------------------------------------------
-# 4. 좌측 사이드바 및 UI
+# 4. 화면 및 로직 구성
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
-    st.caption("메뉴를 선택하세요")
+    st.caption("API-Football 연동 스마트 분석 시스템")
     
     menu = st.radio(
         "NAVIGATION",
@@ -247,9 +174,9 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("💡 **Tip**: 24시간 실시간 AI 연동 모드 작동 중")
+    st.markdown("🌐 **상태**: 24시간 무중단 클라우드 연결됨")
 
-live_matches = scrape_betman()
+live_matches = load_betman_data()
 analyzed_matches = []
 
 if live_matches:
@@ -304,7 +231,7 @@ if live_matches:
 # [메뉴 1: ⚽ 프로토 LIVE]
 if menu == "⚽ 프로토 LIVE":
     st.title("⚽ 프로토 라이브 경기")
-    st.caption("실시간 배당률 연동 및 라이브 스코어 / AI 스마트 픽")
+    st.caption("API-Football 연동 실시간 HD 팀 마크 & 배당률 분석")
     
     tab_soccer, tab_baseball, tab_basketball = st.tabs(["⚽ 축구 LIVE", "⚾ 야구 LIVE", "🏀 농구 LIVE"])
 
@@ -313,8 +240,10 @@ if menu == "⚽ 프로토 LIVE":
             st.success(f"✅ 현재 베트맨 발매 중인 축구 {len(analyzed_matches)}경기 연동 성공!")
             for item in analyzed_matches:
                 m = item['match']
-                logo_h = get_team_logo(m['home'])
-                logo_a = get_team_logo(m['away'])
+                
+                # API-Football을 통해 고화질 팀 로고 가져오기!
+                logo_h = fetch_team_logo_api(m['home'])
+                logo_a = fetch_team_logo_api(m['away'])
 
                 with st.container():
                     st.markdown(f"<span style='color:#a0a0a0;'>🏆 {m['league']}</span>", unsafe_allow_html=True)
@@ -322,15 +251,8 @@ if menu == "⚽ 프로토 LIVE":
                     
                     with c1: 
                         st.markdown(f"<div class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></div>", unsafe_allow_html=True)
-                    
                     with c2: 
-                        if m['status'] == 'LIVE':
-                            st.markdown(f"<div class='score-live' style='text-align: center;'>⚽ {m['live_score']}<br><span style='font-size:12px; color:#2ecc71;'>LIVE 진행 중</span></div>", unsafe_allow_html=True)
-                        elif m['status'] == 'FINISHED':
-                            st.markdown(f"<div class='score-wait' style='text-align: center;'>종료<br>{m['live_score']}</div>", unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"<div class='score-wait' style='text-align: center;'>{m['time']} 마감<br>VS</div>", unsafe_allow_html=True)
-                            
+                        st.markdown(f"<div class='score-wait' style='text-align: center;'>{m['time']} 마감<br>VS</div>", unsafe_allow_html=True)
                     with c3: 
                         st.markdown(f"<div class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</div>", unsafe_allow_html=True)
 
@@ -343,7 +265,7 @@ if menu == "⚽ 프로토 LIVE":
                 )
                 st.markdown("---")
         else:
-            st.warning("⚠️ 현재 발매 중인 축구 경기가 없거나 데이터를 로딩 중입니다.")
+            st.warning("⚠️ 아직 내 PC에서 'collector.py'를 실행해 데이터를 GitHub에 올리지 않았거나 수집 중입니다.")
 
     with tab_baseball:
         st.info("⚾ 야구 프로토 모듈 준비 중...")
@@ -361,7 +283,6 @@ elif menu == "🔥 오늘의 TOP 3 픽":
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
-            
             st.markdown(f"""
                 <div class='top3-card'>
                     <div style='color:#ff4b4b; font-weight:bold; font-size:18px; margin-bottom:8px;'>RANK {idx}</div>
@@ -374,8 +295,6 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                     </div>
                 </div>
             """, unsafe_allow_html=True)
-    else:
-        st.info("분석할 경기 데이터가 아직 준비되지 않았습니다.")
 
 # [메뉴 3: 📈 AI 적중률 리포트]
 elif menu == "📈 AI 적중률 리포트":
