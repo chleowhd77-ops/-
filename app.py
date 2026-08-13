@@ -4,8 +4,7 @@ import json
 import requests
 import sqlite3
 import pandas as pd
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 
@@ -101,7 +100,7 @@ def fetch_team_info_api(team_name):
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
-    """해외 API에서 양 팀의 실제 경기 날짜 및 시각(한국시간)과 H2H 수집"""
+    """해외 API에서 양 팀의 실제 경기 날짜 및 시각(한국시간 UTC+9) 수집"""
     if not home_id or not away_id:
         return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
         
@@ -116,15 +115,18 @@ def fetch_fixture_details_api(home_id, away_id):
         res_data = response.json()
         matches = res_data.get("response", [])
         
-        # 가장 최근/예정 경기 시각 추출
         if len(matches) > 0:
             latest_match = matches[0]
             utc_date_str = latest_match.get("fixture", {}).get("date")
             if utc_date_str:
-                # ISO 시간을 한국 시각(KST)으로 정밀 변환
+                # pytz 없이 표준 datetime 기능으로 한국 시간(UTC+9) 정밀 변환
                 utc_dt = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
-                kst_dt = utc_dt.astimezone(pytz.timezone("Asia/Seoul"))
-                match_time_str = kst_dt.strftime("%m.%d (%a) %H:%M")
+                kst_tz = timezone(timedelta(hours=9))
+                kst_dt = utc_dt.astimezone(kst_tz)
+                
+                weekdays = ['월', '화', '수', '목', '금', '토', '일']
+                weekday_str = weekdays[kst_dt.weekday()]
+                match_time_str = kst_dt.strftime(f"%m.%d ({weekday_str}) %H:%M")
         
         for m in matches[:10]:
             is_home_winner = m.get("teams", {}).get("home", {}).get("winner")
@@ -184,7 +186,7 @@ def analyze_team_news_sentiment(team_name):
 # -----------------------------------------------------------------------------
 # 2. GitHub 수집 데이터 로드
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=60) # 최신 데이터 반영을 위해 캐시 주기를 1분으로 단축
+@st.cache_data(ttl=60)
 def load_betman_data():
     raw_url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json"
     try:
@@ -309,10 +311,8 @@ if live_matches:
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
         
-        # 해외 API로부터 정밀 KST 경기 시간 및 H2H 수집
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         
-        # 해외 API 시간 우선 적용, 없을 경우 수집기 시간 백업 적용
         final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "08.14 예정"
         
         news_h = analyze_team_news_sentiment(home_team)
