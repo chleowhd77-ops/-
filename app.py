@@ -21,7 +21,6 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# 베트맨 한글 팀명 ➔ 해외 API 영문 팀명 매핑 사전
 TEAM_NAME_MAP = {
     "미라솔": "Mirassol",
     "LDU키토": "Liga Dep. Universitaria de Quito",
@@ -35,7 +34,6 @@ TEAM_NAME_MAP = {
     "파리 생제르맹": "Paris Saint Germain"
 }
 
-# 100% 안 깨지는 HD 고화질 팀 로고 직접 매핑 (Direct Logo Fallback)
 DIRECT_LOGO_MAP = {
     "미라솔": "https://media.api-sports.io/football/teams/1023.png",
     "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
@@ -73,16 +71,11 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 및 뉴스 감성 분석(Sentiment) 엔진
+# 1. 해외 API 및 뉴스 분석 엔진
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
-    # 1. 직접 매핑 로고가 있으면 1순위 적용 (속도 & 안정성 극대화)
-    if team_name in DIRECT_LOGO_MAP:
-        logo = DIRECT_LOGO_MAP[team_name]
-    else:
-        logo = None
-
+    logo = DIRECT_LOGO_MAP.get(team_name)
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -138,7 +131,6 @@ def fetch_head_to_head_api(home_id, away_id):
 
 @st.cache_data(ttl=3600)
 def analyze_team_news_sentiment(team_name):
-    """뉴스 헤드라인 기반 부상/결장/로테이션 감성 분석"""
     keywords_negative = ["부상", "결장", "로테이션", "체력 부담", "징계", "불화", "부진", "결장 우려"]
     keywords_positive = ["복귀", "연승", "사기 충천", "주전 총출동", "대승", "호조", "완승"]
     
@@ -171,7 +163,7 @@ def analyze_team_news_sentiment(team_name):
     return {"mod": round(score_mod, 2), "issues": detected_issues[:2]}
 
 # -----------------------------------------------------------------------------
-# 2. GitHub 수집 데이터 로드 및 DB 관리
+# 2. GitHub 수집 데이터 로드
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def load_betman_data():
@@ -217,7 +209,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. 프리미엄 CSS 스타일링 (UI 다듬기)
+# 3. 프리미엄 CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -258,7 +250,8 @@ st.markdown("""
     .team-name { color: #ffffff !important; font-size: 17px; font-weight: bold; display: flex; align-items: center; gap: 12px; }
     .team-name.home { justify-content: flex-end; }
     .team-name.away { justify-content: flex-start; }
-    .score-wait { color: #f1c40f; font-size: 14px; font-weight: bold; background: #222616; padding: 4px 10px; border-radius: 20px; display: inline-block; }
+    .match-time-badge { color: #2ecc71; font-size: 13px; font-weight: bold; background: #132b1d; padding: 4px 10px; border-radius: 20px; display: inline-block; }
+    .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 4px; }
     .odd-info { color: #b0b5c1 !important; font-size: 13px; margin-top: 6px; }
     .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 6px; }
     .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 3px; }
@@ -294,30 +287,25 @@ if live_matches:
         odd_h, odd_d, odd_a = m["odd_h"], m["odd_d"], m["odd_a"]
         home_team, away_team = m["home"], m["away"]
         
-        # 1. 해외 API 데이터 (팀 ID & 로고 & 상대전적 H2H)
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
         h2h = fetch_head_to_head_api(home_info["id"], away_info["id"])
         
-        # 2. 뉴스 감성 분석
         news_h = analyze_team_news_sentiment(home_team)
         news_a = analyze_team_news_sentiment(away_team)
         
-        # 3. 배당률 기반 승률 계산
         try:
             p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
             p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         except Exception:
             p_h, p_a = 0.33, 0.33
             
-        # 4. 상대전적 + 뉴스 이슈 가중치 합산
         h_h2h_bonus = (h2h["h_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
         a_h2h_bonus = (h2h["a_wins"] / h2h["total"] * 0.4) if h2h["total"] > 0 else 0
         
         exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus + news_h["mod"]), 2)
         exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus + news_a["mod"]), 2)
 
-        # 5. 포아송 스코어 확률 계산
         h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(6)]
         a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(6)]
 
@@ -380,6 +368,10 @@ if menu == "⚽ 프로토 LIVE":
                 news_h = item['news_h']
                 news_a = item['news_a']
 
+                # 시간 표기 안전 처리
+                m_time = m.get('match_time', '시간 미정')
+                d_time = m.get('deadline_time', '')
+
                 st.markdown(f"""
                 <div class='match-card'>
                     <div style='color:#a0a0a0; font-size:13px; margin-bottom:8px;'>🏆 {m['league']}</div>
@@ -387,9 +379,9 @@ if menu == "⚽ 프로토 LIVE":
                         <div style='flex:1; text-align:right;'>
                             <span class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></span>
                         </div>
-                        <div style='width:120px; text-align:center;'>
-                            <span class='score-wait'>{m['time']} 마감</span><br>
-                            <span style='color:#ffffff; font-weight:bold; font-size:12px;'>VS</span>
+                        <div style='width:160px; text-align:center;'>
+                            <span class='match-time-badge'>⚽ {m_time}</span><br>
+                            <span class='deadline-badge'>({d_time})</span>
                         </div>
                         <div style='flex:1; text-align:left;'>
                             <span class='team-name away'><img src='{logo_a}' class='team-logo'> {m['away']}</span>
@@ -398,11 +390,9 @@ if menu == "⚽ 프로토 LIVE":
                     <div class='odd-info' style='text-align:center;'><b style='color:#ffffff;'>승무패 배당률</b> | 승 {m['odd_h']} · 무 {m['odd_d']} · 패 {m['odd_a']}</div>
                 """, unsafe_allow_html=True)
                 
-                # 상대 전적 요약
                 if h2h['total'] > 0:
                     st.markdown(f"<div class='h2h-info'>📊 <b>상대 전적 (최근 {h2h['total']}경기)</b>: {m['home']} {h2h['h_wins']}승 {h2h['draws']}무 {h2h['a_wins']}승 {m['away']}</div>", unsafe_allow_html=True)
                 
-                # 뉴스 감성 분석 요약
                 all_issues = news_h['issues'] + news_a['issues']
                 if all_issues:
                     st.markdown(f"<div class='news-info'>📰 <b>뉴스 이슈 감지</b>: {' / '.join(all_issues)}</div>", unsafe_allow_html=True)
@@ -427,12 +417,13 @@ elif menu == "🔥 오늘의 TOP 3 픽":
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
+            m_time = m.get('match_time', '시간 미정')
             st.markdown(f"""
                 <div class='top3-card'>
                     <div style='color:#ff4b4b; font-weight:bold; font-size:18px; margin-bottom:8px;'>RANK {idx}</div>
                     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;'>
                         <span style='color:#ffffff; font-size:16px; font-weight:bold;'>{m['home']} vs {m['away']}</span>
-                        <span style='color:#a0a0a0; font-size:13px;'>{m['time']} 마감</span>
+                        <span style='color:#2ecc71; font-size:13px; font-weight:bold;'>⚽ {m_time}</span>
                     </div>
                     <div style='background-color:#12291b; color:#2ecc71; border:1px solid #1e4d2b; padding:12px; border-radius:8px; font-size:15px;'>
                         🎯 <b>추천 픽</b>: <b style='color:#ffffff;'>{item['best_option']}</b> (예상 승률 <b>{item['best_prob_pct']}%</b>) | 예상 스코어 <b>{item['best_score'][0]}:{item['best_score'][1]}</b>
