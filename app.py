@@ -11,7 +11,12 @@ from bs4 import BeautifulSoup
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 API-Football 셋팅
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="프로토 AI 스마트 픽 대시보드", page_icon="🏆", layout="wide")
+st.set_page_config(
+    page_title="프로토 AI 스마트 픽 대시보드", 
+    page_icon="🏆", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
@@ -225,7 +230,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. 프리미엄 CSS 스타일링
+# 3. 프리미엄 모바일 반응형 CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -238,12 +243,12 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"], div[role="tablist"] {
         width: 100% !important; display: flex !important; justify-content: space-between !important;
         background-color: transparent !important; border: none !important; border-bottom: 1px solid #232731 !important;
-        margin-bottom: 25px !important; gap: 0px !important; padding: 0px !important;
+        margin-bottom: 20px !important; gap: 0px !important; padding: 0px !important;
     }
     .stTabs [data-baseweb="tab"], button[role="tab"] {
-        flex: 1 1 0% !important; width: 33.33% !important; height: 50px !important;
+        flex: 1 1 0% !important; width: 33.33% !important; height: 48px !important;
         border: none !important; background-color: transparent !important;
-        color: #777777 !important; font-weight: 800 !important; font-size: 18px !important;
+        color: #777777 !important; font-weight: 800 !important; font-size: 16px !important;
         cursor: pointer !important; text-align: center !important;
     }
     .stTabs [aria-selected="true"] {
@@ -254,35 +259,54 @@ st.markdown("""
     }
     
     .match-card {
-        background: linear-gradient(135deg, #181b22 0%, #12141a 100%);
-        border: 1px solid #252934; border-radius: 12px;
-        padding: 18px; margin-bottom: 18px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        background: linear-gradient(135deg, #161920 0%, #101217 100%);
+        border: 1px solid #222632; border-radius: 14px;
+        padding: 16px; margin-bottom: 18px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     }
     .top3-card {
-        background: linear-gradient(135deg, #1f2430 0%, #151821 100%);
-        border: 1px solid #2e3445; border-radius: 12px;
-        padding: 18px; margin-bottom: 14px;
+        background: linear-gradient(135deg, #1c212b 0%, #13161f 100%);
+        border: 1px solid #2b3142; border-radius: 14px;
+        padding: 16px; margin-bottom: 14px;
     }
-    .team-name { color: #ffffff !important; font-size: 17px; font-weight: bold; display: flex; align-items: center; gap: 12px; }
+    .team-name { color: #ffffff !important; font-size: 16px; font-weight: bold; display: flex; align-items: center; gap: 10px; }
     .team-name.home { justify-content: flex-end; }
     .team-name.away { justify-content: flex-start; }
-    .match-time-badge { color: #2ecc71; font-size: 13px; font-weight: bold; background: #132b1d; padding: 4px 12px; border-radius: 20px; display: inline-block; }
-    .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 4px; display: block; }
-    .odd-info { color: #b0b5c1 !important; font-size: 12px; margin-top: 6px; }
+    .match-time-badge { color: #2ecc71; font-size: 12px; font-weight: bold; background: #11261a; padding: 4px 10px; border-radius: 20px; display: inline-block; }
+    .deadline-badge { color: #e74c3c; font-size: 11px; margin-top: 3px; display: block; }
+    .odd-info { color: #b0b5c1 !important; font-size: 12px; margin-top: 8px; background: #1a1e27; padding: 6px; border-radius: 6px; }
     .h2h-info { color: #3498db !important; font-size: 12px; text-align: center; margin-top: 6px; }
     .news-info { color: #e67e22 !important; font-size: 12px; text-align: center; margin-top: 3px; }
     
-    .value-box-grid { display: flex; gap: 10px; margin-top: 14px; }
-    .value-pick-box {
-        flex: 1; background-color: #12291b; color: #2ecc71; border: 1px solid #1e4d2b;
-        padding: 10px; border-radius: 8px; font-size: 13px; text-align: center;
+    /* 모바일 대응 가비지 없는 반응형 그리드 */
+    .value-box-grid { 
+        display: flex; 
+        flex-wrap: wrap;
+        gap: 10px; 
+        margin-top: 12px; 
     }
-    .team-logo { width: 38px; height: 38px; object-fit: contain; }
+    .value-pick-box {
+        flex: 1 1 30%; 
+        min-width: 140px;
+        background-color: #11241a; 
+        color: #2ecc71; 
+        border: 1px solid #1c4529;
+        padding: 10px; 
+        border-radius: 8px; 
+        font-size: 12px; 
+        text-align: center;
+    }
+    .team-logo { width: 34px; height: 38px; object-fit: contain; }
+
+    @media (max-width: 640px) {
+        .team-name { font-size: 14px; }
+        .match-time-badge { font-size: 11px; }
+        .value-pick-box { flex: 1 1 100%; } /* 모바일에서는 1열 세로 정렬 */
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 4. 복합 머신러닝 AI 분석 엔진 (승무패 + 핸디캡 + 언더오버 계산)
+# 4. 복합 머신러닝 AI 분석 엔진
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🏆 AI 프로토 센터")
@@ -329,7 +353,6 @@ if live_matches:
         exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus + news_h["mod"]), 2)
         exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus + news_a["mod"]), 2)
 
-        # 1. 포아송 스코어 확률 계산
         h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(6)]
         a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(6)]
 
@@ -345,11 +368,9 @@ if live_matches:
                 elif h == a: draw += p
                 else: a_win += p
                 
-                # 언더 오버 계산
                 if (h + a) < 2.5: prob_under_2_5 += p
                 else: prob_over_2_5 += p
                 
-                # 핸디캡(-1.0 기준) 계산
                 if (h - 1) > a: prob_handi_h += p
                 elif (h - 1) < a: prob_handi_a += p
 
@@ -357,7 +378,6 @@ if live_matches:
                     max_p = p
                     best_score = (h, a)
 
-        # 2. 일반 승무패 픽
         candidates = [
             (f"🏠 {home_team} 승", h_win, h_win * odd_h),
             (f"🚀 {away_team} 승", a_win, a_win * odd_a),
@@ -366,7 +386,6 @@ if live_matches:
         best_option, best_prob, best_ev = max(candidates, key=lambda x: x[2])
         best_prob_pct = round(best_prob * 100, 1)
 
-        # 3. 핸디캡 픽
         if prob_handi_h * handi_h > prob_handi_a * handi_a:
             best_handi = f"🛡️ {home_team} 마핸승"
             best_handi_prob = round(prob_handi_h * 100, 1)
@@ -374,7 +393,6 @@ if live_matches:
             best_handi = f"🛡️ {away_team} 플핸승"
             best_handi_prob = round(prob_handi_a * 100, 1)
 
-        # 4. 언더오버 2.5 픽
         if prob_under_2_5 * uo_under > prob_over_2_5 * uo_over:
             best_uo = "🔽 언더(U 2.5)"
             best_uo_prob = round(prob_under_2_5 * 100, 1)
@@ -433,7 +451,7 @@ if menu == "⚽ 프로토 LIVE":
                         <div style='flex:1; text-align:right;'>
                             <span class='team-name home'>{m['home']} <img src='{logo_h}' class='team-logo'></span>
                         </div>
-                        <div style='width:180px; text-align:center;'>
+                        <div style='width:160px; text-align:center;'>
                             <span class='match-time-badge'>⚽ {m_time}</span>
                             <span class='deadline-badge'>({d_time})</span>
                         </div>
@@ -459,9 +477,9 @@ if menu == "⚽ 프로토 LIVE":
 
                 st.markdown(f"""
                 <div class='value-box-grid'>
-                    <div class='value-pick-box'>🎯 <b>승무패 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> ({item['best_prob_pct']}%)</div>
-                    <div class='value-pick-box'>🛡️ <b>핸디캡 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_handi']}</span> ({item['best_handi_prob']}%)</div>
-                    <div class='value-pick-box'>📊 <b>언더/오버 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_uo']}</span> ({item['best_uo_prob']}%)</div>
+                    <div class='value-pick-box'>🎯 <b>승무패 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_option']}</span> <b style='color:#2ecc71;'>({item['best_prob_pct']}%)</b></div>
+                    <div class='value-pick-box'>🛡️ <b>핸디캡 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_handi']}</span> <b style='color:#2ecc71;'>({item['best_handi_prob']}%)</b></div>
+                    <div class='value-pick-box'>📊 <b>언더/오버 픽</b><br><span style='color:#ffffff; font-weight:bold;'>{item['best_uo']}</span> <b style='color:#2ecc71;'>({item['best_uo_prob']}%)</b></div>
                 </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -485,7 +503,7 @@ elif menu == "🔥 오늘의 TOP 3 픽":
                         <span style='color:#ffffff; font-size:16px; font-weight:bold;'>{m['home']} vs {m['away']}</span>
                         <span style='color:#2ecc71; font-size:13px; font-weight:bold;'>⚽ {m_time}</span>
                     </div>
-                    <div style='background-color:#12291b; color:#2ecc71; border:1px solid #1e4d2b; padding:12px; border-radius:8px; font-size:15px;'>
+                    <div style='background-color:#11241a; color:#2ecc71; border:1px solid #1c4529; padding:12px; border-radius:8px; font-size:15px;'>
                         🎯 <b>추천 일반 픽</b>: <b style='color:#ffffff;'>{item['best_option']}</b> ({item['best_prob_pct']}%) | 
                         📊 <b>언오버 픽</b>: <b style='color:#ffffff;'>{item['best_uo']}</b> ({item['best_uo_prob']}%)
                     </div>
