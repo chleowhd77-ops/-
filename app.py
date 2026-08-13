@@ -249,18 +249,24 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
         conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. PC/모바일 반응형 완벽 대응 CSS 스타일링
+# 3. 모바일 좌우 스크롤(넘침) 완전 차단 CSS
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
-    .stApp { background-color: #0b0d10; }
+    /* 전체 화면 좌우 스크롤 차단 */
+    html, body, .stApp { 
+        background-color: #0b0d10; 
+        overflow-x: hidden !important; 
+        max-width: 100vw !important;
+    }
+    
     [data-testid="stSidebar"] { display: none; }
     
     .app-header {
         text-align: center;
-        padding: 15px 0 25px 0;
+        padding: 15px 0 20px 0;
         border-bottom: 1px solid #1e2430;
-        margin-bottom: 25px;
+        margin-bottom: 20px;
     }
     .app-header h1 {
         color: #ffffff !important;
@@ -270,20 +276,20 @@ st.markdown("""
         margin: 0;
     }
     
-    div[data-testid="stTabs"] { width: 100% !important; }
+    div[data-testid="stTabs"] { width: 100% !important; overflow-x: hidden !important; }
     .stTabs [data-baseweb="tab-list"], div[role="tablist"] {
         width: 100% !important; display: flex !important; justify-content: space-around !important;
         background-color: transparent !important; border: none !important; border-bottom: 2px solid #1e2430 !important;
-        margin-bottom: 30px !important; padding: 0px !important; gap: 0px !important;
+        margin-bottom: 25px !important; padding: 0px !important; gap: 0px !important;
     }
     .stTabs [data-baseweb="tab"], button[role="tab"] {
-        flex: 1 1 0% !important; height: 55px !important; border-radius: 0px !important;
+        flex: 1 1 0% !important; height: 50px !important; border-radius: 0px !important;
         border: none !important; background-color: transparent !important;
-        color: #8a94a6 !important; font-weight: 900 !important; font-size: 22px !important;
+        color: #8a94a6 !important; font-weight: 900 !important; font-size: 20px !important;
         cursor: pointer !important; text-align: center !important; transition: all 0.2s;
     }
     .stTabs [aria-selected="true"] {
-        color: #ff3b3b !important; font-size: 24px !important; font-weight: 900 !important;
+        color: #ff3b3b !important; font-size: 22px !important; font-weight: 900 !important;
         border-bottom: 4px solid #ff3b3b !important; background-color: transparent !important;
         box-shadow: none !important;
     }
@@ -294,80 +300,87 @@ st.markdown("""
     .match-card {
         background: linear-gradient(135deg, #151821 0%, #0f1117 100%);
         border: 1px solid #252d3f; border-radius: 16px;
-        padding: 24px; margin-bottom: 22px; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+        padding: 20px; margin-bottom: 22px; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+        box-sizing: border-box !important;
+        width: 100% !important;
     }
     .top3-card {
         background: linear-gradient(135deg, #1a202c 0%, #111520 100%);
         border: 1px solid #2e374d; border-radius: 16px;
-        padding: 24px; margin-bottom: 18px;
+        padding: 20px; margin-bottom: 18px;
+        box-sizing: border-box !important;
     }
     
-    /* 대결표 가로 레이아웃 고정 */
+    /* 대결표 정밀 가로 레이아웃 */
     .vs-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
         width: 100%;
+        box-sizing: border-box;
     }
     
     .team-box {
         flex: 1;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
+        overflow: hidden;
     }
     .team-box.home { justify-content: flex-end; text-align: right; }
     .team-box.away { justify-content: flex-start; text-align: left; }
     
     .team-name-text {
         color: #ffffff !important;
-        font-size: 24px;
+        font-size: 22px;
         font-weight: 900;
-        white-space: nowrap;
+        word-break: keep-all;
     }
     
     .center-time-box {
-        width: 200px;
+        width: 180px;
         text-align: center;
         flex-shrink: 0;
     }
     
-    .team-logo { width: 52px !important; height: 52px !important; object-fit: contain; flex-shrink: 0; }
+    .team-logo { width: 50px !important; height: 50px !important; object-fit: contain; flex-shrink: 0; }
     
-    .league-title { color: #c0c9d9 !important; font-size: 16px !important; font-weight: bold; margin-bottom: 12px; }
-    .match-time-badge { color: #2ecc71 !important; font-size: 15px !important; font-weight: 800; background: #0c2b1a; padding: 6px 14px; border-radius: 20px; display: inline-block; border: 1px solid #185c32; }
-    .deadline-badge { color: #ff6b6b !important; font-size: 13px !important; font-weight: bold; margin-top: 6px; display: block; }
+    .league-title { color: #c0c9d9 !important; font-size: 15px !important; font-weight: bold; margin-bottom: 12px; }
+    .match-time-badge { color: #2ecc71 !important; font-size: 14px !important; font-weight: 800; background: #0c2b1a; padding: 6px 12px; border-radius: 20px; display: inline-block; border: 1px solid #185c32; }
+    .deadline-badge { color: #ff6b6b !important; font-size: 12px !important; font-weight: bold; margin-top: 4px; display: block; }
     
-    .odd-info { color: #ffffff !important; font-size: 15px !important; margin-top: 14px; background: #1a202c; padding: 12px; border-radius: 8px; border: 1px solid #2a3346; text-align: center; }
+    .odd-info { color: #ffffff !important; font-size: 14px !important; margin-top: 14px; background: #1a202c; padding: 10px; border-radius: 8px; border: 1px solid #2a3346; text-align: center; word-break: break-all; }
     
     .detail-info-box {
-        background: #121620; border: 1px solid #222938; padding: 12px; border-radius: 8px; margin-top: 12px;
-        display: flex; justify-content: space-around; flex-wrap: wrap; text-align: center; gap: 8px;
+        background: #121620; border: 1px solid #222938; padding: 10px; border-radius: 8px; margin-top: 12px;
+        display: flex; justify-content: space-around; flex-wrap: wrap; text-align: center; gap: 6px;
     }
-    .detail-item { color: #5dd5ff !important; font-size: 14px !important; font-weight: bold; }
-    .news-item { color: #ffb84d !important; font-size: 14px !important; font-weight: bold; width: 100%; text-align: center; }
+    .detail-item { color: #5dd5ff !important; font-size: 13px !important; font-weight: bold; }
+    .news-item { color: #ffb84d !important; font-size: 13px !important; font-weight: bold; width: 100%; text-align: center; }
     
-    .value-box-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+    .value-box-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
     .value-pick-box {
-        flex: 1 1 30%; min-width: 150px;
+        flex: 1 1 30%; min-width: 140px;
         background-color: #0e291b; color: #ffffff !important; border: 1px solid #1c5e34;
-        padding: 12px; border-radius: 10px; font-size: 14px !important; text-align: center;
+        padding: 10px; border-radius: 10px; font-size: 13px !important; text-align: center;
+        box-sizing: border-box;
     }
-    .pick-highlight { color: #f1c40f !important; font-weight: 800 !important; font-size: 16px !important; }
-    .prob-highlight { color: #2ecc71 !important; font-weight: 700 !important; font-size: 15px !important; }
+    .pick-highlight { color: #f1c40f !important; font-weight: 800 !important; font-size: 15px !important; }
+    .prob-highlight { color: #2ecc71 !important; font-weight: 700 !important; font-size: 14px !important; }
 
-    /* 📱 모바일 화면 최적화 (가로 한 줄 자동 축소) */
-    @media (max-width: 768px) {
-        .team-name-text { font-size: 15px !important; }
-        .team-logo { width: 34px !important; height: 34px !important; }
-        .center-time-box { width: 130px !important; }
-        .match-time-badge { font-size: 11px !important; padding: 4px 8px !important; }
+    /* 📱 모바일(스마트폰) 폭 맞춰 100% 최적화 (옆으로 넘침 방지) */
+    @media (max-width: 640px) {
+        .match-card, .top3-card { padding: 14px !important; }
+        .team-name-text { font-size: 14px !important; line-height: 1.2; }
+        .team-logo { width: 32px !important; height: 32px !important; }
+        .center-time-box { width: 110px !important; }
+        .match-time-badge { font-size: 11px !important; padding: 4px 6px !important; }
         .deadline-badge { font-size: 10px !important; }
-        .odd-info { font-size: 12px !important; padding: 8px !important; }
-        .detail-item { font-size: 12px !important; }
-        .value-pick-box { flex: 1 1 100%; }
-        .app-header h1 { font-size: 26px !important; }
-        .stTabs [data-baseweb="tab"], button[role="tab"] { font-size: 16px !important; }
+        .odd-info { font-size: 11px !important; padding: 8px 4px !important; }
+        .detail-item { font-size: 11px !important; }
+        .value-pick-box { flex: 1 1 100% !important; min-width: 100% !important; }
+        .app-header h1 { font-size: 24px !important; }
+        .stTabs [data-baseweb="tab"], button[role="tab"] { font-size: 15px !important; }
     }
     </style>
 """, unsafe_allow_html=True)
