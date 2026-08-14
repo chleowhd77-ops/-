@@ -91,10 +91,15 @@ def init_db():
             actual_score TEXT DEFAULT '-:-',
             actual_result TEXT DEFAULT 'PENDING',
             is_correct INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_toto14 INTEGER DEFAULT 0
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # [수정됨] 기존 DB 테이블에 is_toto14 컬럼이 없으면 강제로 추가하는 방어 로직
+    try:
+        cursor.execute("ALTER TABLE predictions ADD COLUMN is_toto14 INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # 이미 컬럼이 존재하면 무시함
+    
     conn.commit()
     conn.close()
 
@@ -243,7 +248,6 @@ def load_betman_data():
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
 
-# 빠졌던 통계 계산 함수 복구!!!
 def get_accuracy_stats():
     conn = sqlite3.connect("ai_predictions.db")
     df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED'", conn)
@@ -511,6 +515,10 @@ with main_tab4:
     df = pd.read_sql_query("SELECT * FROM predictions ORDER BY id DESC", conn)
     conn.close()
     
+    # [에러 방어 코드 추가] DB에 is_toto14 컬럼이 없으면 기본값으로 생성해줍니다.
+    if 'is_toto14' not in df.columns:
+        df['is_toto14'] = 0
+        
     def render_report_list(df_subset):
         if len(df_subset) > 0:
             for _, row in df_subset.iterrows():
