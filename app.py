@@ -441,61 +441,71 @@ if proto_matches:
         })
 
 # -----------------------------------------------------------------------------
-# [TAB 1] PROTO LIVE
+# [TAB 1] PROTO LIVE (야구, 농구 탭 복구)
 # -----------------------------------------------------------------------------
 with main_tab1:
-    if analyzed_proto:
-        for item in analyzed_proto:
-            m = item['match']
-            logo_h_tag = render_logo_html(item["home_logo"])
-            logo_a_tag = render_logo_html(item["away_logo"])
+    sub_soccer, sub_baseball, sub_basketball = st.tabs(["⚽ SOCCER", "⚾ BASEBALL", "🏀 BASKETBALL"])
+    
+    with sub_soccer:
+        if analyzed_proto:
+            for item in analyzed_proto:
+                m = item['match']
+                logo_h_tag = render_logo_html(item["home_logo"])
+                logo_a_tag = render_logo_html(item["away_logo"])
+                
+                raw_deadline = m.get("deadline_time", "23:00")
+                is_closed = is_deadline_passed(item["final_match_time"], raw_deadline)
+                deadline_badge = f"<span class='deadline-closed'>CLOSED</span>" if is_closed else f"<span class='deadline-open'>UNTIL {raw_deadline.replace('마감','').strip()}</span>"
+                
+                html_code = f"""
+<div class='match-card'>
+    <div class='league-title'>MATCH INFO • {m['league']}</div>
+    
+    <div class='vs-row'>
+        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
+        <div class='center-time-box'>
+            <span class='match-time-text'>{item["final_match_time"].replace(' (','<br>(')}</span>
+            {deadline_badge}
+        </div>
+        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+    </div>
+    
+    <div class='odd-bar'>
+        <span class='odd-item'>W/D/L <span class='odd-val'>{m['odd_h']} / {m['odd_d']} / {m['odd_a']}</span></span>
+        <span class='odd-item'>HANDI <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
+        <span class='odd-item'>U/O <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
+    </div>
+    
+    <div class='h2h-bar'>
+        <span>H2H: W{item['h2h']['h_wins']} D{item['h2h']['draws']} L{item['h2h']['a_wins']}</span>
+        <span>REST: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span>
+    </div>
+    
+    <div class='pred-grid'>
+        <div class='pred-box'>
+            <div class='pred-label'>MATCH WINNER</div>
+            <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
+        </div>
+        <div class='pred-box'>
+            <div class='pred-label'>HANDICAP</div>
+            <span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span>
+        </div>
+        <div class='pred-box'>
+            <div class='pred-label'>TOTAL GOALS</div>
+            <span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span>
+        </div>
+    </div>
+</div>
+"""
+                st.markdown(html_code, unsafe_allow_html=True)
+        else:
+            st.info("NO LIVE SOCCER MATCHES AVAILABLE.")
             
-            raw_deadline = m.get("deadline_time", "23:00")
-            is_closed = is_deadline_passed(item["final_match_time"], raw_deadline)
-            deadline_badge = f"<span class='deadline-closed'>CLOSED</span>" if is_closed else f"<span class='deadline-open'>UNTIL {raw_deadline.replace('마감','').strip()}</span>"
-            
-            st.markdown(f"""
-            <div class='match-card'>
-                <div class='league-title'>MATCH INFO • {m['league']}</div>
-                
-                <div class='vs-row'>
-                    <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
-                    <div class='center-time-box'>
-                        <span class='match-time-text'>{item["final_match_time"].replace(' (','<br>(')}</span>
-                        {deadline_badge}
-                    </div>
-                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
-                </div>
-                
-                <div class='odd-bar'>
-                    <span class='odd-item'>W/D/L <span class='odd-val'>{m['odd_h']} / {m['odd_d']} / {m['odd_a']}</span></span>
-                    <span class='odd-item'>HANDI <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
-                    <span class='odd-item'>U/O <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
-                </div>
-                
-                <div class='h2h-bar'>
-                    <span>H2H: W{item['h2h']['h_wins']} D{item['h2h']['draws']} L{item['h2h']['a_wins']}</span>
-                    <span>REST: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span>
-                </div>
-                
-                <div class='pred-grid'>
-                    <div class='pred-box'>
-                        <div class='pred-label'>MATCH WINNER</div>
-                        <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
-                    </div>
-                    <div class='pred-box'>
-                        <div class='pred-label'>HANDICAP</div>
-                        <span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span>
-                    </div>
-                    <div class='pred-box'>
-                        <div class='pred-label'>TOTAL GOALS</div>
-                        <span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("NO LIVE MATCHES AVAILABLE.")
+    with sub_baseball:
+        st.info("BASEBALL DATA WILL BE AVAILABLE SOON.")
+        
+    with sub_basketball:
+        st.info("BASKETBALL DATA WILL BE AVAILABLE SOON.")
 
 # -----------------------------------------------------------------------------
 # [TAB 2] TOTO 14 GAMES
@@ -521,19 +531,20 @@ with main_tab2:
             fake_m_for_db = {'id': f"TOTO14_{m['id']}", 'league': 'TOTO 14', 'home': m['home'], 'away': m['away']}
             save_prediction(fake_m_for_db, best_pick, best_pct, (0, 0))
             
-            st.markdown(f"""
-            <div class='match-card' style='padding: 20px;'>
-                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
-                    <span class='badge-primary'>GAME {idx}</span>
-                    <span style='color:#94A3B8; font-size:13px; font-weight:600;'>AI PICK: <b style='color:#00F2FE;'>{best_pick}</b> ({best_pct}%)</span>
-                </div>
-                <div class='vs-row' style='margin-bottom:0;'>
-                    <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
-                    <div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:14px;'>VS</b></div>
-                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            html_code = f"""
+<div class='match-card' style='padding: 20px;'>
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
+        <span class='badge-primary'>GAME {idx}</span>
+        <span style='color:#94A3B8; font-size:13px; font-weight:600;'>AI PICK: <b style='color:#00F2FE;'>{best_pick}</b> ({best_pct}%)</span>
+    </div>
+    <div class='vs-row' style='margin-bottom:0;'>
+        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
+        <div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:14px;'>VS</b></div>
+        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+    </div>
+</div>
+"""
+            st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.info("NO TOTO 14 DATA.")
 
@@ -545,20 +556,21 @@ with main_tab3:
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
-            st.markdown(f"""
-                <div class='match-card' style='border-color: #00F2FE;'>
-                    <div class='league-title' style='color:#00F2FE;'># {idx} HIGH VALUE PICK</div>
-                    <div class='vs-row'>
-                        <span class='team-name-text'>{m['home']} VS {m['away']}</span>
-                    </div>
-                    <div class='pred-grid'>
-                        <div class='pred-box' style='background:rgba(0, 242, 254, 0.05);'>
-                            <div class='pred-label'>PRIMARY PICK</div>
-                            <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
-                        </div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+            html_code = f"""
+<div class='match-card' style='border-color: #00F2FE;'>
+    <div class='league-title' style='color:#00F2FE;'># {idx} HIGH VALUE PICK</div>
+    <div class='vs-row'>
+        <span class='team-name-text'>{m['home']} VS {m['away']}</span>
+    </div>
+    <div class='pred-grid'>
+        <div class='pred-box' style='background:rgba(0, 242, 254, 0.05);'>
+            <div class='pred-label'>PRIMARY PICK</div>
+            <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
+        </div>
+    </div>
+</div>
+"""
+            st.markdown(html_code, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
 # [TAB 4] PERFORMANCE
@@ -594,21 +606,22 @@ with main_tab4:
                 card_class = "res-card-pend"
                 badge_html = "<span style='color:#64748B; font-weight:700; font-size:13px;'>PENDING</span>"
                     
-            st.markdown(f"""
-            <div class='{card_class}'>
-                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>
-                    <span style='color:#94A3B8; font-size:12px; font-weight:800;'>{league_tag}</span>
-                    {badge_html}
-                </div>
-                <div style='font-size:16px; font-weight:800; color:#F8FAFC; margin-bottom:8px;'>
-                    {row['home_team']} vs {row['away_team']}
-                </div>
-                <div style='font-size:13px; color:#94A3B8; font-weight:600;'>
-                    AI PICK: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) 
-                    <span style='margin:0 8px;'>|</span> 
-                    SCORE: <span style='color:#F8FAFC;'>{row['actual_score']}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            html_code = f"""
+<div class='{card_class}'>
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>
+        <span style='color:#94A3B8; font-size:12px; font-weight:800;'>{league_tag}</span>
+        {badge_html}
+    </div>
+    <div style='font-size:16px; font-weight:800; color:#F8FAFC; margin-bottom:8px;'>
+        {row['home_team']} vs {row['away_team']}
+    </div>
+    <div style='font-size:13px; color:#94A3B8; font-weight:600;'>
+        AI PICK: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) 
+        <span style='margin:0 8px;'>|</span> 
+        SCORE: <span style='color:#F8FAFC;'>{row['actual_score']}</span>
+    </div>
+</div>
+"""
+            st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.info("NO HISTORY FOUND.")
