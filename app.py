@@ -106,151 +106,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# [NEW] 경기 결과 자동 채점 엔진 (스코어 업데이트)
-# -----------------------------------------------------------------------------
-def update_match_results():
-    conn = sqlite3.connect("ai_predictions.db")
-    cursor = conn.cursor()
-    
-    # 아직 결과가 안 나온(PENDING) 경기만 불러옵니다.
-    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
-    pending_matches = cursor.fetchall()
-    
-    for row in pending_matches:
-        match_id, h_team, a_team, pick = row
-        
-        # API를 통해 해당 팀들의 최근 경기 결과를 조회
-        h_info = fetch_team_info_api(h_team)
-        a_info = fetch_team_info_api(a_team)
-        
-        if h_info['id'] and a_info['id']:
-            url = f"https://{API_HOST}/fixtures/headtohead"
-            params = {"h2h": f"{h_info['id']}-{a_info['id']}", "last": 1} # 가장 최근 맞대결 1개만
-            
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=5)
-                data = res.json().get("response", [])
-                
-                if data:
-                    match_data = data[0]
-                    status = match_data['fixture']['status']['short']
-                    
-                    # 경기가 종료되었다면 (FT: Full Time, PEN: Penalty 등)
-                    if status in ['FT', 'AET', 'PEN']:
-                        goals_h = match_data['goals']['home']
-                        goals_a = match_data['goals']['away']
-                        score_str = f"{goals_h}:{goals_a}"
-                        
-                        # 적중 여부 채점 로직 (승무패 기준)
-                        is_correct = 0
-                        if goals_h > goals_a and "승" in pick and h_team in pick:
-                            is_correct = 1
-                        elif goals_h < goals_a and "승" in pick and a_team in pick:
-                            is_correct = 1
-                        elif goals_h == goals_a and "무승부" in pick:
-                            is_correct = 1
-                            
-                        # DB 업데이트
-                        cursor.execute("""
-                            UPDATE predictions 
-                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
-                            WHERE match_id = ?
-                        """, (score_str, is_correct, match_id))
-            except Exception:
-                pass
-                
-    conn.commit()
-    conn.close()
-
-# 대시보드가 로드될 때마다 한 번씩 채점 엔진을 조용히 돌립니다.
-update_match_results()
-
-# -----------------------------------------------------------------------------
-# [로직] 시간 감지 및 라이브 스코어 판별
-# -----------------------------------------------------------------------------
-def get_match_status(match_time_str, deadline_str):
-    if not match_time_str or match_time_str == "시간 미정":
-        return "TBD", False
-    try:
-        now = datetime.now(timezone(timedelta(hours=9)))
-        year = now.year
-        
-        m_dt = None
-        match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
-        if match:
-            mo, d, h, m = map(int, match.groups())
-            m_dt = datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
-            
-            d_dt = m_dt - timedelta(minutes=10)
-            dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
-            if dead_match:
-                dh, dm = map(int, dead_match.groups())
-                d_dt = m_dt.replace(hour=dh, minute=dm)
-                if d_dt >= m_dt:
-                    d_dt -= timedelta(days=1)
-            
-            is_closed = now >= d_dt
-            
-            if m_dt <= now <= m_dt + timedelta(hours=2):
-                return "LIVE", is_closed
-            elif now > m_dt + timedelta(hours=2):
-                return "FINISHED", is_closed
-            else:
-                return "UPCOMING", is_closed
-                
-    except Exception:
-        pass
-    return "UPCOMING", False
-
-# -----------------------------------------------------------------------------
-# [로직] AI 스토리텔링 (관전 포인트) 생성
-# -----------------------------------------------------------------------------
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a):
-    story = ""
-    if prob_h > 60:
-        story = "🔥 전력상 우위! 홈팀의 무난한 승리가 예상되는 매치입니다."
-    elif prob_a > 60:
-        story = "🚨 원정팀의 매서운 기세! 홈팀의 고전이 예상되는 이변 주의 경기!"
-    elif abs(prob_h - prob_a) <= 10 and prob_d >= 28:
-        story = "⚔️ 승부를 예측하기 힘든 팽팽한 접전! 진흙탕 싸움이 예상됩니다."
-    elif h2h_h > h2h_a + 2:
-        story = "📊 압도적인 상대 전적! 홈팀이 확실한 우위를 점하고 있습니다."
-    else:
-        story = "🔍 AI 분석 결과, 미세한 차이로 승패가 갈릴 박빙의 승부입니다."
-    return story
-
-# -----------------------------------------------------------------------------
-# [로직] 포아송 알고리즘
-# -----------------------------------------------------------------------------
-def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
-    h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
-    a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
-
-    h_win, draw, a_win = 0.0, 0.0, 0.0
-    prob_under_2_5, prob_over_2_5 = 0.0, 0.0
-    prob_handi_h, prob_handi_a = 0.0, 0.0 
-    
-    for h in range(8):
-        for a in range(8):
-            p = h_probs[h] * a_probs[a]
-            
-            if h > a: h_win += p
-            elif h == a: draw += p
-            else: a_win += p
-            
-            if (h + a) < 2.5: prob_under_2_5 += p
-            else: prob_over_2_5 += p
-            
-            if (h + handi_val) > a: prob_handi_h += p
-            elif (h + handi_val) < a: prob_handi_a += p
-            else:
-                 if exp_h > exp_a: prob_handi_h += p
-                 else: prob_handi_a += p
-
-    return h_win, draw, a_win, prob_under_2_5, prob_over_2_5, prob_handi_h, prob_handi_a
-
-# -----------------------------------------------------------------------------
-# 1. 해외 API 연동
+# 1. 해외 API 연동 (함수들을 위로 올려서 NameError 방지!)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -320,12 +176,9 @@ def get_accuracy_stats():
 def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
-    
-    # 동일 매치가 있으면 is_toto14 값도 확실하게 업데이트하도록 쿼리 수정
     try:
         cursor.execute("SELECT id FROM predictions WHERE match_id = ?", (m['id'],))
         exists = cursor.fetchone()
-        
         if not exists:
             cursor.execute("""
                 INSERT INTO predictions 
@@ -337,17 +190,107 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
                 m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14
             ))
         else:
-            cursor.execute("""
-                UPDATE predictions 
-                SET is_toto14 = ? 
-                WHERE match_id = ?
-            """, (is_toto14, m['id']))
-            
+            cursor.execute("UPDATE predictions SET is_toto14 = ? WHERE match_id = ?", (is_toto14, m['id']))
         conn.commit()
-    except Exception as e:
-        pass
-    finally:
-        conn.close()
+    except: pass
+    finally: conn.close()
+
+# -----------------------------------------------------------------------------
+# [NEW] 경기 결과 자동 채점 엔진 (이제 안전하게 실행됩니다!)
+# -----------------------------------------------------------------------------
+def update_match_results():
+    conn = sqlite3.connect("ai_predictions.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
+    pending_matches = cursor.fetchall()
+    
+    for row in pending_matches:
+        match_id, h_team, a_team, pick = row
+        h_info = fetch_team_info_api(h_team)
+        a_info = fetch_team_info_api(a_team)
+        
+        if h_info['id'] and a_info['id']:
+            url = f"https://{API_HOST}/fixtures/headtohead"
+            params = {"h2h": f"{h_info['id']}-{a_info['id']}", "last": 1}
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=5)
+                data = res.json().get("response", [])
+                if data:
+                    match_data = data[0]
+                    status = match_data['fixture']['status']['short']
+                    if status in ['FT', 'AET', 'PEN']:
+                        goals_h = match_data['goals']['home']
+                        goals_a = match_data['goals']['away']
+                        score_str = f"{goals_h}:{goals_a}"
+                        
+                        is_correct = 0
+                        if goals_h > goals_a and "승" in pick and h_team in pick: is_correct = 1
+                        elif goals_h < goals_a and "승" in pick and a_team in pick: is_correct = 1
+                        elif goals_h == goals_a and "무승부" in pick: is_correct = 1
+                            
+                        cursor.execute("""
+                            UPDATE predictions 
+                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
+                            WHERE match_id = ?
+                        """, (score_str, is_correct, match_id))
+            except: pass
+    conn.commit()
+    conn.close()
+
+# 대시보드가 로드될 때마다 한 번씩 채점 엔진을 조용히 돌립니다.
+update_match_results()
+
+# -----------------------------------------------------------------------------
+# [로직] 시간 감지 및 스토리텔링, 포아송
+# -----------------------------------------------------------------------------
+def get_match_status(match_time_str, deadline_str):
+    if not match_time_str or match_time_str == "시간 미정": return "TBD", False
+    try:
+        now = datetime.now(timezone(timedelta(hours=9)))
+        year = now.year
+        m_dt = None
+        match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
+        if match:
+            mo, d, h, m = map(int, match.groups())
+            m_dt = datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+            d_dt = m_dt - timedelta(minutes=10)
+            dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
+            if dead_match:
+                dh, dm = map(int, dead_match.groups())
+                d_dt = m_dt.replace(hour=dh, minute=dm)
+                if d_dt >= m_dt: d_dt -= timedelta(days=1)
+            is_closed = now >= d_dt
+            if m_dt <= now <= m_dt + timedelta(hours=2): return "LIVE", is_closed
+            elif now > m_dt + timedelta(hours=2): return "FINISHED", is_closed
+            else: return "UPCOMING", is_closed
+    except: pass
+    return "UPCOMING", False
+
+def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a):
+    if prob_h > 60: return "🔥 전력상 우위! 홈팀의 무난한 승리가 예상되는 매치입니다."
+    elif prob_a > 60: return "🚨 원정팀의 매서운 기세! 홈팀의 고전이 예상되는 이변 주의 경기!"
+    elif abs(prob_h - prob_a) <= 10 and prob_d >= 28: return "⚔️ 승부를 예측하기 힘든 팽팽한 접전! 진흙탕 싸움이 예상됩니다."
+    elif h2h_h > h2h_a + 2: return "📊 압도적인 상대 전적! 홈팀이 확실한 우위를 점하고 있습니다."
+    else: return "🔍 AI 분석 결과, 미세한 차이로 승패가 갈릴 박빙의 승부입니다."
+
+def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
+    h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
+    a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
+    h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    for h in range(8):
+        for a in range(8):
+            p = h_probs[h] * a_probs[a]
+            if h > a: h_win += p
+            elif h == a: draw += p
+            else: a_win += p
+            if (h + a) < 2.5: prob_u += p
+            else: prob_o += p
+            if (h + handi_val) > a: prob_handi_h += p
+            elif (h + handi_val) < a: prob_handi_a += p
+            else:
+                 if exp_h > exp_a: prob_handi_h += p
+                 else: prob_handi_a += p
+    return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
 # 3. 프리미엄 CSS 스타일링
@@ -572,7 +515,7 @@ with main_tab3:
             st.markdown(html_code, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트 (필터링 조건 완벽 수정)
+# [TAB 4] AI 리포트
 # -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
@@ -615,7 +558,6 @@ with main_tab4:
         else:
             st.info("해당 카테고리의 기록이 없습니다.")
 
-    # 수정된 필터링 로직: Pandas 데이터프레임 필터링 에러 방지
     with rep_tab1: 
         proto_df = df[df['is_toto14'] == 0]
         render_report_list(proto_df)
