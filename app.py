@@ -202,10 +202,6 @@ def fetch_fixture_details_api(home_id, away_id):
     except Exception:
         return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
 
-@st.cache_data(ttl=3600)
-def analyze_team_news_sentiment(team_name):
-    return {"mod": 0.0, "issues": []}
-
 # -----------------------------------------------------------------------------
 # 2. GitHub 데이터 로드 & DB 저장 함수
 # -----------------------------------------------------------------------------
@@ -251,7 +247,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
     finally: conn.close()
 
 # -----------------------------------------------------------------------------
-# 3. 프리미엄 CSS 스타일링 (다크 & 네온)
+# 3. 프리미엄 CSS 스타일링 (다크 & 네온, 폰트 확대, 모바일 최적화)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -281,28 +277,30 @@ st.markdown("""
         color: #64748B; font-size: 13px; font-weight: 600; letter-spacing: 2px; margin-top: 5px;
     }
     
-    /* Tabs */
+    /* Tabs (폰트 크기 대폭 확대) */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 20px !important;
+        background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 30px !important;
     }
     .stTabs [data-baseweb="tab"] {
-        color: #64748B !important; font-weight: 600 !important; font-size: 15px !important; letter-spacing: 1px; padding: 10px 0px !important; border: none !important;
+        color: #64748B !important; font-weight: 800 !important; font-size: 18px !important; letter-spacing: 1px; padding: 12px 0px !important; border: none !important;
     }
     .stTabs [aria-selected="true"] {
-        color: #00F2FE !important; font-weight: 800 !important; border-bottom: 3px solid #00F2FE !important;
+        color: #00F2FE !important; border-bottom: 4px solid #00F2FE !important;
     }
     
     /* Cards */
     .match-card {
-        background-color: #0B0F19;
-        border: 1px solid #1E293B;
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-        transition: transform 0.2s ease, border-color 0.2s ease;
+        background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 20px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s ease, border-color 0.2s ease;
     }
     .match-card:hover { border-color: #334155; transform: translateY(-2px); }
+    
+    /* Top 3 럭셔리 네온 글로우 효과 */
+    .top3-glow {
+        border: 2px solid #00F2FE !important;
+        box-shadow: 0 0 15px rgba(0, 242, 254, 0.2) !important;
+        background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important;
+    }
     
     /* Layouts inside Card */
     .league-title {
@@ -335,20 +333,21 @@ st.markdown("""
     
     /* Prediction Boxes */
     .pred-grid { display: flex; gap: 12px; }
-    .pred-box { 
-        flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 14px; text-align: center;
-    }
+    .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 14px; text-align: center; }
     .pred-label { font-size: 11px; color: #64748B; font-weight: 800; letter-spacing: 1px; margin-bottom: 6px; text-transform: uppercase; }
     .pred-value { font-size: 16px; color: #F8FAFC; font-weight: 900; }
     .pred-prob { font-size: 13px; color: #10B981; font-weight: 800; margin-left: 4px; }
     
-    /* Mini Badge for 14 Games */
-    .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 800; }
-    
-    /* Result Cards */
-    .res-card-win { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
-    .res-card-lose { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
-    .res-card-pend { background: #0F172A; border-left: 4px solid #475569; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
+    /* 모바일 반응형 100% 최적화 (위아래 정렬) */
+    @media (max-width: 640px) {
+        .stTabs [data-baseweb="tab"] { font-size: 14px !important; padding: 8px 0px !important; gap: 10px !important;}
+        .team-name-text { font-size: 16px !important; }
+        .team-logo { width: 30px !important; height: 30px !important; }
+        .center-time-box { width: 80px !important; }
+        .pred-grid { flex-direction: column !important; } /* 모바일에서 예측 박스를 세로로 쌓음 */
+        .odd-bar { flex-direction: column !important; text-align: center; gap: 8px; }
+        .h2h-bar { flex-direction: column !important; text-align: center; gap: 5px; }
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -441,10 +440,10 @@ if proto_matches:
         })
 
 # -----------------------------------------------------------------------------
-# [TAB 1] PROTO LIVE (야구, 농구 탭 복구)
+# [TAB 1] PROTO LIVE (들여쓰기 버그 완벽 차단)
 # -----------------------------------------------------------------------------
 with main_tab1:
-    sub_soccer, sub_baseball, sub_basketball = st.tabs(["⚽ SOCCER", "⚾ BASEBALL", "🏀 BASKETBALL"])
+    sub_soccer, sub_baseball, sub_basketball = st.tabs(["SOCCER", "BASEBALL", "BASKETBALL"])
     
     with sub_soccer:
         if analyzed_proto:
@@ -457,42 +456,39 @@ with main_tab1:
                 is_closed = is_deadline_passed(item["final_match_time"], raw_deadline)
                 deadline_badge = f"<span class='deadline-closed'>CLOSED</span>" if is_closed else f"<span class='deadline-open'>UNTIL {raw_deadline.replace('마감','').strip()}</span>"
                 
+                # HTML 시작 부분에 띄어쓰기를 없애 코드 블록으로 인식되는 것을 방지합니다.
                 html_code = f"""
-<div class='match-card'>
-    <div class='league-title'>MATCH INFO • {m['league']}</div>
-    
-    <div class='vs-row'>
-        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
-        <div class='center-time-box'>
-            <span class='match-time-text'>{item["final_match_time"].replace(' (','<br>(')}</span>
+<div class="match-card">
+    <div class="league-title">MATCH INFO • {m['league']}</div>
+    <div class="vs-row">
+        <div class="team-box home"><span class="team-name-text">{m['home']}</span>{logo_h_tag}</div>
+        <div class="center-time-box">
+            <span class="match-time-text">{item["final_match_time"].replace(' (','<br>(')}</span>
             {deadline_badge}
         </div>
-        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+        <div class="team-box away">{logo_a_tag}<span class="team-name-text">{m['away']}</span></div>
     </div>
-    
-    <div class='odd-bar'>
-        <span class='odd-item'>W/D/L <span class='odd-val'>{m['odd_h']} / {m['odd_d']} / {m['odd_a']}</span></span>
-        <span class='odd-item'>HANDI <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
-        <span class='odd-item'>U/O <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
+    <div class="odd-bar">
+        <span class="odd-item">W/D/L <span class="odd-val">{m['odd_h']} / {m['odd_d']} / {m['odd_a']}</span></span>
+        <span class="odd-item">HANDI <span class="odd-val">{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
+        <span class="odd-item">U/O <span class="odd-val">{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
     </div>
-    
-    <div class='h2h-bar'>
+    <div class="h2h-bar">
         <span>H2H: W{item['h2h']['h_wins']} D{item['h2h']['draws']} L{item['h2h']['a_wins']}</span>
         <span>REST: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span>
     </div>
-    
-    <div class='pred-grid'>
-        <div class='pred-box'>
-            <div class='pred-label'>MATCH WINNER</div>
-            <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
+    <div class="pred-grid">
+        <div class="pred-box">
+            <div class="pred-label">MATCH WINNER</div>
+            <span class="pred-value">{item['best_option']}</span> <span class="pred-prob">{item['best_prob_pct']}%</span>
         </div>
-        <div class='pred-box'>
-            <div class='pred-label'>HANDICAP</div>
-            <span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span>
+        <div class="pred-box">
+            <div class="pred-label">HANDICAP</div>
+            <span class="pred-value">{item['best_handi']}</span> <span class="pred-prob">{item['best_handi_prob']}%</span>
         </div>
-        <div class='pred-box'>
-            <div class='pred-label'>TOTAL GOALS</div>
-            <span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span>
+        <div class="pred-box">
+            <div class="pred-label">TOTAL GOALS</div>
+            <span class="pred-value">{item['best_uo']}</span> <span class="pred-prob">{item['best_uo_prob']}%</span>
         </div>
     </div>
 </div>
@@ -532,15 +528,15 @@ with main_tab2:
             save_prediction(fake_m_for_db, best_pick, best_pct, (0, 0))
             
             html_code = f"""
-<div class='match-card' style='padding: 20px;'>
-    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
-        <span class='badge-primary'>GAME {idx}</span>
-        <span style='color:#94A3B8; font-size:13px; font-weight:600;'>AI PICK: <b style='color:#00F2FE;'>{best_pick}</b> ({best_pct}%)</span>
+<div class="match-card" style="padding: 20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <span class="badge-primary">GAME {idx}</span>
+        <span style="color:#94A3B8; font-size:13px; font-weight:600;">AI PICK: <b style="color:#00F2FE;">{best_pick}</b> ({best_pct}%)</span>
     </div>
-    <div class='vs-row' style='margin-bottom:0;'>
-        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
-        <div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:14px;'>VS</b></div>
-        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+    <div class="vs-row" style="margin-bottom:0;">
+        <div class="team-box home"><span class="team-name-text">{m['home']}</span>{logo_h_tag}</div>
+        <div class="center-time-box" style="width:60px;"><b style="color:#475569; font-size:14px;">VS</b></div>
+        <div class="team-box away">{logo_a_tag}<span class="team-name-text">{m['away']}</span></div>
     </div>
 </div>
 """
@@ -549,23 +545,38 @@ with main_tab2:
         st.info("NO TOTO 14 DATA.")
 
 # -----------------------------------------------------------------------------
-# [TAB 3] TODAY'S TOP 3
+# [TAB 3] TODAY'S TOP 3 (럭셔리 글로우 디자인 적용)
 # -----------------------------------------------------------------------------
 with main_tab3:
     top_3_picks = sorted(analyzed_proto, key=lambda x: x['best_ev'], reverse=True)[:3]
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
+            logo_h_tag = render_logo_html(item["home_logo"])
+            logo_a_tag = render_logo_html(item["away_logo"])
+            
             html_code = f"""
-<div class='match-card' style='border-color: #00F2FE;'>
-    <div class='league-title' style='color:#00F2FE;'># {idx} HIGH VALUE PICK</div>
-    <div class='vs-row'>
-        <span class='team-name-text'>{m['home']} VS {m['away']}</span>
+<div class="match-card top3-glow">
+    <div class="league-title" style="color:#00F2FE;"># {idx} HIGH VALUE PICK • {m['league']}</div>
+    <div class="vs-row">
+        <div class="team-box home"><span class="team-name-text">{m['home']}</span>{logo_h_tag}</div>
+        <div class="center-time-box">
+            <span class="match-time-text" style="color:#00F2FE;">{item["final_match_time"].replace(' (','<br>(')}</span>
+        </div>
+        <div class="team-box away">{logo_a_tag}<span class="team-name-text">{m['away']}</span></div>
     </div>
-    <div class='pred-grid'>
-        <div class='pred-box' style='background:rgba(0, 242, 254, 0.05);'>
-            <div class='pred-label'>PRIMARY PICK</div>
-            <span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span>
+    <div class="pred-grid" style="margin-top:20px;">
+        <div class="pred-box" style="background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;">
+            <div class="pred-label" style="color:#00F2FE;">PRIMARY PICK</div>
+            <span class="pred-value">{item['best_option']}</span> <span class="pred-prob">{item['best_prob_pct']}%</span>
+        </div>
+        <div class="pred-box">
+            <div class="pred-label">HANDICAP</div>
+            <span class="pred-value">{item['best_handi']}</span> <span class="pred-prob">{item['best_handi_prob']}%</span>
+        </div>
+        <div class="pred-box">
+            <div class="pred-label">TOTAL GOALS</div>
+            <span class="pred-value">{item['best_uo']}</span> <span class="pred-prob">{item['best_uo_prob']}%</span>
         </div>
     </div>
 </div>
@@ -607,18 +618,18 @@ with main_tab4:
                 badge_html = "<span style='color:#64748B; font-weight:700; font-size:13px;'>PENDING</span>"
                     
             html_code = f"""
-<div class='{card_class}'>
-    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>
-        <span style='color:#94A3B8; font-size:12px; font-weight:800;'>{league_tag}</span>
+<div class="{card_class}">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span style="color:#94A3B8; font-size:12px; font-weight:800;">{league_tag}</span>
         {badge_html}
     </div>
-    <div style='font-size:16px; font-weight:800; color:#F8FAFC; margin-bottom:8px;'>
+    <div style="font-size:16px; font-weight:800; color:#F8FAFC; margin-bottom:8px;">
         {row['home_team']} vs {row['away_team']}
     </div>
-    <div style='font-size:13px; color:#94A3B8; font-weight:600;'>
-        AI PICK: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) 
-        <span style='margin:0 8px;'>|</span> 
-        SCORE: <span style='color:#F8FAFC;'>{row['actual_score']}</span>
+    <div style="font-size:13px; color:#94A3B8; font-weight:600;">
+        AI PICK: <span style="color:#00F2FE;">{row['predicted_pick']}</span> ({row['predicted_prob']}%) 
+        <span style="margin:0 8px;">|</span> 
+        SCORE: <span style="color:#F8FAFC;">{row['actual_score']}</span>
     </div>
 </div>
 """
