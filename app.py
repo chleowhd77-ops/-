@@ -4,6 +4,7 @@ import json
 import requests
 import sqlite3
 import pandas as pd
+import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 from bs4 import BeautifulSoup
@@ -98,6 +99,40 @@ def init_db():
     conn.close()
 
 init_db()
+
+# -----------------------------------------------------------------------------
+# [스마트 기능 추가] 현재 시간 vs 마감 시간 비교 알고리즘
+# -----------------------------------------------------------------------------
+def is_deadline_passed(match_time_str, deadline_str):
+    if not match_time_str or match_time_str == "시간 미정":
+        return False
+    try:
+        now = datetime.now(timezone(timedelta(hours=9))) # 현재 한국 시간
+        year = now.year
+        
+        # 경기시간 파싱 (예: "08.14 (금) 07:00")
+        match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
+        if match:
+            mo, d, h, m = map(int, match.groups())
+            m_dt = datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+            
+            # 마감시간 파싱 (예: "23:00 마감")
+            dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
+            if dead_match:
+                dh, dm = map(int, dead_match.groups())
+                # 오전 경기인데 마감이 23시라면 전날 밤 23시로 계산
+                if dh == 23 and h < 12:
+                    d_dt = m_dt.replace(hour=dh, minute=dm) - timedelta(days=1)
+                else:
+                    d_dt = m_dt.replace(hour=dh, minute=dm)
+            else:
+                # 마감시간 텍스트가 명확하지 않으면 경기 시작 10분 전을 마감으로 간주
+                d_dt = m_dt - timedelta(minutes=10)
+                
+            return now >= d_dt
+    except Exception:
+        pass
+    return False
 
 # -----------------------------------------------------------------------------
 # 1. 해외 API 연동 (팀 정보 & 상대 전적)
@@ -199,7 +234,7 @@ def analyze_team_news_sentiment(team_name):
     return {"mod": round(score_mod, 2), "issues": detected_issues[:2]}
 
 # -----------------------------------------------------------------------------
-# 2. GitHub 데이터 로드
+# 2. GitHub 데이터 로드 & DB 저장 함수
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_betman_data():
@@ -230,7 +265,14 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
             INSERT OR IGNORE INTO predictions 
             (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (m['id'], m['league'], m['home'], m['away'], best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", m['odd_h'], m['odd_d'], m['odd_a']))
+        """, (
+            m['id'], 
+            m.get('league', '축구토토 승무패'), # 14경기도 리그명 기본 할당
+            m['home'], m['away'], 
+            best_option, best_prob_pct, 
+            f"{best_score[0]}:{best_score[1]}", 
+            m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0)
+        ))
         conn.commit()
     except Exception: pass
     finally: conn.close()
@@ -282,6 +324,7 @@ st.markdown("""
     
     .match-time-badge { color: #2ecc71 !important; font-size: 14px !important; font-weight: 800; background: #0c2b1a; padding: 6px 12px; border-radius: 20px; display: inline-block; border: 1px solid #185c32; }
     .deadline-badge { color: #ff6b6b !important; font-size: 12px !important; font-weight: bold; margin-top: 4px; display: block; }
+    .deadline-closed { color: #ffffff !important; font-size: 13px !important; font-weight: bold; margin-top: 6px; display: inline-block; background-color: #e74c3c; padding: 2px 8px; border-radius: 4px; }
     .odd-info { color: #ffffff !important; font-size: 14px !important; margin-top: 14px; background: #1a202c; padding: 10px; border-radius: 8px; border: 1px solid #2a3346; text-align: center; }
     
     .detail-info-box { background: #121620; border: 1px solid #222938; padding: 10px; border-radius: 8px; margin-top: 12px; display: flex; justify-content: space-around; flex-wrap: wrap; text-align: center; gap: 6px; }
@@ -304,7 +347,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# HTML 이미지 렌더링 헬퍼 (로고가 없거나 에러 시 미출력)
 def render_logo_html(logo_url):
     if logo_url:
         return f"<img src='{logo_url}' class='team-logo' onerror=\"this.style.display='none';\">"
@@ -407,12 +449,19 @@ with main_tab1:
                 logo_h_tag = render_logo_html(item["home_logo"])
                 logo_a_tag = render_logo_html(item["away_logo"])
                 
+                # 마감시간 뱃지 동적 처리 (픽 마감 시 빨간색 뱃지)
+                raw_deadline = m.get("deadline_time", "23:00 마감")
+                is_closed = is_deadline_passed(item["final_match_time"], raw_deadline)
+                deadline_badge = f"<span class='deadline-closed'>🚨 픽 마감</span>" if is_closed else f"<span class='deadline-badge'>({raw_deadline})</span>"
+                
                 st.markdown(f"""
                 <div class='match-card'>
                     <div class='league-title'>🏆 {m['league']}</div>
                     <div class='vs-row'>
                         <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
-                        <div class='center-time-box'><span class='match-time-badge'>⚽ {item["final_match_time"]}</span><span class='deadline-badge'>({m.get("deadline_time", "23:00 마감")})</span></div>
+                        <div class='center-time-box'>
+                            <span class='match-time-badge'>⚽ {item["final_match_time"]}</span><br>{deadline_badge}
+                        </div>
                         <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
                     </div>
                     <div class='odd-info'><b style='color:#f1c40f;'>승무패</b> {m['odd_h']} · {m['odd_d']} · {m['odd_a']} | <b style='color:#f1c40f;'>핸디캡</b> {m.get('handi_h', 3.05)} · {m.get('handi_d', 3.05)} · {m.get('handi_a', 2.03)} | <b style='color:#f1c40f;'>언오버</b> {m.get('uo_under', 1.50)} · {m.get('uo_over', 2.13)}</div>
@@ -429,7 +478,7 @@ with main_tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-# [메뉴 2: 🎯 축구토토 승무패 (다채로운 전력 분석 엔진 가동)]
+# [메뉴 2: 🎯 축구토토 승무패 (DB 자동 저장 연동)]
 with main_tab2:
     st.subheader("⚽ 축구토토 승무패 14경기 AI 종합 마킹지")
     st.caption("1경기부터 14경기까지 팀별 체급 + 최근 상대전적 + 홈/원정 이점 결합 분석")
@@ -460,6 +509,15 @@ with main_tab2:
             else:
                 best_pick = "🤝 무승부"
                 best_pct = p_d
+            
+            # DB 저장 로직 추가 (14경기도 리포트에 나오게 연동)
+            fake_m_for_db = {
+                'id': f"TOTO14_{m['id']}",
+                'league': '🏆 축구토토 승무패',
+                'home': m['home'],
+                'away': m['away']
+            }
+            save_prediction(fake_m_for_db, best_pick, best_pct, (0, 0))
             
             st.markdown(f"""
             <div class='match-card' style='padding: 18px;'>
@@ -501,7 +559,7 @@ with main_tab3:
                 </div>
             """, unsafe_allow_html=True)
 
-# [메뉴 4: 📈 AI 적중률 리포트 (카드시각화)]
+# [메뉴 4: 📈 AI 적중률 리포트 (14경기도 함께 표시!)]
 with main_tab4:
     st.subheader("📈 AI 머신러닝 누적 적중률 & 오답 노트")
     stats = get_accuracy_stats()
@@ -522,6 +580,7 @@ with main_tab4:
         for _, row in df.iterrows():
             status = row['actual_result']
             is_correct = row['is_correct']
+            league_tag = row['league'] if row['league'] else "프로토"
             
             card_class = "result-card-pending"
             badge_text = "⏳ 경기 진행 예정 (PENDING)"
@@ -537,7 +596,10 @@ with main_tab4:
             st.markdown(f"""
             <div class='{card_class}'>
                 <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <span style='color:#ffffff; font-size:18px; font-weight:bold;'>{row['home_team']} vs {row['away_team']}</span>
+                    <span style='color:#ffffff; font-size:18px; font-weight:bold;'>
+                        <span style='color:#a0aab8; font-size:13px; margin-right:8px;'>[{league_tag}]</span>
+                        {row['home_team']} vs {row['away_team']}
+                    </span>
                     <span style='font-weight:bold; font-size:15px;'>{badge_text}</span>
                 </div>
                 <div style='margin-top:10px; color:#d1d8e6; font-size:15px;'>
