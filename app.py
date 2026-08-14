@@ -185,7 +185,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_under_2_5, prob_over_2_5, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (팀 정보 & 전적 & 라이브 스코어 Mock)
+# 1. 해외 API 연동
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -243,6 +243,16 @@ def load_betman_data():
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
 
+# 빠졌던 통계 계산 함수 복구!!!
+def get_accuracy_stats():
+    conn = sqlite3.connect("ai_predictions.db")
+    df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED'", conn)
+    conn.close()
+    if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0}
+    total = len(df)
+    correct = df['is_correct'].sum()
+    return {"total": total, "correct": correct, "accuracy": round((correct / total) * 100, 1)}
+
 def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
@@ -267,31 +277,18 @@ st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
     
-    html, body, .stApp { 
-        background-color: #06080F !important; 
-        font-family: 'Noto Sans KR', sans-serif !important;
-        color: #E2E8F0;
-        overflow-x: hidden !important; 
-    }
+    html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
-    .app-header h1 { 
-        color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; 
-        letter-spacing: 2px; margin: 0; 
-        background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    }
+    .app-header h1 { color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; letter-spacing: 2px; margin: 0; background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .app-header p { color: #64748B; font-size: 14px; font-weight: 700; letter-spacing: 1px; margin-top: 5px; }
     
     .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 30px !important; }
     .stTabs [data-baseweb="tab"] { color: #64748B !important; font-weight: 900 !important; font-size: 20px !important; padding: 14px 0px !important; border: none !important; }
     .stTabs [aria-selected="true"] { color: #00F2FE !important; border-bottom: 4px solid #00F2FE !important; }
     
-    .match-card {
-        background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s ease, border-color 0.2s ease;
-    }
+    .match-card { background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s ease, border-color 0.2s ease; }
     .match-card:hover { border-color: #334155; transform: translateY(-2px); }
     .top3-glow { border: 2px solid #00F2FE !important; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15) !important; background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important; }
     
@@ -421,7 +418,7 @@ if proto_matches:
         })
 
 # -----------------------------------------------------------------------------
-# [TAB 1] 프로토 LIVE (띄어쓰기 완전 제거)
+# [TAB 1] 프로토 LIVE
 # -----------------------------------------------------------------------------
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
@@ -444,7 +441,6 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
                 
-                # HTML 띄어쓰기 전부 제거 (버그 해결 핵심)
                 html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}</span><span>휴식일: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else:
@@ -454,7 +450,7 @@ with main_tab1:
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 2] 승무패 14경기 (띄어쓰기 완전 제거)
+# [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
@@ -477,14 +473,13 @@ with main_tab2:
             fake_m_for_db = {'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}
             save_prediction(fake_m_for_db, best_pick, best_pct, (0, 0), 1)
             
-            # HTML 띄어쓰기 전부 제거
             html_code = f"<div class='match-card' style='padding: 24px;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick}</b> ({best_pct}%)</span></div><div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:16px;'>VS</b></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div><div class='prob-bar-container'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 3] 오늘의 TOP 3 (띄어쓰기 완전 제거)
+# [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
     top_3_picks = sorted(analyzed_proto, key=lambda x: x['best_ev'], reverse=True)[:3]
@@ -494,12 +489,11 @@ with main_tab3:
             logo_h_tag = render_logo_html(item["home_logo"])
             logo_a_tag = render_logo_html(item["away_logo"])
             
-            # HTML 띄어쓰기 전부 제거
             html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트 (필터 및 레이아웃 분리)
+# [TAB 4] AI 리포트
 # -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
@@ -534,7 +528,6 @@ with main_tab4:
                     card_class = "res-card-pend"
                     badge_html = "<span style='color:#64748B; font-weight:800; font-size:14px;'>진행 예정</span>"
                         
-                # HTML 띄어쓰기 전부 제거
                 html_code = f"<div class='{card_class}'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'><span style='color:#94A3B8; font-size:13px; font-weight:800;'>{row['league']}</span>{badge_html}</div><div style='font-size:18px; font-weight:900; color:#F8FAFC; margin-bottom:10px;'>{row['home_team']} vs {row['away_team']}</div><div style='font-size:14px; color:#94A3B8; font-weight:700;'>예측 픽: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) <span style='margin:0 10px;'>|</span> 실제 스코어: <span style='color:#F8FAFC;'>{row['actual_score']}</span></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else:
