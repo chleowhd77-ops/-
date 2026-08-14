@@ -91,19 +91,79 @@ def init_db():
             actual_score TEXT DEFAULT '-:-',
             actual_result TEXT DEFAULT 'PENDING',
             is_correct INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_toto14 INTEGER DEFAULT 0
         )
     """)
-    # [수정됨] 기존 DB 테이블에 is_toto14 컬럼이 없으면 강제로 추가하는 방어 로직
     try:
         cursor.execute("ALTER TABLE predictions ADD COLUMN is_toto14 INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
-        pass # 이미 컬럼이 존재하면 무시함
+        pass 
     
     conn.commit()
     conn.close()
 
 init_db()
+
+# -----------------------------------------------------------------------------
+# [NEW] 경기 결과 자동 채점 엔진 (스코어 업데이트)
+# -----------------------------------------------------------------------------
+def update_match_results():
+    conn = sqlite3.connect("ai_predictions.db")
+    cursor = conn.cursor()
+    
+    # 아직 결과가 안 나온(PENDING) 경기만 불러옵니다.
+    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
+    pending_matches = cursor.fetchall()
+    
+    for row in pending_matches:
+        match_id, h_team, a_team, pick = row
+        
+        # API를 통해 해당 팀들의 최근 경기 결과를 조회
+        h_info = fetch_team_info_api(h_team)
+        a_info = fetch_team_info_api(a_team)
+        
+        if h_info['id'] and a_info['id']:
+            url = f"https://{API_HOST}/fixtures/headtohead"
+            params = {"h2h": f"{h_info['id']}-{a_info['id']}", "last": 1} # 가장 최근 맞대결 1개만
+            
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=5)
+                data = res.json().get("response", [])
+                
+                if data:
+                    match_data = data[0]
+                    status = match_data['fixture']['status']['short']
+                    
+                    # 경기가 종료되었다면 (FT: Full Time, PEN: Penalty 등)
+                    if status in ['FT', 'AET', 'PEN']:
+                        goals_h = match_data['goals']['home']
+                        goals_a = match_data['goals']['away']
+                        score_str = f"{goals_h}:{goals_a}"
+                        
+                        # 적중 여부 채점 로직 (승무패 기준)
+                        is_correct = 0
+                        if goals_h > goals_a and "승" in pick and h_team in pick:
+                            is_correct = 1
+                        elif goals_h < goals_a and "승" in pick and a_team in pick:
+                            is_correct = 1
+                        elif goals_h == goals_a and "무승부" in pick:
+                            is_correct = 1
+                            
+                        # DB 업데이트
+                        cursor.execute("""
+                            UPDATE predictions 
+                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
+                            WHERE match_id = ?
+                        """, (score_str, is_correct, match_id))
+            except Exception:
+                pass
+                
+    conn.commit()
+    conn.close()
+
+# 대시보드가 로드될 때마다 한 번씩 채점 엔진을 조용히 돌립니다.
+update_match_results()
 
 # -----------------------------------------------------------------------------
 # [로직] 시간 감지 및 라이브 스코어 판별
@@ -160,7 +220,7 @@ def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a):
     return story
 
 # -----------------------------------------------------------------------------
-# [로직] 포아송 알고리즘 오류 수정 (핸디캡 확률 모순 해결)
+# [로직] 포아송 알고리즘
 # -----------------------------------------------------------------------------
 def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
@@ -260,19 +320,34 @@ def get_accuracy_stats():
 def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
+    
+    # 동일 매치가 있으면 is_toto14 값도 확실하게 업데이트하도록 쿼리 수정
     try:
-        cursor.execute("""
-            INSERT OR IGNORE INTO predictions 
-            (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, is_toto14)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], 
-            best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", 
-            m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14
-        ))
+        cursor.execute("SELECT id FROM predictions WHERE match_id = ?", (m['id'],))
+        exists = cursor.fetchone()
+        
+        if not exists:
+            cursor.execute("""
+                INSERT INTO predictions 
+                (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, is_toto14)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], 
+                best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", 
+                m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14
+            ))
+        else:
+            cursor.execute("""
+                UPDATE predictions 
+                SET is_toto14 = ? 
+                WHERE match_id = ?
+            """, (is_toto14, m['id']))
+            
         conn.commit()
-    except: pass
-    finally: conn.close()
+    except Exception as e:
+        pass
+    finally:
+        conn.close()
 
 # -----------------------------------------------------------------------------
 # 3. 프리미엄 CSS 스타일링
@@ -497,7 +572,7 @@ with main_tab3:
             st.markdown(html_code, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트
+# [TAB 4] AI 리포트 (필터링 조건 완벽 수정)
 # -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
@@ -515,7 +590,6 @@ with main_tab4:
     df = pd.read_sql_query("SELECT * FROM predictions ORDER BY id DESC", conn)
     conn.close()
     
-    # [에러 방어 코드 추가] DB에 is_toto14 컬럼이 없으면 기본값으로 생성해줍니다.
     if 'is_toto14' not in df.columns:
         df['is_toto14'] = 0
         
@@ -541,5 +615,11 @@ with main_tab4:
         else:
             st.info("해당 카테고리의 기록이 없습니다.")
 
-    with rep_tab1: render_report_list(df[df['is_toto14'] == 0])
-    with rep_tab2: render_report_list(df[df['is_toto14'] == 1])
+    # 수정된 필터링 로직: Pandas 데이터프레임 필터링 에러 방지
+    with rep_tab1: 
+        proto_df = df[df['is_toto14'] == 0]
+        render_report_list(proto_df)
+        
+    with rep_tab2: 
+        toto_df = df[df['is_toto14'] == 1]
+        render_report_list(toto_df)
