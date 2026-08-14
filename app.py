@@ -106,7 +106,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (함수들을 위로 올려서 NameError 방지!)
+# 1. 해외 API 연동 
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -196,7 +196,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     finally: conn.close()
 
 # -----------------------------------------------------------------------------
-# [NEW] 경기 결과 자동 채점 엔진 (이제 안전하게 실행됩니다!)
+# [수정] 경기 결과 자동 채점 엔진 (WIN/DRAW 영어 기록 완벽 호환)
 # -----------------------------------------------------------------------------
 def update_match_results():
     conn = sqlite3.connect("ai_predictions.db")
@@ -224,9 +224,15 @@ def update_match_results():
                         score_str = f"{goals_h}:{goals_a}"
                         
                         is_correct = 0
-                        if goals_h > goals_a and "승" in pick and h_team in pick: is_correct = 1
-                        elif goals_h < goals_a and "승" in pick and a_team in pick: is_correct = 1
-                        elif goals_h == goals_a and "무승부" in pick: is_correct = 1
+                        pick_str = str(pick).upper()
+                        
+                        # 옛날 데이터(WIN/DRAW)와 요즘 데이터(승/무) 모두 채점 가능하게 수정
+                        if goals_h > goals_a and ("승" in pick_str or "WIN" in pick_str) and h_team in pick_str: 
+                            is_correct = 1
+                        elif goals_h < goals_a and ("승" in pick_str or "WIN" in pick_str) and a_team in pick_str: 
+                            is_correct = 1
+                        elif goals_h == goals_a and ("무승부" in pick_str or "DRAW" in pick_str): 
+                            is_correct = 1
                             
                         cursor.execute("""
                             UPDATE predictions 
@@ -237,7 +243,6 @@ def update_match_results():
     conn.commit()
     conn.close()
 
-# 대시보드가 로드될 때마다 한 번씩 채점 엔진을 조용히 돌립니다.
 update_match_results()
 
 # -----------------------------------------------------------------------------
