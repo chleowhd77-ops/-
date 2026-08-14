@@ -101,7 +101,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# [스마트 기능 추가] 현재 시간 vs 마감 시간 비교 알고리즘
+# [스마트 기능] 현재 시간 vs 마감 시간 완벽 비교 로직
 # -----------------------------------------------------------------------------
 def is_deadline_passed(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정":
@@ -110,7 +110,7 @@ def is_deadline_passed(match_time_str, deadline_str):
         now = datetime.now(timezone(timedelta(hours=9))) # 현재 한국 시간
         year = now.year
         
-        # 경기시간 파싱 (예: "08.14 (금) 07:00")
+        # 경기시간 파싱 (예: "08.14 (금) 19:00")
         match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
         if match:
             mo, d, h, m = map(int, match.groups())
@@ -120,22 +120,23 @@ def is_deadline_passed(match_time_str, deadline_str):
             dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
             if dead_match:
                 dh, dm = map(int, dead_match.groups())
-                # 오전 경기인데 마감이 23시라면 전날 밤 23시로 계산
-                if dh == 23 and h < 12:
-                    d_dt = m_dt.replace(hour=dh, minute=dm) - timedelta(days=1)
-                else:
-                    d_dt = m_dt.replace(hour=dh, minute=dm)
+                d_dt = m_dt.replace(hour=dh, minute=dm)
+                
+                # [핵심 로직] 마감시간(예: 23시)이 경기시간(예: 19시)보다 늦게 찍혀 있다면 
+                # 당일 23시가 될 수 없으므로 무조건 하루 전날(어제) 23시 마감으로 계산함!
+                if d_dt >= m_dt:
+                    d_dt -= timedelta(days=1)
             else:
-                # 마감시간 텍스트가 명확하지 않으면 경기 시작 10분 전을 마감으로 간주
                 d_dt = m_dt - timedelta(minutes=10)
                 
-            return now >= d_dt
+            # 마감 시간을 지났거나, 혹은 경기 시간 자체가 이미 지나버렸다면 True
+            return now >= d_dt or now >= m_dt
     except Exception:
         pass
     return False
 
 # -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (팀 정보 & 상대 전적)
+# 1. 해외 API 연동
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
@@ -267,7 +268,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             m['id'], 
-            m.get('league', '축구토토 승무패'), # 14경기도 리그명 기본 할당
+            m.get('league', '축구토토 승무패'), 
             m['home'], m['away'], 
             best_option, best_prob_pct, 
             f"{best_score[0]}:{best_score[1]}", 
@@ -449,7 +450,6 @@ with main_tab1:
                 logo_h_tag = render_logo_html(item["home_logo"])
                 logo_a_tag = render_logo_html(item["away_logo"])
                 
-                # 마감시간 뱃지 동적 처리 (픽 마감 시 빨간색 뱃지)
                 raw_deadline = m.get("deadline_time", "23:00 마감")
                 is_closed = is_deadline_passed(item["final_match_time"], raw_deadline)
                 deadline_badge = f"<span class='deadline-closed'>🚨 픽 마감</span>" if is_closed else f"<span class='deadline-badge'>({raw_deadline})</span>"
@@ -478,7 +478,7 @@ with main_tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-# [메뉴 2: 🎯 축구토토 승무패 (DB 자동 저장 연동)]
+# [메뉴 2: 🎯 축구토토 승무패 (DB 저장)]
 with main_tab2:
     st.subheader("⚽ 축구토토 승무패 14경기 AI 종합 마킹지")
     st.caption("1경기부터 14경기까지 팀별 체급 + 최근 상대전적 + 홈/원정 이점 결합 분석")
@@ -510,7 +510,6 @@ with main_tab2:
                 best_pick = "🤝 무승부"
                 best_pct = p_d
             
-            # DB 저장 로직 추가 (14경기도 리포트에 나오게 연동)
             fake_m_for_db = {
                 'id': f"TOTO14_{m['id']}",
                 'league': '🏆 축구토토 승무패',
@@ -559,7 +558,7 @@ with main_tab3:
                 </div>
             """, unsafe_allow_html=True)
 
-# [메뉴 4: 📈 AI 적중률 리포트 (14경기도 함께 표시!)]
+# [메뉴 4: 📈 AI 적중률 리포트 (14경기 포함)]
 with main_tab4:
     st.subheader("📈 AI 머신러닝 누적 적중률 & 오답 노트")
     stats = get_accuracy_stats()
