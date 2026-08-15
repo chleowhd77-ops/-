@@ -6,7 +6,6 @@ import sqlite3
 import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
@@ -92,13 +91,17 @@ def init_db():
             actual_result TEXT DEFAULT 'PENDING',
             is_correct INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_toto14 INTEGER DEFAULT 0
+            is_toto14 INTEGER DEFAULT 0,
+            failure_reason TEXT DEFAULT '',
+            match_time TEXT DEFAULT ''
         )
     """)
-    try:
-        cursor.execute("ALTER TABLE predictions ADD COLUMN is_toto14 INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass 
+    try: cursor.execute("ALTER TABLE predictions ADD COLUMN is_toto14 INTEGER DEFAULT 0")
+    except: pass 
+    try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
+    except: pass
+    try: cursor.execute("ALTER TABLE predictions ADD COLUMN match_time TEXT DEFAULT ''")
+    except: pass
     
     conn.commit()
     conn.close()
@@ -112,7 +115,6 @@ init_db()
 def fetch_team_info_api(team_name):
     logo = DIRECT_LOGO_MAP.get(team_name)
     if logo: return {"id": None, "logo": logo}
-    
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     url = f"https://{API_HOST}/teams"
     params = {"search": search_name}
@@ -173,7 +175,7 @@ def get_accuracy_stats():
     correct = df['is_correct'].sum()
     return {"total": total, "correct": correct, "accuracy": round((correct / total) * 100, 1)}
 
-def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
+def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0, match_time_str=""):
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
     try:
@@ -182,68 +184,18 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
         if not exists:
             cursor.execute("""
                 INSERT INTO predictions 
-                (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, is_toto14)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, is_toto14, match_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], 
                 best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", 
-                m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14
+                m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14, match_time_str
             ))
         else:
-            cursor.execute("UPDATE predictions SET is_toto14 = ? WHERE match_id = ?", (is_toto14, m['id']))
+            cursor.execute("UPDATE predictions SET is_toto14 = ?, match_time = ? WHERE match_id = ?", (is_toto14, match_time_str, m['id']))
         conn.commit()
     except: pass
     finally: conn.close()
-
-# -----------------------------------------------------------------------------
-# [수정] 경기 결과 자동 채점 엔진 (WIN/DRAW 영어 기록 완벽 호환)
-# -----------------------------------------------------------------------------
-def update_match_results():
-    conn = sqlite3.connect("ai_predictions.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT match_id, home_team, away_team, predicted_pick FROM predictions WHERE actual_result = 'PENDING'")
-    pending_matches = cursor.fetchall()
-    
-    for row in pending_matches:
-        match_id, h_team, a_team, pick = row
-        h_info = fetch_team_info_api(h_team)
-        a_info = fetch_team_info_api(a_team)
-        
-        if h_info['id'] and a_info['id']:
-            url = f"https://{API_HOST}/fixtures/headtohead"
-            params = {"h2h": f"{h_info['id']}-{a_info['id']}", "last": 1}
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=5)
-                data = res.json().get("response", [])
-                if data:
-                    match_data = data[0]
-                    status = match_data['fixture']['status']['short']
-                    if status in ['FT', 'AET', 'PEN']:
-                        goals_h = match_data['goals']['home']
-                        goals_a = match_data['goals']['away']
-                        score_str = f"{goals_h}:{goals_a}"
-                        
-                        is_correct = 0
-                        pick_str = str(pick).upper()
-                        
-                        # 옛날 데이터(WIN/DRAW)와 요즘 데이터(승/무) 모두 채점 가능하게 수정
-                        if goals_h > goals_a and ("승" in pick_str or "WIN" in pick_str) and h_team in pick_str: 
-                            is_correct = 1
-                        elif goals_h < goals_a and ("승" in pick_str or "WIN" in pick_str) and a_team in pick_str: 
-                            is_correct = 1
-                        elif goals_h == goals_a and ("무승부" in pick_str or "DRAW" in pick_str): 
-                            is_correct = 1
-                            
-                        cursor.execute("""
-                            UPDATE predictions 
-                            SET actual_score = ?, actual_result = 'FINISHED', is_correct = ?
-                            WHERE match_id = ?
-                        """, (score_str, is_correct, match_id))
-            except: pass
-    conn.commit()
-    conn.close()
-
-update_match_results()
 
 # -----------------------------------------------------------------------------
 # [로직] 시간 감지 및 스토리텔링, 포아송
@@ -270,13 +222,6 @@ def get_match_status(match_time_str, deadline_str):
             else: return "UPCOMING", is_closed
     except: pass
     return "UPCOMING", False
-
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a):
-    if prob_h > 60: return "🔥 전력상 우위! 홈팀의 무난한 승리가 예상되는 매치입니다."
-    elif prob_a > 60: return "🚨 원정팀의 매서운 기세! 홈팀의 고전이 예상되는 이변 주의 경기!"
-    elif abs(prob_h - prob_a) <= 10 and prob_d >= 28: return "⚔️ 승부를 예측하기 힘든 팽팽한 접전! 진흙탕 싸움이 예상됩니다."
-    elif h2h_h > h2h_a + 2: return "📊 압도적인 상대 전적! 홈팀이 확실한 우위를 점하고 있습니다."
-    else: return "🔍 AI 분석 결과, 미세한 차이로 승패가 갈릴 박빙의 승부입니다."
 
 def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
@@ -375,7 +320,7 @@ def render_logo_html(logo_url):
     return ""
 
 # -----------------------------------------------------------------------------
-# 4. 메인 데이터 처리 로직
+# 4. 메인 렌더링
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class='app-header'>
@@ -384,12 +329,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
-    "프로토 LIVE", 
-    "승무패 14경기", 
-    "오늘의 TOP 3", 
-    "AI 리포트"
-])
+main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs(["프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "AI 리포트"])
 
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
@@ -427,13 +367,17 @@ if proto_matches:
 
         best_handi = f"{home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{away_team} 핸디승"
         best_handi_prob = round(max(prob_handi_h, prob_handi_a) * 100, 1)
-        
         best_uo = "언더 (U 2.5)" if prob_u * uo_under > prob_o * uo_over else "오버 (O 2.5)"
         best_uo_prob = round(max(prob_u, prob_o) * 100, 1)
 
-        save_prediction(m, best_option, best_prob_pct, (0,0), 0)
+        save_prediction(m, best_option, best_prob_pct, (0,0), 0, final_match_time)
 
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details['h_wins'], fixture_details['a_wins'])
+        story = ""
+        if h_win*100 > 60: story = "🔥 전력상 우위! 홈팀의 무난한 승리가 예상되는 매치입니다."
+        elif a_win*100 > 60: story = "🚨 원정팀의 매서운 기세! 홈팀의 고전이 예상되는 이변 주의 경기!"
+        elif abs(h_win*100 - a_win*100) <= 10 and draw*100 >= 28: story = "⚔️ 승부를 예측하기 힘든 팽팽한 접전! 진흙탕 싸움이 예상됩니다."
+        elif fixture_details['h_wins'] > fixture_details['a_wins'] + 2: story = "📊 압도적인 상대 전적! 홈팀이 확실한 우위를 점하고 있습니다."
+        else: story = "🔍 AI 분석 결과, 미세한 차이로 승패가 갈릴 박빙의 승부입니다."
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time,
@@ -449,21 +393,17 @@ if proto_matches:
 # -----------------------------------------------------------------------------
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
-    
     with sub_soccer:
         if analyzed_proto:
             for item in analyzed_proto:
                 m = item['match']
                 logo_h_tag = render_logo_html(item["home_logo"])
                 logo_a_tag = render_logo_html(item["away_logo"])
-                
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
-                if match_status == "LIVE":
-                    time_display = f"<span class='live-score'>1 : 0</span><span class='deadline-closed'>LIVE</span>"
-                elif match_status == "FINISHED":
-                    time_display = f"<span class='live-score'>종료</span>"
+                if match_status == "LIVE": time_display = f"<span class='live-score'>1 : 0</span><span class='deadline-closed'>LIVE</span>"
+                elif match_status == "FINISHED": time_display = f"<span class='live-score'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
@@ -481,7 +421,6 @@ with main_tab1:
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
-    
     if toto_14_raw:
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api(m['home'])
@@ -497,13 +436,25 @@ with main_tab2:
             elif p_a > p_h and p_a >= p_d: best_pick = f"{m['away']} 승"; best_pct = p_a
             else: best_pick = "무승부"; best_pct = p_d
             
-            fake_m_for_db = {'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}
-            save_prediction(fake_m_for_db, best_pick, best_pct, (0, 0), 1)
+            save_prediction(m, best_pick, best_pct, (0, 0), 1, "시간 미정")
             
             html_code = f"<div class='match-card' style='padding: 24px;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick}</b> ({best_pct}%)</span></div><div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:16px;'>VS</b></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div><div class='prob-bar-container'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
     else:
-        st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
+        conn = sqlite3.connect("ai_predictions.db")
+        df_14 = pd.read_sql_query("SELECT * FROM predictions WHERE is_toto14 = 1 ORDER BY id DESC LIMIT 14", conn)
+        conn.close()
+        
+        if len(df_14) > 0:
+            df_14 = df_14.iloc[::-1]
+            st.info("베트맨 발매가 마감되어, 가장 최근 저장된 14경기 데이터를 불러옵니다.")
+            idx = 1
+            for _, row in df_14.iterrows():
+                html_code = f"<div class='match-card' style='padding: 24px;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{row['predicted_pick']}</b> ({row['predicted_prob']}%)</span></div><div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><span class='team-name-text'>{row['home_team']}</span></div><div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:16px;'>VS</b></div><div class='team-box away'><span class='team-name-text'>{row['away_team']}</span></div></div></div>"
+                st.markdown(html_code, unsafe_allow_html=True)
+                idx += 1
+        else:
+            st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
 # -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3
@@ -515,16 +466,14 @@ with main_tab3:
             m = item['match']
             logo_h_tag = render_logo_html(item["home_logo"])
             logo_a_tag = render_logo_html(item["away_logo"])
-            
             html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트
+# [TAB 4] AI 리포트 (버튼 깔끔하게 제거 완료)
 # -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
-    
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("누적 분석 경기", f"{stats['total']} 경기")
     with c2: st.metric("적중 횟수", f"{stats['correct']} 회")
@@ -538,14 +487,15 @@ with main_tab4:
     df = pd.read_sql_query("SELECT * FROM predictions ORDER BY id DESC", conn)
     conn.close()
     
-    if 'is_toto14' not in df.columns:
-        df['is_toto14'] = 0
+    if 'is_toto14' not in df.columns: df['is_toto14'] = 0
+    if 'failure_reason' not in df.columns: df['failure_reason'] = ""
         
     def render_report_list(df_subset):
         if len(df_subset) > 0:
             for _, row in df_subset.iterrows():
                 status = row['actual_result']
                 is_correct = row['is_correct']
+                failure_note = ""
                 
                 if status == 'FINISHED':
                     if is_correct == 1:
@@ -554,11 +504,13 @@ with main_tab4:
                     else:
                         card_class = "res-card-lose"
                         badge_html = "<span style='color:#EF4444; font-weight:900; font-size:14px;'>미적중 (LOSE)</span>"
+                        if row['failure_reason']:
+                            failure_note = f"<div style='margin-top:12px; padding:10px; background:rgba(239, 68, 68, 0.1); border-left:3px solid #EF4444; color:#F8FAFC; font-size:13px; font-weight:700;'>{row['failure_reason']}</div>"
                 else:
                     card_class = "res-card-pend"
                     badge_html = "<span style='color:#64748B; font-weight:800; font-size:14px;'>진행 예정</span>"
                         
-                html_code = f"<div class='{card_class}'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'><span style='color:#94A3B8; font-size:13px; font-weight:800;'>{row['league']}</span>{badge_html}</div><div style='font-size:18px; font-weight:900; color:#F8FAFC; margin-bottom:10px;'>{row['home_team']} vs {row['away_team']}</div><div style='font-size:14px; color:#94A3B8; font-weight:700;'>예측 픽: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) <span style='margin:0 10px;'>|</span> 실제 스코어: <span style='color:#F8FAFC;'>{row['actual_score']}</span></div></div>"
+                html_code = f"<div class='{card_class}'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'><span style='color:#94A3B8; font-size:13px; font-weight:800;'>{row['league']}</span>{badge_html}</div><div style='font-size:18px; font-weight:900; color:#F8FAFC; margin-bottom:10px;'>{row['home_team']} vs {row['away_team']}</div><div style='font-size:14px; color:#94A3B8; font-weight:700;'>예측 픽: <span style='color:#00F2FE;'>{row['predicted_pick']}</span> ({row['predicted_prob']}%) <span style='margin:0 10px;'>|</span> 실제 스코어: <span style='color:#F8FAFC;'>{row['actual_score']}</span></div>{failure_note}</div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else:
             st.info("해당 카테고리의 기록이 없습니다.")
