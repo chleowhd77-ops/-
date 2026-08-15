@@ -6,14 +6,12 @@ import sqlite3
 import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정
 # -----------------------------------------------------------------------------
 APP_TITLE = "D.J PROTO ANALYTICS"
 
-# 레이아웃은 wide로 두되, CSS로 최대 폭을 제한합니다.
 st.set_page_config(page_title=APP_TITLE, page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
 API_KEY = "28b599664bba858ebf93515768741975"
@@ -151,7 +149,7 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0, matc
     finally: conn.close()
 
 # -----------------------------------------------------------------------------
-# [로직] 시간 감지 및 포아송
+# [로직] 시간 감지 및 포아송 & AI 동적 스토리텔링
 # -----------------------------------------------------------------------------
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
@@ -195,6 +193,23 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
                  else: prob_handi_a += p
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
+# [수정] 밋밋한 템플릿을 버리고 디테일한 데이터 삽입형 AI 코멘트로 진화!
+def generate_dynamic_story(h_team, a_team, prob_h, prob_d, prob_a, odd_h, odd_a):
+    prob_h, prob_d, prob_a = round(prob_h, 1), round(prob_d, 1), round(prob_a, 1)
+    
+    if prob_h >= 60.0:
+        return f"🔥 전력 우위 분석! 홈팀 <b>{h_team}</b>의 승률이 {prob_h}%로 데이터상 크게 앞섭니다. 배당률({odd_h}) 대비 안정적인 투자가치가 보이는 경기입니다."
+    elif prob_a >= 60.0:
+        return f"🚨 원정팀의 매서운 기세! <b>{a_team}</b>의 승리 확률이 {prob_a}%로 산출되었습니다. {h_team}의 고전이 예상되는 이변 주의 매치입니다."
+    elif abs(prob_h - prob_a) <= 10.0 and prob_d >= 25.0:
+        return f"⚔️ <b>{h_team}</b>({prob_h}%) vs <b>{a_team}</b>({prob_a}%)의 초박빙 승부! 승률 차이가 미미하며, 무승부 확률({prob_d}%)이 높아 신중한 접근이 필요합니다."
+    elif prob_h > prob_a and (prob_h - prob_a) > 10.0:
+        return f"📊 AI 알고리즘 산출 결과, <b>{h_team}</b>의 승률({prob_h}%)이 {a_team}보다 다소 우세합니다. 다만 배당({odd_h}) 변동 흐름을 체크해야 합니다."
+    elif prob_a > prob_h and (prob_a - prob_h) > 10.0:
+        return f"🔍 원정팀 <b>{a_team}</b>의 전력 수치가 {prob_a}%로 조금 더 높게 평가되었습니다. {h_team}이 홈 이점을 얼마나 살릴지가 관건입니다."
+    else:
+        return f"💡 팽팽한 흐름! 홈팀 <b>{h_team}</b>과 원정팀 <b>{a_team}</b> 모두 뚜렷한 우위를 점하지 못한 경기력 지표를 보이고 있습니다."
+
 # -----------------------------------------------------------------------------
 # 3. 프리미엄 CSS
 # -----------------------------------------------------------------------------
@@ -205,7 +220,6 @@ st.markdown("""
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
-    /* [수정] 앱의 전체 폭을 제한하여 가독성을 높입니다 */
     .block-container { max-width: 1000px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
@@ -240,7 +254,7 @@ st.markdown("""
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
     
     .h2h-bar { display: flex; justify-content: space-between; font-size: 13px; color: #64748B; font-weight: 700; border-top: 1px dashed #1E293B; padding-top: 12px; margin-bottom: 15px; }
-    .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 700; border-radius: 4px; margin-bottom: 15px; }
+    .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 500; line-height:1.5; border-radius: 4px; margin-bottom: 15px; }
     
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; }
@@ -328,12 +342,8 @@ if proto_matches:
 
         save_prediction(m, best_option, best_prob_pct, (0,0), 0, final_match_time)
 
-        story = ""
-        if h_win*100 > 60: story = "🔥 전력상 우위! 홈팀의 무난한 승리가 예상되는 매치입니다."
-        elif a_win*100 > 60: story = "🚨 원정팀의 매서운 기세! 홈팀의 고전이 예상되는 이변 주의 경기!"
-        elif abs(h_win*100 - a_win*100) <= 10 and draw*100 >= 28: story = "⚔️ 승부를 예측하기 힘든 팽팽한 접전! 진흙탕 싸움이 예상됩니다."
-        elif fixture_details['h_wins'] > fixture_details['a_wins'] + 2: story = "📊 압도적인 상대 전적! 홈팀이 확실한 우위를 점하고 있습니다."
-        else: story = "🔍 AI 분석 결과, 미세한 차이로 승패가 갈릴 박빙의 승부입니다."
+        # [NEW] 동적 텍스트 스토리텔링 함수 적용!
+        story = generate_dynamic_story(m['home'], m['away'], h_win*100, draw*100, a_win*100, odd_h, odd_a)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info["logo"], "away_logo": away_info["logo"],
@@ -378,7 +388,6 @@ with main_tab2:
     
     if toto_14_raw:
         total_combinations = 1
-        
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api(m['home'])
             away_info = fetch_team_info_api(m['away'])
