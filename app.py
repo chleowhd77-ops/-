@@ -6,12 +6,14 @@ import sqlite3
 import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정
 # -----------------------------------------------------------------------------
 APP_TITLE = "D.J PROTO ANALYTICS"
 
+# 레이아웃은 wide로 두되, CSS로 최대 폭을 제한합니다.
 st.set_page_config(page_title=APP_TITLE, page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
 API_KEY = "28b599664bba858ebf93515768741975"
@@ -199,34 +201,47 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
+    
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
+    
+    /* [수정] 앱의 전체 폭을 제한하여 가독성을 높입니다 */
+    .block-container { max-width: 1000px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
+    
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
     .app-header h1 { color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; letter-spacing: 2px; margin: 0; background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .app-header p { color: #64748B; font-size: 14px; font-weight: 700; letter-spacing: 1px; margin-top: 5px; }
+    
     .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 30px !important; }
     .stTabs [data-baseweb="tab"] { color: #64748B !important; font-weight: 900 !important; font-size: 20px !important; padding: 14px 0px !important; border: none !important; }
     .stTabs [aria-selected="true"] { color: #00F2FE !important; border-bottom: 4px solid #00F2FE !important; }
+    
     .match-card { background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s ease, border-color 0.2s ease; }
     .match-card:hover { border-color: #334155; transform: translateY(-2px); }
     .top3-glow { border: 2px solid #00F2FE !important; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15) !important; background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important; }
+    
     .league-title { font-size: 13px; color: #94A3B8; font-weight: 900; letter-spacing: 1px; margin-bottom: 15px; }
     .vs-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
     .team-box { flex: 1; display: flex; align-items: center; gap: 15px; }
     .team-box.home { justify-content: flex-end; text-align: right; }
     .team-box.away { justify-content: flex-start; text-align: left; }
+    
     .team-name-text { color: #F8FAFC !important; font-size: 24px; font-weight: 900; letter-spacing: -0.5px; }
     .team-logo { width: 55px !important; height: 55px !important; object-fit: contain; }
+    
     .center-time-box { width: 140px; text-align: center; flex-shrink: 0; }
     .match-time-text { color: #CBD5E1; font-size: 15px; font-weight: 700; display: block; margin-bottom: 4px;}
     .live-score { font-size: 28px; font-weight: 900; color: #00F2FE; display: block; margin-bottom: 4px; text-shadow: 0 0 10px rgba(0,242,254,0.5); }
     .deadline-open { color: #00F2FE; font-size: 12px; font-weight: 900; border: 1px solid #00F2FE; padding: 3px 8px; border-radius: 4px; display: inline-block;}
     .deadline-closed { color: #EF4444; font-size: 12px; font-weight: 900; background: rgba(239, 68, 68, 0.1); border: 1px solid #EF4444; padding: 3px 8px; border-radius: 4px; display: inline-block;}
+    
     .odd-bar { display: flex; justify-content: space-between; background: #111827; border-radius: 6px; padding: 12px 20px; margin-bottom: 15px; border: 1px solid #1F2937; }
     .odd-item { font-size: 14px; color: #94A3B8; font-weight: 700; }
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
+    
     .h2h-bar { display: flex; justify-content: space-between; font-size: 13px; color: #64748B; font-weight: 700; border-top: 1px dashed #1E293B; padding-top: 12px; margin-bottom: 15px; }
     .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 700; border-radius: 4px; margin-bottom: 15px; }
+    
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; }
     .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 8px; }
@@ -276,10 +291,7 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs(["프로토 LIVE", "승무�
 
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
-
-# [문제 해결 핵심] 14경기 필터링 조건을 완전히 풀어버렸습니다! 무조건 다 표시합니다.
 toto_14_raw = all_data.get("toto_14_matches", []) 
-
 live_scores_dict = load_live_scores()
 
 analyzed_proto = []
@@ -359,7 +371,7 @@ with main_tab1:
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 2] 승무패 14경기
+# [TAB 2] 승무패 14경기 
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 & 스마트 마킹표</p>", unsafe_allow_html=True)
