@@ -6,7 +6,6 @@ import sqlite3
 import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정
@@ -277,7 +276,10 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs(["프로토 LIVE", "승무�
 
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
-toto_14_raw = [x for x in all_data.get("toto_14_matches", []) if "홈" not in x["home"] and "원정" not in x["away"]]
+
+# [문제 해결 핵심] 14경기 필터링 조건을 완전히 풀어버렸습니다! 무조건 다 표시합니다.
+toto_14_raw = all_data.get("toto_14_matches", []) 
+
 live_scores_dict = load_live_scores()
 
 analyzed_proto = []
@@ -357,7 +359,7 @@ with main_tab1:
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 2] 승무패 14경기 (AI 조합기 & 마킹표 UI 탑재)
+# [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 & 스마트 마킹표</p>", unsafe_allow_html=True)
@@ -371,7 +373,6 @@ with main_tab2:
             logo_h_tag = render_logo_html(home_info["logo"])
             logo_a_tag = render_logo_html(away_info["logo"])
             
-            # (임시) 전력 분석 시드 값 - 나중에 실제 배당 API 연동 가능
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = 32.0 + (base_seed % 35)
             p_d = 24.0 + (base_seed % 12)
@@ -379,31 +380,26 @@ with main_tab2:
             p_h = round(p_h, 1)
             p_d = round(p_d, 1)
             
-            # [핵심] AI 스마트 마킹 로직 (단통 vs 복수 마킹)
             probs = [("win", p_h), ("draw", p_d), ("lose", p_a)]
             probs.sort(key=lambda x: x[1], reverse=True)
             
             mark_win, mark_draw, mark_lose = "", "", ""
             picks = []
             
-            # 1순위 확률이 50%를 넘거나, 1순위와 2순위 차이가 15% 이상이면 단통 (1개)
             if probs[0][1] >= 50.0 or (probs[0][1] - probs[1][1] >= 15.0):
                 if probs[0][0] == "win": mark_win = "active"; picks.append(f"{m['home']} 승")
                 elif probs[0][0] == "draw": mark_draw = "active"; picks.append("무승부")
                 else: mark_lose = "active"; picks.append(f"{m['away']} 승")
-            # 접전이면 투마킹 (2개 픽)
             else:
-                total_combinations *= 2 # 조합의 수 2배 증가
+                total_combinations *= 2
                 for i in range(2):
                     if probs[i][0] == "win": mark_win = "active"; picks.append(f"{m['home']} 승")
                     elif probs[i][0] == "draw": mark_draw = "active"; picks.append("무승부")
                     else: mark_lose = "active"; picks.append(f"{m['away']} 승")
                     
             best_pick_text = " / ".join(picks)
-            
             save_prediction(m, best_pick_text, probs[0][1], (0, 0), 1, "시간 미정")
             
-            # UI: 실제 베트맨 종이 같은 마킹 버튼 렌더링
             html_code = f"""
             <div class='match-card' style='padding: 24px;'>
                 <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
@@ -421,8 +417,6 @@ with main_tab2:
                     <div class='prob-bar-draw' style='width: {p_d}%;'></div>
                     <div class='prob-bar-lose' style='width: {p_a}%;'></div>
                 </div>
-                
-                <!-- 마킹표 UI -->
                 <div class='marking-grid'>
                     <div class='mark-btn win {mark_win}'>승</div>
                     <div class='mark-btn draw {mark_draw}'>무</div>
@@ -432,7 +426,6 @@ with main_tab2:
             """
             st.markdown(html_code, unsafe_allow_html=True)
             
-        # 총 베팅 금액 계산 표시
         bet_amount = total_combinations * 1000
         st.success(f"💡 AI 추천 조합을 모두 마킹할 경우, 총 조합 수는 **{total_combinations}개**이며, 예상 구매 금액은 **{bet_amount:,}원**입니다.")
         
