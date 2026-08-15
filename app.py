@@ -10,13 +10,14 @@ from datetime import datetime, timezone, timedelta
 # -----------------------------------------------------------------------------
 # 0. 기본 설정
 # -----------------------------------------------------------------------------
-APP_TITLE = "D.J PROTO ANALYTICS"
+APP_TITLE = "28b599664bba858ebf93515768741975"
 st.set_page_config(page_title=APP_TITLE, page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
-API_KEY = "28b599664bba858ebf93515768741975"
+API_KEY = "YOUR_API_KEY_HERE"
 API_HOST = "v3.football.api-sports.io"
 headers = {'x-rapidapi-host': API_HOST, 'x-rapidapi-key': API_KEY}
 
+# [서프라이즈] 스크린샷에 있던 팀들 영문 변환 사전 대규모 추가!
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
@@ -24,26 +25,18 @@ TEAM_NAME_MAP = {
     "부산아이": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
     "부천FC": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "서울이랜": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
-    "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC"
+    "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
+    "가시마 앤틀러스": "Kashima Antlers", "나고야 그램퍼스": "Nagoya Grampus", "미토 홀리호크": "Mito Hollyhock", 
+    "감바 오사카": "Gamba Osaka", "시미즈 에스펄스": "Shimizu S-Pulse", "요코하마 F마리노스": "Yokohama F. Marinos",
+    "후지에다 MYFC": "Fujieda MYFC", "이와키FC": "Iwaki FC", "가시와 레이솔": "Kashiwa Reysol", "도쿄 베르디": "Tokyo Verdy",
+    "KFUM카메라테네 오슬로": "KFUM", "릴레스트룀SK": "Lillestrom", "브리스틀 시티": "Bristol City", "밀월": "Millwall"
 }
 
 DIRECT_LOGO_MAP = {
     "광주FC": "https://media.api-sports.io/football/teams/2836.png", "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
     "제주SKFC": "https://media.api-sports.io/football/teams/2839.png", "FC안양": "https://media.api-sports.io/football/teams/2848.png",
     "FC서울": "https://media.api-sports.io/football/teams/2844.png", "대전하나": "https://media.api-sports.io/football/teams/2835.png",
-    "충북청주": "https://media.api-sports.io/football/teams/18525.png", "전남드래": "https://media.api-sports.io/football/teams/2847.png",
-    "김해FC": "https://media.api-sports.io/football/teams/18027.png", "경남FC": "https://media.api-sports.io/football/teams/2837.png",
-    "수원삼성": "https://media.api-sports.io/football/teams/2845.png", "수원FC": "https://media.api-sports.io/football/teams/2846.png",
-    "부산아이": "https://media.api-sports.io/football/teams/2834.png", "화성FC": "https://media.api-sports.io/football/teams/18031.png",
-    "인천유나": "https://media.api-sports.io/football/teams/2838.png", "김천상무": "https://media.api-sports.io/football/teams/2842.png",
-    "부천FC": "https://media.api-sports.io/football/teams/2849.png", "전북현대": "https://media.api-sports.io/football/teams/2840.png",
-    "울산HDFC": "https://media.api-sports.io/football/teams/2841.png", "강원FC": "https://media.api-sports.io/football/teams/2833.png",
-    "서울이랜드": "https://media.api-sports.io/football/teams/2850.png", "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
-    "안산그리": "https://media.api-sports.io/football/teams/2851.png", "대구FC": "https://media.api-sports.io/football/teams/2832.png",
-    "충남아산": "https://media.api-sports.io/football/teams/8282.png", "미라솔": "https://media.api-sports.io/football/teams/1023.png",
-    "LDU키토": "https://media.api-sports.io/football/teams/1148.png", "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
-    "SC코린티안스": "https://media.api-sports.io/football/teams/131.png", "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
-    "가시와 레이솔": "https://media.api-sports.io/football/teams/2960.png"
+    "충북청주": "https://media.api-sports.io/football/teams/18525.png", "전남드래": "https://media.api-sports.io/football/teams/2847.png"
 }
 
 def init_db():
@@ -79,13 +72,13 @@ def fetch_team_info_api(team_name):
 
 @st.cache_data(ttl=43200)
 def fetch_recent_form(team_id):
-    if not team_id: return {"form": "정보없음", "rest_days": "-"}
+    if not team_id: return {"form": "정보없음"}
     url = f"https://{API_HOST}/fixtures"
     params = {"team": team_id, "last": 5, "status": "FT-AET-PEN"}
     try:
         res = requests.get(url, headers=headers, params=params, timeout=5)
         matches = res.json().get("response", [])
-        if not matches: return {"form": "정보없음", "rest_days": "-"}
+        if not matches: return {"form": "정보없음"}
         form = []
         for m in matches:
             if m['teams']['home']['id'] == team_id:
@@ -96,11 +89,8 @@ def fetch_recent_form(team_id):
                 if m['teams']['away']['winner']: form.append("승")
                 elif m['teams']['home']['winner']: form.append("패")
                 else: form.append("무")
-        last_match_date = datetime.fromisoformat(matches[0]['fixture']['date'].replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        rest_days = (now - last_match_date).days
-        return {"form": "-".join(form), "rest_days": f"{rest_days}일"}
-    except: return {"form": "정보없음", "rest_days": "-"}
+        return {"form": "-".join(form)}
+    except: return {"form": "정보없음"}
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
@@ -253,8 +243,11 @@ st.markdown("""
     .odd-bar { display: flex; justify-content: space-between; background: #111827; border-radius: 6px; padding: 12px 20px; margin-bottom: 15px; border: 1px solid #1F2937; }
     .odd-item { font-size: 14px; color: #94A3B8; font-weight: 700; }
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
+    
+    /* H2H Bar 디자인 변경 (휴식일 삭제) */
     .h2h-bar { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #64748B; font-weight: 700; border-top: 1px dashed #1E293B; padding-top: 12px; margin-bottom: 15px; }
     .h2h-row { display: flex; justify-content: space-between; align-items: center; }
+    
     .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 500; line-height:1.5; border-radius: 4px; margin-bottom: 15px; }
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; }
@@ -358,17 +351,16 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
                 
-                if item['h2h']['is_valid']:
+                # [수정] 조건문을 변경하여 폼이 무조건 렌더링되게 만듭니다!
+                if item['h2h']['is_valid'] and item['h_form']['form'] != "정보없음":
                     h2h_text = f"{m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}"
                     recent_form_html = f"<span>📈 최근 5경기: {m['home']} <b style='color:#00F2FE;'>[{item['h_form']['form']}]</b> vs {m['away']} <b style='color:#00F2FE;'>[{item['a_form']['form']}]</b></span>"
-                    rest_days_text = f"{item['h_form']['rest_days']} / {item['a_form']['rest_days']}"
                 else:
                     h2h_text = "해외 데이터 매칭 대기 중"
-                    recent_form_html = ""
-                    rest_days_text = "- / -"
+                    recent_form_html = "<span>📈 최근 5경기: 해외 데이터 매칭 대기 중</span>"
                 
-                # [수정 완료] 줄바꿈/들여쓰기를 제거하여 Markdown 코드로 인식되지 않게 완벽 보호!
-                html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>{live_event_html}<div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><div class='h2h-row'><span>⚔️ 상대전적: {h2h_text}</span><span>🔋 휴식일: {rest_days_text}</span></div><div class='h2h-row' style='color:#94A3B8; font-size:12px; margin-top:4px;'>{recent_form_html}</div></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
+                # 휴식일(rest_days)를 완전히 날려버린 깔끔한 UI
+                html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>{live_event_html}<div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><div class='h2h-row'><span>⚔️ 상대전적: {h2h_text}</span></div><div class='h2h-row' style='color:#94A3B8; font-size:12px; margin-top:4px;'>{recent_form_html}</div></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
             
