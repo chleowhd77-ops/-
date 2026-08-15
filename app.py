@@ -7,6 +7,9 @@ import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
 
+# -----------------------------------------------------------------------------
+# 0. 기본 설정
+# -----------------------------------------------------------------------------
 APP_TITLE = "D.J PROTO ANALYTICS"
 st.set_page_config(page_title=APP_TITLE, page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
@@ -59,6 +62,9 @@ def init_db():
 
 init_db()
 
+# -----------------------------------------------------------------------------
+# 1. API 및 데이터 로드 함수 (최근 전적 & 휴식일 로직 추가)
+# -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
     logo = DIRECT_LOGO_MAP.get(team_name)
@@ -69,17 +75,48 @@ def fetch_team_info_api(team_name):
     try:
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
-        if res_data.get("response") and len(res_data["response"]) > 0: return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
+        if res_data.get("response") and len(res_data["response"]) > 0: 
+            return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
     except: pass
     return {"id": None, "logo": None}
 
+# [NEW] 최근 5경기 폼 및 마지막 경기일(휴식일 계산용) 가져오기
+@st.cache_data(ttl=43200)
+def fetch_recent_form(team_id):
+    if not team_id: return {"form": "정보없음", "rest_days": "-"}
+    url = f"https://{API_HOST}/fixtures"
+    params = {"team": team_id, "last": 5, "status": "FT-AET-PEN"}
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=5)
+        matches = res.json().get("response", [])
+        if not matches: return {"form": "정보없음", "rest_days": "-"}
+        
+        form = []
+        for m in matches:
+            if m['teams']['home']['id'] == team_id:
+                if m['teams']['home']['winner']: form.append("승")
+                elif m['teams']['away']['winner']: form.append("패")
+                else: form.append("무")
+            else:
+                if m['teams']['away']['winner']: form.append("승")
+                elif m['teams']['home']['winner']: form.append("패")
+                else: form.append("무")
+                
+        # 가장 최근 경기 날짜로 휴식일 계산
+        last_match_date = datetime.fromisoformat(matches[0]['fixture']['date'].replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        rest_days = (now - last_match_date).days
+        
+        return {"form": "-".join(form), "rest_days": f"{rest_days}일"}
+    except: return {"form": "정보없음", "rest_days": "-"}
+
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
-    if not home_id or not away_id: return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    if not home_id or not away_id: return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
     url = f"https://{API_HOST}/fixtures/headtohead"
     params = {"h2h": f"{home_id}-{away_id}"}
-    match_time_str, last_h2h_date = None, "-"
     h_wins, draws, a_wins = 0, 0, 0
+    match_time_str = None
     try:
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
@@ -97,8 +134,8 @@ def fetch_fixture_details_api(home_id, away_id):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
             else: draws += 1
-        return {"match_time": match_time_str, "last_h2h_date": last_h2h_date, "h_rest": "4일", "a_rest": "4일", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
-    except: return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        return {"match_time": match_time_str, "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10]), "is_valid": True}
+    except: return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
 
 @st.cache_data(ttl=60)
 def load_betman_data():
@@ -192,6 +229,9 @@ def generate_dynamic_story(h_team, a_team, prob_h, prob_d, prob_a, odd_h, odd_a)
     elif prob_a > prob_h and (prob_a - prob_h) > 10.0: return f"🔍 원정팀 <b>{a_team}</b>의 전력 수치가 {prob_a}%로 조금 더 높게 평가되었습니다. {h_team}이 홈 이점을 얼마나 살릴지가 관건입니다."
     else: return f"💡 팽팽한 흐름! 홈팀 <b>{h_team}</b>과 원정팀 <b>{a_team}</b> 모두 뚜렷한 우위를 점하지 못한 경기력 지표를 보이고 있습니다."
 
+# -----------------------------------------------------------------------------
+# 3. 프리미엄 CSS
+# -----------------------------------------------------------------------------
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -219,15 +259,16 @@ st.markdown("""
     .live-score { font-size: 28px; font-weight: 900; color: #00F2FE; display: block; margin-bottom: 4px; text-shadow: 0 0 10px rgba(0,242,254,0.5); }
     .deadline-open { color: #00F2FE; font-size: 12px; font-weight: 900; border: 1px solid #00F2FE; padding: 3px 8px; border-radius: 4px; display: inline-block;}
     .deadline-closed { color: #EF4444; font-size: 12px; font-weight: 900; background: rgba(239, 68, 68, 0.1); border: 1px solid #EF4444; padding: 3px 8px; border-radius: 4px; display: inline-block;}
-    
-    /* [NEW] 라이브 이벤트 타임라인 CSS */
     .live-event-bar { background: linear-gradient(90deg, rgba(234, 179, 8, 0.15) 0%, rgba(234, 179, 8, 0.05) 100%); border-left: 3px solid #EAB308; padding: 8px 15px; font-size: 13px; color: #FDE047; font-weight: 800; border-radius: 4px; margin-bottom: 15px; animation: pulse 2s infinite; }
     @keyframes pulse { 0% { opacity: 0.8; } 50% { opacity: 1; } 100% { opacity: 0.8; } }
-
     .odd-bar { display: flex; justify-content: space-between; background: #111827; border-radius: 6px; padding: 12px 20px; margin-bottom: 15px; border: 1px solid #1F2937; }
     .odd-item { font-size: 14px; color: #94A3B8; font-weight: 700; }
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
-    .h2h-bar { display: flex; justify-content: space-between; font-size: 13px; color: #64748B; font-weight: 700; border-top: 1px dashed #1E293B; padding-top: 12px; margin-bottom: 15px; }
+    
+    /* [NEW] H2H Bar 디자인 변경 */
+    .h2h-bar { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #64748B; font-weight: 700; border-top: 1px dashed #1E293B; padding-top: 12px; margin-bottom: 15px; }
+    .h2h-row { display: flex; justify-content: space-between; align-items: center; }
+    
     .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 500; line-height:1.5; border-radius: 4px; margin-bottom: 15px; }
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; }
@@ -274,8 +315,13 @@ if proto_matches:
         
         home_info = fetch_team_info_api(m["home"])
         away_info = fetch_team_info_api(m["away"])
+        
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "시간 미정"
+        
+        # [NEW] 최근 5경기 폼 & 휴식일 데이터 가져오기
+        h_form_data = fetch_recent_form(home_info["id"])
+        a_form_data = fetch_recent_form(away_info["id"])
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
@@ -303,7 +349,8 @@ if proto_matches:
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info["logo"], "away_logo": away_info["logo"],
             "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
-            "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev
+            "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
+            "h_form": h_form_data, "a_form": a_form_data # 폼 데이터 추가
         })
 
 # -----------------------------------------------------------------------------
@@ -321,24 +368,53 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
                 live_event_html = ""
-                
                 if match_status == "LIVE": 
-                    # 딕셔너리 구조로 변경된 라이브 데이터 로드
                     live_data = live_scores_dict.get(m['id'], {"score": "진행중", "event": ""})
                     real_live_score = live_data["score"] if isinstance(live_data, dict) else "진행중"
                     time_display = f"<span class='live-score'>{real_live_score}</span><span class='deadline-closed'>LIVE</span>"
-                    
-                    # [NEW] 라이브 이벤트가 있으면 전광판 띄우기
                     event_str = live_data.get("event", "") if isinstance(live_data, dict) else ""
-                    if event_str:
-                        live_event_html = f"<div class='live-event-bar'>⚡ 실시간 상황: {event_str}</div>"
-                        
+                    if event_str: live_event_html = f"<div class='live-event-bar'>⚡ {event_str}</div>"
                 elif match_status == "FINISHED": time_display = f"<span class='live-score'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
                 
-                html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>{live_event_html}<div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}</span><span>휴식일: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
+                # [NEW] 상대 전적 & 최근 전적 UI 동적 처리
+                if item['h2h']['is_valid']:
+                    h2h_text = f"{m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}"
+                    recent_form_html = f"<span>📈 최근 5경기: {m['home']} <b style='color:#00F2FE;'>[{item['h_form']['form']}]</b> vs {m['away']} <b style='color:#00F2FE;'>[{item['a_form']['form']}]</b></span>"
+                    rest_days_text = f"{item['h_form']['rest_days']} / {item['a_form']['rest_days']}"
+                else:
+                    h2h_text = "해외 데이터 매칭 대기 중"
+                    recent_form_html = ""
+                    rest_days_text = "- / -"
+                
+                html_code = f"""
+                <div class='match-card'>
+                    <div class='league-title'>{m['league']}</div>
+                    <div class='vs-row'>
+                        <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
+                        <div class='center-time-box'>{time_display}</div>
+                        <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+                    </div>
+                    {live_event_html}
+                    <div class='ai-story'>{item['story']}</div>
+                    <div class='odd-bar'>
+                        <span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span>
+                        <span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
+                        <span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
+                    </div>
+                    <div class='h2h-bar'>
+                        <div class='h2h-row'><span>⚔️ 상대전적: {h2h_text}</span><span>🔋 휴식일: {rest_days_text}</span></div>
+                        <div class='h2h-row' style='color:#94A3B8; font-size:12px; margin-top:4px;'>{recent_form_html}</div>
+                    </div>
+                    <div class='pred-grid'>
+                        <div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div>
+                        <div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div>
+                        <div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div>
+                    </div>
+                </div>
+                """
                 st.markdown(html_code, unsafe_allow_html=True)
         else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
             
@@ -346,7 +422,7 @@ with main_tab1:
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 2] 승무패 14경기 
+# [TAB 2, TAB 3, TAB 4 생략 처리: 이전 코드와 동일하므로 공간 절약상 생략하지 않고 전체 제공]
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 & 스마트 마킹표</p>", unsafe_allow_html=True)
@@ -394,9 +470,6 @@ with main_tab2:
                 idx += 1
         else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
-# -----------------------------------------------------------------------------
-# [TAB 3] 오늘의 TOP 3
-# -----------------------------------------------------------------------------
 with main_tab3:
     top_3_picks = sorted(analyzed_proto, key=lambda x: x['best_ev'], reverse=True)[:3]
     if top_3_picks:
@@ -407,9 +480,6 @@ with main_tab3:
             html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
 
-# -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트
-# -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
     c1, c2, c3 = st.columns(3)
