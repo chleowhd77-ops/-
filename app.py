@@ -28,7 +28,6 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수정 완료] MLS 및 챔피언십, 호주 FA컵 등 로고 누락 방지 사전 업데이트!
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
@@ -86,16 +85,11 @@ def fetch_team_info_api(team_name):
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
-    if not home_id or not away_id: return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    if not home_id or not away_id: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
     try:
         response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
         h_wins, draws, a_wins = 0, 0, 0
-        match_time_str, last_h2h_date = None, "-"
-        if len(matches) > 0:
-            utc_dt = datetime.fromisoformat(matches[0].get("fixture", {}).get("date").replace("Z", "+00:00"))
-            kst_dt = utc_dt.astimezone(timezone(timedelta(hours=9)))
-            match_time_str = kst_dt.strftime(f"%m.%d ({['월', '화', '수', '목', '금', '토', '일'][kst_dt.weekday()]}) %H:%M")
         for m in matches[:10]:
             if m.get("teams", {}).get("home", {}).get("winner"):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
@@ -104,10 +98,9 @@ def fetch_fixture_details_api(home_id, away_id):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
             else: draws += 1
-        return {"match_time": match_time_str, "last_h2h_date": last_h2h_date, "h_rest": "4일", "a_rest": "4일", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
-    except: return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        return {"h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+    except: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
 
-@st.cache_data(ttl=60)
 def load_betman_data():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json?t={int(time.time())}"
     try:
@@ -119,7 +112,6 @@ def load_betman_data():
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
 
-# [수정 완료] @st.cache_data 삭제!! Streamlit 자체 캐시를 꺼버려서 새로고침 할때마다 무조건 최신 점수 가져옴
 def load_live_scores():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/live_scores.json?t={int(time.time())}"
     try:
@@ -143,9 +135,9 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
         cursor.execute("SELECT id FROM predictions WHERE match_id = ?", (m['id'],))
         if not cursor.fetchone():
             cursor.execute("""
-                INSERT INTO predictions (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, is_toto14)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), is_toto14))
+                INSERT INTO predictions (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, match_time, is_toto14)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), m.get('match_time', ''), is_toto14))
         else: cursor.execute("UPDATE predictions SET is_toto14 = ? WHERE match_id = ?", (is_toto14, m['id']))
         conn.commit()
     except: pass
@@ -266,23 +258,28 @@ all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
 live_scores_data = load_live_scores()
 
+# [수정 완료] 종료된 경기도 24시간 동안은 화면에 여운을 남겨두기! (SD레이더스 부활!)
 try:
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a, match_time FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0")
-    db_pending = cursor.fetchall()
+    cursor.execute("""
+        SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a, match_time, actual_result, actual_score 
+        FROM predictions 
+        WHERE is_toto14 = 0 
+        AND (actual_result = 'PENDING' OR (actual_result = 'FINISHED' AND created_at >= datetime('now', '-1 day')))
+    """)
+    db_matches = cursor.fetchall()
     conn.close()
     
     json_match_ids = [str(m['id']) for m in proto_matches]
-    for row in db_pending:
-        m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time = row
+    for row in db_matches:
+        m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time, a_result, a_score = row
         if str(m_id) not in json_match_ids:
-            status, _ = get_match_status(m_time, "23:00")
-            if status == "LIVE": 
-                proto_matches.append({
-                    'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
-                    'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a, 'match_time': m_time
-                })
+            proto_matches.append({
+                'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
+                'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a, 'match_time': m_time,
+                'actual_result': a_result, 'actual_score': a_score
+            })
 except: pass
 
 toto_14_raw = []
@@ -308,7 +305,9 @@ if proto_matches:
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
-        final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "시간 미정"
+        
+        # [수정 완료] 무조건 베트맨 시간(m.get)을 1순위로! (과거 12.15 타임머신 원천 차단)
+        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
@@ -351,7 +350,13 @@ with main_tab1:
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
-                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # [수정 완료] 종료된 경기는 여운을 남기고, 라이브는 점수 띄우기
+                a_result = m.get('actual_result', 'PENDING')
+                a_score = m.get('actual_score', '')
+                
+                if a_result == 'FINISHED':
+                    time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
+                elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     match_id_str = str(m['id'])
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
@@ -361,7 +366,8 @@ with main_tab1:
                         if event_text: time_display += f"<div style='margin-top:4px; font-size:12px; color:#10B981; font-weight:900;'>{event_text}</div>"
                     else:
                         time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed'>LIVE</span>"
-                elif match_status == "FINISHED": time_display = f"<span class='live-score'>종료</span>"
+                elif match_status == "FINISHED": 
+                    time_display = f"<span class='live-score'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
@@ -459,7 +465,6 @@ with main_tab2:
         total_price = total_combinations * 1000
         single_pick_count = len(toto_14_raw) - double_pick_count
         
-        # [핵심 추가] 14경기 단통/투마킹 개수와 가격을 오해 없이 친절하게 풀어서 설명!
         summary_html = f"""
         <div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'>
             <span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto_14_raw)}경기 기준)</span>
