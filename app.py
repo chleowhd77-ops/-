@@ -380,32 +380,26 @@ with main_tab2:
             elif p_a > p_h and p_a >= p_d: best_pick = f"{m['away']} 승"
             else: best_pick = "무승부"
             
-            html_code = f"""
-            <div class='match-card' style='padding: 20px;'>
-                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
-                    <span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:3px 10px; border-radius:12px; font-weight:900;'>제 {idx} 경기</span>
-                    <span style='font-size:13px; color:#F8FAFC; font-weight:700;'>AI 추천: <span style='color:#10B981;'>{best_pick}</span></span>
-                </div>
-                <div class='vs-row' style='margin-bottom:15px;'>
-                    <div class='team-box-col home'><div class='team-info-row'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div></div>
-                    <div class='center-time-box' style='width:40px;'><b style='color:#475569; font-size:16px;'>VS</b></div>
-                    <div class='team-box-col away'><div class='team-info-row'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>
-                </div>
-                
-                <!-- 승무패 확률 바 그래프 (14경기 전용) -->
-                <div style='width: 100%; display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px;'>
-                    <div style='width: {p_h}%; background: #00F2FE;' title='승 {p_h}%'></div>
-                    <div style='width: {p_d}%; background: #10B981;' title='무 {p_d}%'></div>
-                    <div style='width: {p_a}%; background: #EF4444;' title='패 {p_a}%'></div>
-                </div>
-                <div style='font-size:11px; color:#94A3B8; text-align:center;'>
-                    확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%
-                </div>
-            </div>
-            """
+            # [수술 완료] HTML 코드가 텍스트로 노출되지 않도록 들여쓰기 쫙 당김!
+            html_code = f"""<div class='match-card' style='padding: 20px;'>
+<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
+<span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:3px 10px; border-radius:12px; font-weight:900;'>제 {idx} 경기</span>
+<span style='font-size:13px; color:#F8FAFC; font-weight:700;'>AI 추천: <span style='color:#10B981;'>{best_pick}</span></span>
+</div>
+<div class='vs-row' style='margin-bottom:15px;'>
+<div class='team-box-col home'><div class='team-info-row'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div></div>
+<div class='center-time-box' style='width:40px;'><b style='color:#475569; font-size:16px;'>VS</b></div>
+<div class='team-box-col away'><div class='team-info-row'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>
+</div>
+<div style='width: 100%; display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px;'>
+<div style='width: {p_h}%; background: #00F2FE;' title='승 {p_h}%'></div>
+<div style='width: {p_d}%; background: #10B981;' title='무 {p_d}%'></div>
+<div style='width: {p_a}%; background: #EF4444;' title='패 {p_a}%'></div>
+</div>
+<div style='font-size:11px; color:#94A3B8; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
+</div>"""
             st.markdown(html_code, unsafe_allow_html=True)
     else: st.info("이번 회차 승무패 14경기 데이터가 없습니다.")
-
 # --------------------------
 # 탭 3: 오늘의 TOP 3
 # --------------------------
