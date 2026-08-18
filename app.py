@@ -14,29 +14,36 @@ from datetime import datetime, timezone, timedelta
 APP_TITLE = "D.J PROTO ANALYTICS"
 st.set_page_config(page_title=APP_TITLE, page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
-API_KEY = "28b599664bba858ebf93515768741975"
+API_KEY = "28b599664bba858ebf93515768741975"  # 👈 여기에 회원님 API 키를 넣어주세요!
 API_HOST = "v3.football.api-sports.io"
 headers = {'x-rapidapi-host': API_HOST, 'x-rapidapi-key': API_KEY}
 
-# [핵심 수술 1] 남미, 유럽, 터키 팀들 완벽 번역 추가!
+# [핵심 수술 1] 베트맨 고무줄 작명 + 남미/유럽 + 동남아 완벽 번역기!
 TEAM_NAME_MAP = {
-    # K리그
+    # K리그 (짧은 이름 + 긴 이름 모두 등록)
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
-    "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
-    "김해FC": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
-    "부산아이": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
-    "부천FC": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
-    "서울이랜드": "Seoul E-Land", "서울이랜": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
-    "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
+    "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen",
+    "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons", "김해FC": "Gimhae", 
+    "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
+    "부산아이": "Busan I Park", "부산 아이파크": "Busan I Park", "화성FC": "Hwaseong", 
+    "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu", "김천상무 프로축구단": "Gimcheon Sangmu",
+    "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", 
+    "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC", "서울이랜드": "Seoul E-Land", 
+    "서울이랜": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
+    "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", 
+    "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
+    
     # MLS (미국)
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "Montreal Impact",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "시카파이": "Chicago Fire",
     "올랜시티": "Orlando City", "인터마이": "Inter Miami", "필라유니": "Philadelphia Union", "애틀유나": "Atlanta United",
-    # 기타 해외 (유럽, 남미, 호주 등)
+    
+    # 기타 해외 (유럽, 남미, 국가대표 등)
     "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "GNK디나모자그레브": "Dinamo Zagreb", "비킹FK": "Viking",
     "페네르바흐체SK": "Fenerbahce", "올랭피크 리옹": "Lyon", "인디펜디엔테 리바다비아": "Independiente Rivadavia",
     "플루미넨시": "Fluminense", "데포르테스 톨리마": "Deportes Tolima", "인디펜디엔테 델바예": "Independiente del Valle",
-    "태국": "Thailand", "싱가포르": "Singapore", "대한민국": "South Korea", "일본": "Japan", "호주": "Australia"
+    "태국": "Thailand", "싱가포르": "Singapore", "대한민국": "South Korea", "일본": "Japan", "호주": "Australia",
+    "베트남": "Vietnam", "말레이시아": "Malaysia"
 }
 
 DIRECT_LOGO_MAP = {
@@ -196,7 +203,7 @@ def generate_dynamic_story(h_team, a_team, prob_h, prob_d, prob_a, odd_h, odd_a)
     elif prob_h > prob_a: return f"📊 AI 알고리즘 산출 결과, <b>{h_team}</b>의 승률({prob_h}%)이 {a_team}보다 다소 우세합니다."
     else: return f"🔍 원정팀 <b>{a_team}</b>의 전력 수치가 {prob_a}%로 조금 더 높게 평가되었습니다."
 
-# [핵심 수술 2] 모바일에서 무조건 두 줄 줄바꿈 + 로고 상단 배치 CSS!
+# [핵심 수술 2] 모바일 기적의 대칭 정렬 CSS!
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -234,20 +241,24 @@ st.markdown("""
     .pred-value { font-size: 16px; color: #F8FAFC; font-weight: 900; }
     .pred-prob { font-size: 13px; color: #10B981; font-weight: 900; margin-left: 6px; }
 
-    /* ★ 모바일 기적의 2줄 래핑 & 중앙 정렬 CSS ★ */
+    /* ★ 모바일 기적의 대칭 정렬 CSS ★ */
     @media (max-width: 768px) {
         .vs-row { align-items: flex-start !important; }
         .team-box-col.home, .team-box-col.away { align-items: center !important; text-align: center !important; }
-        .team-info-row { flex-direction: column !important; justify-content: center !important; gap: 6px !important; }
+        
+        /* 홈팀, 원정팀 모두 무조건 [마크 위, 이름 아래]로 강제 고정! */
+        .team-box-col.home .team-info-row { flex-direction: column-reverse !important; justify-content: center !important; gap: 6px !important; }
+        .team-box-col.away .team-info-row { flex-direction: column !important; justify-content: center !important; gap: 6px !important; }
+        
         .team-name-text { 
             font-size: 12px !important; 
-            white-space: normal !important; /* 강제로 2줄로 쪼개기 허용 */
+            white-space: normal !important; 
             word-break: keep-all !important; 
             text-align: center !important; 
             line-height: 1.4 !important; 
         }
         .team-logo { width: 40px !important; height: 40px !important; }
-        .center-time-box { width: 80px !important; margin-top: 15px !important; } /* 시간이 로고 사이에 예쁘게 위치하도록 마진 추가 */
+        .center-time-box { width: 80px !important; margin-top: 15px !important; }
         .match-time-text { font-size: 11px !important; }
         .live-score { font-size: 18px !important; }
         
