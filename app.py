@@ -21,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-API_KEY = "28b599664bba858ebf93515768741975"
+API_KEY = "28b599664bba858ebf93515768741975" # 👈 회원님 API 키 필수!
 API_HOST = "v3.football.api-sports.io"
 
 headers = {
@@ -40,36 +40,21 @@ TEAM_NAME_MAP = {
 }
 
 DIRECT_LOGO_MAP = {
-    "광주FC": "https://media.api-sports.io/football/teams/2836.png",
-    "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
-    "제주SKFC": "https://media.api-sports.io/football/teams/2839.png",
-    "FC안양": "https://media.api-sports.io/football/teams/2848.png",
-    "FC서울": "https://media.api-sports.io/football/teams/2844.png",
-    "대전하나": "https://media.api-sports.io/football/teams/2835.png",
-    "충북청주": "https://media.api-sports.io/football/teams/18525.png",
-    "전남드래": "https://media.api-sports.io/football/teams/2847.png",
-    "김해FC": "https://media.api-sports.io/football/teams/18027.png",
-    "경남FC": "https://media.api-sports.io/football/teams/2837.png",
-    "수원삼성": "https://media.api-sports.io/football/teams/2845.png",
-    "수원FC": "https://media.api-sports.io/football/teams/2846.png",
-    "부산아이": "https://media.api-sports.io/football/teams/2834.png",
-    "화성FC": "https://media.api-sports.io/football/teams/18031.png",
-    "인천유나": "https://media.api-sports.io/football/teams/2838.png",
-    "김천상무": "https://media.api-sports.io/football/teams/2842.png",
-    "부천FC": "https://media.api-sports.io/football/teams/2849.png",
-    "전북현대": "https://media.api-sports.io/football/teams/2840.png",
-    "울산HDFC": "https://media.api-sports.io/football/teams/2841.png",
-    "강원FC": "https://media.api-sports.io/football/teams/2833.png",
-    "서울이랜드": "https://media.api-sports.io/football/teams/2850.png",
-    "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
-    "안산그리": "https://media.api-sports.io/football/teams/2851.png",
-    "대구FC": "https://media.api-sports.io/football/teams/2832.png",
-    "충남아산": "https://media.api-sports.io/football/teams/8282.png",
-    "미라솔": "https://media.api-sports.io/football/teams/1023.png",
-    "LDU키토": "https://media.api-sports.io/football/teams/1148.png",
-    "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
-    "SC코린티안스": "https://media.api-sports.io/football/teams/131.png",
-    "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
+    "광주FC": "https://media.api-sports.io/football/teams/2836.png", "포항스틸": "https://media.api-sports.io/football/teams/2843.png",
+    "제주SKFC": "https://media.api-sports.io/football/teams/2839.png", "FC안양": "https://media.api-sports.io/football/teams/2848.png",
+    "FC서울": "https://media.api-sports.io/football/teams/2844.png", "대전하나": "https://media.api-sports.io/football/teams/2835.png",
+    "충북청주": "https://media.api-sports.io/football/teams/18525.png", "전남드래": "https://media.api-sports.io/football/teams/2847.png",
+    "김해FC": "https://media.api-sports.io/football/teams/18027.png", "경남FC": "https://media.api-sports.io/football/teams/2837.png",
+    "수원삼성": "https://media.api-sports.io/football/teams/2845.png", "수원FC": "https://media.api-sports.io/football/teams/2846.png",
+    "부산아이": "https://media.api-sports.io/football/teams/2834.png", "화성FC": "https://media.api-sports.io/football/teams/18031.png",
+    "인천유나": "https://media.api-sports.io/football/teams/2838.png", "김천상무": "https://media.api-sports.io/football/teams/2842.png",
+    "부천FC": "https://media.api-sports.io/football/teams/2849.png", "전북현대": "https://media.api-sports.io/football/teams/2840.png",
+    "울산HDFC": "https://media.api-sports.io/football/teams/2841.png", "강원FC": "https://media.api-sports.io/football/teams/2833.png",
+    "서울이랜드": "https://media.api-sports.io/football/teams/2850.png", "서울이랜": "https://media.api-sports.io/football/teams/2850.png",
+    "안산그리": "https://media.api-sports.io/football/teams/2851.png", "대구FC": "https://media.api-sports.io/football/teams/2832.png",
+    "충남아산": "https://media.api-sports.io/football/teams/8282.png", "미라솔": "https://media.api-sports.io/football/teams/1023.png",
+    "LDU키토": "https://media.api-sports.io/football/teams/1148.png", "로사리오 센트랄": "https://media.api-sports.io/football/teams/459.png",
+    "SC코린티안스": "https://media.api-sports.io/football/teams/131.png", "도쿄 베르디": "https://media.api-sports.io/football/teams/2967.png",
     "가시와 레이솔": "https://media.api-sports.io/football/teams/2960.png"
 }
 
@@ -101,15 +86,11 @@ def init_db():
     except: pass 
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
     except: pass
-    
     conn.commit()
     conn.close()
 
 init_db()
 
-# -----------------------------------------------------------------------------
-# 1. 해외 API 연동 (함수들을 위로 올려서 NameError 방지!)
-# -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
     logo = DIRECT_LOGO_MAP.get(team_name)
@@ -122,8 +103,7 @@ def fetch_team_info_api(team_name):
         response = requests.get(url, headers=headers, params=params, timeout=5)
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
-            team_data = res_data["response"][0]["team"]
-            return {"id": team_data["id"], "logo": team_data.get("logo")}
+            return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
     except: pass
     return {"id": None, "logo": None}
 
@@ -136,8 +116,7 @@ def fetch_fixture_details_api(home_id, away_id):
     h_wins, draws, a_wins = 0, 0, 0
     try:
         response = requests.get(url, headers=headers, params=params, timeout=5)
-        res_data = response.json()
-        matches = res_data.get("response", [])
+        matches = response.json().get("response", [])
         if len(matches) > 0:
             utc_dt = datetime.fromisoformat(matches[0].get("fixture", {}).get("date").replace("Z", "+00:00"))
             kst_dt = utc_dt.astimezone(timezone(timedelta(hours=9)))
@@ -198,9 +177,6 @@ def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     except: pass
     finally: conn.close()
 
-# -----------------------------------------------------------------------------
-# 경기 결과 자동 채점 엔진 & 오답노트 기능
-# -----------------------------------------------------------------------------
 def update_match_results():
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
@@ -248,15 +224,11 @@ def update_match_results():
 
 update_match_results()
 
-# -----------------------------------------------------------------------------
-# [로직] 시간 감지 및 스토리텔링, 포아송
-# -----------------------------------------------------------------------------
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
     try:
         now = datetime.now(timezone(timedelta(hours=9)))
         year = now.year
-        m_dt = None
         match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
         if match:
             mo, d, h, m = map(int, match.groups())
@@ -301,7 +273,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# 3. 프리미엄 CSS 스타일링
+# 3. 프리미엄 CSS 스타일링 (화면 넓이 복구 완료!)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -309,6 +281,9 @@ st.markdown("""
     
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
+    
+    /* [수정 완료] 화면 너무 넓어지는 현상 방지 (최대 1000px 고정) */
+    .block-container { max-width: 1000px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
     .app-header h1 { color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; letter-spacing: 2px; margin: 0; background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
@@ -377,9 +352,6 @@ def render_logo_html(logo_url):
     if logo_url: return f"<img src='{logo_url}' class='team-logo' onerror=\"this.style.display='none';\">"
     return ""
 
-# -----------------------------------------------------------------------------
-# 4. 메인 데이터 처리 로직
-# -----------------------------------------------------------------------------
 st.markdown("""
 <div class='app-header'>
     <h1>D.J PROTO ANALYTICS</h1>
@@ -397,11 +369,11 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
 
-# [LIVE 경기 살려내기 병합 로직]
+# [수정 완료] LIVE 탭 좀비 경기 방지: 최근 24시간 이내 데이터만 살려내기
 try:
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0")
+    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 AND created_at >= datetime('now', '-1 day')")
     db_pending = cursor.fetchall()
     conn.close()
     
@@ -427,8 +399,6 @@ analyzed_proto = []
 
 if proto_matches:
     for m in proto_matches:
-        
-        # [에러 방지용 방탄 조끼!] DB에서 가져온 글자를 무조건 숫자로 강제 변환
         try:
             odd_h = float(m.get("odd_h", 2.0))
             odd_d = float(m.get("odd_d", 3.0))
@@ -555,14 +525,43 @@ with main_tab2:
             else:
                 best_pick_display = f"{first_pick}"
                 
+            # [수정 완료] 픽 박스 색상 복구
+            style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if "승" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+            style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if "무" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+            style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if "패" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+
             fake_m_for_db = {'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}
             save_prediction(fake_m_for_db, best_pick_display, first_pct, (0, 0), 1)
             
-            html_code = f"<div class='match-card' style='padding: 24px;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{m['home'] if '승' in best_pick_display else m['away'] if best_pick_display == '패' else ''} {best_pick_display}</b></span></div><div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:16px;'>VS</b></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div><div class='prob-bar-container'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div></div>"
+            html_code = f"""
+            <div class='match-card' style='padding: 24px;'>
+                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
+                    <span class='badge-primary'>제 {idx} 경기</span>
+                    <span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{m['home'] if '승' in best_pick_display else m['away'] if best_pick_display == '패' else ''} {best_pick_display}</b></span>
+                </div>
+                <div class='vs-row' style='margin-bottom:15px;'>
+                    <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
+                    <div class='center-time-box' style='width:60px;'><b style='color:#475569; font-size:16px;'>VS</b></div>
+                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+                </div>
+                <div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
+                <div class='prob-bar-container' style='margin-bottom: 15px;'>
+                    <div class='prob-bar-win' style='width: {p_h}%;'></div>
+                    <div class='prob-bar-draw' style='width: {p_d}%;'></div>
+                    <div class='prob-bar-lose' style='width: {p_a}%;'></div>
+                </div>
+                <!-- [수정 완료] 아래 3단 픽 상자 완벽 부활! -->
+                <div style='display: flex; gap: 10px;'>
+                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div>
+                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div>
+                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>
+                </div>
+            </div>
+            """
             match_html_list.append(html_code)
             
         total_price = total_combinations * 1000
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14폴더 최종 분석 결과</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>총 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (총 {len(toto_14_raw)}경기 유효)</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>총 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
         for html in match_html_list: st.markdown(html, unsafe_allow_html=True)
     else:
@@ -572,7 +571,16 @@ with main_tab2:
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
-    top_3_picks = sorted(analyzed_proto, key=lambda x: x['best_ev'], reverse=True)[:3]
+    # [수정 완료] 시작 전(UPCOMING) 경기만 필터링해서 Top 3에 올리기
+    valid_top3 = []
+    for item in analyzed_proto:
+        m = item['match']
+        status, is_closed = get_match_status(item["final_match_time"], m.get("deadline_time", "23:00"))
+        if status == "UPCOMING" and not is_closed and m.get('match_time') != '마감/진행중':
+            valid_top3.append(item)
+            
+    top_3_picks = sorted(valid_top3, key=lambda x: x['best_prob_pct'], reverse=True)[:3]
+    
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
@@ -581,6 +589,8 @@ with main_tab3:
             
             html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
+    else:
+        st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
 
 # -----------------------------------------------------------------------------
 # [TAB 4] AI 리포트 (오답노트 포함)
