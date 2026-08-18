@@ -85,7 +85,9 @@ def fetch_team_info_api(team_name):
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
-    if not home_id or not away_id: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    # [수정] KeyError 방지를 위해 기본 딕셔너리 구조를 안전하게 세팅!
+    default_res = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    if not home_id or not away_id: return default_res
     try:
         response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
@@ -98,8 +100,8 @@ def fetch_fixture_details_api(home_id, away_id):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
             else: draws += 1
-        return {"h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
-    except: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+        return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+    except: return default_res
 
 def load_betman_data():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json?t={int(time.time())}"
@@ -258,7 +260,6 @@ all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
 live_scores_data = load_live_scores()
 
-# [수정 완료] 종료된 경기도 24시간 동안은 화면에 여운을 남겨두기! (SD레이더스 부활!)
 try:
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
@@ -306,14 +307,13 @@ if proto_matches:
         away_info = fetch_team_info_api(away_team)
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         
-        # [수정 완료] 무조건 베트맨 시간(m.get)을 1순위로! (과거 12.15 타임머신 원천 차단)
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
-        h2h_total = fixture_details["total"]
-        h_h2h_bonus = (fixture_details["h_wins"] / h2h_total * 0.4) if h2h_total > 0 else 0
-        a_h2h_bonus = (fixture_details["a_wins"] / h2h_total * 0.4) if h2h_total > 0 else 0
+        h2h_total = fixture_details.get("total", 0)
+        h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0
+        a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0
         exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus), 2)
         exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus), 2)
         handi_val = 1.0 if odd_h > odd_a else -1.0
@@ -328,10 +328,10 @@ if proto_matches:
         best_uo_prob = round(max(prob_u, prob_o) * 100, 1)
 
         save_prediction(m, best_option, best_prob_pct, (0,0), 0)
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details['h_wins'], fixture_details['a_wins'])
+        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0))
 
         analyzed_proto.append({
-            "match": m, "final_match_time": final_match_time, "home_logo": home_info["logo"], "away_logo": away_info["logo"],
+            "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
             "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev
         })
@@ -345,19 +345,18 @@ with main_tab1:
         if analyzed_proto:
             for item in analyzed_proto:
                 m = item['match']
-                logo_h_tag = render_logo_html(item["home_logo"])
-                logo_a_tag = render_logo_html(item["away_logo"])
+                logo_h_tag = render_logo_html(item.get("home_logo"))
+                logo_a_tag = render_logo_html(item.get("away_logo"))
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
-                # [수정 완료] 종료된 경기는 여운을 남기고, 라이브는 점수 띄우기
                 a_result = m.get('actual_result', 'PENDING')
                 a_score = m.get('actual_score', '')
                 
                 if a_result == 'FINISHED':
                     time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
-                    match_id_str = str(m['id'])
+                    match_id_str = str(m.get('id', ''))
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
@@ -376,7 +375,14 @@ with main_tab1:
                 o_d_disp = m.get('odd_d') if m.get('odd_d') is not None else '-'
                 o_a_disp = m.get('odd_a') if m.get('odd_a') is not None else '-'
                 
-                html_code = f"<div class='match-card'><div class='league-title'>{m.get('league','축구')}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}</span><span>휴식일: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
+                # [수정] 방탄 조끼(.get) 적용! 
+                h_wins = item['h2h'].get('h_wins', 0)
+                draws = item['h2h'].get('draws', 0)
+                a_wins = item['h2h'].get('a_wins', 0)
+                h_rest = item['h2h'].get('h_rest', '-')
+                a_rest = item['h2h'].get('a_rest', '-')
+                
+                html_code = f"<div class='match-card'><div class='league-title'>{m.get('league','축구')}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m.get('home','')}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m.get('away','')}</span></div></div><div class='ai-story'>{item.get('story','')}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m.get('home','')} {h_wins}승 {draws}무 {a_wins}승 {m.get('away','')}</span><span>휴식일: {h_rest} / {a_rest}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item.get('best_handi','')}</span> <span class='pred-prob'>{item.get('best_handi_prob','0')}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
@@ -394,8 +400,8 @@ with main_tab2:
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api(m['home'])
             away_info = fetch_team_info_api(m['away'])
-            logo_h_tag = render_logo_html(home_info["logo"])
-            logo_a_tag = render_logo_html(away_info["logo"])
+            logo_h_tag = render_logo_html(home_info.get("logo"))
+            logo_a_tag = render_logo_html(away_info.get("logo"))
             
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = round(32.0 + (base_seed % 35), 1); p_d = round(24.0 + (base_seed % 12), 1); p_a = round(100.0 - (p_h + p_d), 1)
@@ -427,7 +433,7 @@ with main_tab2:
             style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if is_d else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
 
-            match_id_str = str(m['id'])
+            match_id_str = str(m.get('id', ''))
             live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
             if match_id_str in live_scores_data:
                 live_info = live_scores_data[match_id_str]
@@ -443,9 +449,9 @@ with main_tab2:
                     <span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span>
                 </div>
                 <div class='vs-row' style='margin-bottom:15px;'>
-                    <div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div>
+                    <div class='team-box home'><span class='team-name-text'>{m.get('home','')}</span>{logo_h_tag}</div>
                     <div class='center-time-box' style='width:80px;'>{live_score_html}</div>
-                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div>
+                    <div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m.get('away','')}</span></div>
                 </div>
                 <div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
                 <div class='prob-bar-container' style='margin-bottom: 15px;'>
@@ -490,9 +496,9 @@ with main_tab3:
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
             m = item['match']
-            logo_h_tag = render_logo_html(item["home_logo"])
-            logo_a_tag = render_logo_html(item["away_logo"])
-            html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
+            logo_h_tag = render_logo_html(item.get("home_logo"))
+            logo_a_tag = render_logo_html(item.get("away_logo"))
+            html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m.get('home','')}</span>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m.get('away','')}</span></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
     else: st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
 
@@ -516,15 +522,15 @@ with main_tab4:
     if history:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>채점</th></tr></thead><tbody>"
         for row in history:
-            result_mark = "<span style='color:#10B981; font-weight:900;'>적중</span>" if row['is_correct'] == 1 else "<span style='color:#EF4444; font-weight:900;'>실패</span>"
-            table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row['home_team']} vs {row['away_team']}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row['predicted_pick']}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{row['actual_score']}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
+            result_mark = "<span style='color:#10B981; font-weight:900;'>적중</span>" if row.get('is_correct',0) == 1 else "<span style='color:#EF4444; font-weight:900;'>실패</span>"
+            table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{row.get('actual_score','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
         table_html += "</tbody></table>"
         st.markdown(table_html, unsafe_allow_html=True)
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 AI 실패 원인 분석 목록</h4>", unsafe_allow_html=True)
         has_failure = False
         for row in history:
-            if row['is_correct'] == 0 and row.get('failure_reason'):
+            if row.get('is_correct',0) == 0 and row.get('failure_reason'):
                 has_failure = True
-                st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row['home_team']} vs {row['away_team']}]</b><br>{row['failure_reason']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row.get('home_team','')} vs {row.get('away_team','')}]</b><br>{row.get('failure_reason','')}</div>", unsafe_allow_html=True)
         if not has_failure: st.info("실패한 경기나 분석된 오답 노트가 아직 없습니다.")
     else: st.info("아직 채점이 완료된 종료 경기가 없습니다.")
