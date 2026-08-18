@@ -367,6 +367,9 @@ with main_tab1:
 # --------------------------
 with main_tab2:
     if toto_14_raw:
+        total_combinations = 1  # 경우의 수 계산용 (기본 1)
+        match_html_list = []
+        
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api_v3(m['home'])
             away_info = fetch_team_info_api_v3(m['away'])
@@ -375,28 +378,34 @@ with main_tab2:
             
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = 32.0 + (base_seed % 35); p_d = 24.0 + (base_seed % 12); p_a = round(100.0 - (p_h + p_d), 1)
+            p_h = round(p_h, 1); p_d = round(p_d, 1)
             
-            if p_h >= p_a and p_h >= p_d: 
-                best_pick = f"{m['home']} 승"
-                style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;"
-                style_d = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-                style_a = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-            elif p_a > p_h and p_a >= p_d: 
-                best_pick = f"{m['away']} 승"
-                style_h = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-                style_d = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-                style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;"
-            else: 
-                best_pick = "무승부"
-                style_h = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-                style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;"
-                style_a = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+            # [복구] 확률 1위, 2위, 3위 정렬
+            probs = {"승": p_h, "무": p_d, "패": p_a}
+            sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
             
-            # [복구 완료] 픽 상자 3개 원상복구! (들여쓰기 조심)
+            first_pick, first_pct = sorted_probs[0]
+            second_pick, second_pct = sorted_probs[1]
+            
+            # [복구] 1위와 2위 확률 차이가 12% 이하면 '박빙'으로 간주하고 투마킹 추천!
+            if first_pct - second_pct <= 12.0:
+                best_pick_display = f"{first_pick}, {second_pick}"
+                total_combinations *= 2  # 투마킹이므로 경우의 수 2배 증가
+                # 투마킹 박스 색상 설정
+                style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if "승" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if "무" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if "패" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+            else:
+                best_pick_display = f"{first_pick}"
+                # 단통 박스 색상 설정
+                style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if first_pick == "승" else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if first_pick == "무" else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if first_pick == "패" else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+
             html_code = f"""<div class='match-card' style='padding: 20px;'>
 <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
 <span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:3px 10px; border-radius:12px; font-weight:900;'>제 {idx} 경기</span>
-<span style='font-size:13px; color:#F8FAFC; font-weight:700;'>AI 추천: <span style='color:#10B981;'>{best_pick}</span></span>
+<span style='font-size:13px; color:#F8FAFC; font-weight:700;'>AI 추천: <span style='color:#10B981; font-weight:900;'>{m['home'] if "승" in best_pick_display else m['away'] if best_pick_display == "패" else ""} {best_pick_display}</span></span>
 </div>
 <div class='vs-row' style='margin-bottom:15px;'>
 <div class='team-box-col home'><div class='team-info-row'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div></div>
@@ -415,7 +424,23 @@ with main_tab2:
 <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>
 </div>
 </div>"""
-            st.markdown(html_code, unsafe_allow_html=True)
+            match_html_list.append(html_code)
+            
+        # 총 금액 계산 (1조합당 1,000원)
+        total_price = total_combinations * 1000
+        
+        # [복구] 14경기 리스트 맨 위에 총 마킹 수와 구매 금액 띄우기
+        summary_html = f"""
+        <div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'>
+            <span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14폴더 최종 분석 결과</span>
+            <span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>총 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span>
+        </div>
+        """
+        st.markdown(summary_html, unsafe_allow_html=True)
+        
+        for html in match_html_list:
+            st.markdown(html, unsafe_allow_html=True)
+            
     else: st.info("이번 회차 승무패 14경기 데이터가 없습니다.")
 # --------------------------
 # 탭 3: 오늘의 TOP 3
