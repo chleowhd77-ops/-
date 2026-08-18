@@ -427,9 +427,28 @@ analyzed_proto = []
 
 if proto_matches:
     for m in proto_matches:
-        odd_h, odd_d, odd_a = m["odd_h"], m["odd_d"], m["odd_a"]
-        handi_h, handi_d, handi_a = m.get("handi_h", 3.05), m.get("handi_d", 3.05), m.get("handi_a", 2.03)
-        uo_under, uo_over = m.get("uo_under", 1.50), m.get("uo_over", 2.13)
+        
+        # [에러 방지용 방탄 조끼!] DB에서 가져온 글자를 무조건 숫자로 강제 변환
+        try:
+            odd_h = float(m.get("odd_h", 2.0))
+            odd_d = float(m.get("odd_d", 3.0))
+            odd_a = float(m.get("odd_a", 2.0))
+        except:
+            odd_h, odd_d, odd_a = 2.0, 3.0, 2.0
+            
+        try:
+            handi_h = float(m.get("handi_h", 3.05))
+            handi_d = float(m.get("handi_d", 3.05))
+            handi_a = float(m.get("handi_a", 2.03))
+        except:
+            handi_h, handi_d, handi_a = 3.05, 3.05, 2.03
+            
+        try:
+            uo_under = float(m.get("uo_under", 1.50))
+            uo_over = float(m.get("uo_over", 2.13))
+        except:
+            uo_under, uo_over = 1.50, 2.13
+
         home_team, away_team = m["home"], m["away"]
         
         home_info = fetch_team_info_api(home_team)
@@ -497,7 +516,7 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
                 
-                html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m['odd_h']}</span> | 무 <span class='odd-val'>{m['odd_d']}</span> | 패 <span class='odd-val'>{m['odd_a']}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}</span><span>휴식일: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
+                html_code = f"<div class='match-card'><div class='league-title'>{m['league']}</div><div class='vs-row'><div class='team-box home'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div><div class='ai-story'>{item['story']}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h', '-')}</span> | 무 <span class='odd-val'>{m.get('odd_d', '-')}</span> | 패 <span class='odd-val'>{m.get('odd_a', '-')}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='h2h-bar'><span>상대전적: {m['home']} {item['h2h']['h_wins']}승 {item['h2h']['draws']}무 {item['h2h']['a_wins']}승 {m['away']}</span><span>휴식일: {item['h2h']['h_rest']} / {item['h2h']['a_rest']}</span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item['best_option']}</span> <span class='pred-prob'>{item['best_prob_pct']}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item['best_handi']}</span> <span class='pred-prob'>{item['best_handi_prob']}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item['best_uo']}</span> <span class='pred-prob'>{item['best_uo_prob']}%</span></div></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else:
             st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
