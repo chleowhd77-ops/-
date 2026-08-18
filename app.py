@@ -21,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-API_KEY = "28b599664bba858ebf93515768741975" # 👈 회원님 API 키 필수!
+API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
 
 headers = {
@@ -273,7 +273,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# 3. 프리미엄 CSS 스타일링 (화면 넓이 복구 완료!)
+# 3. 프리미엄 CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -282,7 +282,6 @@ st.markdown("""
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
-    /* [수정 완료] 화면 너무 넓어지는 현상 방지 (최대 1000px 고정) */
     .block-container { max-width: 1000px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
@@ -369,30 +368,33 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
 
-# [수정 완료] LIVE 탭 좀비 경기 방지: 최근 24시간 이내 데이터만 살려내기
+# [수정 완료] 좀비 경기 차단! DB에서 정확한 'match_time'을 가져와서 진짜 LIVE만 살려내기
 try:
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 AND created_at >= datetime('now', '-1 day')")
+    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a, match_time FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0")
     db_pending = cursor.fetchall()
     conn.close()
     
     json_match_ids = [str(m['id']) for m in proto_matches]
     for row in db_pending:
-        m_id, league, h_team, a_team, odd_h, odd_d, odd_a = row
+        m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time = row
         if str(m_id) not in json_match_ids:
-            proto_matches.append({
-                'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
-                'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a,
-                'match_time': '마감/진행중'
-            })
+            # 강제로 '마감/진행중' 넣지 않고 실제 시간을 바탕으로 판별
+            status, _ = get_match_status(m_time, "23:00")
+            if status == "LIVE":  # 경기가 시작 후 2시간 내에만 부활시킴 (좀비 완벽 차단)
+                proto_matches.append({
+                    'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
+                    'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a,
+                    'match_time': m_time
+                })
 except: pass
 
 # [승무패 14경기 가짜 팀 차단 로직]
 toto_14_raw = []
 for x in all_data.get("toto_14_matches", []):
     h_name, a_name = x.get("home", ""), x.get("away", "")
-    if not any(word in h_name or word in a_name for word in ["홈", "원정", "조합", "구매", "전체", "바로가기"]):
+    if not any(word in h_name or word in a_name for word in ["홈팀", "원정팀", "조합", "구매", "전체", "바로가기"]):
         toto_14_raw.append(x)
 
 analyzed_proto = []
@@ -478,7 +480,8 @@ with main_tab1:
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
-                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # [수정 완료] 시간 계산을 통해 얻은 결과값으로만 LIVE 표시
+                if match_status == "LIVE":
                     time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed'>LIVE</span>"
                 elif match_status == "FINISHED":
                     time_display = f"<span class='live-score'>종료</span>"
@@ -525,7 +528,6 @@ with main_tab2:
             else:
                 best_pick_display = f"{first_pick}"
                 
-            # [수정 완료] 픽 박스 색상 복구
             style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if "승" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if "무" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if "패" in best_pick_display else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
@@ -550,7 +552,6 @@ with main_tab2:
                     <div class='prob-bar-draw' style='width: {p_d}%;'></div>
                     <div class='prob-bar-lose' style='width: {p_a}%;'></div>
                 </div>
-                <!-- [수정 완료] 아래 3단 픽 상자 완벽 부활! -->
                 <div style='display: flex; gap: 10px;'>
                     <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div>
                     <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div>
@@ -571,7 +572,6 @@ with main_tab2:
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
-    # [수정 완료] 시작 전(UPCOMING) 경기만 필터링해서 Top 3에 올리기
     valid_top3 = []
     for item in analyzed_proto:
         m = item['match']
