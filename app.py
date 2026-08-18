@@ -5,6 +5,7 @@ import requests
 import sqlite3
 import pandas as pd
 import re
+import time
 from datetime import datetime, timezone, timedelta
 
 # -----------------------------------------------------------------------------
@@ -43,10 +44,11 @@ DIRECT_LOGO_MAP = {
     "충북청주": "https://media.api-sports.io/football/teams/18525.png", "전남드래": "https://media.api-sports.io/football/teams/2847.png"
 }
 
-# (주의: 웹앱에서는 DB 저장을 하지 않고, 로봇이 업로드한 DB를 다운받아 읽기만 합니다)
+# [핵심 수술] 깃허브 캐시 무력화 로직 적용 (1분 단위로 새 파일 강제 요청)
 def download_db_from_github():
     try:
-        res = requests.get("https://raw.githubusercontent.com/chleowhd77-ops/-/main/ai_predictions.db", timeout=10)
+        t = int(time.time() / 60)
+        res = requests.get(f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/ai_predictions.db?t={t}", timeout=10)
         if res.status_code == 200:
             with open("ai_predictions.db", "wb") as f:
                 f.write(res.content)
@@ -118,10 +120,12 @@ def fetch_fixture_details_api_v3(home_id, away_id):
         return {"match_time": match_time_str, "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10]), "is_valid": True}
     except: return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
 
+# [핵심 수술] JSON 데이터들도 캐시 무력화 적용!
 @st.cache_data(ttl=60)
 def load_betman_data():
     try:
-        res = requests.get("https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json", timeout=5)
+        t = int(time.time() / 60)
+        res = requests.get(f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json?t={t}", timeout=5)
         if res.status_code == 200: return res.json()
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
@@ -129,7 +133,8 @@ def load_betman_data():
 @st.cache_data(ttl=60)
 def load_live_scores():
     try:
-        res = requests.get("https://raw.githubusercontent.com/chleowhd77-ops/-/main/live_scores.json", timeout=5)
+        t = int(time.time() / 60)
+        res = requests.get(f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/live_scores.json?t={t}", timeout=5)
         if res.status_code == 200: return res.json()
     except: pass
     return {}
