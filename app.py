@@ -145,6 +145,17 @@ def load_betman_data():
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
 
+# [핵심 수술 파트] 깃허브에서 라이브 스코어 데이터를 읽어오는 함수 추가!
+@st.cache_data(ttl=30)
+def load_live_scores():
+    raw_url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/live_scores.json"
+    try:
+        res = requests.get(raw_url, timeout=5)
+        if res.status_code == 200:
+            return res.json()
+    except: pass
+    return {}
+
 def get_accuracy_stats():
     conn = sqlite3.connect("ai_predictions.db")
     df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED'", conn)
@@ -368,34 +379,34 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
 all_data = load_betman_data()
 proto_matches = all_data.get("proto_matches", [])
 
-# [수정 완료] 좀비 경기 차단! DB에서 정확한 'match_time'을 가져와서 진짜 LIVE만 살려내기
+# [수정] 다운로드한 점수 데이터를 불러옵니다.
+live_scores_data = load_live_scores()
+
 try:
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a, match_time FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0")
+    cursor.execute("SELECT match_id, league, home_team, away_team, odd_h, odd_d, odd_a FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 AND created_at >= datetime('now', '-1 day')")
     db_pending = cursor.fetchall()
     conn.close()
     
     json_match_ids = [str(m['id']) for m in proto_matches]
     for row in db_pending:
-        m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time = row
+        m_id, league, h_team, a_team, odd_h, odd_d, odd_a = row
         if str(m_id) not in json_match_ids:
-            # 강제로 '마감/진행중' 넣지 않고 실제 시간을 바탕으로 판별
-            status, _ = get_match_status(m_time, "23:00")
-            if status == "LIVE":  # 경기가 시작 후 2시간 내에만 부활시킴 (좀비 완벽 차단)
-                proto_matches.append({
-                    'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
-                    'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a,
-                    'match_time': m_time
-                })
+            proto_matches.append({
+                'id': m_id, 'league': league, 'home': h_team, 'away': a_team,
+                'odd_h': odd_h, 'odd_d': odd_d, 'odd_a': odd_a,
+                'match_time': '마감/진행중'
+            })
 except: pass
 
-# [승무패 14경기 가짜 팀 차단 로직]
+# [수정 완료] 14경기 필터링 완화: 정확한 버튼 텍스트만 차단하여 멀쩡한 팀(포틀팀버) 누락 방지!
 toto_14_raw = []
 for x in all_data.get("toto_14_matches", []):
     h_name, a_name = x.get("home", ""), x.get("away", "")
-    if not any(word in h_name or word in a_name for word in ["홈팀", "원정팀", "조합", "구매", "전체", "바로가기"]):
-        toto_14_raw.append(x)
+    if h_name in ['홈팀', '홈'] or a_name in ['원정팀', '원정']: continue
+    if any(word in h_name or word in a_name for word in ["전체조합수", "구매하기", "바로가기"]): continue
+    toto_14_raw.append(x)
 
 analyzed_proto = []
 
@@ -480,9 +491,19 @@ with main_tab1:
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
-                # [수정 완료] 시간 계산을 통해 얻은 결과값으로만 LIVE 표시
-                if match_status == "LIVE":
-                    time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed'>LIVE</span>"
+                # [수정 완료] 드디어 라이브 스코어와 이벤트가 화면에 출력됩니다!
+                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                    match_id_str = str(m['id'])
+                    if match_id_str in live_scores_data:
+                        live_info = live_scores_data[match_id_str]
+                        score_text = live_info.get("score", "진행중")
+                        event_text = live_info.get("event", "")
+                        
+                        time_display = f"<span class='live-score'>{score_text}</span><span class='deadline-closed'>LIVE</span>"
+                        if event_text: # 카드나 골 이벤트가 있으면 스코어 밑에 녹색으로 출력!
+                            time_display += f"<div style='margin-top:4px; font-size:12px; color:#10B981; font-weight:900;'>{event_text}</div>"
+                    else:
+                        time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed'>LIVE</span>"
                 elif match_status == "FINISHED":
                     time_display = f"<span class='live-score'>종료</span>"
                 else:
