@@ -28,7 +28,7 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수정 완료] MLS 및 챔피언십 등 로고 누락 방지 사전 업데이트!
+# [수정 완료] MLS 및 챔피언십, 호주 FA컵 등 로고 누락 방지 사전 업데이트!
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
@@ -37,7 +37,6 @@ TEAM_NAME_MAP = {
     "부천FC": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
-    # MLS & 기타 추가
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
     "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte FC",
@@ -108,7 +107,6 @@ def fetch_fixture_details_api(home_id, away_id):
         return {"match_time": match_time_str, "last_h2h_date": last_h2h_date, "h_rest": "4일", "a_rest": "4일", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
     except: return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
 
-# [수정 완료] GitHub 캐시 무력화 (항상 최신 데이터를 강제로 받아옴!)
 @st.cache_data(ttl=60)
 def load_betman_data():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json?t={int(time.time())}"
@@ -121,8 +119,7 @@ def load_betman_data():
     except: pass
     return {"proto_matches": [], "toto_14_matches": []}
 
-# [수정 완료] GitHub 라이브 스코어 캐시 무력화
-@st.cache_data(ttl=30)
+# [수정 완료] @st.cache_data 삭제!! Streamlit 자체 캐시를 꺼버려서 새로고침 할때마다 무조건 최신 점수 가져옴
 def load_live_scores():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/live_scores.json?t={int(time.time())}"
     try:
@@ -369,7 +366,6 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
                 
-                # [수정 완료] None 대신 - 기호가 이쁘게 찍히도록 방어막 추가
                 o_h_disp = m.get('odd_h') if m.get('odd_h') is not None else '-'
                 o_d_disp = m.get('odd_d') if m.get('odd_d') is not None else '-'
                 o_a_disp = m.get('odd_a') if m.get('odd_a') is not None else '-'
@@ -387,6 +383,7 @@ with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
     if toto_14_raw:
         total_combinations = 1
+        double_pick_count = 0
         match_html_list = []
         for idx, m in enumerate(toto_14_raw, 1):
             home_info = fetch_team_info_api(m['home'])
@@ -406,6 +403,7 @@ with main_tab2:
             if first_pct - second_pct <= 12.0:
                 picks = [first_pick, second_pick]
                 total_combinations *= 2
+                double_pick_count += 1
             else:
                 picks = [first_pick]
             
@@ -416,7 +414,6 @@ with main_tab2:
                 else: disp_texts.append("무승부")
             best_pick_display = ", ".join(disp_texts)
             
-            # [수정 완료] 글자에 속지 않고 완벽하게 버튼에 불 켜기!
             is_h = "승" in picks
             is_d = "무" in picks
             is_a = "패" in picks
@@ -424,7 +421,6 @@ with main_tab2:
             style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if is_d else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
 
-            # [수정 완료] 14경기에도 라이브 스코어 장착!
             match_id_str = str(m['id'])
             live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
             if match_id_str in live_scores_data:
@@ -461,7 +457,16 @@ with main_tab2:
             match_html_list.append(html_code)
             
         total_price = total_combinations * 1000
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (총 {len(toto_14_raw)}경기 유효)</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>총 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        single_pick_count = len(toto_14_raw) - double_pick_count
+        
+        # [핵심 추가] 14경기 단통/투마킹 개수와 가격을 오해 없이 친절하게 풀어서 설명!
+        summary_html = f"""
+        <div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'>
+            <span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto_14_raw)}경기 기준)</span>
+            <span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span>
+            <span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span>
+        </div>
+        """
         st.markdown(summary_html, unsafe_allow_html=True)
         for html in match_html_list: st.markdown(html, unsafe_allow_html=True)
     else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
