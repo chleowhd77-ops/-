@@ -18,9 +18,8 @@ API_KEY = "28b599664bba858ebf93515768741975"  # 👈 여기에 회원님 API 키
 API_HOST = "v3.football.api-sports.io"
 headers = {'x-rapidapi-host': API_HOST, 'x-rapidapi-key': API_KEY}
 
-# [핵심 수술 1] 베트맨 고무줄 작명 + 남미/유럽 + 동남아 완벽 번역기!
 TEAM_NAME_MAP = {
-    # K리그 (짧은 이름 + 긴 이름 모두 등록)
+    # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen",
     "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons", "김해FC": "Gimhae", 
@@ -33,12 +32,12 @@ TEAM_NAME_MAP = {
     "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", 
     "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
     
-    # MLS (미국)
+    # MLS
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "Montreal Impact",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "시카파이": "Chicago Fire",
     "올랜시티": "Orlando City", "인터마이": "Inter Miami", "필라유니": "Philadelphia Union", "애틀유나": "Atlanta United",
     
-    # 기타 해외 (유럽, 남미, 국가대표 등)
+    # 해외
     "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "GNK디나모자그레브": "Dinamo Zagreb", "비킹FK": "Viking",
     "페네르바흐체SK": "Fenerbahce", "올랭피크 리옹": "Lyon", "인디펜디엔테 리바다비아": "Independiente Rivadavia",
     "플루미넨시": "Fluminense", "데포르테스 톨리마": "Deportes Tolima", "인디펜디엔테 델바예": "Independiente del Valle",
@@ -101,19 +100,13 @@ def fetch_recent_form_v3(team_id):
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api_v3(home_id, away_id):
-    if not home_id or not away_id: return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
+    if not home_id or not away_id: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
     url = f"https://{API_HOST}/fixtures/headtohead"
     params = {"h2h": f"{home_id}-{away_id}"}
     h_wins, draws, a_wins = 0, 0, 0
-    match_time_str = None
     try:
         response = requests.get(url, headers=headers, params=params, timeout=5)
         matches = response.json().get("response", [])
-        if len(matches) > 0:
-            utc_dt = datetime.fromisoformat(matches[0].get("fixture", {}).get("date").replace("Z", "+00:00"))
-            kst_dt = utc_dt.astimezone(timezone(timedelta(hours=9)))
-            weekdays = ['월', '화', '수', '목', '금', '토', '일']
-            match_time_str = kst_dt.strftime(f"%m.%d ({weekdays[kst_dt.weekday()]}) %H:%M")
         for m in matches[:10]:
             if m.get("teams", {}).get("home", {}).get("winner"):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
@@ -122,8 +115,8 @@ def fetch_fixture_details_api_v3(home_id, away_id):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
             else: draws += 1
-        return {"match_time": match_time_str, "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10]), "is_valid": True}
-    except: return {"match_time": None, "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
+        return {"h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10]), "is_valid": True}
+    except: return {"h_wins": 0, "draws": 0, "a_wins": 0, "total": 0, "is_valid": False}
 
 @st.cache_data(ttl=60)
 def load_betman_data():
@@ -147,12 +140,13 @@ def get_accuracy_stats():
     try:
         conn = sqlite3.connect("ai_predictions.db")
         df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED'", conn)
+        df_history = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result IN ('FINISHED', 'CANCELED') ORDER BY id DESC LIMIT 50", conn)
         conn.close()
-        if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0}
+        if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0, "history": []}
         total = len(df)
         correct = df['is_correct'].sum()
-        return {"total": total, "correct": correct, "accuracy": round((correct / total) * 100, 1)}
-    except: return {"total": 0, "correct": 0, "accuracy": 0.0}
+        return {"total": total, "correct": correct, "accuracy": round((correct / total) * 100, 1), "history": df_history.to_dict('records')}
+    except: return {"total": 0, "correct": 0, "accuracy": 0.0, "history": []}
 
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
@@ -203,7 +197,6 @@ def generate_dynamic_story(h_team, a_team, prob_h, prob_d, prob_a, odd_h, odd_a)
     elif prob_h > prob_a: return f"📊 AI 알고리즘 산출 결과, <b>{h_team}</b>의 승률({prob_h}%)이 {a_team}보다 다소 우세합니다."
     else: return f"🔍 원정팀 <b>{a_team}</b>의 전력 수치가 {prob_a}%로 조금 더 높게 평가되었습니다."
 
-# [핵심 수술 2] 모바일 기적의 대칭 정렬 CSS!
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -241,27 +234,16 @@ st.markdown("""
     .pred-value { font-size: 16px; color: #F8FAFC; font-weight: 900; }
     .pred-prob { font-size: 13px; color: #10B981; font-weight: 900; margin-left: 6px; }
 
-    /* ★ 모바일 기적의 대칭 정렬 CSS ★ */
     @media (max-width: 768px) {
         .vs-row { align-items: flex-start !important; }
         .team-box-col.home, .team-box-col.away { align-items: center !important; text-align: center !important; }
-        
-        /* 홈팀, 원정팀 모두 무조건 [마크 위, 이름 아래]로 강제 고정! */
         .team-box-col.home .team-info-row { flex-direction: column-reverse !important; justify-content: center !important; gap: 6px !important; }
         .team-box-col.away .team-info-row { flex-direction: column !important; justify-content: center !important; gap: 6px !important; }
-        
-        .team-name-text { 
-            font-size: 12px !important; 
-            white-space: normal !important; 
-            word-break: keep-all !important; 
-            text-align: center !important; 
-            line-height: 1.4 !important; 
-        }
+        .team-name-text { font-size: 12px !important; white-space: normal !important; word-break: keep-all !important; text-align: center !important; line-height: 1.4 !important; }
         .team-logo { width: 40px !important; height: 40px !important; }
         .center-time-box { width: 80px !important; margin-top: 15px !important; }
         .match-time-text { font-size: 11px !important; }
         .live-score { font-size: 18px !important; }
-        
         .odd-bar { padding: 10px; flex-direction: column; gap: 8px; text-align: center; }
         .odd-item { font-size: 12px; }
         .pred-grid { flex-direction: column; gap: 8px; }
@@ -269,6 +251,13 @@ st.markdown("""
         .pred-value { font-size: 14px !important; }
         .pred-prob { font-size: 12px !important; }
     }
+    
+    /* 리포트 테이블 CSS */
+    .history-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; }
+    .history-table th { background: #1E293B; color: #94A3B8; padding: 10px; border-bottom: 2px solid #334155; }
+    .history-table td { padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; }
+    .hit { color: #10B981; font-weight: 900; }
+    .miss { color: #EF4444; font-weight: 900; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -294,10 +283,8 @@ if proto_matches:
         home_info = fetch_team_info_api_v3(m["home"])
         away_info = fetch_team_info_api_v3(m["away"])
         fixture_details = fetch_fixture_details_api_v3(home_info["id"], away_info["id"])
-        final_match_time = fixture_details["match_time"] or m.get("match_time") or m.get("time") or "시간 미정"
         
-        h_form_data = fetch_recent_form_v3(home_info["id"])
-        a_form_data = fetch_recent_form_v3(away_info["id"])
+        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
@@ -321,11 +308,13 @@ if proto_matches:
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info["logo"], "away_logo": away_info["logo"],
-            "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
-            "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
-            "h_form": h_form_data, "a_form": a_form_data 
+            "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
+            "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob
         })
 
+# --------------------------
+# 탭 1: 프로토 LIVE
+# --------------------------
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
@@ -373,6 +362,9 @@ with main_tab1:
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
+# --------------------------
+# 탭 2: 승무패 14경기
+# --------------------------
 with main_tab2:
     if toto_14_raw:
         for idx, m in enumerate(toto_14_raw, 1):
@@ -383,23 +375,110 @@ with main_tab2:
             
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = 32.0 + (base_seed % 35); p_d = 24.0 + (base_seed % 12); p_a = round(100.0 - (p_h + p_d), 1)
-            p_h, p_d = round(p_h, 1), round(p_d, 1)
+            
+            if p_h >= p_a and p_h >= p_d: best_pick = f"{m['home']} 승"
+            elif p_a > p_h and p_a >= p_d: best_pick = f"{m['away']} 승"
+            else: best_pick = "무승부"
             
             html_code = f"""
             <div class='match-card' style='padding: 20px;'>
-                <div style='display:flex; justify-content:space-between; margin-bottom:10px;'><span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:2px 8px; border-radius:10px;'>제 {idx} 경기</span></div>
-                <div class='vs-row' style='margin-bottom:10px;'>
+                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
+                    <span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:3px 10px; border-radius:12px; font-weight:900;'>제 {idx} 경기</span>
+                    <span style='font-size:13px; color:#F8FAFC; font-weight:700;'>AI 추천: <span style='color:#10B981;'>{best_pick}</span></span>
+                </div>
+                <div class='vs-row' style='margin-bottom:15px;'>
                     <div class='team-box-col home'><div class='team-info-row'><span class='team-name-text'>{m['home']}</span>{logo_h_tag}</div></div>
-                    <div class='center-time-box' style='width:40px;'><b style='color:#475569;'>VS</b></div>
+                    <div class='center-time-box' style='width:40px;'><b style='color:#475569; font-size:16px;'>VS</b></div>
                     <div class='team-box-col away'><div class='team-info-row'>{logo_a_tag}<span class='team-name-text'>{m['away']}</span></div></div>
                 </div>
-                <div style='font-size:11px; color:#64748B; text-align:center;'>확률: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
+                
+                <!-- 승무패 확률 바 그래프 (14경기 전용) -->
+                <div style='width: 100%; display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px;'>
+                    <div style='width: {p_h}%; background: #00F2FE;' title='승 {p_h}%'></div>
+                    <div style='width: {p_d}%; background: #10B981;' title='무 {p_d}%'></div>
+                    <div style='width: {p_a}%; background: #EF4444;' title='패 {p_a}%'></div>
+                </div>
+                <div style='font-size:11px; color:#94A3B8; text-align:center;'>
+                    확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%
+                </div>
             </div>
             """
             st.markdown(html_code, unsafe_allow_html=True)
-    else: st.info("데이터가 없습니다.")
+    else: st.info("이번 회차 승무패 14경기 데이터가 없습니다.")
 
-with main_tab3: st.info("TOP 3 데이터 구성 중...")
+# --------------------------
+# 탭 3: 오늘의 TOP 3
+# --------------------------
+with main_tab3:
+    if analyzed_proto:
+        # 확률이 가장 높은 순서대로 정렬해서 상위 3개 뽑기
+        top_matches = sorted(analyzed_proto, key=lambda x: x['best_prob_pct'], reverse=True)[:3]
+        st.markdown("<h3 style='color:#00F2FE; margin-bottom:20px; font-weight:900;'>🏆 AI가 픽한 오늘의 초강력 추천 3경기</h3>", unsafe_allow_html=True)
+        
+        for i, item in enumerate(top_matches, 1):
+            m = item['match']
+            html_code = f"""
+            <div class='match-card' style='border: 2px solid #00F2FE; box-shadow: 0 0 15px rgba(0,242,254,0.2);'>
+                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
+                    <span style='background:#00F2FE; color:#0B0F19; font-size:14px; padding:4px 12px; border-radius:4px; font-weight:900;'>TOP {i}</span>
+                    <span style='color:#F8FAFC; font-weight:900; font-size:18px;'>추천 픽: <span style='color:#00F2FE;'>{item['best_option']}</span></span>
+                </div>
+                <div class='vs-row'>
+                    <div class='team-box-col home' style='text-align:right;'><span class='team-name-text'>{m['home']}</span></div>
+                    <div class='center-time-box' style='color:#94A3B8;'>VS</div>
+                    <div class='team-box-col away' style='text-align:left;'><span class='team-name-text'>{m['away']}</span></div>
+                </div>
+                <div style='text-align:center; font-size:14px; color:#10B981; font-weight:900; margin-top:10px;'>
+                    적중 예상 확률: {item['best_prob_pct']}%
+                </div>
+            </div>
+            """
+            st.markdown(html_code, unsafe_allow_html=True)
+    else: st.info("추천할 경기가 없습니다.")
+
+# --------------------------
+# 탭 4: AI 리포트 (오답 노트)
+# --------------------------
 with main_tab4:
     stats = get_accuracy_stats()
-    st.metric("AI 적중률", f"{stats['accuracy']}%")
+    
+    st.markdown(f"""
+        <div style='display:flex; align-items:center; gap:20px; margin-bottom:30px; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'>
+            <div>
+                <span style='color:#94A3B8; font-size:14px; font-weight:700; display:block;'>전체 누적 적중률</span>
+                <span style='color:#00F2FE; font-size:40px; font-weight:900;'>{stats['accuracy']}%</span>
+            </div>
+            <div style='border-left:1px solid #334155; padding-left:20px;'>
+                <span style='color:#CBD5E1; font-size:14px; display:block;'>종료된 경기: {stats['total']} 경기</span>
+                <span style='color:#10B981; font-size:14px; display:block; margin-top:5px;'>적중: {stats['correct']} 경기</span>
+                <span style='color:#EF4444; font-size:14px; display:block; margin-top:5px;'>실패: {stats['total'] - stats['correct']} 경기</span>
+            </div>
+        </div>
+        <h4 style='color:#F8FAFC; font-weight:900; margin-bottom:10px;'>📜 최근 경기 학습(오답) 노트</h4>
+    """, unsafe_allow_html=True)
+    
+    history = stats.get('history', [])
+    if history:
+        table_html = "<table class='history-table'><thead><tr><th>시간</th><th>경기</th><th>예측</th><th>결과</th><th>채점</th></tr></thead><tbody>"
+        for row in history:
+            result_mark = "<span class='hit'>적중</span>" if row['is_correct'] == 1 else "<span class='miss'>실패</span>"
+            if row['actual_result'] == 'CANCELED': result_mark = "<span style='color:#94A3B8;'>취소/무효</span>"
+            
+            table_html += f"""
+                <tr>
+                    <td style='font-size:11px; color:#64748B;'>{row['match_time']}</td>
+                    <td style='font-weight:700;'>{row['home_team']} vs {row['away_team']}</td>
+                    <td>{row['predicted_pick']}</td>
+                    <td style='font-weight:900;'>{row['actual_score']}</td>
+                    <td>{result_mark}</td>
+                </tr>
+            """
+        table_html += "</tbody></table>"
+        st.markdown(table_html, unsafe_allow_html=True)
+        
+        st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 실패 원인 분석 목록</h4>", unsafe_allow_html=True)
+        for row in history:
+            if row['is_correct'] == 0 and row['failure_reason']:
+                st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row['home_team']} vs {row['away_team']}]</b><br>{row['failure_reason']}</div>", unsafe_allow_html=True)
+    else:
+        st.info("아직 채점이 완료된 종료 경기가 없습니다.")
