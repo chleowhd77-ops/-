@@ -376,11 +376,23 @@ with main_tab2:
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = 32.0 + (base_seed % 35); p_d = 24.0 + (base_seed % 12); p_a = round(100.0 - (p_h + p_d), 1)
             
-            if p_h >= p_a and p_h >= p_d: best_pick = f"{m['home']} 승"
-            elif p_a > p_h and p_a >= p_d: best_pick = f"{m['away']} 승"
-            else: best_pick = "무승부"
+            if p_h >= p_a and p_h >= p_d: 
+                best_pick = f"{m['home']} 승"
+                style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;"
+                style_d = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_a = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+            elif p_a > p_h and p_a >= p_d: 
+                best_pick = f"{m['away']} 승"
+                style_h = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_d = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;"
+            else: 
+                best_pick = "무승부"
+                style_h = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
+                style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;"
+                style_a = "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             
-            # [수술 완료] HTML 코드가 텍스트로 노출되지 않도록 들여쓰기 쫙 당김!
+            # [복구 완료] 픽 상자 3개 원상복구! (들여쓰기 조심)
             html_code = f"""<div class='match-card' style='padding: 20px;'>
 <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
 <span style='color:#00F2FE; font-size:12px; border:1px solid #00F2FE; padding:3px 10px; border-radius:12px; font-weight:900;'>제 {idx} 경기</span>
@@ -396,7 +408,12 @@ with main_tab2:
 <div style='width: {p_d}%; background: #10B981;' title='무 {p_d}%'></div>
 <div style='width: {p_a}%; background: #EF4444;' title='패 {p_a}%'></div>
 </div>
-<div style='font-size:11px; color:#94A3B8; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
+<div style='font-size:11px; color:#94A3B8; text-align:center; margin-bottom: 15px;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
+<div style='display: flex; gap: 10px;'>
+<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div>
+<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div>
+<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>
+</div>
 </div>"""
             st.markdown(html_code, unsafe_allow_html=True)
     else: st.info("이번 회차 승무패 14경기 데이터가 없습니다.")
