@@ -18,7 +18,7 @@ API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
 headers = {'x-rapidapi-host': API_HOST, 'x-rapidapi-key': API_KEY}
 
-# [핵심 수술 1] 베트맨 맘대로 줄임말 -> 글로벌 공식 영어 이름 완벽 번역!
+# [핵심 수술 1] 남미, 유럽, 터키 팀들 완벽 번역 추가!
 TEAM_NAME_MAP = {
     # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
@@ -32,8 +32,10 @@ TEAM_NAME_MAP = {
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "Montreal Impact",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "시카파이": "Chicago Fire",
     "올랜시티": "Orlando City", "인터마이": "Inter Miami", "필라유니": "Philadelphia Union", "애틀유나": "Atlanta United",
-    # 기타 해외 (호주, 유럽, 국가대표)
+    # 기타 해외 (유럽, 남미, 호주 등)
     "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "GNK디나모자그레브": "Dinamo Zagreb", "비킹FK": "Viking",
+    "페네르바흐체SK": "Fenerbahce", "올랭피크 리옹": "Lyon", "인디펜디엔테 리바다비아": "Independiente Rivadavia",
+    "플루미넨시": "Fluminense", "데포르테스 톨리마": "Deportes Tolima", "인디펜디엔테 델바예": "Independiente del Valle",
     "태국": "Thailand", "싱가포르": "Singapore", "대한민국": "South Korea", "일본": "Japan", "호주": "Australia"
 }
 
@@ -194,7 +196,7 @@ def generate_dynamic_story(h_team, a_team, prob_h, prob_d, prob_a, odd_h, odd_a)
     elif prob_h > prob_a: return f"📊 AI 알고리즘 산출 결과, <b>{h_team}</b>의 승률({prob_h}%)이 {a_team}보다 다소 우세합니다."
     else: return f"🔍 원정팀 <b>{a_team}</b>의 전력 수치가 {prob_a}%로 조금 더 높게 평가되었습니다."
 
-# [핵심 수술 2] 모바일 최적화 CSS 대거 투입! (글씨 깨짐, 겹침 완벽 방지)
+# [핵심 수술 2] 모바일에서 무조건 두 줄 줄바꿈 + 로고 상단 배치 CSS!
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -213,7 +215,6 @@ st.markdown("""
     .team-box-col.away { align-items: flex-start; text-align: left; }
     .team-info-row { display: flex; align-items: center; gap: 10px; }
     
-    /* 긴 이름 방어막 */
     .team-name-text { color: #F8FAFC !important; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; word-break: keep-all; line-height: 1.2; }
     .team-logo { width: 50px !important; height: 50px !important; object-fit: contain; }
     .center-time-box { width: 120px; text-align: center; flex-shrink: 0; }
@@ -233,13 +234,23 @@ st.markdown("""
     .pred-value { font-size: 16px; color: #F8FAFC; font-weight: 900; }
     .pred-prob { font-size: 13px; color: #10B981; font-weight: 900; margin-left: 6px; }
 
-    /* ★ 모바일 반응형 (스마트폰 화면일 때 자동으로 변신) ★ */
+    /* ★ 모바일 기적의 2줄 래핑 & 중앙 정렬 CSS ★ */
     @media (max-width: 768px) {
-        .team-name-text { font-size: 14px !important; word-break: break-word; }
-        .team-logo { width: 35px !important; height: 35px !important; }
-        .center-time-box { width: 70px; }
-        .match-time-text { font-size: 11px; }
-        .live-score { font-size: 18px; }
+        .vs-row { align-items: flex-start !important; }
+        .team-box-col.home, .team-box-col.away { align-items: center !important; text-align: center !important; }
+        .team-info-row { flex-direction: column !important; justify-content: center !important; gap: 6px !important; }
+        .team-name-text { 
+            font-size: 12px !important; 
+            white-space: normal !important; /* 강제로 2줄로 쪼개기 허용 */
+            word-break: keep-all !important; 
+            text-align: center !important; 
+            line-height: 1.4 !important; 
+        }
+        .team-logo { width: 40px !important; height: 40px !important; }
+        .center-time-box { width: 80px !important; margin-top: 15px !important; } /* 시간이 로고 사이에 예쁘게 위치하도록 마진 추가 */
+        .match-time-text { font-size: 11px !important; }
+        .live-score { font-size: 18px !important; }
+        
         .odd-bar { padding: 10px; flex-direction: column; gap: 8px; text-align: center; }
         .odd-item { font-size: 12px; }
         .pred-grid { flex-direction: column; gap: 8px; }
