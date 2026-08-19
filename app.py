@@ -169,6 +169,47 @@ def calculate_rest_days(last_date_iso, match_time_str):
     except: pass
     return 99
 
+# [NEW Phase 3] 리그 순위 파악 엔진
+@st.cache_data(ttl=86400)
+def fetch_team_standing_api(team_id):
+    if not team_id: return {"rank": 99, "points": 0}
+    try:
+        year = datetime.now().year
+        res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
+        data = res.json().get("response", [])
+        if not data:
+            res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
+            data = res.json().get("response", [])
+        if data:
+            standings = data[0]["league"]["standings"][0]
+            for s in standings:
+                if s["team"]["id"] == team_id:
+                    return {"rank": s["rank"], "points": s["points"]}
+    except: pass
+    return {"rank": 99, "points": 0}
+
+# [NEW Phase 3] 해외 도박사 시장 쏠림(배당 흐름) 파악 엔진
+@st.cache_data(ttl=43200)
+def fetch_overseas_odds_api(team_id):
+    if not team_id: return None
+    try:
+        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "next": 1}, timeout=5)
+        data = res.json().get("response", [])
+        if data:
+            fix_id = data[0]["fixture"]["id"]
+            odds_res = requests.get(f"https://{API_HOST}/odds", headers=headers, params={"fixture": fix_id}, timeout=5)
+            odds_data = odds_res.json().get("response", [])
+            if odds_data:
+                bookmakers = odds_data[0].get("bookmakers", [])
+                if bookmakers:
+                    bets = bookmakers[0].get("bets", [])
+                    for b in bets:
+                        if b["name"] == "Match Winner":
+                            vals = b["values"]
+                            return {"odd_h": float(vals[0]["odd"]), "odd_d": float(vals[1]["odd"]), "odd_a": float(vals[2]["odd"])}
+    except: pass
+    return None
+
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
     default_res = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
@@ -252,8 +293,16 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest):
+# [Phase 3] 코멘트 엔진에 마켓 흐름, 순위 동기부여 프리미엄 해설 추가!
+def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest, h_rank, a_rank, h_market, a_market):
     story_parts = []
+    
+    if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 현재 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 해외 배당이 폭락 중입니다. (강력 추천)")
+    elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 시장 흐름상 {away} 승리에 엄청난 자금이 쏠리며 원정팀 배당 가치가 급락하고 있습니다.")
+
+    if h_rank <= 3 and a_rank >= 10: story_parts.append(f"🏆 {home}은(는) 상위권(리그 {h_rank}위)을 질주 중인 반면, {away}은(는) {a_rank}위로 기본 체급 차이가 명확합니다.")
+    elif h_rank >= 15 and h_rank != 99: story_parts.append(f"🔥 {home}은(는) 현재 {h_rank}위로 강등권 위기에 처해 있어, 안방에서 사활을 건 '생존 버프'가 발동될 수 있습니다.")
+    elif a_rank >= 15 and a_rank != 99: story_parts.append(f"🔥 원정팀 {away}({a_rank}위)은(는) 벼랑 끝에 몰린 강등권으로 끈질긴 저항과 이변이 우려됩니다.")
     
     if h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장(부상) 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
     elif h_inj >= 3: story_parts.append(f"🚨 {home}에 핵심 자원 결장이 다수 의심되어 스쿼드 전력에 상당한 타격이 있습니다.")
@@ -265,14 +314,6 @@ def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h
 
     if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 3일 이하로 짧아 후반전 체력 방전이 우려됩니다.")
     if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 빡빡한 일정 탓에 체력적인 부담을 안고 경기에 임합니다.")
-    
-    is_default_odds = (odd_h == 2.0 and odd_a == 2.0)
-    if not is_default_odds:
-        if odd_h <= 1.5: story_parts.append(f"📊 도박사들의 배당({odd_h})이 증명하듯 {home}의 강력한 우세가 점쳐지는 정배당 매치입니다.")
-        elif odd_a <= 1.5: story_parts.append(f"📊 원정임에도 {away}가 매우 낮은 배당({odd_a})을 받으며 압도적인 탑독으로 평가받고 있습니다.")
-        elif abs(odd_h - odd_a) <= 0.3: story_parts.append(f"⚖️ 배당률({odd_h} vs {odd_a}) 차이가 거의 없는 초박빙 접전이 예상됩니다.")
-        elif odd_h < odd_a: story_parts.append(f"📈 배당률 흐름상 홈팀 {home}의 근소한 우세가 예상됩니다.")
-        else: story_parts.append(f"📈 배당률 흐름상 원정팀 {away}의 근소한 우세가 예상됩니다.")
     
     h_home_rate = int((h_long["home_wins"] / max(1, h_long["home_total"])) * 100) if h_long["home_total"] > 0 else 0
     a_away_rate = int((a_long["away_wins"] / max(1, a_long["away_total"])) * 100) if a_long["away_total"] > 0 else 0
@@ -317,7 +358,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링 
+# CSS 스타일링 (신규 배지 디자인 추가)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -345,8 +386,13 @@ st.markdown("""
     .team-box.away .team-info-wrapper { align-items: flex-start; }
     .team-name-text { display: block; color: #F8FAFC !important; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; }
     .team-form-text { display: block; color: #64748B; font-size: 12px; font-weight: 700; letter-spacing: 1px; margin-top: 4px; }
+    
     .injury-badge { display: block; color: #F87171; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(248,113,113,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F87171; }
     .fatigue-badge { display: block; color: #F59E0B; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(245,158,11,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F59E0B; }
+    .rank-badge { display: block; color: #38BDF8; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(56,189,248,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #38BDF8; }
+    .money-badge { display: block; color: #10B981; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(16,185,129,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #10B981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16,185,129, 0.4); } 70% { box-shadow: 0 0 0 5px rgba(16,185,129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129, 0); } }
+
     .team-logo { width: 55px !important; height: 55px !important; object-fit: contain; }
     
     .center-time-box { width: 140px; text-align: center; flex-shrink: 0; }
@@ -459,8 +505,23 @@ if proto_matches:
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
-        
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
+        
+        # [NEW Phase 3] 변수 가져오기 (순위, 해외배당)
+        h_stand = fetch_team_standing_api(home_info.get("id"))
+        a_stand = fetch_team_standing_api(away_info.get("id"))
+        h_rank, a_rank = h_stand["rank"], a_stand["rank"]
+        
+        os_odds = fetch_overseas_odds_api(home_info.get("id"))
+        h_market_bonus, a_market_bonus = 0.0, 0.0
+        if os_odds and odd_h > 1.0 and odd_a > 1.0:
+            if os_odds["odd_h"] < odd_h - 0.2: h_market_bonus = 0.25
+            if os_odds["odd_a"] < odd_a - 0.2: a_market_bonus = 0.25
+            
+        rank_diff_bonus_h = max(-0.3, min(0.3, (a_rank - h_rank) * 0.02))
+        rank_diff_bonus_a = max(-0.3, min(0.3, (h_rank - a_rank) * 0.02))
+        h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
+        a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
         
         h_injuries = fetch_team_injuries_api(home_info.get("id"))
         a_injuries = fetch_team_injuries_api(away_info.get("id"))
@@ -471,7 +532,6 @@ if proto_matches:
         a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
         h_rest_days = calculate_rest_days(h_last_date, final_match_time)
         a_rest_days = calculate_rest_days(a_last_date, final_match_time)
-        
         h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
         a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
         
@@ -490,8 +550,9 @@ if proto_matches:
         h_bigdata_bonus = h_home_win_rate * 0.6 
         a_bigdata_bonus = a_away_win_rate * 0.6 
         
-        exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty), 2)
-        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty), 2)
+        # [NEW Phase 3] 수식에 프리미엄 변수 융합!
+        exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus), 2)
+        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus), 2)
         
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
@@ -505,11 +566,10 @@ if proto_matches:
         best_uo_prob = round(max(prob_u, prob_o) * 100, 1)
 
         save_prediction(m, best_option, best_prob_pct, (0,0), 0)
-        
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries, h_rest_days, a_rest_days)
+        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
@@ -517,7 +577,9 @@ if proto_matches:
             "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
             "home_form": h_form, "away_form": a_form,
             "h_inj": h_injuries, "a_inj": a_injuries,
-            "h_rest": h_rest_days, "a_rest": a_rest_days
+            "h_rest": h_rest_days, "a_rest": a_rest_days,
+            "h_rank": h_rank, "a_rank": a_rank,
+            "h_market": h_market_bonus, "a_market": a_market_bonus
         })
 
 # -----------------------------------------------------------------------------
@@ -573,14 +635,23 @@ with main_tab1:
                 a_rest = item.get('a_rest', 99)
                 h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
                 a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
+
+                # [NEW Phase 3] 신규 배지 렌더링
+                h_rank, a_rank = item.get('h_rank', 99), item.get('a_rank', 99)
+                h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
+                a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
+                
+                h_market, a_market = item.get('h_market', 0.0), item.get('a_market', 0.0)
+                h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market > 0 else ""
+                a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market > 0 else ""
                 
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
                     f"<div class='vs-row'>"
-                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
+                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                     f"<div class='center-time-box'>{time_display}</div>"
-                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div>"
+                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}</div></div>"
                     f"</div>"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
                     f"<div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div>"
@@ -610,6 +681,21 @@ with main_tab2:
             h_form = fetch_team_form_api(home_info.get("id"))
             a_form = fetch_team_form_api(away_info.get("id"))
             
+            h_stand = fetch_team_standing_api(home_info.get("id"))
+            a_stand = fetch_team_standing_api(away_info.get("id"))
+            h_rank, a_rank = h_stand["rank"], a_stand["rank"]
+            
+            os_odds = fetch_overseas_odds_api(home_info.get("id"))
+            h_market_bonus, a_market_bonus = 0.0, 0.0
+            if os_odds:
+                if os_odds["odd_h"] <= 1.8: h_market_bonus = 0.25
+                if os_odds["odd_a"] <= 1.8: a_market_bonus = 0.25
+                
+            rank_diff_bonus_h = max(-0.3, min(0.3, (a_rank - h_rank) * 0.02))
+            rank_diff_bonus_a = max(-0.3, min(0.3, (h_rank - a_rank) * 0.02))
+            h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
+            a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
+            
             h_long = fetch_team_long_term_stats_api(home_info.get("id"))
             a_long = fetch_team_long_term_stats_api(away_info.get("id"))
             
@@ -617,7 +703,6 @@ with main_tab2:
             a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
             h_rest_days = calculate_rest_days(h_last_date, "시간 미정")
             a_rest_days = calculate_rest_days(a_last_date, "시간 미정")
-            
             h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
             a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
 
@@ -634,8 +719,9 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty), 2)
-            exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty), 2)
+            # [NEW Phase 3] 14경기도 괴물 엔진 가동!
+            exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus), 2)
+            exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus), 2)
             
             h_win, draw, a_win, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
             total_p = h_win + draw + a_win
@@ -654,12 +740,17 @@ with main_tab2:
             h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest_days <= 3 else ""
             a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest_days <= 3 else ""
             
+            h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
+            a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
+            h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market_bonus > 0 else ""
+            a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market_bonus > 0 else ""
+            
             probs = {"승": p_h, "무": p_d, "패": p_a}
             sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
             first_pick, first_pct = sorted_probs[0]
             second_pick, second_pct = sorted_probs[1]
             
-            # [수술 핵심] 투마킹 다이어트(7.0%) & 승/패 투마킹 금지(무승부 강제 보정)
+            # 투마킹 다이어트(7.0%) & 무승부 강제 보정
             picks = []
             if first_pct - second_pct <= 7.0:
                 if set([first_pick, second_pick]) == set(["승", "패"]):
@@ -696,9 +787,9 @@ with main_tab2:
             html_code = (
                 f"<div class='match-card' style='padding: 24px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span></div>"
-                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}</div></div></div>"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div>"
                 f"<div style='display: flex; gap: 10px;'><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div></div>"
@@ -746,12 +837,19 @@ with main_tab3:
             h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
             a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
             
+            h_rank, a_rank = item.get('h_rank', 99), item.get('a_rank', 99)
+            h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
+            a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
+            h_market, a_market = item.get('h_market', 0.0), item.get('a_market', 0.0)
+            h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market > 0 else ""
+            a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market > 0 else ""
+
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
-                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}</div></div></div>"
                 f"<div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div>"
                 f"</div>"
             )
