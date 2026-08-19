@@ -28,7 +28,7 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수술 완료] 베트맨 기출변형 텍스트 매핑 대폭 추가
+# [수술 완료] 베트맨 기출변형 대폭 추가 및 특수팀 맵핑
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
@@ -37,6 +37,8 @@ TEAM_NAME_MAP = {
     "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
+    "충남아산 프로축구단": "Chungnam Asan", "대전 하나시티즌": "Daejeon Citizen", "김천상무 프로축구단": "Gimcheon Sangmu",
+    "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
     "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte FC",
@@ -81,6 +83,15 @@ def fetch_team_info_api(team_name):
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
             return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
+        
+        # [최종 병기] 1차 검색 실패 시 꼬리표 떼고 '자동 세탁 재검색'
+        clean_name = re.sub(r'(프로축구단|하나시티즌|FC|유나이티드|아이파크|스틸러스|드래곤즈|시티즌|모터스|이랜드|그리너스|시티|프런티어|1995)', '', team_name).strip()
+        if clean_name and clean_name != team_name:
+            search_name_clean = TEAM_NAME_MAP.get(clean_name, clean_name)
+            res2 = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name_clean}, timeout=5)
+            res2_data = res2.json()
+            if res2_data.get("response") and len(res2_data["response"]) > 0:
+                return {"id": res2_data["response"][0]["team"]["id"], "logo": res2_data["response"][0]["team"].get("logo")}
     except: pass
     return {"id": None, "logo": None}
 
@@ -359,7 +370,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링
+# CSS 스타일링 
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
