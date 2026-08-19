@@ -143,7 +143,6 @@ def fetch_team_injuries_api(team_id):
         return 0
     except: return 0
 
-# [NEW Phase 2 - Step 3] 팀의 가장 최근 경기 날짜 가져오기 (피로도 계산용)
 @st.cache_data(ttl=43200)
 def fetch_team_last_match_date_api(team_id):
     if not team_id: return None
@@ -253,22 +252,19 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# [NEW Phase 2 - Step 3] 코멘트에 부상자 MAX 리밋 처리 및 피로도 추가
 def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest):
     story_parts = []
     
-    # 부상자 코멘트 (6명 이상일 경우 '다수'로 뭉뚱그림)
     if h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장(부상) 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
-    elif h_inj >= 3: story_parts.append(f"🚨 {home}에 핵심 자원을 포함한 {h_inj}명의 결장 의심 선수가 있어 고전이 예상됩니다.")
+    elif h_inj >= 3: story_parts.append(f"🚨 {home}에 핵심 자원 결장이 다수 의심되어 스쿼드 전력에 상당한 타격이 있습니다.")
     elif h_inj >= 1: story_parts.append(f"🏥 {home}에 가벼운 결장 의심 선수가 있어 스쿼드 변화가 예상됩니다.")
         
     if a_inj >= 6: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 다수의 결장 의심 선수가 확인되어 정상적인 경기 운영이 어렵습니다.")
-    elif a_inj >= 3: story_parts.append(f"🚨 원정팀 {away}에 {a_inj}명의 결장 의심 선수가 확인되어 고전이 예상됩니다.")
+    elif a_inj >= 3: story_parts.append(f"🚨 원정팀 {away} 측에 핵심 자원 결장이 의심되어 고전이 예상됩니다.")
     elif a_inj >= 1: story_parts.append(f"🏥 원정팀 {away} 측에 결장 의심 선수가 일부 있습니다.")
 
-    # 피로도 코멘트
-    if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 {h_rest}일에 불과해 후반전 체력 방전이 우려됩니다.")
-    if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 짧은 휴식({a_rest}일) 후 치르는 경기라 체력적인 부담이 큽니다.")
+    if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 3일 이하로 짧아 후반전 체력 방전이 우려됩니다.")
+    if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 빡빡한 일정 탓에 체력적인 부담을 안고 경기에 임합니다.")
     
     is_default_odds = (odd_h == 2.0 and odd_a == 2.0)
     if not is_default_odds:
@@ -321,7 +317,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링 (피로도 배지 추가)
+# CSS 스타일링 
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -466,10 +462,8 @@ if proto_matches:
         
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
-        # [NEW Phase 2 - Step 3] 부상자 MAX 상한선 & 휴식일(피로도) 패널티 적용
         h_injuries = fetch_team_injuries_api(home_info.get("id"))
         a_injuries = fetch_team_injuries_api(away_info.get("id"))
-        
         h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
         a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
         
@@ -483,8 +477,8 @@ if proto_matches:
         
         h_long = fetch_team_long_term_stats_api(home_info.get("id"))
         a_long = fetch_team_long_term_stats_api(away_info.get("id"))
-        h_home_win_rate = (h_long["home_wins"] / h_long["home_total"]) if h_long["home_total"] > 0 else 0.33
-        a_away_win_rate = (a_long["away_wins"] / a_long["away_total"]) if a_long["away_total"] > 0 else 0.33
+        h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
+        a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
@@ -570,13 +564,15 @@ with main_tab1:
                 
                 h_inj = item.get('h_inj', 0)
                 a_inj = item.get('a_inj', 0)
-                h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_inj}명</div>" if h_inj > 0 else ""
-                a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_inj}명</div>" if a_inj > 0 else ""
+                h_inj_level = "3단계(MAX)" if h_inj >= 6 else ("2단계(-0.3)" if h_inj >= 3 else "1단계(-0.15)")
+                a_inj_level = "3단계(MAX)" if a_inj >= 6 else ("2단계(-0.3)" if a_inj >= 3 else "1단계(-0.15)")
+                h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_inj > 0 else ""
+                a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_inj > 0 else ""
                 
                 h_rest = item.get('h_rest', 99)
                 a_rest = item.get('a_rest', 99)
-                h_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {h_rest}일</div>" if h_rest <= 3 else ""
-                a_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {a_rest}일</div>" if a_rest <= 3 else ""
+                h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
+                a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
                 
                 html_code = (
                     f"<div class='match-card'>"
@@ -613,18 +609,50 @@ with main_tab2:
             
             h_form = fetch_team_form_api(home_info.get("id"))
             a_form = fetch_team_form_api(away_info.get("id"))
+            
+            # [NEW Phase 2] 승무패 14경기 리얼 확률 엔진 이식
             h_injuries = fetch_team_injuries_api(home_info.get("id"))
             a_injuries = fetch_team_injuries_api(away_info.get("id"))
+            h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
+            a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
             
-            h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_injuries}명</div>" if h_injuries > 0 else ""
-            a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_injuries}명</div>" if a_injuries > 0 else ""
+            h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
+            a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
+            h_rest_days = calculate_rest_days(h_last_date, "시간 미정")
+            a_rest_days = calculate_rest_days(a_last_date, "시간 미정")
+            h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
+            a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
             
-            # 14경기도 배지 표시용 임시 날짜 처리 (자세한건 collector에서 처리)
-            h_rest_html = ""
-            a_rest_html = ""
+            h_long = fetch_team_long_term_stats_api(home_info.get("id"))
+            a_long = fetch_team_long_term_stats_api(away_info.get("id"))
+            h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
+            a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
             
-            base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
-            p_h = round(32.0 + (base_seed % 35), 1); p_d = round(24.0 + (base_seed % 12), 1); p_a = round(100.0 - (p_h + p_d), 1)
+            fixture_details = fetch_fixture_details_api(home_info.get("id"), away_info.get("id"))
+            h2h_total = fixture_details.get("total", 0)
+            h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
+            a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
+            
+            # 배당률이 없으므로 기본 전력 상수로 기대치 생성
+            exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty), 2)
+            exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty), 2)
+            
+            h_win, draw, a_win, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
+            
+            total_p = h_win + draw + a_win
+            if total_p > 0:
+                p_h = round((h_win / total_p) * 100, 1)
+                p_d = round((draw / total_p) * 100, 1)
+                p_a = round(100.0 - p_h - p_d, 1)
+            else:
+                p_h, p_d, p_a = 34.0, 33.0, 33.0
+            
+            h_inj_level = "3단계(MAX)" if h_injuries >= 6 else ("2단계(-0.3)" if h_injuries >= 3 else "1단계(-0.15)")
+            a_inj_level = "3단계(MAX)" if a_injuries >= 6 else ("2단계(-0.3)" if a_injuries >= 3 else "1단계(-0.15)")
+            h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_injuries > 0 else ""
+            a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_injuries > 0 else ""
+            h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest_days <= 3 else ""
+            a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest_days <= 3 else ""
             
             probs = {"승": p_h, "무": p_d, "패": p_a}
             sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
@@ -702,15 +730,18 @@ with main_tab3:
             
             h_form = item.get('home_form', '')
             a_form = item.get('away_form', '')
+            
             h_inj = item.get('h_inj', 0)
             a_inj = item.get('a_inj', 0)
+            h_inj_level = "3단계(MAX)" if h_inj >= 6 else ("2단계(-0.3)" if h_inj >= 3 else "1단계(-0.15)")
+            a_inj_level = "3단계(MAX)" if a_inj >= 6 else ("2단계(-0.3)" if a_inj >= 3 else "1단계(-0.15)")
+            h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_inj > 0 else ""
+            a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_inj > 0 else ""
+            
             h_rest = item.get('h_rest', 99)
             a_rest = item.get('a_rest', 99)
-            
-            h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_inj}명</div>" if h_inj > 0 else ""
-            a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_inj}명</div>" if a_inj > 0 else ""
-            h_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {h_rest}일</div>" if h_rest <= 3 else ""
-            a_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {a_rest}일</div>" if a_rest <= 3 else ""
+            h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
+            a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
             
             html_code = (
                 f"<div class='match-card top3-glow'>"
