@@ -28,7 +28,7 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수술 완료] 베트맨 기출변형 대폭 추가 및 특수팀 맵핑
+# [수술 완료] 유럽 팀 추가 및 샬럿FC 검색어 특수 교정
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
@@ -41,14 +41,15 @@ TEAM_NAME_MAP = {
     "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
     "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
-    "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte FC",
+    "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte",
     "스포캔자": "Sporting Kansas City", "세인시티": "St. Louis City", "미네유나": "Minnesota United", "애틀유나": "Atlanta United",
     "콜로래피": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "FC댈러스": "FC Dallas",
     "시애사운": "Seattle Sounders", "오스틴FC": "Austin FC", "LA갤럭시": "LA Galaxy", "새너어스": "San Jose Earthquakes",
     "포틀팀버": "Portland Timbers", "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo",
     "포츠머스": "Portsmouth", "퀸즈파크 레인저스": "Queens Park Rangers", "노리치 시티": "Norwich City",
     "웨스트브로미치 앨비언": "West Bromwich Albion", "스토크 시티": "Stoke City", "스완지 시티": "Swansea City",
-    "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "말레이시아": "Malaysia", "베트남": "Vietnam"
+    "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "말레이시아": "Malaysia", "베트남": "Vietnam",
+    "SK슬로반 브라티슬라바": "Slovan Bratislava", "NK첼레": "Celje", "하포엘 베르셰바": "Hapoel Beer Sheva", "사바FK": "Sabah"
 }
 
 DIRECT_LOGO_MAP = {}
@@ -84,8 +85,8 @@ def fetch_team_info_api(team_name):
         if res_data.get("response") and len(res_data["response"]) > 0:
             return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
         
-        # [최종 병기] 1차 검색 실패 시 꼬리표 떼고 '자동 세탁 재검색'
-        clean_name = re.sub(r'(프로축구단|하나시티즌|FC|유나이티드|아이파크|스틸러스|드래곤즈|시티즌|모터스|이랜드|그리너스|시티|프런티어|1995)', '', team_name).strip()
+        # [수술 완료] SK, NK, FK 등 유럽팀 꼬리표까지 모조리 떼어내고 세탁 재검색!
+        clean_name = re.sub(r'(프로축구단|하나시티즌|FC|유나이티드|아이파크|스틸러스|드래곤즈|시티즌|모터스|이랜드|그리너스|시티|프런티어|1995|SK|NK|FK)', '', team_name).strip()
         if clean_name and clean_name != team_name:
             search_name_clean = TEAM_NAME_MAP.get(clean_name, clean_name)
             res2 = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name_clean}, timeout=5)
@@ -181,7 +182,6 @@ def calculate_rest_days(last_date_iso, match_time_str):
     except: pass
     return 99
 
-# [수술 완료] MLS 등 복수 리그/컨퍼런스 전체 순회 로직 탑재!
 @st.cache_data(ttl=86400)
 def fetch_team_standing_api(team_id):
     if not team_id: return {"rank": 99, "points": 0}
