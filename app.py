@@ -1,4 +1,4 @@
-mport streamlit as st
+import streamlit as st
 import math
 import json
 import requests
