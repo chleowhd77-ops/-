@@ -128,7 +128,6 @@ def fetch_team_long_term_stats_api(team_id):
         return default_res
     except: return default_res
 
-# [NEW Phase 2 - Step 2] 부상자/결장자 파악 엔진 (최근 1경기 기준)
 @st.cache_data(ttl=43200)
 def fetch_team_injuries_api(team_id):
     if not team_id: return 0
@@ -143,6 +142,33 @@ def fetch_team_injuries_api(team_id):
             return count
         return 0
     except: return 0
+
+# [NEW Phase 2 - Step 3] 팀의 가장 최근 경기 날짜 가져오기 (피로도 계산용)
+@st.cache_data(ttl=43200)
+def fetch_team_last_match_date_api(team_id):
+    if not team_id: return None
+    try:
+        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 1}, timeout=5)
+        data = res.json().get("response", [])
+        if data:
+            return data[0]["fixture"]["date"]
+    except: pass
+    return None
+
+def calculate_rest_days(last_date_iso, match_time_str):
+    if not last_date_iso or not match_time_str or match_time_str == "시간 미정": return 99
+    try:
+        last_dt = datetime.fromisoformat(last_date_iso.replace('Z', '+00:00'))
+        now = datetime.now(timezone(timedelta(hours=9)))
+        year = now.year
+        match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
+        if match:
+            mo, d, h, m = map(int, match.groups())
+            curr_dt = datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+            diff = curr_dt - last_dt
+            return max(0, diff.days)
+    except: pass
+    return 99
 
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
@@ -227,15 +253,22 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# [NEW Phase 2 - Step 2] 코멘트에 부상/결장 정보 강력하게 추가!
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj):
+# [NEW Phase 2 - Step 3] 코멘트에 부상자 MAX 리밋 처리 및 피로도 추가
+def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest):
     story_parts = []
     
-    if h_inj >= 2: story_parts.append(f"🚨 삐용삐용! {home}에 {h_inj}명의 결장(부상) 의심 선수가 발생해 전력 누수가 심각합니다.")
-    elif h_inj == 1: story_parts.append(f"🏥 {home}에 결장 의심 선수가 있어 스쿼드 변화가 예상됩니다.")
+    # 부상자 코멘트 (6명 이상일 경우 '다수'로 뭉뚱그림)
+    if h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장(부상) 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
+    elif h_inj >= 3: story_parts.append(f"🚨 {home}에 핵심 자원을 포함한 {h_inj}명의 결장 의심 선수가 있어 고전이 예상됩니다.")
+    elif h_inj >= 1: story_parts.append(f"🏥 {home}에 가벼운 결장 의심 선수가 있어 스쿼드 변화가 예상됩니다.")
         
-    if a_inj >= 2: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 {a_inj}명의 결장 의심 선수가 확인되어 고전이 예상됩니다.")
-    elif a_inj == 1: story_parts.append(f"🏥 원정팀 {away} 측에 결장 의심 선수가 일부 있습니다.")
+    if a_inj >= 6: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 다수의 결장 의심 선수가 확인되어 정상적인 경기 운영이 어렵습니다.")
+    elif a_inj >= 3: story_parts.append(f"🚨 원정팀 {away}에 {a_inj}명의 결장 의심 선수가 확인되어 고전이 예상됩니다.")
+    elif a_inj >= 1: story_parts.append(f"🏥 원정팀 {away} 측에 결장 의심 선수가 일부 있습니다.")
+
+    # 피로도 코멘트
+    if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 {h_rest}일에 불과해 후반전 체력 방전이 우려됩니다.")
+    if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 짧은 휴식({a_rest}일) 후 치르는 경기라 체력적인 부담이 큽니다.")
     
     is_default_odds = (odd_h == 2.0 and odd_a == 2.0)
     if not is_default_odds:
@@ -288,7 +321,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링 (부상자 배지 추가)
+# CSS 스타일링 (피로도 배지 추가)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -317,6 +350,7 @@ st.markdown("""
     .team-name-text { display: block; color: #F8FAFC !important; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; }
     .team-form-text { display: block; color: #64748B; font-size: 12px; font-weight: 700; letter-spacing: 1px; margin-top: 4px; }
     .injury-badge { display: block; color: #F87171; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(248,113,113,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F87171; }
+    .fatigue-badge { display: block; color: #F59E0B; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(245,158,11,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F59E0B; }
     .team-logo { width: 55px !important; height: 55px !important; object-fit: contain; }
     
     .center-time-box { width: 140px; text-align: center; flex-shrink: 0; }
@@ -430,18 +464,27 @@ if proto_matches:
         away_info = fetch_team_info_api(away_team)
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         
-        # [NEW Phase 2 - Step 2] 부상자 데이터 파악 및 페널티 부여
+        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
+        
+        # [NEW Phase 2 - Step 3] 부상자 MAX 상한선 & 휴식일(피로도) 패널티 적용
         h_injuries = fetch_team_injuries_api(home_info.get("id"))
         a_injuries = fetch_team_injuries_api(away_info.get("id"))
-        h_injury_penalty = h_injuries * 0.15
-        a_injury_penalty = a_injuries * 0.15
+        
+        h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
+        a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
+        
+        h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
+        a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
+        h_rest_days = calculate_rest_days(h_last_date, final_match_time)
+        a_rest_days = calculate_rest_days(a_last_date, final_match_time)
+        
+        h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
+        a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
         
         h_long = fetch_team_long_term_stats_api(home_info.get("id"))
         a_long = fetch_team_long_term_stats_api(away_info.get("id"))
         h_home_win_rate = (h_long["home_wins"] / h_long["home_total"]) if h_long["home_total"] > 0 else 0.33
         a_away_win_rate = (a_long["away_wins"] / a_long["away_total"]) if a_long["away_total"] > 0 else 0.33
-        
-        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
@@ -453,9 +496,8 @@ if proto_matches:
         h_bigdata_bonus = h_home_win_rate * 0.6 
         a_bigdata_bonus = a_away_win_rate * 0.6 
         
-        # 부상자 발생 시 득점 기대치를 강제로 깎아버림 (스쿼드 데미지)
-        exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty), 2)
-        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty), 2)
+        exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty), 2)
+        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty), 2)
         
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
@@ -473,15 +515,15 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        # 스토리에 부상자 정보 넘겨줌
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries)
+        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries, h_rest_days, a_rest_days)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
             "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
             "home_form": h_form, "away_form": a_form,
-            "h_inj": h_injuries, "a_inj": a_injuries
+            "h_inj": h_injuries, "a_inj": a_injuries,
+            "h_rest": h_rest_days, "a_rest": a_rest_days
         })
 
 # -----------------------------------------------------------------------------
@@ -526,19 +568,23 @@ with main_tab1:
                 h_form = item.get('home_form', '')
                 a_form = item.get('away_form', '')
                 
-                # [수술 핵심] 부상자 발생 시 UI에 빨간 배지 표시!
                 h_inj = item.get('h_inj', 0)
                 a_inj = item.get('a_inj', 0)
                 h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_inj}명</div>" if h_inj > 0 else ""
                 a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_inj}명</div>" if a_inj > 0 else ""
                 
+                h_rest = item.get('h_rest', 99)
+                a_rest = item.get('a_rest', 99)
+                h_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {h_rest}일</div>" if h_rest <= 3 else ""
+                a_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {a_rest}일</div>" if a_rest <= 3 else ""
+                
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
                     f"<div class='vs-row'>"
-                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}</div>{logo_h_tag}</div>"
+                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                     f"<div class='center-time-box'>{time_display}</div>"
-                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}</div></div>"
+                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div>"
                     f"</div>"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
                     f"<div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div>"
@@ -572,6 +618,10 @@ with main_tab2:
             
             h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_injuries}명</div>" if h_injuries > 0 else ""
             a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_injuries}명</div>" if a_injuries > 0 else ""
+            
+            # 14경기도 배지 표시용 임시 날짜 처리 (자세한건 collector에서 처리)
+            h_rest_html = ""
+            a_rest_html = ""
             
             base_seed = (ord(m['home'][0]) + ord(m['away'][0]) + idx * 7)
             p_h = round(32.0 + (base_seed % 35), 1); p_d = round(24.0 + (base_seed % 12), 1); p_a = round(100.0 - (p_h + p_d), 1)
@@ -615,9 +665,9 @@ with main_tab2:
             html_code = (
                 f"<div class='match-card' style='padding: 24px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span></div>"
-                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div></div>"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div>"
                 f"<div style='display: flex; gap: 10px;'><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div></div>"
@@ -654,16 +704,20 @@ with main_tab3:
             a_form = item.get('away_form', '')
             h_inj = item.get('h_inj', 0)
             a_inj = item.get('a_inj', 0)
+            h_rest = item.get('h_rest', 99)
+            a_rest = item.get('a_rest', 99)
             
             h_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {h_inj}명</div>" if h_inj > 0 else ""
             a_inj_html = f"<div class='injury-badge'>🏥 결장 의심: {a_inj}명</div>" if a_inj > 0 else ""
+            h_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {h_rest}일</div>" if h_rest <= 3 else ""
+            a_rest_html = f"<div class='fatigue-badge'>💦 짧은 휴식: {a_rest}일</div>" if a_rest <= 3 else ""
             
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
-                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_inj_html}{h_rest_html}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_inj_html}{a_rest_html}</div></div></div>"
                 f"<div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div>"
                 f"</div>"
             )
