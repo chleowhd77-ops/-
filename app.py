@@ -28,7 +28,6 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수술 완료] 유럽팀 추가, 베트맨식 띄어쓰기/풀네임 장난 100% 타격 맵핑
 TEAM_NAME_MAP = {
     # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
@@ -65,6 +64,9 @@ TEAM_NAME_MAP = {
 
 DIRECT_LOGO_MAP = {}
 
+# -----------------------------------------------------------------------------
+# [NEW] 영구 DB 캐싱 엔진 (API 호출 99% 방어)
+# -----------------------------------------------------------------------------
 def init_db():
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
@@ -76,6 +78,13 @@ def init_db():
             failure_reason TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_toto14 INTEGER DEFAULT 0
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_cache (
+            cache_key TEXT PRIMARY KEY,
+            cache_value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN is_toto14 INTEGER DEFAULT 0")
     except: pass 
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
@@ -85,16 +94,56 @@ def init_db():
 
 init_db()
 
+def get_db_cache(key, ttl_hours):
+    try:
+        conn = sqlite3.connect("ai_predictions.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            val, updated_at = row
+            updated_time = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - updated_time < timedelta(hours=ttl_hours):
+                return json.loads(val)
+    except: pass
+    return None
+
+def set_db_cache(key, value):
+    try:
+        conn = sqlite3.connect("ai_predictions.db")
+        cursor = conn.cursor()
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            INSERT OR REPLACE INTO api_cache (cache_key, cache_value, updated_at)
+            VALUES (?, ?, ?)
+        """, (key, json.dumps(value), now_str))
+        conn.commit()
+        conn.close()
+    except: pass
+
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
+    if not team_name: return {"id": None, "logo": None}
+    
+    cache_key = f"team_info_{team_name}"
+    cached_data = get_db_cache(cache_key, 8760) # 팀 정보는 1년(8760시간) 영구 캐싱!
+    if cached_data: return cached_data
+    
     logo = DIRECT_LOGO_MAP.get(team_name)
-    if logo: return {"id": None, "logo": logo}
+    if logo: 
+        res = {"id": None, "logo": logo}
+        set_db_cache(cache_key, res)
+        return res
+        
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     try:
         response = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
         res_data = response.json()
         if res_data.get("response") and len(res_data["response"]) > 0:
-            return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
+            res = {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
+            set_db_cache(cache_key, res)
+            return res
         
         clean_name = re.sub(r'(프로축구단|하나시티즌|FC|유나이티드|아이파크|스틸러스|드래곤즈|시티즌|모터스|이랜드|그리너스|시티|프런티어|1995|SK|NK|FK|SC|NEC|SE)', '', team_name).strip()
         if clean_name and clean_name != team_name:
@@ -102,13 +151,19 @@ def fetch_team_info_api(team_name):
             res2 = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name_clean}, timeout=5)
             res2_data = res2.json()
             if res2_data.get("response") and len(res2_data["response"]) > 0:
-                return {"id": res2_data["response"][0]["team"]["id"], "logo": res2_data["response"][0]["team"].get("logo")}
+                res = {"id": res2_data["response"][0]["team"]["id"], "logo": res2_data["response"][0]["team"].get("logo")}
+                set_db_cache(cache_key, res)
+                return res
     except: pass
     return {"id": None, "logo": None}
 
 @st.cache_data(ttl=43200)
 def fetch_team_form_api(team_id):
     if not team_id: return ""
+    cache_key = f"form_{team_id}"
+    cached_data = get_db_cache(cache_key, 12)
+    if cached_data is not None: return cached_data
+    
     try:
         response = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 5}, timeout=5)
         data = response.json().get("response", [])
@@ -126,13 +181,19 @@ def fetch_team_form_api(team_id):
                 elif away_win is False and home_win is True: form_list.append("패")
                 else: form_list.append("무")
         form_list.reverse()
-        return "-".join(form_list) if form_list else ""
+        res = "-".join(form_list) if form_list else ""
+        set_db_cache(cache_key, res)
+        return res
     except: return ""
 
 @st.cache_data(ttl=86400)
 def fetch_team_long_term_stats_api(team_id):
     default_res = {"home_wins": 0, "home_total": 0, "away_wins": 0, "away_total": 0}
     if not team_id: return default_res
+    cache_key = f"stats_{team_id}"
+    cached_data = get_db_cache(cache_key, 24)
+    if cached_data: return cached_data
+    
     try:
         res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 40}, timeout=5)
         data = res.json().get("response", [])
@@ -148,12 +209,17 @@ def fetch_team_long_term_stats_api(team_id):
             elif away_id == team_id:
                 default_res["away_total"] += 1
                 if winner_away is True: default_res["away_wins"] += 1
+        set_db_cache(cache_key, default_res)
         return default_res
     except: return default_res
 
 @st.cache_data(ttl=43200)
 def fetch_team_injuries_api(team_id):
     if not team_id: return 0
+    cache_key = f"inj_{team_id}"
+    cached_data = get_db_cache(cache_key, 12)
+    if cached_data is not None: return cached_data
+    
     try:
         fix_res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 1}, timeout=5)
         last_fix = fix_res.json().get("response", [])
@@ -162,6 +228,7 @@ def fetch_team_injuries_api(team_id):
             inj_res = requests.get(f"https://{API_HOST}/injuries", headers=headers, params={"fixture": fix_id}, timeout=5)
             inj_data = inj_res.json().get("response", [])
             count = sum(1 for x in inj_data if x.get("team", {}).get("id") == team_id)
+            set_db_cache(cache_key, count)
             return count
         return 0
     except: return 0
@@ -169,11 +236,17 @@ def fetch_team_injuries_api(team_id):
 @st.cache_data(ttl=43200)
 def fetch_team_last_match_date_api(team_id):
     if not team_id: return None
+    cache_key = f"last_match_{team_id}"
+    cached_data = get_db_cache(cache_key, 12)
+    if cached_data: return cached_data
+    
     try:
         res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 1}, timeout=5)
         data = res.json().get("response", [])
         if data:
-            return data[0]["fixture"]["date"]
+            date_val = data[0]["fixture"]["date"]
+            set_db_cache(cache_key, date_val)
+            return date_val
     except: pass
     return None
 
@@ -195,6 +268,10 @@ def calculate_rest_days(last_date_iso, match_time_str):
 @st.cache_data(ttl=86400)
 def fetch_team_standing_api(team_id):
     if not team_id: return {"rank": 99, "points": 0}
+    cache_key = f"standing_{team_id}"
+    cached_data = get_db_cache(cache_key, 24)
+    if cached_data: return cached_data
+    
     try:
         year = datetime.now().year
         res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
@@ -208,13 +285,19 @@ def fetch_team_standing_api(team_id):
                 for group in standings_list:
                     for s in group:
                         if s["team"]["id"] == team_id:
-                            return {"rank": s["rank"], "points": s["points"]}
+                            res_val = {"rank": s["rank"], "points": s["points"]}
+                            set_db_cache(cache_key, res_val)
+                            return res_val
     except: pass
     return {"rank": 99, "points": 0}
 
 @st.cache_data(ttl=43200)
 def fetch_overseas_odds_api(team_id):
     if not team_id: return None
+    cache_key = f"odds_{team_id}"
+    cached_data = get_db_cache(cache_key, 6)
+    if cached_data: return cached_data
+    
     try:
         res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "next": 1}, timeout=5)
         data = res.json().get("response", [])
@@ -229,7 +312,9 @@ def fetch_overseas_odds_api(team_id):
                     for b in bets:
                         if b["name"] == "Match Winner":
                             vals = b["values"]
-                            return {"odd_h": float(vals[0]["odd"]), "odd_d": float(vals[1]["odd"]), "odd_a": float(vals[2]["odd"])}
+                            res_val = {"odd_h": float(vals[0]["odd"]), "odd_d": float(vals[1]["odd"]), "odd_a": float(vals[2]["odd"])}
+                            set_db_cache(cache_key, res_val)
+                            return res_val
     except: pass
     return None
 
@@ -237,6 +322,10 @@ def fetch_overseas_odds_api(team_id):
 def fetch_fixture_details_api(home_id, away_id):
     default_res = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
     if not home_id or not away_id: return default_res
+    cache_key = f"app_h2h_{home_id}_{away_id}"
+    cached_data = get_db_cache(cache_key, 24)
+    if cached_data: return cached_data
+    
     try:
         response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
@@ -249,7 +338,9 @@ def fetch_fixture_details_api(home_id, away_id):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
             else: draws += 1
-        return {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+        res_val = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+        set_db_cache(cache_key, res_val)
+        return res_val
     except: return default_res
 
 def load_betman_data():
