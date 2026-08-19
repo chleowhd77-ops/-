@@ -28,12 +28,13 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
+# [수술 완료] 베트맨 기출변형 텍스트 매핑 대폭 추가
 TEAM_NAME_MAP = {
-    "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "FC안양": "FC Anyang",
+    "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
     "김해FC": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
-    "부산아이": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
-    "부천FC": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
+    "부산아이": "Busan I Park", "부산 아이파크": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
+    "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
     "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
@@ -169,7 +170,7 @@ def calculate_rest_days(last_date_iso, match_time_str):
     except: pass
     return 99
 
-# [NEW Phase 3] 리그 순위 파악 엔진
+# [수술 완료] MLS 등 복수 리그/컨퍼런스 전체 순회 로직 탑재!
 @st.cache_data(ttl=86400)
 def fetch_team_standing_api(team_id):
     if not team_id: return {"rank": 99, "points": 0}
@@ -181,14 +182,15 @@ def fetch_team_standing_api(team_id):
             res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
             data = res.json().get("response", [])
         if data:
-            standings = data[0]["league"]["standings"][0]
-            for s in standings:
-                if s["team"]["id"] == team_id:
-                    return {"rank": s["rank"], "points": s["points"]}
+            for league_data in data:
+                standings_list = league_data.get("league", {}).get("standings", [])
+                for group in standings_list:
+                    for s in group:
+                        if s["team"]["id"] == team_id:
+                            return {"rank": s["rank"], "points": s["points"]}
     except: pass
     return {"rank": 99, "points": 0}
 
-# [NEW Phase 3] 해외 도박사 시장 쏠림(배당 흐름) 파악 엔진
 @st.cache_data(ttl=43200)
 def fetch_overseas_odds_api(team_id):
     if not team_id: return None
@@ -293,7 +295,6 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# [Phase 3] 코멘트 엔진에 마켓 흐름, 순위 동기부여 프리미엄 해설 추가!
 def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest, h_rank, a_rank, h_market, a_market):
     story_parts = []
     
@@ -358,7 +359,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링 (신규 배지 디자인 추가)
+# CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -507,7 +508,6 @@ if proto_matches:
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
-        # [NEW Phase 3] 변수 가져오기 (순위, 해외배당)
         h_stand = fetch_team_standing_api(home_info.get("id"))
         a_stand = fetch_team_standing_api(away_info.get("id"))
         h_rank, a_rank = h_stand["rank"], a_stand["rank"]
@@ -550,7 +550,6 @@ if proto_matches:
         h_bigdata_bonus = h_home_win_rate * 0.6 
         a_bigdata_bonus = a_away_win_rate * 0.6 
         
-        # [NEW Phase 3] 수식에 프리미엄 변수 융합!
         exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus), 2)
         exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus), 2)
         
@@ -636,7 +635,6 @@ with main_tab1:
                 h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
                 a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
 
-                # [NEW Phase 3] 신규 배지 렌더링
                 h_rank, a_rank = item.get('h_rank', 99), item.get('a_rank', 99)
                 h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
                 a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
@@ -719,7 +717,6 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            # [NEW Phase 3] 14경기도 괴물 엔진 가동!
             exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus), 2)
             exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus), 2)
             
@@ -750,7 +747,6 @@ with main_tab2:
             first_pick, first_pct = sorted_probs[0]
             second_pick, second_pct = sorted_probs[1]
             
-            # 투마킹 다이어트(7.0%) & 무승부 강제 보정
             picks = []
             if first_pct - second_pct <= 7.0:
                 if set([first_pick, second_pick]) == set(["승", "패"]):
