@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 import math
 import json
 import requests
@@ -106,6 +106,29 @@ def fetch_team_form_api(team_id):
         return "-".join(form_list) if form_list else ""
     except: return ""
 
+# [NEW Phase 2] 2년 치 누적 빅데이터 (최대 40경기 홈/원정 폼 분리 추출)
+@st.cache_data(ttl=86400)
+def fetch_team_long_term_stats_api(team_id):
+    default_res = {"home_wins": 0, "home_total": 0, "away_wins": 0, "away_total": 0}
+    if not team_id: return default_res
+    try:
+        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 40}, timeout=5)
+        data = res.json().get("response", [])
+        for m in data:
+            home_id = m["teams"]["home"]["id"]
+            away_id = m["teams"]["away"]["id"]
+            winner_home = m["teams"]["home"]["winner"]
+            winner_away = m["teams"]["away"]["winner"]
+            
+            if home_id == team_id:
+                default_res["home_total"] += 1
+                if winner_home is True: default_res["home_wins"] += 1
+            elif away_id == team_id:
+                default_res["away_total"] += 1
+                if winner_away is True: default_res["away_wins"] += 1
+        return default_res
+    except: return default_res
+
 @st.cache_data(ttl=43200)
 def fetch_fixture_details_api(home_id, away_id):
     default_res = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
@@ -189,46 +212,41 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form):
+# [NEW Phase 2] 코멘트에 2년 치 빅데이터 성향 반영
+def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long):
     story_parts = []
     
     is_default_odds = (odd_h == 2.0 and odd_a == 2.0)
     if not is_default_odds:
-        if odd_h <= 1.5:
-            story_parts.append(f"📊 도박사들의 배당({odd_h})이 증명하듯 {home}의 강력한 우세가 점쳐지는 정배당 매치입니다.")
-        elif odd_a <= 1.5:
-            story_parts.append(f"📊 원정임에도 {away}가 매우 낮은 배당({odd_a})을 받으며 압도적인 탑독으로 평가받고 있습니다.")
-        elif abs(odd_h - odd_a) <= 0.3:
-            story_parts.append(f"⚖️ 배당률({odd_h} vs {odd_a}) 차이가 거의 없는 초박빙 접전이 예상됩니다.")
-        elif odd_h < odd_a:
-            story_parts.append(f"📈 배당률 흐름상 홈팀 {home}의 근소한 우세가 예상됩니다.")
-        else:
-            story_parts.append(f"📈 배당률 흐름상 원정팀 {away}의 근소한 우세가 예상됩니다.")
+        if odd_h <= 1.5: story_parts.append(f"📊 도박사들의 배당({odd_h})이 증명하듯 {home}의 강력한 우세가 점쳐지는 정배당 매치입니다.")
+        elif odd_a <= 1.5: story_parts.append(f"📊 원정임에도 {away}가 매우 낮은 배당({odd_a})을 받으며 압도적인 탑독으로 평가받고 있습니다.")
+        elif abs(odd_h - odd_a) <= 0.3: story_parts.append(f"⚖️ 배당률({odd_h} vs {odd_a}) 차이가 거의 없는 초박빙 접전이 예상됩니다.")
+        elif odd_h < odd_a: story_parts.append(f"📈 배당률 흐름상 홈팀 {home}의 근소한 우세가 예상됩니다.")
+        else: story_parts.append(f"📈 배당률 흐름상 원정팀 {away}의 근소한 우세가 예상됩니다.")
     
-    if "승-승" in h_form:
-        story_parts.append(f"🔥 {home}은(는) 최근 쾌조의 연승으로 팀 폼이 최고조에 달했습니다.")
-    elif "패-패" in h_form:
-        story_parts.append(f"💧 {home}은(는) 최근 연패의 늪에 빠져 수비 정비가 시급합니다.")
-        
-    if "승-승" in a_form:
-        story_parts.append(f"🚀 원정팀 {away} 역시 매서운 연승 기세를 보여주고 있어 방심할 수 없는 상대입니다.")
+    # 2년 치 빅데이터 멘트
+    h_home_rate = int((h_long["home_wins"] / max(1, h_long["home_total"])) * 100) if h_long["home_total"] > 0 else 0
+    a_away_rate = int((a_long["away_wins"] / max(1, a_long["away_total"])) * 100) if a_long["away_total"] > 0 else 0
+    
+    if h_home_rate >= 60:
+        story_parts.append(f"🏰 2년 누적 빅데이터 분석 결과, {home}은(는) 안방에서 무려 {h_home_rate}%의 높은 승률을 자랑하는 '홈 깡패'입니다.")
+    elif a_away_rate >= 50:
+        story_parts.append(f"✈️ 빅데이터 상 {away}은(는) 원정 경기에서도 {a_away_rate}%의 준수한 승률을 기록하며 원정 징크스가 없는 팀입니다.")
+    
+    if "승-승" in h_form: story_parts.append(f"🔥 단기 폼 역시 {home}이(가) 최근 쾌조의 연승으로 최고조에 달했습니다.")
+    elif "패-패" in h_form: story_parts.append(f"💧 {home}은(는) 최근 연패의 늪에 빠져 수비 정비가 시급합니다.")
+    if "승-승" in a_form: story_parts.append(f"🚀 원정팀 {away} 역시 매서운 연승 기세를 보여주고 있어 방심할 수 없는 상대입니다.")
     
     total_h2h = h2h_h + h2h_a
     if total_h2h >= 3:
-        if h2h_h > h2h_a + 2:
-            story_parts.append(f"⚔️ 상대전적에서 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
-        elif h2h_a > h2h_h + 2:
-            story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
+        if h2h_h > h2h_a + 2: story_parts.append(f"⚔️ 상대전적에서도 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
+        elif h2h_a > h2h_h + 2: story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
             
-    if prob_h > 55:
-        story_parts.append(f"🤖 결론적으로 AI는 홈 어드밴티지를 살려 {home}의 무난한 승리를 예측합니다.")
-    elif prob_a > 55:
-        story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 {away}의 승리 가능성을 높게 평가합니다.")
-    elif prob_d >= 30 or abs(prob_h - prob_a) <= 10:
-        story_parts.append(f"🤖 결론적으로 AI는 팽팽한 주도권 싸움 끝에 진흙탕 무승부 가능성을 배제하지 않고 있습니다.")
+    if prob_h > 55: story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
+    elif prob_a > 55: story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 {away}의 승리 가능성을 높게 평가합니다.")
+    elif prob_d >= 30 or abs(prob_h - prob_a) <= 10: story_parts.append(f"🤖 결론적으로 AI는 팽팽한 주도권 싸움 끝에 진흙탕 무승부 가능성을 배제하지 않고 있습니다.")
         
-    if not story_parts:
-        return f"🔍 뚜렷한 전력차가 없는 경기! {home}과(와) {away}의 치열한 전술 싸움이 키포인트입니다."
+    if not story_parts: return f"🔍 뚜렷한 전력차가 없는 경기! {home}과(와) {away}의 치열한 전술 싸움이 키포인트입니다."
         
     return " ".join(story_parts)
 
@@ -393,15 +411,29 @@ if proto_matches:
         away_info = fetch_team_info_api(away_team)
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
         
+        # [NEW Phase 2] 2년 치 데이터 가중치 혼합!
+        h_long = fetch_team_long_term_stats_api(home_info.get("id"))
+        a_long = fetch_team_long_term_stats_api(away_info.get("id"))
+        
+        h_home_win_rate = (h_long["home_wins"] / h_long["home_total"]) if h_long["home_total"] > 0 else 0.33
+        a_away_win_rate = (a_long["away_wins"] / a_long["away_total"]) if a_long["away_total"] > 0 else 0.33
+        
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         
         p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
         p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
+        
         h2h_total = fixture_details.get("total", 0)
-        h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0
-        a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0
-        exp_h = round(max(0.5, (p_h * 2.7) + h_h2h_bonus), 2)
-        exp_a = round(max(0.3, (p_a * 2.5) + a_h2h_bonus), 2)
+        h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
+        a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
+        
+        h_bigdata_bonus = h_home_win_rate * 0.6 
+        a_bigdata_bonus = a_away_win_rate * 0.6 
+        
+        # 뼈대 공식에 2년 치 가중치 보너스 융합
+        exp_h = round(max(0.5, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus), 2)
+        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus), 2)
+        
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
 
@@ -418,7 +450,7 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form)
+        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
@@ -469,7 +501,6 @@ with main_tab1:
                 h_form = item.get('home_form', '')
                 a_form = item.get('away_form', '')
                 
-                # [수술 핵심] <span> 대신 <div>를 사용해 블록 요소로 완벽하게 위아래 정렬 강제!
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
