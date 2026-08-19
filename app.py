@@ -28,30 +28,39 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
-# [수술 완료] 띄어쓰기 변형 및 남미/유럽 뉴페이스 초대량 추가
+# [수술 완료] 유럽팀 추가, 베트맨식 띄어쓰기/풀네임 장난 100% 타격 맵핑
 TEAM_NAME_MAP = {
+    # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
-    "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
+    "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
     "김해FC": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
-    "부산아이": "Busan I Park", "부산 아이파크": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu",
+    "부산아이": "Busan I Park", "부산 아이파크": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "김천상무": "Gimcheon Sangmu", "김천상무 프로축구단": "Gimcheon Sangmu",
     "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
-    "충남아산": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
-    "충남아산 프로축구단": "Chungnam Asan", "대전 하나시티즌": "Daejeon Citizen", "김천상무 프로축구단": "Gimcheon Sangmu",
+    "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
+    
+    # 해외리그 (호주/유럽/남미)
     "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
-    "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
-    "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
-    "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte",
-    "스포캔자": "Sporting Kansas City", "세인시티": "St. Louis City", "미네유나": "Minnesota United", "애틀유나": "Atlanta United",
-    "콜로래피": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "FC댈러스": "FC Dallas",
-    "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "오스틴FC": "Austin FC", "LA갤럭시": "LA Galaxy", "LA 갤럭시": "LA Galaxy", "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes",
-    "포틀팀버": "Portland Timbers", "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo",
     "포츠머스": "Portsmouth", "퀸즈파크 레인저스": "Queens Park Rangers", "노리치 시티": "Norwich City",
     "웨스트브로미치 앨비언": "West Bromwich Albion", "스토크 시티": "Stoke City", "스완지 시티": "Swansea City",
     "SD레이더스": "SD Raiders", "시드니FC": "Sydney FC", "말레이시아": "Malaysia", "베트남": "Vietnam",
     "SK슬로반 브라티슬라바": "Slovan Bratislava", "NK첼레": "Celje", "하포엘 베르셰바": "Hapoel Beer Sheva", "사바FK": "Sabah",
     "NEC네이메헌": "NEC Nijmegen", "FK보되 글림트": "Bodo/Glimt", "세로 포르테뇨": "Cerro Porteno", "SE파우메이라스": "Palmeiras",
-    "LDU키토": "LDU Quito", "미라솔": "Mirassol", "SC코린티안스": "Corinthians", "로사리오 센트랄": "Rosario Central"
+    "LDU키토": "LDU Quito", "미라솔": "Mirassol", "SC코린티안스": "Corinthians", "로사리오 센트랄": "Rosario Central",
+    "아틀레티코 마드리드": "Atletico Madrid", "말라가": "Malaga", "셀틱": "Celtic", "라요 바예카노": "Rayo Vallecano", "알라베스": "Alaves", "LASK": "LASK",
+    
+    # MLS (다중인격 띄어쓰기 완벽 대응)
+    "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
+    "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
+    "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte",
+    "스포캔자": "Sporting Kansas City", "세인시티": "St. Louis City", "세인트루이스 시티": "St. Louis City", "미네유나": "Minnesota United", "애틀유나": "Atlanta United",
+    "콜로래피": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "FC댈러스": "FC Dallas",
+    "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "시애틀 사운더스": "Seattle Sounders",
+    "오스틴FC": "Austin FC", "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
+    "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes",
+    "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
+    "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
+    "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
 }
 
 DIRECT_LOGO_MAP = {}
@@ -87,7 +96,6 @@ def fetch_team_info_api(team_name):
         if res_data.get("response") and len(res_data["response"]) > 0:
             return {"id": res_data["response"][0]["team"]["id"], "logo": res_data["response"][0]["team"].get("logo")}
         
-        # [수술 완료] SC, NEC, SE 꼬리표까지 완벽 분쇄!
         clean_name = re.sub(r'(프로축구단|하나시티즌|FC|유나이티드|아이파크|스틸러스|드래곤즈|시티즌|모터스|이랜드|그리너스|시티|프런티어|1995|SK|NK|FK|SC|NEC|SE)', '', team_name).strip()
         if clean_name and clean_name != team_name:
             search_name_clean = TEAM_NAME_MAP.get(clean_name, clean_name)
