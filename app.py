@@ -610,7 +610,6 @@ with main_tab2:
             h_form = fetch_team_form_api(home_info.get("id"))
             a_form = fetch_team_form_api(away_info.get("id"))
             
-            # [NEW Phase 2] 승무패 14경기 리얼 확률 계산!
             h_long = fetch_team_long_term_stats_api(home_info.get("id"))
             a_long = fetch_team_long_term_stats_api(away_info.get("id"))
             
@@ -635,7 +634,6 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            # 배당률 없이 순수 전력 기반 포아송 득점 기대치 산출
             exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty), 2)
             exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty), 2)
             
@@ -661,8 +659,11 @@ with main_tab2:
             first_pick, first_pct = sorted_probs[0]
             second_pick, second_pct = sorted_probs[1]
             
+            # [수술 핵심] 투마킹 다이어트(7.0%) & 승/패 투마킹 금지(무승부 강제 보정)
             picks = []
-            if first_pct - second_pct <= 12.0:
+            if first_pct - second_pct <= 7.0:
+                if set([first_pick, second_pick]) == set(["승", "패"]):
+                    second_pick = "무"
                 picks = [first_pick, second_pick]
                 total_combinations *= 2
                 double_pick_count += 1
