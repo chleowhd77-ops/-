@@ -610,21 +610,23 @@ with main_tab2:
             h_form = fetch_team_form_api(home_info.get("id"))
             a_form = fetch_team_form_api(away_info.get("id"))
             
-            # [NEW Phase 2] 승무패 14경기 리얼 확률 엔진 이식
-            h_injuries = fetch_team_injuries_api(home_info.get("id"))
-            a_injuries = fetch_team_injuries_api(away_info.get("id"))
-            h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
-            a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
+            # [NEW Phase 2] 승무패 14경기 리얼 확률 계산!
+            h_long = fetch_team_long_term_stats_api(home_info.get("id"))
+            a_long = fetch_team_long_term_stats_api(away_info.get("id"))
             
             h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
             a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
             h_rest_days = calculate_rest_days(h_last_date, "시간 미정")
             a_rest_days = calculate_rest_days(a_last_date, "시간 미정")
+            
             h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
             a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
-            
-            h_long = fetch_team_long_term_stats_api(home_info.get("id"))
-            a_long = fetch_team_long_term_stats_api(away_info.get("id"))
+
+            h_injuries = fetch_team_injuries_api(home_info.get("id"))
+            a_injuries = fetch_team_injuries_api(away_info.get("id"))
+            h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
+            a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
+
             h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
             a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
             
@@ -633,12 +635,11 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            # 배당률이 없으므로 기본 전력 상수로 기대치 생성
+            # 배당률 없이 순수 전력 기반 포아송 득점 기대치 산출
             exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty), 2)
             exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty), 2)
             
             h_win, draw, a_win, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
-            
             total_p = h_win + draw + a_win
             if total_p > 0:
                 p_h = round((h_win / total_p) * 100, 1)
@@ -651,6 +652,7 @@ with main_tab2:
             a_inj_level = "3단계(MAX)" if a_injuries >= 6 else ("2단계(-0.3)" if a_injuries >= 3 else "1단계(-0.15)")
             h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_injuries > 0 else ""
             a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_injuries > 0 else ""
+            
             h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest_days <= 3 else ""
             a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest_days <= 3 else ""
             
