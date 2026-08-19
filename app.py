@@ -83,7 +83,6 @@ def fetch_team_info_api(team_name):
     except: pass
     return {"id": None, "logo": None}
 
-# [NEW] 최근 5경기 폼(승-무-패) 가져오는 엔진 추가!
 @st.cache_data(ttl=43200)
 def fetch_team_form_api(team_id):
     if not team_id: return ""
@@ -103,7 +102,6 @@ def fetch_team_form_api(team_id):
                 if away_win is True: form_list.append("승")
                 elif away_win is False and home_win is True: form_list.append("패")
                 else: form_list.append("무")
-        # 최근 경기가 뒤로 가도록(시간순) 리스트 뒤집기
         form_list.reverse()
         return "-".join(form_list) if form_list else ""
     except: return ""
@@ -191,7 +189,6 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# [수술 완료] 전문가 AI 코멘트 복구! (팀 이름 동적 삽입)
 def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away):
     if prob_h > 60: return f"🔥 전력상 우위! 홈팀 {home}의 무난한 승리가 예상되는 매치입니다."
     elif prob_a > 60: return f"🚨 {away}의 매서운 기세! {home}의 고전이 예상되는 이변 주의 경기!"
@@ -219,7 +216,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
-# CSS 스타일링 [수술 완료: 모바일 반응형 완벽 최적화 & 로고 위치 보정]
+# CSS 스타일링
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -238,7 +235,6 @@ st.markdown("""
     .top3-glow { border: 2px solid #00F2FE !important; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15) !important; background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important; }
     .league-title { font-size: 13px; color: #94A3B8; font-weight: 900; letter-spacing: 1px; margin-bottom: 15px; }
     
-    /* Desktop UI */
     .vs-row { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 15px; }
     .team-box { flex: 1; display: flex; align-items: center; gap: 15px; }
     .team-box.home { justify-content: flex-end; text-align: right; }
@@ -270,11 +266,10 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
     
-    /* Mobile CSS Magic (로고 위, 이름 아래로 중앙 정렬) */
     @media (max-width: 640px) {
         .vs-row { align-items: flex-start !important; }
         .team-box { flex-direction: column !important; justify-content: flex-start !important; gap: 8px !important; }
-        .team-box.home { flex-direction: column-reverse !important; } /* HTML 순서 뒤집기 (로고를 위로) */
+        .team-box.home { flex-direction: column-reverse !important; } 
         .team-box.away { flex-direction: column !important; } 
         .team-info-wrapper { align-items: center !important; text-align: center !important; }
         .team-name-text { font-size: 15px !important; white-space: normal; }
@@ -375,10 +370,8 @@ if proto_matches:
 
         save_prediction(m, best_option, best_prob_pct, (0,0), 0)
         
-        # [수술 완료] 전문가 AI 코멘트에 홈팀/원정팀 이름 쏙쏙 집어넣기!
         story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team)
 
-        # [수술 완료] 5경기 폼 긁어오기!
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
@@ -431,40 +424,7 @@ with main_tab1:
                 h_form = item.get('home_form', '')
                 a_form = item.get('away_form', '')
                 
-                # [수술 완료] 지저분한 h2h-bar(상대전적/휴식일 바) 영역 완전히 삭제 & 폼 텍스트 추가
-                html_code = f"""
-                <div class='match-card'>
-                    <div class='league-title'>{m.get('league','축구')}</div>
-                    <div class='vs-row'>
-                        <div class='team-box home'>
-                            <div class='team-info-wrapper'>
-                                <span class='team-name-text'>{m.get('home','')}</span>
-                                <span class='team-form-text'>{h_form}</span>
-                            </div>
-                            {logo_h_tag}
-                        </div>
-                        <div class='center-time-box'>{time_display}</div>
-                        <div class='team-box away'>
-                            {logo_a_tag}
-                            <div class='team-info-wrapper'>
-                                <span class='team-name-text'>{m.get('away','')}</span>
-                                <span class='team-form-text'>{a_form}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class='ai-story'>{item.get('story','')}</div>
-                    <div class='odd-bar'>
-                        <span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span>
-                        <span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span>
-                        <span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>
-                    </div>
-                    <div class='pred-grid'>
-                        <div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div>
-                        <div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item.get('best_handi','')}</span> <span class='pred-prob'>{item.get('best_handi_prob','0')}%</span></div>
-                        <div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div>
-                    </div>
-                </div>
-                """
+                html_code = f"<div class='match-card'><div class='league-title'>{m.get('league','축구')}</div><div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><span class='team-name-text'>{m.get('home','')}</span><span class='team-form-text'>{h_form}</span></div>{logo_h_tag}</div><div class='center-time-box'>{time_display}</div><div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><span class='team-name-text'>{m.get('away','')}</span><span class='team-form-text'>{a_form}</span></div></div></div><div class='ai-story'>{item.get('story','')}</div><div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div><div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item.get('best_handi','')}</span> <span class='pred-prob'>{item.get('best_handi_prob','0')}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div></div>"
                 st.markdown(html_code, unsafe_allow_html=True)
         else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
@@ -485,7 +445,6 @@ with main_tab2:
             logo_h_tag = render_logo_html(home_info.get("logo"))
             logo_a_tag = render_logo_html(away_info.get("logo"))
             
-            # [NEW] 14경기에도 5경기 폼 긁어오기!
             h_form = fetch_team_form_api(home_info.get("id"))
             a_form = fetch_team_form_api(away_info.get("id"))
             
@@ -528,54 +487,13 @@ with main_tab2:
 
             save_prediction({'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}, best_pick_display, first_pct, (0, 0), 1)
             
-            html_code = f"""
-            <div class='match-card' style='padding: 24px;'>
-                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'>
-                    <span class='badge-primary'>제 {idx} 경기</span>
-                    <span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span>
-                </div>
-                <div class='vs-row' style='margin-bottom:15px;'>
-                    <div class='team-box home'>
-                        <div class='team-info-wrapper'>
-                            <span class='team-name-text'>{m.get('home','')}</span>
-                            <span class='team-form-text'>{h_form}</span>
-                        </div>
-                        {logo_h_tag}
-                    </div>
-                    <div class='center-time-box' style='width:80px;'>{live_score_html}</div>
-                    <div class='team-box away'>
-                        {logo_a_tag}
-                        <div class='team-info-wrapper'>
-                            <span class='team-name-text'>{m.get('away','')}</span>
-                            <span class='team-form-text'>{a_form}</span>
-                        </div>
-                    </div>
-                </div>
-                <div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>
-                <div class='prob-bar-container' style='margin-bottom: 15px;'>
-                    <div class='prob-bar-win' style='width: {p_h}%;'></div>
-                    <div class='prob-bar-draw' style='width: {p_d}%;'></div>
-                    <div class='prob-bar-lose' style='width: {p_a}%;'></div>
-                </div>
-                <div style='display: flex; gap: 10px;'>
-                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div>
-                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div>
-                    <div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>
-                </div>
-            </div>
-            """
+            html_code = f"<div class='match-card' style='padding: 24px;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span></div><div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><span class='team-name-text'>{m.get('home','')}</span><span class='team-form-text'>{h_form}</span></div>{logo_h_tag}</div><div class='center-time-box' style='width:80px;'>{live_score_html}</div><div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><span class='team-name-text'>{m.get('away','')}</span><span class='team-form-text'>{a_form}</span></div></div></div><div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div><div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div><div style='display: flex; gap: 10px;'><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div></div></div>"
             match_html_list.append(html_code)
             
         total_price = total_combinations * 1000
         single_pick_count = len(toto_14_raw) - double_pick_count
         
-        summary_html = f"""
-        <div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'>
-            <span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto_14_raw)}경기 기준)</span>
-            <span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span>
-            <span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span>
-        </div>
-        """
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto_14_raw)}경기 기준)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
         for html in match_html_list: st.markdown(html, unsafe_allow_html=True)
     else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
@@ -600,38 +518,7 @@ with main_tab3:
             h_form = item.get('home_form', '')
             a_form = item.get('away_form', '')
             
-            html_code = f"""
-            <div class='match-card top3-glow'>
-                <div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>
-                <div class='vs-row'>
-                    <div class='team-box home'>
-                        <div class='team-info-wrapper'>
-                            <span class='team-name-text'>{m.get('home','')}</span>
-                            <span class='team-form-text'>{h_form}</span>
-                        </div>
-                        {logo_h_tag}
-                    </div>
-                    <div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div>
-                    <div class='team-box away'>
-                        {logo_a_tag}
-                        <div class='team-info-wrapper'>
-                            <span class='team-name-text'>{m.get('away','')}</span>
-                            <span class='team-form-text'>{a_form}</span>
-                        </div>
-                    </div>
-                </div>
-                <div class='pred-grid' style='margin-top:20px;'>
-                    <div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'>
-                        <div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div>
-                        <span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span>
-                    </div>
-                    <div class='pred-box'>
-                        <div class='pred-label'>서브 추천 (언오버)</div>
-                        <span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span>
-                    </div>
-                </div>
-            </div>
-            """
+            html_code = f"<div class='match-card top3-glow'><div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div><div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><span class='team-name-text'>{m.get('home','')}</span><span class='team-form-text'>{h_form}</span></div>{logo_h_tag}</div><div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div><div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><span class='team-name-text'>{m.get('away','')}</span><span class='team-form-text'>{a_form}</span></div></div></div><div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div></div>"
             st.markdown(html_code, unsafe_allow_html=True)
     else: st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
 
@@ -640,17 +527,7 @@ with main_tab3:
 # -----------------------------------------------------------------------------
 with main_tab4:
     stats = get_accuracy_stats()
-    st.markdown(f"""
-        <div style='display:flex; align-items:center; gap:20px; margin-bottom:30px; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'>
-            <div><span style='color:#94A3B8; font-size:14px; font-weight:700; display:block;'>전체 누적 적중률</span><span style='color:#00F2FE; font-size:40px; font-weight:900;'>{stats['accuracy']}%</span></div>
-            <div style='border-left:1px solid #334155; padding-left:20px;'>
-                <span style='color:#CBD5E1; font-size:14px; display:block;'>종료된 경기: {stats['total']} 경기</span>
-                <span style='color:#10B981; font-size:14px; display:block; margin-top:5px;'>적중: {stats['correct']} 경기</span>
-                <span style='color:#EF4444; font-size:14px; display:block; margin-top:5px;'>실패: {stats['total'] - stats['correct']} 경기</span>
-            </div>
-        </div>
-        <h4 style='color:#F8FAFC; font-weight:900; margin-bottom:10px;'>📜 최근 경기 학습(오답) 노트</h4>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div style='display:flex; align-items:center; gap:20px; margin-bottom:30px; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'><div><span style='color:#94A3B8; font-size:14px; font-weight:700; display:block;'>전체 누적 적중률</span><span style='color:#00F2FE; font-size:40px; font-weight:900;'>{stats['accuracy']}%</span></div><div style='border-left:1px solid #334155; padding-left:20px;'><span style='color:#CBD5E1; font-size:14px; display:block;'>종료된 경기: {stats['total']} 경기</span><span style='color:#10B981; font-size:14px; display:block; margin-top:5px;'>적중: {stats['correct']} 경기</span><span style='color:#EF4444; font-size:14px; display:block; margin-top:5px;'>실패: {stats['total'] - stats['correct']} 경기</span></div></div><h4 style='color:#F8FAFC; font-weight:900; margin-bottom:10px;'>📜 최근 경기 학습(오답) 노트</h4>", unsafe_allow_html=True)
     history = stats.get('history', [])
     if history:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>채점</th></tr></thead><tbody>"
