@@ -28,6 +28,7 @@ headers = {
     'x-rapidapi-key': API_KEY
 }
 
+# [수술 완료] J리그, 유로파, 남미 뉴페이스 + 베트맨 다중인격(풀네임/축약어) 100% 장전!
 TEAM_NAME_MAP = {
     # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
@@ -38,7 +39,7 @@ TEAM_NAME_MAP = {
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
     
-    # 해외리그 (호주/유럽/남미)
+    # 해외리그 (호주/아시아/유럽/남미 공통)
     "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
     "포츠머스": "Portsmouth", "퀸즈파크 레인저스": "Queens Park Rangers", "노리치 시티": "Norwich City",
     "웨스트브로미치 앨비언": "West Bromwich Albion", "스토크 시티": "Stoke City", "스완지 시티": "Swansea City",
@@ -48,18 +49,34 @@ TEAM_NAME_MAP = {
     "LDU키토": "LDU Quito", "미라솔": "Mirassol", "SC코린티안스": "Corinthians", "로사리오 센트랄": "Rosario Central",
     "아틀레티코 마드리드": "Atletico Madrid", "말라가": "Malaga", "셀틱": "Celtic", "라요 바예카노": "Rayo Vallecano", "알라베스": "Alaves", "LASK": "LASK",
     
-    # MLS (다중인격 띄어쓰기 완벽 대응)
-    "FC신시내": "FC Cincinnati", "뉴욕시티": "New York City FC", "콜럼크루": "Columbus Crew", "CF몽레알": "CF Montreal",
-    "DC유나이": "DC United", "뉴잉레벌": "New England Revolution", "뉴욕레드": "New York Red Bulls", "내슈빌SC": "Nashville SC",
-    "올랜시티": "Orlando City", "시카파이": "Chicago Fire", "토론토FC": "Toronto FC", "샬럿FC": "Charlotte",
-    "스포캔자": "Sporting Kansas City", "세인시티": "St. Louis City", "세인트루이스 시티": "St. Louis City", "미네유나": "Minnesota United", "애틀유나": "Atlanta United",
-    "콜로래피": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "FC댈러스": "FC Dallas",
+    # [NEW] 남미/유로파/기타 뉴페이스 총망라!
+    "코킴보 우니도": "Coquimbo Unido", "CA플라텐세": "CA Platense", "CR플라멩구": "Flamengo", "크루제이루EC": "Cruzeiro",
+    "카이라트 알마티": "Kairat Almaty", "RSC안더레흐트": "Anderlecht", "야기엘로니아 비아위스토크": "Jagiellonia Bialystok", "이베리아1999 트빌리시": "Iberia 1999",
+    "미엘뷔AIF": "Mjallby", "잘츠부르크": "Red Bull Salzburg", "트라브존스포르": "Trabzonspor", "페렌츠바로시TC": "Ferencvarosi TC",
+    "우니베르시타테아 크라이오바": "Universitatea Craiova", "아라라트 아르메니아": "Ararat-Armenia", "KF에그나티아": "KF Egnatia", "릴레스트룀SK": "Lillestrom",
+    "레흐 포즈난": "Lech Poznan", "FC툰": "Thun", "베식타시": "Besiktas", "카우노 잘기리스": "Kauno Zalgiris",
+    "신트 트라위던VV": "Sint-Truiden", "AC오모니아": "Omonia Nicosia", "FK츠르베나 즈베즈다": "Crvena Zvezda", "빅토리아 플젠": "Viktoria Plzen",
+    "OFI크레타": "OFI Crete", "CSKA소피아": "CSKA Sofia", "SL벤피카": "Benfica", "AGF오르후스": "Aarhus",
+    
+    # [NEW] 일본 J리그 추가
+    "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
+    
+    # MLS (다중인격 띄어쓰기/풀네임 완벽 맵핑)
+    "FC신시내": "FC Cincinnati", "FC신시내티": "FC Cincinnati", "뉴욕시티": "New York City FC", "뉴욕 시티FC": "New York City FC",
+    "콜럼크루": "Columbus Crew", "콜럼버스 크루": "Columbus Crew", "CF몽레알": "CF Montreal",
+    "DC유나이": "DC United", "DC유나이티드": "DC United", "뉴잉레벌": "New England Revolution", "뉴잉글랜드 레벌루션": "New England Revolution",
+    "뉴욕레드": "New York Red Bulls", "뉴욕 레드불스": "New York Red Bulls", "내슈빌SC": "Nashville SC",
+    "올랜시티": "Orlando City", "올랜도 시티SC": "Orlando City", "시카파이": "Chicago Fire", "시카고 파이어FC": "Chicago Fire",
+    "토론토FC": "Toronto FC", "샬럿FC": "Charlotte", "필라델피아 유니언": "Philadelphia Union", "인터 마이애미CF": "Inter Miami CF",
+    "스포캔자": "Sporting Kansas City", "스포팅 캔자스시티": "Sporting Kansas City", "세인시티": "St. Louis City", "세인트루이스 시티": "St. Louis City", "세인트루이스 시티SC": "St. Louis City",
+    "미네유나": "Minnesota United", "미네소타 유나이티드FC": "Minnesota United", "애틀유나": "Atlanta United", "애틀랜타 유나이티드FC": "Atlanta United",
+    "콜로래피": "Colorado Rapids", "콜로라도 래피즈": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "레알 솔트레이크": "Real Salt Lake", "FC댈러스": "FC Dallas",
     "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "시애틀 사운더스": "Seattle Sounders",
     "오스틴FC": "Austin FC", "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
     "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes",
     "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
     "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
-    "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
+    "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
 DIRECT_LOGO_MAP = {}
@@ -127,7 +144,7 @@ def fetch_team_info_api(team_name):
     if not team_name: return {"id": None, "logo": None}
     
     cache_key = f"team_info_{team_name}"
-    cached_data = get_db_cache(cache_key, 8760) # 팀 정보는 1년(8760시간) 영구 캐싱!
+    cached_data = get_db_cache(cache_key, 8760) # 팀 정보는 1년 영구 캐싱!
     if cached_data: return cached_data
     
     logo = DIRECT_LOGO_MAP.get(team_name)
