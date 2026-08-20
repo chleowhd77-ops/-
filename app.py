@@ -691,11 +691,18 @@ st.markdown("""
     .odd-item { font-size: 14px; color: #94A3B8; font-weight: 700; }
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
     .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 700; border-radius: 4px; margin-bottom: 15px; line-height: 1.6; }
+    
+    /* 👑 예측 박스 디자인 전면 개편 */
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; }
-    .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 8px; }
-    .pred-value { font-size: 18px; color: #F8FAFC; font-weight: 900; }
-    .pred-prob { font-size: 14px; color: #10B981; font-weight: 900; margin-left: 6px; }
+    .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 10px; }
+    
+    /* 글자 삐져나옴 방지 및 위아래 정렬 */
+    .pred-value { display: block; font-size: 15px; color: #F8FAFC; font-weight: 900; line-height: 1.4; margin-bottom: 8px; word-break: keep-all; }
+    
+    /* 확률을 눈에 띄는 연녹색 알약 배지로 성형 */
+    .pred-prob { display: inline-block; font-size: 13px; color: #0B0F19; font-weight: 900; background-color: #10B981; padding: 3px 12px; border-radius: 12px; box-shadow: 0 2px 5px rgba(16, 185, 129, 0.2); }
+    
     .prob-bar-container { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; background: #1E293B;}
     .prob-bar-win { background-color: #00F2FE; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .prob-bar-draw { background-color: #10B981; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
@@ -885,13 +892,13 @@ if proto_matches:
 
         candidates = [(f"{home_team} 승", h_win, h_win * odd_h), (f"{away_team} 승", a_win, a_win * odd_a), ("무승부", draw, draw * odd_d)]
         
-        # 👑 [기획 패치] 승무패 추천을 EV(배당가치)가 아닌 1순위 확률(%) 우선으로 변경!
+        # 👑 [기획 패치] 승무패 1순위 추천을 EV(x[2])가 아닌 '확률순(x[1])'으로 고정! (이베리아 역배 참사 방지)
         best_option, best_prob, best_ev = max(candidates, key=lambda x: x[1])
         best_prob_pct = round(best_prob * 100, 1)
         
-        # 👑 [기획 패치] 기준점 명시: 핸디캡 수치를 문자열 앞에 예쁘게 붙여줍니다.
-        handi_str = f"[{handi_val:+1.1f}]" 
-        best_handi = f"{handi_str} {home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{handi_str} {away_team} 핸디승"
+        # 👑 [기획 패치] 핸디캡 기준점 분리 및 상단 배치 (위아래 예쁘게 정렬)
+        handi_str = f"<span style='color:#00F2FE; font-size:13px; font-weight:900;'>[{handi_val:+1.1f}]</span><br>" 
+        best_handi = f"{handi_str}{home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{handi_str}{away_team} 핸디승"
         best_handi_prob = round(max(prob_handi_h, prob_handi_a) * 100, 1)
         
         best_uo = "언더 (U 2.5)" if prob_u * uo_under > prob_o * uo_over else "오버 (O 2.5)"
