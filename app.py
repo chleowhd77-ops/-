@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import math
 import json
@@ -22,6 +23,7 @@ st.set_page_config(
 
 API_KEY = "28b599664bba858ebf93515768741975"
 API_HOST = "v3.football.api-sports.io"
+GITHUB_REPO = "chleowhd77-ops/-"
 
 headers = {
     'x-rapidapi-host': API_HOST,
@@ -47,7 +49,7 @@ TEAM_NAME_MAP = {
     "코킴보 우니도": "Coquimbo Unido", "CA플라텐세": "CA Platense", "CR플라멩구": "Flamengo", "크루제이루EC": "Cruzeiro",
     "카이라트 알마티": "Kairat Almaty", "RSC안더레흐트": "Anderlecht", "야기엘로니아 비아위스토크": "Jagiellonia Bialystok", "이베리아1999 트빌리시": "Iberia 1999",
     "미엘뷔AIF": "Mjallby", "잘츠부르크": "Red Bull Salzburg", "트라브존스포르": "Trabzonspor", "페렌츠바로시TC": "Ferencvarosi TC",
-    "우니베르시타테아 크라이오바": "Universitatea Craiova", "아라라트 아르메니아": "Ararat-Armenia", "KF에그나티아": "KF Egnatia", "릴레스트룀SK": "Lillestrom",
+    "우니베르시타테아 크라이오바": "Universitatea Craiova", "Ararat-Armenia": "Ararat-Armenia", "KF에그나티아": "KF Egnatia", "릴레스트룀SK": "Lillestrom",
     "레흐 포즈난": "Lech Poznan", "FC툰": "Thun", "베식타시": "Besiktas", "카우노 잘기리스": "Kauno Zalgiris",
     "신트 트라위던VV": "Sint-Truiden", "AC오모니아": "Omonia Nicosia", "FK츠르베나 즈베즈다": "Crvena Zvezda", "빅토리아 플젠": "Viktoria Plzen",
     "OFI크레타": "OFI Crete", "CSKA소피아": "CSKA Sofia", "SL벤피카": "Benfica", "AGF오르후스": "Aarhus",
@@ -61,15 +63,12 @@ TEAM_NAME_MAP = {
     "스포캔자": "Sporting Kansas City", "스포팅 캔자스시티": "Sporting Kansas City", "세인시티": "St. Louis City", "세인트루이스 시티": "St. Louis City", "세인트루이스 시티SC": "St. Louis City",
     "미네유나": "Minnesota United", "미네소타 유나이티드FC": "Minnesota United", "애틀유나": "Atlanta United", "애틀랜타 유나이티드FC": "Atlanta United",
     "콜로래피": "Colorado Rapids", "콜로라도 래피즈": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "레알 솔트레이크": "Real Salt Lake", "FC댈러스": "FC Dallas",
-    "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "시애틀 사운더스": "Seattle Sounders",
-    "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
+    "시애사운": "Seattle Sounders", "오스틴FC": "Austin FC", "LA갤럭시": "Los Angeles Galaxy", 
+    "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes", "새너제이 어스케이크스": "San Jose Earthquakes",
     "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
-    "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
-    "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo",
-    "새너제이 어스케이크스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes", "새너어스": "San Jose Earthquakes"
+    "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
 }
 
-# 👑 [API 제한 방지 패치] 미국 MLS 팀들 ID 직접 매핑으로 에러 완벽 차단!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
@@ -94,6 +93,18 @@ DIRECT_TEAM_INFO = {
     "밴쿠버 화이트캡스FC": {"id": 16053, "logo": "https://media.api-sports.io/football/teams/16053.png"},
     "휴스턴 다이너모FC": {"id": 16060, "logo": "https://media.api-sports.io/football/teams/16060.png"}
 }
+
+# 👑 [기획 패치] 웹사이트 구동 시, 로봇이 깃허브에 올려둔 '진짜' DB를 멱살 잡고 강제로 덮어씌움!
+def download_db_from_github():
+    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
+    try:
+        res = requests.get(raw_url, timeout=5)
+        if res.status_code == 200:
+            with open("ai_predictions.db", "wb") as f:
+                f.write(res.content)
+    except: pass
+
+download_db_from_github()
 
 # -----------------------------------------------------------------------------
 # 영구 DB 캐싱 엔진
@@ -121,7 +132,6 @@ def init_db():
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
     except: pass
     
-    # 👑 악성 캐시 정리 (팀 못찾은 거 초기화)
     try: cursor.execute("DELETE FROM api_cache WHERE cache_key LIKE 'team_info_%' AND cache_value LIKE '%null%'")
     except: pass
     
@@ -164,7 +174,6 @@ def fetch_team_info_api(team_name):
     if team_name in DIRECT_TEAM_INFO: return DIRECT_TEAM_INFO[team_name]
     cache_key = f"team_info_{team_name}"
     cached_data = get_db_cache(cache_key, 8760) 
-    # 👑 캐시가 살아있더라도 id가 없으면 무시하고 API로 직행!
     if cached_data and cached_data.get("id") is not None: return cached_data
     
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
@@ -871,7 +880,7 @@ if proto_matches:
         odds_exp_a = p_a * 2.8
         
         exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus - h_injury_penalty - h_fatigue_penalty - h_rot_penalty), 2)
-        exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus - a_injury_penalty - a_fatigue_penalty - a_rot_penalty), 2)
+        exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty - a_rot_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
         
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
@@ -908,8 +917,7 @@ if proto_matches:
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        # 👑 [기획 패치] 종료된 게임은 AI 리포트 탭에서 볼 수 있다는 배너 추가!
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 경기가 종료된 게임은 [AI 리포트] 탭에서 확인하실 수 있습니다.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
         
         if analyzed_proto:
             displayed_count = 0
@@ -922,14 +930,12 @@ with main_tab1:
                 
                 a_result = m.get('actual_result', 'PENDING')
                 
-                # 👑 [기획 패치] 실제 종료되었거나, 채점이 끝난 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제!
                 if match_status == "FINISHED" or a_result == 'FINISHED':
                     continue
                 
                 displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                # 아직 진행중이거나 예정된 경기만 화면에 그림
                 if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
@@ -1157,14 +1163,15 @@ with main_tab2:
             style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if is_d else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
             style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
 
-            match_id_str = str(m.get('id', ''))
+            # 승무패 14경기 라이브 스코어 연동 패치
+            match_id_str = f"TOTO14_{m['id']}"
             live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
             if match_id_str in live_scores_data:
                 live_info = live_scores_data[match_id_str]
                 score_text = live_info.get("score", "")
                 if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"
 
-            save_prediction({'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}, best_pick_display, first_pct, (0, 0), 1)
+            save_prediction({'id': match_id_str, 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}, best_pick_display, first_pct, (0, 0), 1)
             
             html_code = (
                 f"<div class='match-card' style='padding: 24px;'>"
@@ -1262,11 +1269,10 @@ with main_tab4:
     if scoring_data or history_data:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
         
-        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 채점 중인 경기 노출
+        # 👑 [기획 패치] 승무패 14경기들도 리포트에서 -:- 안 뜨게 파일에서 직접 가져옴!
         for row in scoring_data:
             m_id_str = str(row['match_id'])
             
-            # 👑 [기획 패치] 임시로 확보한 스코어를 보여줌 (-:- 방지)
             temp_score = row.get('actual_score', '-:-')
             if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
                 temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
