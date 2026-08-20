@@ -472,7 +472,7 @@ def fetch_fixture_details_api(home_id, away_id):
     try:
         response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
-        h_wins, draws, a_wins = 0, 0, 0
+        h_wins, draws, a_wins = 0, 0
         for m in matches[:10]:
             if m.get("teams", {}).get("home", {}).get("winner"):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
@@ -645,8 +645,7 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
                  if exp_h > exp_a: prob_handi_h += p
                  else: prob_handi_a += p
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
-
-# -----------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------
 # CSS 스타일링 
 # -----------------------------------------------------------------------------
 st.markdown("""
@@ -888,8 +887,12 @@ if proto_matches:
         candidates = [(f"{home_team} 승", h_win, h_win * odd_h), (f"{away_team} 승", a_win, a_win * odd_a), (f"무승부", draw, draw * odd_d)]
         best_option, best_prob, best_ev = max(candidates, key=lambda x: x[2])
         best_prob_pct = round(best_prob * 100, 1)
-        best_handi = f"{home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{away_team} 핸디승"
+        
+        # 👑 [기획 패치] 기준점 명시: 핸디캡 수치를 문자열 앞에 예쁘게 붙여줍니다.
+        handi_str = f"[{handi_val:+1.1f}]" 
+        best_handi = f"{handi_str} {home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{handi_str} {away_team} 핸디승"
         best_handi_prob = round(max(prob_handi_h, prob_handi_a) * 100, 1)
+        
         best_uo = "언더 (U 2.5)" if prob_u * uo_under > prob_o * uo_over else "오버 (O 2.5)"
         best_uo_prob = round(max(prob_u, prob_o) * 100, 1)
 
