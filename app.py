@@ -29,7 +29,6 @@ headers = {
 }
 
 TEAM_NAME_MAP = {
-    # K리그
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", "FC안양": "FC Anyang", "FC 안양": "FC Anyang",
     "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen", "충북청주": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons",
     "김해FC": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원FC": "Suwon FC",
@@ -37,8 +36,6 @@ TEAM_NAME_MAP = {
     "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", "전북현대": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
-    
-    # 해외리그
     "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
     "포츠머스": "Portsmouth", "퀸즈파크 레인저스": "Queens Park Rangers", "노리치 시티": "Norwich City",
     "웨스트브로미치 앨비언": "West Bromwich Albion", "스토크 시티": "Stoke City", "스완지 시티": "Swansea City",
@@ -54,11 +51,7 @@ TEAM_NAME_MAP = {
     "레흐 포즈난": "Lech Poznan", "FC툰": "Thun", "베식타시": "Besiktas", "카우노 잘기리스": "Kauno Zalgiris",
     "신트 트라위던VV": "Sint-Truiden", "AC오모니아": "Omonia Nicosia", "FK츠르베나 즈베즈다": "Crvena Zvezda", "빅토리아 플젠": "Viktoria Plzen",
     "OFI크레타": "OFI Crete", "CSKA소피아": "CSKA Sofia", "SL벤피카": "Benfica", "AGF오르후스": "Aarhus",
-    
-    # 일본 J리그
     "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
-    
-    # MLS
     "FC신시내": "FC Cincinnati", "FC신시내티": "FC Cincinnati", "뉴욕시티": "New York City FC", "뉴욕 시티FC": "New York City FC",
     "콜럼크루": "Columbus Crew", "콜럼버스 크루": "Columbus Crew", "CF몽레알": "CF Montreal",
     "DC유나이": "DC United", "DC유나이티드": "DC United", "뉴잉레벌": "New England Revolution", "뉴잉글랜드 레벌루션": "New England Revolution",
@@ -77,7 +70,6 @@ TEAM_NAME_MAP = {
 
 DIRECT_LOGO_MAP = {}
 
-# 👑 [무적 패치] 말썽 피우는 팀들 ID와 로고 강제 주입!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
@@ -154,14 +146,10 @@ def set_db_cache(key, value):
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
     if not team_name: return {"id": None, "logo": None}
-    
-    if team_name in DIRECT_TEAM_INFO:
-        return DIRECT_TEAM_INFO[team_name]
-        
+    if team_name in DIRECT_TEAM_INFO: return DIRECT_TEAM_INFO[team_name]
     cache_key = f"team_info_{team_name}"
     cached_data = get_db_cache(cache_key, 8760) 
     if cached_data: return cached_data
-        
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     try:
         response = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
@@ -210,11 +198,12 @@ def fetch_team_form_api(team_id):
         return res
     except: return ""
 
+# 👑 [PHASE 3] 포아송 고도화를 위한 득실점 데이터 수집 장착 (캐시 v3)
 @st.cache_data(ttl=86400)
 def fetch_team_long_term_stats_api(team_id):
-    default_res = {"home_wins": 0, "home_total": 0, "away_wins": 0, "away_total": 0}
+    default_res = {"home_wins": 0, "home_total": 0, "home_gf": 0, "home_ga": 0, "away_wins": 0, "away_total": 0, "away_gf": 0, "away_ga": 0}
     if not team_id: return default_res
-    cache_key = f"stats_{team_id}"
+    cache_key = f"stats_v3_{team_id}"
     cached_data = get_db_cache(cache_key, 24)
     if cached_data: return cached_data
     try:
@@ -225,11 +214,20 @@ def fetch_team_long_term_stats_api(team_id):
             away_id = m["teams"]["away"]["id"]
             winner_home = m["teams"]["home"]["winner"]
             winner_away = m["teams"]["away"]["winner"]
+            goals_h = m.get("goals", {}).get("home")
+            goals_a = m.get("goals", {}).get("away")
+            gh = int(goals_h) if goals_h is not None else 0
+            ga = int(goals_a) if goals_a is not None else 0
+            
             if home_id == team_id:
                 default_res["home_total"] += 1
+                default_res["home_gf"] += gh
+                default_res["home_ga"] += ga
                 if winner_home is True: default_res["home_wins"] += 1
             elif away_id == team_id:
                 default_res["away_total"] += 1
+                default_res["away_gf"] += ga
+                default_res["away_ga"] += gh
                 if winner_away is True: default_res["away_wins"] += 1
         set_db_cache(cache_key, default_res)
         return default_res
@@ -264,14 +262,11 @@ def fetch_team_standing_api(team_id):
     set_db_cache(cache_key, res_val)
     return res_val
 
-# -----------------------------------------------------------------------------
-# [PHASE 2] 에이스 결장 판별 시스템 탑재
-# -----------------------------------------------------------------------------
 @st.cache_data(ttl=604800)
 def fetch_league_top_scorers(league_id, season):
     if not league_id or not season: return []
     cache_key = f"topscorers_{league_id}_{season}"
-    cached_data = get_db_cache(cache_key, 168) # 7일 캐싱
+    cached_data = get_db_cache(cache_key, 168)
     if cached_data: return cached_data
     try:
         res = requests.get(f"https://{API_HOST}/players/topscorers", headers=headers, params={"league": league_id, "season": season}, timeout=5)
@@ -341,7 +336,6 @@ def fetch_recent_team_stats_api(team_id):
     cache_key = f"recent_stats_{team_id}"
     cached_data = get_db_cache(cache_key, 12)
     if cached_data: return cached_data
-    
     try:
         res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 2}, timeout=5)
         fixtures = res.json().get("response", [])
@@ -502,9 +496,12 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# 👑 [동기화 패치] 파라미터 맨 앞에 'best_option'을 추가했습니다.
-def generate_match_story(best_option, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
+# 👑 [PHASE 3] 포아송 수학 모델 파라미터 (math_exp_h, math_exp_a) 추가!
+def generate_match_story(best_option, math_exp_h, math_exp_a, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
     story_parts = []
+    
+    # [PHASE 3] 득점 모델 스토리텔링
+    story_parts.append(f"📈 [포아송 수학 모델] 양 팀의 공격/수비 지수를 환산한 결과, 예상 정규시간 득점은 {home} <b style='color:#00F2FE;'>{math_exp_h:.1f}골</b>, {away} <b style='color:#EF4444;'>{math_exp_a:.1f}골</b>로 산출되었습니다.")
     
     if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 배당이 폭락 중입니다.")
     elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 시장 흐름상 {away} 승리에 자금이 쏠리며 원정팀 배당 가치가 급락하고 있습니다.")
@@ -533,12 +530,6 @@ def generate_match_story(best_option, prob_h, prob_d, prob_a, h2h_h, h2h_a, home
     if a_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] 원정팀 {away} 역시 강한 압박과 높은 점유율을 바탕으로 주도권을 쥐는 데 능합니다.")
     if a_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {away}의 원정 유효 슈팅 창출력이 매서워 역습에 의한 실점을 경계해야 합니다.")
 
-    h_home_rate = int((h_long["home_wins"] / max(1, h_long["home_total"])) * 100) if h_long["home_total"] > 0 else 0
-    a_away_rate = int((a_long["away_wins"] / max(1, a_long["away_total"])) * 100) if a_long["away_total"] > 0 else 0
-    
-    if h_home_rate >= 60: story_parts.append(f"🏰 2년 누적 빅데이터 분석 결과, {home}은(는) 안방에서 무려 {h_home_rate}%의 승률을 자랑하는 '홈 깡패'입니다.")
-    elif a_away_rate >= 50: story_parts.append(f"✈️ 빅데이터 상 {away}은(는) 원정 경기에서도 {a_away_rate}%의 준수한 승률을 기록하며 징크스가 없는 팀입니다.")
-    
     if "승-승" in h_form: story_parts.append(f"🔥 단기 폼 측면에서 {home}이(가) 최근 쾌조의 연승으로 최고조에 달했습니다.")
     elif "패-패" in h_form: story_parts.append(f"💧 {home}은(는) 최근 연패의 늪에 빠져 수비 정비가 시급합니다.")
     if "승-승" in a_form: story_parts.append(f"🚀 원정팀 {away} 역시 매서운 연승 기세를 보여주고 있어 방심할 수 없는 상대입니다.")
@@ -548,21 +539,14 @@ def generate_match_story(best_option, prob_h, prob_d, prob_a, h2h_h, h2h_a, home
         if h2h_h > h2h_a + 2: story_parts.append(f"⚔️ 상대전적에서도 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
         elif h2h_a > h2h_h + 2: story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
             
-    # 👑 [동기화 패치] 예측 결과 박스(best_option)에 맞춰서 코멘트를 강제로 고정시킵니다!
     if best_option == "무승부":
         story_parts.append(f"🤖 결론적으로 AI는 팽팽한 흐름 속에 진흙탕 무승부 가능성을 가장 높게 예측합니다.")
     elif best_option == f"{home} 승":
-        if prob_h >= 50:
-            story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
-        else:
-            story_parts.append(f"🤖 결론적으로 AI는 치열한 접전 끝에 {home}의 신승(진땀승)을 예측합니다.")
+        if prob_h >= 50: story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
+        else: story_parts.append(f"🤖 결론적으로 AI는 치열한 접전 끝에 {home}의 신승(진땀승)을 예측합니다.")
     elif best_option == f"{away} 승":
-        if prob_a >= 50:
-            story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 원정팀 {away}의 승리 가능성을 높게 평가합니다.")
-        else:
-            story_parts.append(f"🤖 결론적으로 AI는 팽팽한 승부 속 원정팀 {away}의 짜릿한 신승을 예측합니다.")
-        
-    if not story_parts: return f"🔍 뚜렷한 전력차가 없는 경기! {home}과(와) {away}의 치열한 전술 싸움이 키포인트입니다."
+        if prob_a >= 50: story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 원정팀 {away}의 승리 가능성을 높게 평가합니다.")
+        else: story_parts.append(f"🤖 결론적으로 AI는 팽팽한 승부 속 원정팀 {away}의 짜릿한 신승을 예측합니다.")
         
     return " ".join(story_parts)
 
@@ -750,7 +734,6 @@ if proto_matches:
         h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
         a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
         
-        # [PHASE 2] 에이스 결장 확인 로직
         h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
         a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
         
@@ -772,8 +755,21 @@ if proto_matches:
         
         h_long = fetch_team_long_term_stats_api(home_info.get("id"))
         a_long = fetch_team_long_term_stats_api(away_info.get("id"))
-        h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
-        a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
+        
+        # 👑 [PHASE 3] 포아송 정통 수학 모델 (공격/수비 지수 상대 평가)
+        AVG_H_GF, AVG_A_GF = 1.5, 1.2
+        AVG_H_GA, AVG_A_GA = 1.2, 1.5
+        
+        h_tot = max(1, h_long["home_total"])
+        a_tot = max(1, a_long["away_total"])
+        
+        HAS = (h_long["home_gf"] / h_tot) / AVG_H_GF
+        HDS = (h_long["home_ga"] / h_tot) / AVG_H_GA
+        AAS = (a_long["away_gf"] / a_tot) / AVG_A_GF
+        ADS = (a_long["away_ga"] / a_tot) / AVG_A_GA
+        
+        math_exp_h = HAS * ADS * AVG_H_GF
+        math_exp_a = AAS * HDS * AVG_A_GF
 
         h_stats = fetch_recent_team_stats_api(home_info.get("id"))
         a_stats = fetch_recent_team_stats_api(away_info.get("id"))
@@ -788,11 +784,12 @@ if proto_matches:
         h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
         a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
         
-        h_bigdata_bonus = h_home_win_rate * 0.6 
-        a_bigdata_bonus = a_away_win_rate * 0.6 
+        # 👑 [PHASE 3] 예측 혼합 (배당률 확률 40% + 순수 수학 모델 60%)
+        odds_exp_h = p_h * 2.8
+        odds_exp_a = p_a * 2.8
         
-        exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
-        exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
+        exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus - h_injury_penalty - h_fatigue_penalty), 2)
+        exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus - a_injury_penalty - a_fatigue_penalty), 2)
         
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
@@ -809,8 +806,7 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        # 👑 [동기화 패치] best_option을 함께 넘겨서 예측과 코멘트를 묶어줍니다!
-        story = generate_match_story(best_option, h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
+        story = generate_match_story(best_option, math_exp_h, math_exp_a, h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
@@ -952,7 +948,6 @@ with main_tab2:
             h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
             a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
 
-            # [PHASE 2] 에이스 결장 확인!
             h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
             a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
             h_inj_count = h_inj_data["count"]
@@ -964,8 +959,20 @@ with main_tab2:
             if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
             else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
 
-            h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
-            a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
+            # 👑 [PHASE 3] 포아송 정통 수학 모델 적용
+            AVG_H_GF, AVG_A_GF = 1.5, 1.2
+            AVG_H_GA, AVG_A_GA = 1.2, 1.5
+            
+            h_tot = max(1, h_long["home_total"])
+            a_tot = max(1, a_long["away_total"])
+            
+            HAS = (h_long["home_gf"] / h_tot) / AVG_H_GF
+            HDS = (h_long["home_ga"] / h_tot) / AVG_H_GA
+            AAS = (a_long["away_gf"] / a_tot) / AVG_A_GF
+            ADS = (a_long["away_ga"] / a_tot) / AVG_A_GA
+            
+            math_exp_h = HAS * ADS * AVG_H_GF
+            math_exp_a = AAS * HDS * AVG_A_GF
             
             h_stats = fetch_recent_team_stats_api(home_info.get("id"))
             a_stats = fetch_recent_team_stats_api(away_info.get("id"))
@@ -978,8 +985,18 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
-            exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
+            # 👑 [PHASE 3] 14경기도 포아송 수학 모델 + 오즈 메이커 확률 믹스 반영
+            p_h, p_d, p_a = 0.34, 0.33, 0.33 # Default
+            if os_odds:
+                total_o = (1/os_odds["odd_h"]) + (1/os_odds["odd_d"]) + (1/os_odds["odd_a"])
+                p_h = (1/os_odds["odd_h"]) / total_o
+                p_a = (1/os_odds["odd_a"]) / total_o
+            
+            odds_exp_h = p_h * 2.8
+            odds_exp_a = p_a * 2.8
+            
+            exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
+            exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
             
             h_win, draw, a_win, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
             total_p = h_win + draw + a_win
