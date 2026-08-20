@@ -38,7 +38,7 @@ TEAM_NAME_MAP = {
     "서울이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "대구FC": "Daegu FC", 
     "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "파주프런": "Paju Citizen", "성남FC": "Seongnam FC",
     
-    # 해외리그 (호주/아시아/유럽/남미 공통)
+    # 해외리그
     "APIA 라이카트": "APIA Leichhardt", "멜버른 빅토리": "Melbourne Victory",
     "포츠머스": "Portsmouth", "퀸즈파크 레인저스": "Queens Park Rangers", "노리치 시티": "Norwich City",
     "웨스트브로미치 앨비언": "West Bromwich Albion", "스토크 시티": "Stoke City", "스완지 시티": "Swansea City",
@@ -47,8 +47,6 @@ TEAM_NAME_MAP = {
     "NEC네이메헌": "NEC Nijmegen", "FK보되 글림트": "Bodo/Glimt", "세로 포르테뇨": "Cerro Porteno", "SE파우메이라스": "Palmeiras",
     "LDU키토": "LDU Quito", "미라솔": "Mirassol", "SC코린티안스": "Corinthians", "로사리오 센트랄": "Rosario Central",
     "아틀레티코 마드리드": "Atletico Madrid", "말라가": "Malaga", "셀틱": "Celtic", "라요 바예카노": "Rayo Vallecano", "알라베스": "Alaves", "LASK": "LASK",
-    
-    # 남미/유로파/기타 뉴페이스 총망라!
     "코킴보 우니도": "Coquimbo Unido", "CA플라텐세": "CA Platense", "CR플라멩구": "Flamengo", "크루제이루EC": "Cruzeiro",
     "카이라트 알마티": "Kairat Almaty", "RSC안더레흐트": "Anderlecht", "야기엘로니아 비아위스토크": "Jagiellonia Bialystok", "이베리아1999 트빌리시": "Iberia 1999",
     "미엘뷔AIF": "Mjallby", "잘츠부르크": "Red Bull Salzburg", "트라브존스포르": "Trabzonspor", "페렌츠바로시TC": "Ferencvarosi TC",
@@ -57,7 +55,7 @@ TEAM_NAME_MAP = {
     "신트 트라위던VV": "Sint-Truiden", "AC오모니아": "Omonia Nicosia", "FK츠르베나 즈베즈다": "Crvena Zvezda", "빅토리아 플젠": "Viktoria Plzen",
     "OFI크레타": "OFI Crete", "CSKA소피아": "CSKA Sofia", "SL벤피카": "Benfica", "AGF오르후스": "Aarhus",
     
-    # 일본 J리그 추가
+    # 일본 J리그
     "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
     
     # MLS
@@ -76,8 +74,6 @@ TEAM_NAME_MAP = {
     "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
-
-DIRECT_LOGO_MAP = {}
 
 # 👑 [무적 패치] 말썽 피우는 팀들 ID와 로고 강제 주입!
 DIRECT_TEAM_INFO = {
@@ -157,7 +153,6 @@ def set_db_cache(key, value):
 def fetch_team_info_api(team_name):
     if not team_name: return {"id": None, "logo": None}
     
-    # 👑 [무적 패치] 과거 찌꺼기 DB를 뒤지기 전에, VIP 명단부터 0순위로 확인!
     if team_name in DIRECT_TEAM_INFO:
         return DIRECT_TEAM_INFO[team_name]
         
@@ -238,10 +233,57 @@ def fetch_team_long_term_stats_api(team_id):
         return default_res
     except: return default_res
 
+@st.cache_data(ttl=86400)
+def fetch_team_standing_api(team_id):
+    if not team_id: return {"rank": 99, "points": 0, "league_id": None, "season": None}
+    cache_key = f"standing_v2_{team_id}"
+    cached_data = get_db_cache(cache_key, 24)
+    if cached_data: return cached_data
+    try:
+        year = datetime.now().year
+        res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
+        data = res.json().get("response", [])
+        if not data:
+            res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
+            data = res.json().get("response", [])
+        if data:
+            for league_data in data:
+                league_id = league_data.get("league", {}).get("id")
+                season = league_data.get("league", {}).get("season")
+                standings_list = league_data.get("league", {}).get("standings", [])
+                for group in standings_list:
+                    for s in group:
+                        if s["team"]["id"] == team_id:
+                            res_val = {"rank": s["rank"], "points": s["points"], "league_id": league_id, "season": season}
+                            set_db_cache(cache_key, res_val)
+                            return res_val
+    except: pass
+    res_val = {"rank": 99, "points": 0, "league_id": None, "season": None}
+    set_db_cache(cache_key, res_val)
+    return res_val
+
+# -----------------------------------------------------------------------------
+# [PHASE 2] 에이스 결장 판별 시스템 탑재
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=604800)
+def fetch_league_top_scorers(league_id, season):
+    if not league_id or not season: return []
+    cache_key = f"topscorers_{league_id}_{season}"
+    cached_data = get_db_cache(cache_key, 168) # 7일 캐싱!
+    if cached_data: return cached_data
+    try:
+        res = requests.get(f"https://{API_HOST}/players/topscorers", headers=headers, params={"league": league_id, "season": season}, timeout=5)
+        data = res.json().get("response", [])
+        names = [p["player"]["name"] for p in data]
+        set_db_cache(cache_key, names)
+        return names
+    except: return []
+
 @st.cache_data(ttl=43200)
-def fetch_team_injuries_api(team_id):
-    if not team_id: return 0
-    cache_key = f"inj_{team_id}"
+def fetch_team_injuries_api(team_id, league_id, season):
+    default_res = {"count": 0, "ace_missing": False, "ace_names": []}
+    if not team_id: return default_res
+    cache_key = f"inj_v2_{team_id}_{league_id}_{season}"
     cached_data = get_db_cache(cache_key, 12)
     if cached_data is not None: return cached_data
     try:
@@ -251,11 +293,28 @@ def fetch_team_injuries_api(team_id):
             fix_id = last_fix[0]["fixture"]["id"]
             inj_res = requests.get(f"https://{API_HOST}/injuries", headers=headers, params={"fixture": fix_id}, timeout=5)
             inj_data = inj_res.json().get("response", [])
-            count = sum(1 for x in inj_data if x.get("team", {}).get("id") == team_id)
-            set_db_cache(cache_key, count)
-            return count
-        return 0
-    except: return 0
+            
+            injured_names = [x.get("player", {}).get("name", "") for x in inj_data if x.get("team", {}).get("id") == team_id]
+            count = len(injured_names)
+            ace_missing = False
+            ace_names = []
+            
+            if count > 0 and league_id and season:
+                top_scorers = fetch_league_top_scorers(league_id, season)
+                for name in injured_names:
+                    if not name: continue
+                    n_lower = name.lower()
+                    for ts in top_scorers:
+                        ts_lower = ts.lower()
+                        if n_lower in ts_lower or ts_lower in n_lower:
+                            ace_missing = True
+                            if name not in ace_names: ace_names.append(name)
+                            
+            res_val = {"count": count, "ace_missing": ace_missing, "ace_names": list(set(ace_names))}
+            set_db_cache(cache_key, res_val)
+            return res_val
+        return default_res
+    except: return default_res
 
 @st.cache_data(ttl=43200)
 def fetch_team_last_match_date_api(team_id):
@@ -273,9 +332,6 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
-# -----------------------------------------------------------------------------
-# [PHASE 1] xG 및 경기력(슈팅/점유율) 분석 엔진
-# -----------------------------------------------------------------------------
 @st.cache_data(ttl=43200)
 def fetch_recent_team_stats_api(team_id):
     default_res = {"possession": 50, "shots_on_goal": 4.0}
@@ -287,16 +343,13 @@ def fetch_recent_team_stats_api(team_id):
     try:
         res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 2}, timeout=5)
         fixtures = res.json().get("response", [])
-        
         total_possession = 0
         total_sog = 0
         valid_matches = 0
-        
         for f in fixtures:
             fix_id = f["fixture"]["id"]
             stat_res = requests.get(f"https://{API_HOST}/fixtures/statistics", headers=headers, params={"fixture": fix_id}, timeout=5)
             stats_data = stat_res.json().get("response", [])
-            
             for team_stat in stats_data:
                 if team_stat["team"]["id"] == team_id:
                     pos_val = 50
@@ -310,12 +363,9 @@ def fetch_recent_team_stats_api(team_id):
                     total_sog += sog_val
                     valid_matches += 1
                     break
-        
         if valid_matches > 0:
             res_val = {"possession": round(total_possession / valid_matches, 1), "shots_on_goal": round(total_sog / valid_matches, 1)}
-        else:
-            res_val = default_res
-            
+        else: res_val = default_res
         set_db_cache(cache_key, res_val)
         return res_val
     except: pass
@@ -335,31 +385,6 @@ def calculate_rest_days(last_date_iso, match_time_str):
             return max(0, diff.days)
     except: pass
     return 99
-
-@st.cache_data(ttl=86400)
-def fetch_team_standing_api(team_id):
-    if not team_id: return {"rank": 99, "points": 0}
-    cache_key = f"standing_{team_id}"
-    cached_data = get_db_cache(cache_key, 24)
-    if cached_data: return cached_data
-    try:
-        year = datetime.now().year
-        res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
-        data = res.json().get("response", [])
-        if not data:
-            res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
-            data = res.json().get("response", [])
-        if data:
-            for league_data in data:
-                standings_list = league_data.get("league", {}).get("standings", [])
-                for group in standings_list:
-                    for s in group:
-                        if s["team"]["id"] == team_id:
-                            res_val = {"rank": s["rank"], "points": s["points"]}
-                            set_db_cache(cache_key, res_val)
-                            return res_val
-    except: pass
-    return {"rank": 99, "points": 0}
 
 @st.cache_data(ttl=43200)
 def fetch_overseas_odds_api(team_id):
@@ -475,39 +500,41 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
+def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
     story_parts = []
     
-    if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 현재 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 해외 배당이 폭락 중입니다. (강력 추천)")
-    elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 시장 흐름상 {away} 승리에 엄청난 자금이 쏠리며 원정팀 배당 가치가 급락하고 있습니다.")
+    if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 배당이 폭락 중입니다.")
+    elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 시장 흐름상 {away} 승리에 자금이 쏠리며 원정팀 배당 가치가 급락하고 있습니다.")
 
-    if h_rank <= 3 and a_rank >= 10: story_parts.append(f"🏆 {home}은(는) 상위권(리그 {h_rank}위)을 질주 중인 반면, {away}은(는) {a_rank}위로 기본 체급 차이가 명확합니다.")
-    elif h_rank >= 15 and h_rank != 99: story_parts.append(f"🔥 {home}은(는) 현재 {h_rank}위로 강등권 위기에 처해 있어, 안방에서 사활을 건 '생존 버프'가 발동될 수 있습니다.")
-    elif a_rank >= 15 and a_rank != 99: story_parts.append(f"🔥 원정팀 {away}({a_rank}위)은(는) 벼랑 끝에 몰린 강등권으로 끈질긴 저항과 이변이 우려됩니다.")
+    if h_rank <= 3 and a_rank >= 10: story_parts.append(f"🏆 {home}은(는) 상위권(리그 {h_rank}위)을 질주 중인 반면, {away}은(는) {a_rank}위로 체급 차이가 명확합니다.")
+    elif h_rank >= 15 and h_rank != 99: story_parts.append(f"🔥 {home}은(는) 현재 {h_rank}위로 강등권 위기에 처해 있어 사활을 건 '생존 버프'가 발동될 수 있습니다.")
+    elif a_rank >= 15 and a_rank != 99: story_parts.append(f"🔥 원정팀 {away}({a_rank}위)은(는) 벼랑 끝에 몰린 강등권으로 끈질긴 저항이 우려됩니다.")
     
-    if h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장(부상) 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
-    elif h_inj >= 3: story_parts.append(f"🚨 {home}에 핵심 자원 결장이 다수 의심되어 스쿼드 전력에 상당한 타격이 있습니다.")
-    elif h_inj >= 1: story_parts.append(f"🏥 {home}에 가벼운 결장 의심 선수가 있어 스쿼드 변화가 예상됩니다.")
+    h_inj = h_inj_data['count']
+    if h_inj_data['ace_missing']: story_parts.append(f"🚨 [초비상] {home}의 전력 핵심이자 주득점원({', '.join(h_inj_data['ace_names'])})의 결장이 의심되어 득점력에 치명적인 타격이 예상됩니다.")
+    elif h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
+    elif h_inj >= 1: story_parts.append(f"🏥 {home}에 {h_inj}명의 부상자가 있으나, 로테이션 자원 위주라 베스트 11 전력에는 큰 누수가 없습니다.")
         
-    if a_inj >= 6: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 다수의 결장 의심 선수가 확인되어 정상적인 경기 운영이 어렵습니다.")
-    elif a_inj >= 3: story_parts.append(f"🚨 원정팀 {away} 측에 핵심 자원 결장이 의심되어 고전이 예상됩니다.")
-    elif a_inj >= 1: story_parts.append(f"🏥 원정팀 {away} 측에 결장 의심 선수가 일부 있습니다.")
+    a_inj = a_inj_data['count']
+    if a_inj_data['ace_missing']: story_parts.append(f"🚨 [초비상] 원정팀 {away} 측 핵심 주득점원({', '.join(a_inj_data['ace_names'])})의 결장이 의심되어 고전이 예상됩니다.")
+    elif a_inj >= 6: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 다수의 결장 의심 선수가 확인되어 정상적인 경기 운영이 어렵습니다.")
+    elif a_inj >= 1: story_parts.append(f"🏥 원정팀 {away} 측에 {a_inj}명의 부상자가 있지만 치명적인 전력 누수는 피했습니다.")
 
     if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 3일 이하로 짧아 후반전 체력 방전이 우려됩니다.")
     if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 빡빡한 일정 탓에 체력적인 부담을 안고 경기에 임합니다.")
     
     if h_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] {home}은(는) 최근 평균 60% 이상의 압도적인 점유율로 경기를 지배하고 있습니다.")
-    elif h_stats['possession'] <= 35.0 and "승" in h_form: story_parts.append(f"⚠️ [위험 경보] {home}은(는) 최근 승리는 있지만 점유율이 심각하게 밀리고 있어 폼 거품일 확률이 존재합니다.")
+    elif h_stats['possession'] <= 35.0 and "승" in h_form: story_parts.append(f"⚠️ [위험 경보] {home}은(는) 최근 승리는 있지만 점유율이 밀리고 있어 폼 거품일 확률이 존재합니다.")
     if h_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {home}은(는) 매 경기 날카로운 유효 슈팅을 창출하며 득점 기대값(xG)이 매우 높습니다.")
     
-    if a_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] 원정팀 {away} 역시 강한 압박과 높은 점유율을 바탕으로 주도권을 쥐는 플레이에 능합니다.")
+    if a_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] 원정팀 {away} 역시 강한 압박과 높은 점유율을 바탕으로 주도권을 쥐는 데 능합니다.")
     if a_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {away}의 원정 유효 슈팅 창출력이 매서워 역습에 의한 실점을 경계해야 합니다.")
 
     h_home_rate = int((h_long["home_wins"] / max(1, h_long["home_total"])) * 100) if h_long["home_total"] > 0 else 0
     a_away_rate = int((a_long["away_wins"] / max(1, a_long["away_total"])) * 100) if a_long["away_total"] > 0 else 0
     
-    if h_home_rate >= 60: story_parts.append(f"🏰 2년 누적 빅데이터 분석 결과, {home}은(는) 안방에서 무려 {h_home_rate}%의 높은 승률을 자랑하는 '홈 깡패'입니다.")
-    elif a_away_rate >= 50: story_parts.append(f"✈️ 빅데이터 상 {away}은(는) 원정 경기에서도 {a_away_rate}%의 준수한 승률을 기록하며 원정 징크스가 없는 팀입니다.")
+    if h_home_rate >= 60: story_parts.append(f"🏰 2년 누적 빅데이터 분석 결과, {home}은(는) 안방에서 무려 {h_home_rate}%의 승률을 자랑하는 '홈 깡패'입니다.")
+    elif a_away_rate >= 50: story_parts.append(f"✈️ 빅데이터 상 {away}은(는) 원정 경기에서도 {a_away_rate}%의 준수한 승률을 기록하며 징크스가 없는 팀입니다.")
     
     if "승-승" in h_form: story_parts.append(f"🔥 단기 폼 측면에서 {home}이(가) 최근 쾌조의 연승으로 최고조에 달했습니다.")
     elif "패-패" in h_form: story_parts.append(f"💧 {home}은(는) 최근 연패의 늪에 빠져 수비 정비가 시급합니다.")
@@ -710,10 +737,18 @@ if proto_matches:
         h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
         a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
         
-        h_injuries = fetch_team_injuries_api(home_info.get("id"))
-        a_injuries = fetch_team_injuries_api(away_info.get("id"))
-        h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
-        a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
+        # [PHASE 2] 에이스 결장 확인!
+        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+        
+        h_inj_count = h_inj_data["count"]
+        a_inj_count = a_inj_data["count"]
+        
+        if h_inj_data["ace_missing"]: h_injury_penalty = 0.60
+        else: h_injury_penalty = 0.40 if h_inj_count >= 6 else (0.20 if h_inj_count >= 3 else (0.10 if h_inj_count >= 1 else 0.0))
+        
+        if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
+        else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
         
         h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
         a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
@@ -761,14 +796,14 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
+        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
             "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
             "home_form": h_form, "away_form": a_form,
-            "h_inj": h_injuries, "a_inj": a_injuries,
+            "h_inj_data": h_inj_data, "a_inj_data": a_inj_data,
             "h_rest": h_rest_days, "a_rest": a_rest_days,
             "h_rank": h_rank, "a_rank": a_rank,
             "h_market": h_market_bonus, "a_market": a_market_bonus
@@ -816,12 +851,18 @@ with main_tab1:
                 h_form = item.get('home_form', '')
                 a_form = item.get('away_form', '')
                 
-                h_inj = item.get('h_inj', 0)
-                a_inj = item.get('a_inj', 0)
-                h_inj_level = "3단계(MAX)" if h_inj >= 6 else ("2단계(-0.3)" if h_inj >= 3 else "1단계(-0.15)")
-                a_inj_level = "3단계(MAX)" if a_inj >= 6 else ("2단계(-0.3)" if a_inj >= 3 else "1단계(-0.15)")
-                h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_inj > 0 else ""
-                a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_inj > 0 else ""
+                h_inj_data = item.get('h_inj_data', {'count': 0, 'ace_missing': False})
+                a_inj_data = item.get('a_inj_data', {'count': 0, 'ace_missing': False})
+                h_inj = h_inj_data['count']
+                a_inj = a_inj_data['count']
+                
+                if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+                elif h_inj > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj >= 6 else ('2단계(-0.2)' if h_inj >= 3 else '1단계(-0.1)')}</div>"
+                else: h_inj_html = ""
+
+                if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+                elif a_inj > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj >= 6 else ('2단계(-0.2)' if a_inj >= 3 else '1단계(-0.1)')}</div>"
+                else: a_inj_html = ""
                 
                 h_rest = item.get('h_rest', 99)
                 a_rest = item.get('a_rest', 99)
@@ -897,10 +938,17 @@ with main_tab2:
             h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
             a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
 
-            h_injuries = fetch_team_injuries_api(home_info.get("id"))
-            a_injuries = fetch_team_injuries_api(away_info.get("id"))
-            h_injury_penalty = 0.50 if h_injuries >= 6 else (0.30 if h_injuries >= 3 else (0.15 if h_injuries >= 1 else 0.0))
-            a_injury_penalty = 0.50 if a_injuries >= 6 else (0.30 if a_injuries >= 3 else (0.15 if a_injuries >= 1 else 0.0))
+            # [PHASE 2] 에이스 결장 확인!
+            h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+            a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+            h_inj_count = h_inj_data["count"]
+            a_inj_count = a_inj_data["count"]
+            
+            if h_inj_data["ace_missing"]: h_injury_penalty = 0.60
+            else: h_injury_penalty = 0.40 if h_inj_count >= 6 else (0.20 if h_inj_count >= 3 else (0.10 if h_inj_count >= 1 else 0.0))
+            
+            if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
+            else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
 
             h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
             a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
@@ -928,10 +976,13 @@ with main_tab2:
             else:
                 p_h, p_d, p_a = 34.0, 33.0, 33.0
             
-            h_inj_level = "3단계(MAX)" if h_injuries >= 6 else ("2단계(-0.3)" if h_injuries >= 3 else "1단계(-0.15)")
-            a_inj_level = "3단계(MAX)" if a_injuries >= 6 else ("2단계(-0.3)" if a_injuries >= 3 else "1단계(-0.15)")
-            h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_injuries > 0 else ""
-            a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_injuries > 0 else ""
+            if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+            elif h_inj_count > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj_count >= 6 else ('2단계(-0.2)' if h_inj_count >= 3 else '1단계(-0.1)')}</div>"
+            else: h_inj_html = ""
+
+            if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+            elif a_inj_count > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj_count >= 6 else ('2단계(-0.2)' if a_inj_count >= 3 else '1단계(-0.1)')}</div>"
+            else: a_inj_html = ""
             
             h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest_days <= 3 else ""
             a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest_days <= 3 else ""
@@ -1021,12 +1072,18 @@ with main_tab3:
             h_form = item.get('home_form', '')
             a_form = item.get('away_form', '')
             
-            h_inj = item.get('h_inj', 0)
-            a_inj = item.get('a_inj', 0)
-            h_inj_level = "3단계(MAX)" if h_inj >= 6 else ("2단계(-0.3)" if h_inj >= 3 else "1단계(-0.15)")
-            a_inj_level = "3단계(MAX)" if a_inj >= 6 else ("2단계(-0.3)" if a_inj >= 3 else "1단계(-0.15)")
-            h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {h_inj_level}</div>" if h_inj > 0 else ""
-            a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {a_inj_level}</div>" if a_inj > 0 else ""
+            h_inj_data = item.get('h_inj_data', {'count': 0, 'ace_missing': False})
+            a_inj_data = item.get('a_inj_data', {'count': 0, 'ace_missing': False})
+            h_inj = h_inj_data['count']
+            a_inj = a_inj_data['count']
+            
+            if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+            elif h_inj > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj >= 6 else ('2단계(-0.2)' if h_inj >= 3 else '1단계(-0.1)')}</div>"
+            else: h_inj_html = ""
+
+            if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
+            elif a_inj > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj >= 6 else ('2단계(-0.2)' if a_inj >= 3 else '1단계(-0.1)')}</div>"
+            else: a_inj_html = ""
             
             h_rest = item.get('h_rest', 99)
             a_rest = item.get('a_rest', 99)
