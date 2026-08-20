@@ -328,34 +328,33 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
-# 👑 [PHASE 4] 미래를 보는 눈: 다음 경기(일정)의 중요도 탐색 기능 추가
+# 👑 [PHASE 4] 0일 뒤 버그 완벽 패치 (최소 20시간 이후의 경기만 감지)
 @st.cache_data(ttl=43200)
 def fetch_team_next_fixture_api(team_id):
     default_res = {"days_until_next": 99, "is_important": False, "league_name": ""}
     if not team_id: return default_res
-    cache_key = f"next_fix_{team_id}"
+    cache_key = f"next_fix_v3_{team_id}"
     cached_data = get_db_cache(cache_key, 12)
     if cached_data: return cached_data
     try:
-        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "next": 1}, timeout=5)
+        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "next": 3}, timeout=5)
         data = res.json().get("response", [])
-        if data:
-            next_fix = data[0]
+        for next_fix in data:
             next_date_str = next_fix["fixture"]["date"]
             league_name = next_fix["league"]["name"]
             
             next_dt = datetime.fromisoformat(next_date_str.replace('Z', '+00:00'))
             now = datetime.now(timezone(timedelta(hours=9)))
-            diff = next_dt - now
-            days_until = max(0, diff.days)
+            diff_hours = (next_dt - now).total_seconds() / 3600.0
             
-            # 중요 대회 컵/대륙 클럽 대항전 키워드
-            important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
-            is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
-            
-            res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
-            set_db_cache(cache_key, res_val)
-            return res_val
+            if diff_hours > 20:
+                days_until = int(diff_hours / 24)
+                important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
+                is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
+                
+                res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
+                set_db_cache(cache_key, res_val)
+                return res_val
     except: pass
     return default_res
 
@@ -526,15 +525,13 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# 👑 [PHASE 4] 파라미터에 h_next, a_next 추가 (스토리텔링용)
 def generate_match_story(best_option, math_exp_h, math_exp_a, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_next, a_next, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
     story_parts = []
     
     story_parts.append(f"📈 [포아송 수학 모델] 양 팀의 공격/수비 지수를 환산한 결과, 예상 정규시간 득점은 {home} <b style='color:#00F2FE;'>{math_exp_h:.1f}골</b>, {away} <b style='color:#EF4444;'>{math_exp_a:.1f}골</b>로 산출되었습니다.")
     
-    # 👑 [PHASE 4] 로테이션 위험도(함정 픽) 경보 추가!
     if h_next["is_important"] and h_next["days_until_next"] <= 4:
-        story_parts.append(f"⚠️ [로테이션 경보] {home}은(는) 불과 {h_next['days_until_next']}일 뒤에 열리는 '{h_next['league_name']}' 대회를 대비해 핵심 선수들을 대거 쉬게 할(힘 빼기) 확률이 99%입니다. 강팀의 뜬금없는 이변(함정 픽)에 각별히 주의하세요!")
+        story_parts.append(f"⚠️ [로테이션 경보] {home}은(는) 불과 {h_next['days_until_next']}일 뒤에 열리는 '{h_next['league_name']}' 대회를 대비해 핵심 선수들을 대거 쉬게 할(힘 빼기) 확률이 매우 높습니다. 강팀의 뜬금없는 이변(함정 픽)에 각별히 주의하세요!")
     if a_next["is_important"] and a_next["days_until_next"] <= 4:
         story_parts.append(f"⚠️ [로테이션 경보] 원정팀 {away} 측에 {a_next['days_until_next']}일 뒤 '{a_next['league_name']}' 중요 일정이 겹쳐 있어, 정상적인 100% 전력 가동이 불투명합니다. 역배당 이변의 희생양이 될 수 있습니다.")
 
@@ -787,8 +784,7 @@ if proto_matches:
         a_rest_days = calculate_rest_days(a_last_date, final_match_time)
         h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
         a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
-
-        # 👑 [PHASE 4] 다가오는 중요 일정 탐색 (로테이션 경보)
+        
         h_next = fetch_team_next_fixture_api(home_info.get("id"))
         a_next = fetch_team_next_fixture_api(away_info.get("id"))
         
@@ -828,7 +824,6 @@ if proto_matches:
         odds_exp_h = p_h * 2.8
         odds_exp_a = p_a * 2.8
         
-        # 👑 [PHASE 4] 공격 기댓값에서 로테이션 페널티(-0.3) 무자비하게 차감!
         exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus - h_injury_penalty - h_fatigue_penalty - h_rot_penalty), 2)
         exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus - a_injury_penalty - a_fatigue_penalty - a_rot_penalty), 2)
         
@@ -847,7 +842,6 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        # 👑 [PHASE 4] h_next, a_next 파라미터 추가 전송!
         story = generate_match_story(best_option, math_exp_h, math_exp_a, h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_next, a_next, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
 
         analyzed_proto.append({
@@ -922,7 +916,6 @@ with main_tab1:
                 h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
                 a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
 
-                # 👑 [PHASE 4] UI 로테이션 경보 뱃지 추가!
                 h_next = item.get('h_next', {"is_important": False, "days_until_next": 99})
                 a_next = item.get('a_next', {"is_important": False, "days_until_next": 99})
                 h_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if h_next["is_important"] and h_next["days_until_next"] <= 4 else ""
@@ -997,7 +990,6 @@ with main_tab2:
             h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
             a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
 
-            # 👑 [PHASE 4] 14경기도 로테이션 페널티 적용!
             h_next = fetch_team_next_fixture_api(home_info.get("id"))
             a_next = fetch_team_next_fixture_api(away_info.get("id"))
             h_rot_penalty = 0.3 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
