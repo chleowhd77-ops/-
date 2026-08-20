@@ -328,12 +328,12 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
-# 👑 [PHASE 4] 0일 뒤 버그 완벽 패치 (최소 20시간 이후의 경기만 감지)
+# 👑 [PHASE 4] 미래 일정 탐색용 엔진 (v4로 업데이트: 40시간 이내의 당일 경기는 완벽 무시!)
 @st.cache_data(ttl=43200)
 def fetch_team_next_fixture_api(team_id):
     default_res = {"days_until_next": 99, "is_important": False, "league_name": ""}
     if not team_id: return default_res
-    cache_key = f"next_fix_v3_{team_id}"
+    cache_key = f"next_fix_v4_{team_id}"
     cached_data = get_db_cache(cache_key, 12)
     if cached_data: return cached_data
     try:
@@ -347,8 +347,9 @@ def fetch_team_next_fixture_api(team_id):
             now = datetime.now(timezone(timedelta(hours=9)))
             diff_hours = (next_dt - now).total_seconds() / 3600.0
             
-            if diff_hours > 20:
-                days_until = int(diff_hours / 24)
+            # 현재 시간 기준 40시간(거의 이틀) 이내의 경기는 무조건 당일/이번 라운드 경기로 간주하고 패스!
+            if diff_hours > 40:
+                days_until = max(1, int(diff_hours / 24)) # 최소 1일 뒤로 표기 (0일 뒤 원천 차단)
                 important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
                 is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
                 
