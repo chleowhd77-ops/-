@@ -751,8 +751,8 @@ if proto_matches:
         a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
         
         # [PHASE 2] 에이스 결장 확인 로직
-        h_inj_data = fetch_team_injuries_api(h_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-        a_inj_data = fetch_team_injuries_api(a_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
         
         h_inj_count = h_inj_data["count"]
         a_inj_count = a_inj_data["count"]
@@ -763,15 +763,15 @@ if proto_matches:
         if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
         else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
         
-        h_last_date = fetch_team_last_match_date_api(h_info.get("id"))
-        a_last_date = fetch_team_last_match_date_api(a_info.get("id"))
+        h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
+        a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
         h_rest_days = calculate_rest_days(h_last_date, final_match_time)
         a_rest_days = calculate_rest_days(a_last_date, final_match_time)
         h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
         a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
         
-        h_long = fetch_team_long_term_stats_api(h_info.get("id"))
-        a_long = fetch_team_long_term_stats_api(a_info.get("id"))
+        h_long = fetch_team_long_term_stats_api(home_info.get("id"))
+        a_long = fetch_team_long_term_stats_api(away_info.get("id"))
         h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
         a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
 
