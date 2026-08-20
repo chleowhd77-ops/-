@@ -881,7 +881,7 @@ with main_tab1:
                 a_score = m.get('actual_score', '')
                 match_id_str = str(m.get('id', ''))
                 
-                # 👑 [LIVE 패치] 골 넣은 멘트는 위에 조그맣게, 실시간/종료 점수는 크게!
+                # 👑 [LIVE 패치] 경기 중, 종료 모두 실제 스코어 무조건 강제 출력
                 if a_result == 'FINISHED' and a_score and a_score != '-:-':
                     time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
