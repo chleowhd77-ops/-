@@ -69,7 +69,7 @@ TEAM_NAME_MAP = {
     "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
 }
 
-# 👑 [API 제한 방지 패치] 확실한 진짜 공식 ID만 남기고, 모르는 건 로봇이 직접 찾게 함!
+# 👑 [API 제한 방지 패치] 확실한 진짜 공식 ID 매핑!
 DIRECT_TEAM_INFO = {
     "새너제이 어스퀘이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
     "새너제이 어스케이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
@@ -94,7 +94,6 @@ DIRECT_TEAM_INFO = {
     "밴쿠버 화이트캡스FC": {"id": 44, "logo": "https://media.api-sports.io/football/teams/44.png"},
     "휴스턴 다이너모FC": {"id": 49, "logo": "https://media.api-sports.io/football/teams/49.png"}
 }
-# 👑 [기획 패치] 웹사이트 구동 시, 로봇이 깃허브에 올려둔 '진짜' DB를 멱살 잡고 강제로 덮어씌움!
 def download_db_from_github():
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
     try:
@@ -884,8 +883,10 @@ if proto_matches:
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
 
-        candidates = [(f"{home_team} 승", h_win, h_win * odd_h), (f"{away_team} 승", a_win, a_win * odd_a), (f"무승부", draw, draw * odd_d)]
-        best_option, best_prob, best_ev = max(candidates, key=lambda x: x[2])
+        candidates = [(f"{home_team} 승", h_win, h_win * odd_h), (f"{away_team} 승", a_win, a_win * odd_a), ("무승부", draw, draw * odd_d)]
+        
+        # 👑 [기획 패치] 승무패 추천을 EV(배당가치)가 아닌 1순위 확률(%) 우선으로 변경!
+        best_option, best_prob, best_ev = max(candidates, key=lambda x: x[1])
         best_prob_pct = round(best_prob * 100, 1)
         
         # 👑 [기획 패치] 기준점 명시: 핸디캡 수치를 문자열 앞에 예쁘게 붙여줍니다.
