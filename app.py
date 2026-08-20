@@ -110,6 +110,11 @@ def init_db():
     except: pass 
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
     except: pass
+    
+    # 👑 [핵심 패치] 과거에 팀ID 못찾고 저장된 '악성 캐시(null)'를 무조건 다 불태워서 새로 API 찌르게 만듦!
+    try: cursor.execute("DELETE FROM api_cache WHERE cache_key LIKE 'team_info_%' AND cache_value LIKE '%null%'")
+    except: pass
+    
     conn.commit()
     conn.close()
 
@@ -149,7 +154,9 @@ def fetch_team_info_api(team_name):
     if team_name in DIRECT_TEAM_INFO: return DIRECT_TEAM_INFO[team_name]
     cache_key = f"team_info_{team_name}"
     cached_data = get_db_cache(cache_key, 8760) 
-    if cached_data: return cached_data
+    # 👑 캐시가 살아있더라도 id가 없으면 무시하고 API로 직행!
+    if cached_data and cached_data.get("id") is not None: return cached_data
+    
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     try:
         response = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
@@ -891,10 +898,10 @@ if proto_matches:
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        # 👑 [기획 패치] 회원님 요청 반영! 종료된 게임은 리포트에서 볼 수 있다는 깔끔한 배너 추가
         st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
         
         if analyzed_proto:
+            displayed_count = 0
             for item in analyzed_proto:
                 m = item['match']
                 logo_h_tag = render_logo_html(item.get("home_logo"))
@@ -903,18 +910,16 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
                 a_result = m.get('actual_result', 'PENDING')
-                a_score = m.get('actual_score', '')
+                
+                # 👑 [기획 패치] 실제 종료되었거나 채점된 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제!
+                if match_status == "FINISHED" or a_result == 'FINISHED':
+                    continue
+                
+                displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                # 👑 [기획 패치] 경기 종료가 되면 '채점대기'가 아니라 무조건 '2 : 1 종료' 스코어가 나오게 하라!
-                if match_status == "FINISHED" or a_result == 'FINISHED':
-                    temp_score = a_score if a_score and a_score != '-:-' else "-:-"
-                    # DB에 채점 스코어가 아직 없으면 라이브 딕셔너리에서 가장 마지막에 본 스코어를 가져옴!
-                    if temp_score == '-:-' and match_id_str in live_scores_data:
-                        temp_score = live_scores_data[match_id_str].get("score", "-:-").replace(" : ", ":")
-                    time_display = f"<span class='live-score'>{temp_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
-                
-                elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # 아직 진행중이거나 예정된 경기만 화면에 출력
+                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
@@ -980,7 +985,10 @@ with main_tab1:
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
-        else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
+            
+            if displayed_count == 0:
+                st.info("현재 진행 중이거나 예정된 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
+        else: st.info("현재 진행 중이거나 예정된 축구 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
@@ -1243,17 +1251,14 @@ with main_tab4:
     if scoring_data or history_data:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
         
-        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 꼼꼼하게 채점 중인(PENDING이지만 시간상 끝난) 경기
+        # 👑 [기획 패치] 리포트 탭: 채점 중인 경기는 무조건 찾아낸 스코어로 표시!
         for row in scoring_data:
             m_id_str = str(row['match_id'])
             
-            # DB에 임시로 저장된 스코어를 먼저 가져옵니다
             temp_score = row.get('actual_score', '-:-')
-            # 만약 DB에 스코어가 없으면 라이브스코어 딕셔너리에서 가져옵니다
             if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
                 temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
                 
-            # '-:-' 표시 대신 무조건 찾아낸 스코어를 표시!    
             result_mark = "<span style='color:#F59E0B; font-weight:900;'>채점중</span>"
             table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{temp_score}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
 
