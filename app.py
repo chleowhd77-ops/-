@@ -69,11 +69,12 @@ TEAM_NAME_MAP = {
     "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
 }
 
+# 👑 [API 제한 방지 패치] 미국 MLS 팀들의 진짜 공식 ID로 전면 수정!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
-    "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
-    "새너제이 어스케이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
-    "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
+    "새너제이 어스퀘이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
+    "새너제이 어스케이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
+    "새너어스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
     "LDU키토": {"id": 2939, "logo": "https://media.api-sports.io/football/teams/2939.png"},
     "신트 트라위던VV": {"id": 742, "logo": "https://media.api-sports.io/football/teams/742.png"},
     "OFI크레타": {"id": 354, "logo": "https://media.api-sports.io/football/teams/354.png"},
@@ -82,18 +83,19 @@ DIRECT_TEAM_INFO = {
     "아라라트 아르메니아": {"id": 5316, "logo": "https://media.api-sports.io/football/teams/5316.png"},
     "KF에그나티아": {"id": 9789, "logo": "https://tmssl.akamaized.net/images/wappen/big/19491.png"},
     "이베리아1999 트빌리시": {"id": 2280, "logo": "https://media.api-sports.io/football/teams/2280.png"},
-    "샌디에이고FC": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"},
-    "콜로라도 래피즈": {"id": 16052, "logo": "https://media.api-sports.io/football/teams/16052.png"},
-    "LAFC": {"id": 16109, "logo": "https://media.api-sports.io/football/teams/16109.png"},
-    "레알 솔트레이크": {"id": 16056, "logo": "https://media.api-sports.io/football/teams/16056.png"},
-    "FC댈러스": {"id": 16054, "logo": "https://media.api-sports.io/football/teams/16054.png"},
-    "시애틀 사운더스FC": {"id": 16057, "logo": "https://media.api-sports.io/football/teams/16057.png"},
-    "LA 갤럭시": {"id": 16058, "logo": "https://media.api-sports.io/football/teams/16058.png"},
-    "포틀랜드 팀버스": {"id": 16059, "logo": "https://media.api-sports.io/football/teams/16059.png"},
-    "밴쿠버 화이트캡스FC": {"id": 16053, "logo": "https://media.api-sports.io/football/teams/16053.png"},
-    "휴스턴 다이너모FC": {"id": 16060, "logo": "https://media.api-sports.io/football/teams/16060.png"}
+    "세인트루이스 시티": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"},
+    "콜로라도 래피즈": {"id": 43, "logo": "https://media.api-sports.io/football/teams/43.png"},
+    "LAFC": {"id": 41, "logo": "https://media.api-sports.io/football/teams/41.png"},
+    "레알 솔트레이크": {"id": 45, "logo": "https://media.api-sports.io/football/teams/45.png"},
+    "레알솔트레이크": {"id": 45, "logo": "https://media.api-sports.io/football/teams/45.png"},
+    "FC댈러스": {"id": 46, "logo": "https://media.api-sports.io/football/teams/46.png"},
+    "시애틀 사운더스FC": {"id": 48, "logo": "https://media.api-sports.io/football/teams/48.png"},
+    "LA 갤럭시": {"id": 42, "logo": "https://media.api-sports.io/football/teams/42.png"},
+    "LA갤럭시": {"id": 42, "logo": "https://media.api-sports.io/football/teams/42.png"},
+    "포틀랜드 팀버스": {"id": 55, "logo": "https://media.api-sports.io/football/teams/55.png"},
+    "밴쿠버 화이트캡스FC": {"id": 44, "logo": "https://media.api-sports.io/football/teams/44.png"},
+    "휴스턴 다이너모FC": {"id": 49, "logo": "https://media.api-sports.io/football/teams/49.png"}
 }
-
 # 👑 [기획 패치] 웹사이트 구동 시, 로봇이 깃허브에 올려둔 '진짜' DB를 멱살 잡고 강제로 덮어씌움!
 def download_db_from_github():
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
