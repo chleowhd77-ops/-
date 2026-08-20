@@ -69,6 +69,7 @@ TEAM_NAME_MAP = {
     "새너제이 어스케이크스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes", "새너어스": "San Jose Earthquakes"
 }
 
+# 👑 [API 제한 방지 패치] 미국 MLS 팀들 ID 직접 매핑으로 에러 완벽 차단!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
@@ -82,7 +83,16 @@ DIRECT_TEAM_INFO = {
     "아라라트 아르메니아": {"id": 5316, "logo": "https://media.api-sports.io/football/teams/5316.png"},
     "KF에그나티아": {"id": 9789, "logo": "https://tmssl.akamaized.net/images/wappen/big/19491.png"},
     "이베리아1999 트빌리시": {"id": 2280, "logo": "https://media.api-sports.io/football/teams/2280.png"},
-    "샌디에이고FC": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"}
+    "샌디에이고FC": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"},
+    "콜로라도 래피즈": {"id": 16052, "logo": "https://media.api-sports.io/football/teams/16052.png"},
+    "LAFC": {"id": 16109, "logo": "https://media.api-sports.io/football/teams/16109.png"},
+    "레알 솔트레이크": {"id": 16056, "logo": "https://media.api-sports.io/football/teams/16056.png"},
+    "FC댈러스": {"id": 16054, "logo": "https://media.api-sports.io/football/teams/16054.png"},
+    "시애틀 사운더스FC": {"id": 16057, "logo": "https://media.api-sports.io/football/teams/16057.png"},
+    "LA 갤럭시": {"id": 16058, "logo": "https://media.api-sports.io/football/teams/16058.png"},
+    "포틀랜드 팀버스": {"id": 16059, "logo": "https://media.api-sports.io/football/teams/16059.png"},
+    "밴쿠버 화이트캡스FC": {"id": 16053, "logo": "https://media.api-sports.io/football/teams/16053.png"},
+    "휴스턴 다이너모FC": {"id": 16060, "logo": "https://media.api-sports.io/football/teams/16060.png"}
 }
 
 # -----------------------------------------------------------------------------
@@ -111,7 +121,7 @@ def init_db():
     try: cursor.execute("ALTER TABLE predictions ADD COLUMN failure_reason TEXT DEFAULT ''")
     except: pass
     
-    # 👑 [핵심 패치] 과거에 팀ID 못찾고 저장된 '악성 캐시(null)'를 무조건 다 불태워서 새로 API 찌르게 만듦!
+    # 👑 악성 캐시 정리 (팀 못찾은 거 초기화)
     try: cursor.execute("DELETE FROM api_cache WHERE cache_key LIKE 'team_info_%' AND cache_value LIKE '%null%'")
     except: pass
     
@@ -898,7 +908,8 @@ if proto_matches:
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
+        # 👑 [기획 패치] 종료된 게임은 AI 리포트 탭에서 볼 수 있다는 배너 추가!
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 경기가 종료된 게임은 [AI 리포트] 탭에서 확인하실 수 있습니다.</div>", unsafe_allow_html=True)
         
         if analyzed_proto:
             displayed_count = 0
@@ -911,14 +922,14 @@ with main_tab1:
                 
                 a_result = m.get('actual_result', 'PENDING')
                 
-                # 👑 [기획 패치] 실제 종료되었거나 채점된 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제!
+                # 👑 [기획 패치] 실제 종료되었거나, 채점이 끝난 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제!
                 if match_status == "FINISHED" or a_result == 'FINISHED':
                     continue
                 
                 displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                # 아직 진행중이거나 예정된 경기만 화면에 출력
+                # 아직 진행중이거나 예정된 경기만 화면에 그림
                 if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
@@ -1251,10 +1262,11 @@ with main_tab4:
     if scoring_data or history_data:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
         
-        # 👑 [기획 패치] 리포트 탭: 채점 중인 경기는 무조건 찾아낸 스코어로 표시!
+        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 채점 중인 경기 노출
         for row in scoring_data:
             m_id_str = str(row['match_id'])
             
+            # 👑 [기획 패치] 임시로 확보한 스코어를 보여줌 (-:- 방지)
             temp_score = row.get('actual_score', '-:-')
             if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
                 temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
