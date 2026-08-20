@@ -81,7 +81,18 @@ TEAM_NAME_MAP = {
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
-    "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"}
+    "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
+    
+    # 👇 오늘 마크/전적 누락된 팀들 완벽 타겟팅!
+    "LDU키토": {"id": 2939, "logo": "https://media.api-sports.io/football/teams/2939.png"},
+    "신트 트라위던VV": {"id": 742, "logo": "https://media.api-sports.io/football/teams/742.png"},
+    "OFI크레타": {"id": 354, "logo": "https://media.api-sports.io/football/teams/354.png"},
+    "V바렌 나가사키": {"id": 300, "logo": "https://media.api-sports.io/football/teams/300.png"},
+    "야기엘로니아 비아위스토크": {"id": 338, "logo": "https://media.api-sports.io/football/teams/338.png"},
+    "아라라트 아르메니아": {"id": 5316, "logo": "https://media.api-sports.io/football/teams/5316.png"},
+    "KF에그나티아": {"id": 9789, "logo": "https://media.api-sports.io/football/teams/9789.png"},
+    "이베리아1999 트빌리시": {"id": 2280, "logo": "https://media.api-sports.io/football/teams/2280.png"},
+    "샌디에이고FC": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"}
 }
 
 # -----------------------------------------------------------------------------
