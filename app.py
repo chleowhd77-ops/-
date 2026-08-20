@@ -481,9 +481,29 @@ def get_accuracy_stats():
     conn = sqlite3.connect("ai_predictions.db")
     df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED'", conn)
     df_history = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED' ORDER BY id DESC LIMIT 50", conn)
+    df_pending = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'PENDING'", conn)
     conn.close()
-    if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0, "history": []}
-    return {"total": len(df), "correct": df['is_correct'].sum(), "accuracy": round((df['is_correct'].sum() / len(df)) * 100, 1), "history": df_history.to_dict('records')}
+    
+    scoring_list = []
+    now = datetime.now(timezone(timedelta(hours=9)))
+    for _, row in df_pending.iterrows():
+        m_time = row['match_time']
+        is_finished_time = False
+        try:
+            match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', m_time)
+            if match:
+                mo, d, h, m = map(int, match.groups())
+                m_dt = datetime(now.year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+                if now > m_dt + timedelta(hours=2): 
+                    is_finished_time = True
+        except: pass
+        if is_finished_time:
+            scoring_list.append(row.to_dict())
+            
+    history_list = df_history.to_dict('records')
+    
+    if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0, "history": history_list, "scoring": scoring_list}
+    return {"total": len(df), "correct": df['is_correct'].sum(), "accuracy": round((df['is_correct'].sum() / len(df)) * 100, 1), "history": history_list, "scoring": scoring_list}
 
 def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
     conn = sqlite3.connect("ai_predictions.db")
@@ -869,7 +889,11 @@ if proto_matches:
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
+        # 👑 [기획 패치] 종료된 게임은 리포트로 간다는 상단 안내 멘트 추가!
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 경기가 종료된 게임은 [AI 리포트] 탭으로 이동되었습니다.</div>", unsafe_allow_html=True)
+        
         if analyzed_proto:
+            displayed_count = 0
             for item in analyzed_proto:
                 m = item['match']
                 logo_h_tag = render_logo_html(item.get("home_logo"))
@@ -878,13 +902,16 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
                 a_result = m.get('actual_result', 'PENDING')
-                a_score = m.get('actual_score', '')
+                
+                # 👑 [기획 패치] 실제 종료되었거나, 채점이 끝난 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제 (스킵)
+                if match_status == "FINISHED" or a_result == 'FINISHED':
+                    continue
+                
+                displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                # 👑 [LIVE 패치] 경기 중, 종료 모두 실제 스코어 무조건 강제 출력
-                if a_result == 'FINISHED' and a_score and a_score != '-:-':
-                    time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
-                elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # 아직 진행중이거나 예정된 경기만 화면에 그림
+                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
@@ -894,12 +921,6 @@ with main_tab1:
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                     else:
                         time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
-                elif match_status == "FINISHED": 
-                    if match_id_str in live_scores_data and live_scores_data[match_id_str].get("score"):
-                        temp_score = live_scores_data[match_id_str].get("score")
-                        time_display = f"<span class='live-score' style='font-size:24px; color:#CBD5E1;'>{temp_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>채점 대기</span>"
-                    else:
-                        time_display = f"<span class='live-score' style='font-size:20px; color:#94A3B8;'>채점 대기</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
@@ -956,7 +977,10 @@ with main_tab1:
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
-        else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
+            
+            if displayed_count == 0:
+                st.info("현재 진행 중이거나 예정된 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
+        else: st.info("현재 진행 중이거나 예정된 축구 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
@@ -1212,17 +1236,37 @@ with main_tab3:
 with main_tab4:
     stats = get_accuracy_stats()
     st.markdown(f"<div style='display:flex; align-items:center; gap:20px; margin-bottom:30px; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'><div><span style='color:#94A3B8; font-size:14px; font-weight:700; display:block;'>전체 누적 적중률</span><span style='color:#00F2FE; font-size:40px; font-weight:900;'>{stats['accuracy']}%</span></div><div style='border-left:1px solid #334155; padding-left:20px;'><span style='color:#CBD5E1; font-size:14px; display:block;'>종료된 경기: {stats['total']} 경기</span><span style='color:#10B981; font-size:14px; display:block; margin-top:5px;'>적중: {stats['correct']} 경기</span><span style='color:#EF4444; font-size:14px; display:block; margin-top:5px;'>실패: {stats['total'] - stats['correct']} 경기</span></div></div><h4 style='color:#F8FAFC; font-weight:900; margin-bottom:10px;'>📜 최근 경기 학습(오답) 노트</h4>", unsafe_allow_html=True)
-    history = stats.get('history', [])
-    if history:
-        table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>채점</th></tr></thead><tbody>"
-        for row in history:
-            result_mark = "<span style='color:#10B981; font-weight:900;'>적중</span>" if row.get('is_correct',0) == 1 else "<span style='color:#EF4444; font-weight:900;'>실패</span>"
+    
+    scoring_data = stats.get('scoring', [])
+    history_data = stats.get('history', [])
+    
+    if scoring_data or history_data:
+        table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
+        
+        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 채점 중인(PENDING이지만 시간상 끝난) 경기 먼저 노출!
+        for row in scoring_data:
+            m_id_str = str(row['match_id'])
+            temp_score = "-:-"
+            if m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
+                temp_score = live_scores_data[m_id_str].get("score")
+                
+            result_mark = "<span style='color:#F59E0B; font-weight:900;'>채점중</span>"
+            table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{temp_score}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
+
+        # 👑 [기획 패치] 완전히 종료되고 오답/정답 노트까지 쓰여진 경기 노출!
+        for row in history_data:
+            if row.get('is_correct',0) == 1:
+                result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>종료</span><br><span style='color:#10B981; font-weight:900;'>적중</span>"
+            else:
+                result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>종료</span><br><span style='color:#EF4444; font-weight:900;'>실패</span>"
             table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{row.get('actual_score','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
+            
         table_html += "</tbody></table>"
         st.markdown(table_html, unsafe_allow_html=True)
+        
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 AI 실패 원인 분석 목록</h4>", unsafe_allow_html=True)
         has_failure = False
-        for row in history:
+        for row in history_data:
             if row.get('is_correct',0) == 0 and row.get('failure_reason'):
                 has_failure = True
                 st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row.get('home_team','')} vs {row.get('away_team','')}]</b><br>{row.get('failure_reason','')}</div>", unsafe_allow_html=True)
