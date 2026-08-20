@@ -339,6 +339,7 @@ def fetch_team_next_fixture_api(team_id):
         for next_fix in data:
             next_date_str = next_fix["fixture"]["date"]
             league_name = next_fix["league"]["name"]
+            
             next_dt = datetime.fromisoformat(next_date_str.replace('Z', '+00:00'))
             now = datetime.now(timezone(timedelta(hours=9)))
             diff_hours = (next_dt - now).total_seconds() / 3600.0
@@ -347,6 +348,7 @@ def fetch_team_next_fixture_api(team_id):
                 days_until = max(1, int(diff_hours / 24))
                 important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
                 is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
+                
                 res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
                 set_db_cache(cache_key, res_val)
                 return res_val
@@ -703,7 +705,15 @@ try:
     db_matches = cursor.fetchall()
     conn.close()
     
+    db_dict = {str(row[0]): row for row in db_matches}
     json_match_ids = [str(m['id']) for m in proto_matches]
+    
+    for m in proto_matches:
+        m_id_str = str(m['id'])
+        if m_id_str in db_dict:
+            m['actual_result'] = db_dict[m_id_str][8]
+            m['actual_score'] = db_dict[m_id_str][9]
+            
     for row in db_matches:
         m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time, a_result, a_score = row
         if str(m_id) not in json_match_ids:
@@ -869,12 +879,12 @@ with main_tab1:
                 
                 a_result = m.get('actual_result', 'PENDING')
                 a_score = m.get('actual_score', '')
+                match_id_str = str(m.get('id', ''))
                 
-                # 👑 [LIVE 패치] 골 넣은 멘트는 위에 조그맣게, 실시간 점수는 크게!
-                if a_result == 'FINISHED':
+                # 👑 [LIVE 패치] 골 넣은 멘트는 위에 조그맣게, 실시간/종료 점수는 크게!
+                if a_result == 'FINISHED' and a_score and a_score != '-:-':
                     time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
-                    match_id_str = str(m.get('id', ''))
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
@@ -885,7 +895,11 @@ with main_tab1:
                     else:
                         time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                 elif match_status == "FINISHED": 
-                    time_display = f"<span class='live-score'>종료</span>"
+                    if match_id_str in live_scores_data and live_scores_data[match_id_str].get("score"):
+                        temp_score = live_scores_data[match_id_str].get("score")
+                        time_display = f"<span class='live-score' style='font-size:24px; color:#CBD5E1;'>{temp_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>채점 대기</span>"
+                    else:
+                        time_display = f"<span class='live-score' style='font-size:20px; color:#94A3B8;'>채점 대기</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
