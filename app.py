@@ -63,10 +63,11 @@ TEAM_NAME_MAP = {
     "스포캔자": "Sporting Kansas City", "스포팅 캔자스시티": "Sporting Kansas City", "세인시티": "St. Louis City", "세인트루이스 시티": "St. Louis City", "세인트루이스 시티SC": "St. Louis City",
     "미네유나": "Minnesota United", "미네소타 유나이티드FC": "Minnesota United", "애틀유나": "Atlanta United", "애틀랜타 유나이티드FC": "Atlanta United",
     "콜로래피": "Colorado Rapids", "콜로라도 래피즈": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "레알 솔트레이크": "Real Salt Lake", "FC댈러스": "FC Dallas",
-    "시애사운": "Seattle Sounders", "오스틴FC": "Austin FC", "LA갤럭시": "Los Angeles Galaxy", 
-    "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes", "새너제이 어스케이크스": "San Jose Earthquakes",
+    "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "시애틀 사운더스": "Seattle Sounders",
+    "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
     "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
-    "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
+    "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
+    "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
 DIRECT_TEAM_INFO = {
@@ -1297,48 +1298,5 @@ with main_tab4:
             if row.get('failure_reason'):
                 has_failure = True
                 st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row.get('home_team','')} vs {row.get('away_team','')}]</b><br>{row.get('failure_reason','')}</div>", unsafe_allow_html=True)
-       if not has_failure: st.info("아직 분석된 정답/오답 노트가 없습니다.")
+        if not has_failure: st.info("아직 분석된 정답/오답 노트가 없습니다.")
     else: st.info("아직 채점이 완료된 종료 경기가 없습니다.")
-
-    # ---------------------------------------------------------
-    # 👑 [기획 패치] 관리자 전용 수동 채점 패널 추가!
-    # ---------------------------------------------------------
-    st.markdown("---")
-    st.markdown("<h4 style='color:#F59E0B; font-weight:900;'>🛠️ 관리자 전용 수동 채점 패널</h4>", unsafe_allow_html=True)
-    st.info("API 스코어 업데이트가 안 되는 경기(미국 MLS, 하부리그 등)의 점수를 직접 입력하여 강제로 졸업시킵니다.")
-    
-    # 채점 대기중인 경기 목록 가져오기
-    scoring_data = stats.get('scoring', [])
-    pending_options = [f"{row['home_team']}vs{row['away_team']}" for row in scoring_data]
-    
-    if pending_options:
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            manual_match = st.selectbox("수동 채점할 경기 선택", pending_options)
-        with col2:
-            manual_score = st.text_input("스코어 입력 (예: 2:1)", placeholder="홈:원정")
-        with col3:
-            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-            if st.button("수동 채점 확정", use_container_width=True):
-                if re.match(r'^\d+:\d+$', manual_score):
-                    try:
-                        import os
-                        manual_scores = {}
-                        if os.path.exists("manual_scores.json"):
-                            with open("manual_scores.json", "r", encoding="utf-8") as f:
-                                manual_scores = json.load(f)
-                        
-                        # 점수 저장
-                        manual_scores[manual_match] = manual_score
-                        with open("manual_scores.json", "w", encoding="utf-8") as f:
-                            json.dump(manual_scores, f, ensure_ascii=False, indent=4)
-                        
-                        st.success(f"✅ {manual_match} 경기 ({manual_score}) 입력 완료! 20분 내로 수집기가 강제 채점합니다.")
-                        time.sleep(2)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"저장 실패: {e}")
-                else:
-                    st.warning("스코어 형식을 '숫자:숫자' (예: 2:1) 형태로 정확히 입력해주세요.")
-    else:
-        st.success("🎉 현재 수동으로 채점할 대기 경기가 없습니다. (모두 정상 채점 완료)")
