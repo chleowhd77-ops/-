@@ -65,12 +65,14 @@ TEAM_NAME_MAP = {
     "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
     "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
     "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
-    "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
+    "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo",
+    "새너제이 어스케이크스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes", "새너어스": "San Jose Earthquakes"
 }
 
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
+    "새너제이 어스케이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
     "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
     "LDU키토": {"id": 2939, "logo": "https://media.api-sports.io/football/teams/2939.png"},
     "신트 트라위던VV": {"id": 742, "logo": "https://media.api-sports.io/football/teams/742.png"},
@@ -889,11 +891,10 @@ if proto_matches:
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        # 👑 [기획 패치] 종료된 게임은 리포트로 간다는 상단 안내 멘트 추가!
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 경기가 종료된 게임은 [AI 리포트] 탭으로 이동되었습니다.</div>", unsafe_allow_html=True)
+        # 👑 [기획 패치] 회원님 요청 반영! 종료된 게임은 리포트에서 볼 수 있다는 깔끔한 배너 추가
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
         
         if analyzed_proto:
-            displayed_count = 0
             for item in analyzed_proto:
                 m = item['match']
                 logo_h_tag = render_logo_html(item.get("home_logo"))
@@ -902,16 +903,18 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
                 a_result = m.get('actual_result', 'PENDING')
-                
-                # 👑 [기획 패치] 실제 종료되었거나, 채점이 끝난 경기는 라이브 탭에서 0.1초도 안 남기고 즉시 삭제 (스킵)
-                if match_status == "FINISHED" or a_result == 'FINISHED':
-                    continue
-                
-                displayed_count += 1
+                a_score = m.get('actual_score', '')
                 match_id_str = str(m.get('id', ''))
                 
-                # 아직 진행중이거나 예정된 경기만 화면에 그림
-                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # 👑 [기획 패치] 경기 종료가 되면 '채점대기'가 아니라 무조건 '2 : 1 종료' 스코어가 나오게 하라!
+                if match_status == "FINISHED" or a_result == 'FINISHED':
+                    temp_score = a_score if a_score and a_score != '-:-' else "-:-"
+                    # DB에 채점 스코어가 아직 없으면 라이브 딕셔너리에서 가장 마지막에 본 스코어를 가져옴!
+                    if temp_score == '-:-' and match_id_str in live_scores_data:
+                        temp_score = live_scores_data[match_id_str].get("score", "-:-").replace(" : ", ":")
+                    time_display = f"<span class='live-score'>{temp_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
+                
+                elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
@@ -977,10 +980,7 @@ with main_tab1:
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
-            
-            if displayed_count == 0:
-                st.info("현재 진행 중이거나 예정된 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
-        else: st.info("현재 진행 중이거나 예정된 축구 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
+        else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
 
@@ -1243,17 +1243,21 @@ with main_tab4:
     if scoring_data or history_data:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
         
-        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 채점 중인(PENDING이지만 시간상 끝난) 경기 먼저 노출!
+        # 👑 [기획 패치] 리포트 탭: 아직 로봇이 꼼꼼하게 채점 중인(PENDING이지만 시간상 끝난) 경기
         for row in scoring_data:
             m_id_str = str(row['match_id'])
-            temp_score = "-:-"
-            if m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
-                temp_score = live_scores_data[m_id_str].get("score")
+            
+            # DB에 임시로 저장된 스코어를 먼저 가져옵니다
+            temp_score = row.get('actual_score', '-:-')
+            # 만약 DB에 스코어가 없으면 라이브스코어 딕셔너리에서 가져옵니다
+            if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
+                temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
                 
+            # '-:-' 표시 대신 무조건 찾아낸 스코어를 표시!    
             result_mark = "<span style='color:#F59E0B; font-weight:900;'>채점중</span>"
             table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{temp_score}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
 
-        # 👑 [기획 패치] 완전히 종료되고 오답/정답 노트까지 쓰여진 경기 노출!
+        # 완전히 종료되고 오답/정답 노트까지 쓰여진 경기 노출
         for row in history_data:
             if row.get('is_correct',0) == 1:
                 result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>종료</span><br><span style='color:#10B981; font-weight:900;'>적중</span>"
@@ -1264,11 +1268,11 @@ with main_tab4:
         table_html += "</tbody></table>"
         st.markdown(table_html, unsafe_allow_html=True)
         
-        st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 AI 실패 원인 분석 목록</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 AI 학습(분석) 노트 내용</h4>", unsafe_allow_html=True)
         has_failure = False
         for row in history_data:
-            if row.get('is_correct',0) == 0 and row.get('failure_reason'):
+            if row.get('failure_reason'):
                 has_failure = True
                 st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row.get('home_team','')} vs {row.get('away_team','')}]</b><br>{row.get('failure_reason','')}</div>", unsafe_allow_html=True)
-        if not has_failure: st.info("실패한 경기나 분석된 오답 노트가 아직 없습니다.")
+        if not has_failure: st.info("아직 분석된 정답/오답 노트가 없습니다.")
     else: st.info("아직 채점이 완료된 종료 경기가 없습니다.")
