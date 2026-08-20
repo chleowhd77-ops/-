@@ -68,6 +68,8 @@ TEAM_NAME_MAP = {
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
+DIRECT_LOGO_MAP = {}
+
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
@@ -339,6 +341,7 @@ def fetch_team_next_fixture_api(team_id):
         for next_fix in data:
             next_date_str = next_fix["fixture"]["date"]
             league_name = next_fix["league"]["name"]
+            
             next_dt = datetime.fromisoformat(next_date_str.replace('Z', '+00:00'))
             now = datetime.now(timezone(timedelta(hours=9)))
             diff_hours = (next_dt - now).total_seconds() / 3600.0
@@ -347,6 +350,7 @@ def fetch_team_next_fixture_api(team_id):
                 days_until = max(1, int(diff_hours / 24))
                 important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
                 is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
+                
                 res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
                 set_db_cache(cache_key, res_val)
                 return res_val
@@ -407,42 +411,15 @@ def calculate_rest_days(last_date_iso, match_time_str):
     return 99
 
 @st.cache_data(ttl=43200)
-def fetch_overseas_odds_api(team_id):
-    if not team_id: return None
-    cache_key = f"odds_{team_id}"
-    cached_data = get_db_cache(cache_key, 6)
-    if cached_data: return cached_data
-    try:
-        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "next": 1}, timeout=5)
-        data = res.json().get("response", [])
-        if data:
-            fix_id = data[0]["fixture"]["id"]
-            odds_res = requests.get(f"https://{API_HOST}/odds", headers=headers, params={"fixture": fix_id}, timeout=5)
-            odds_data = odds_res.json().get("response", [])
-            if odds_data:
-                bookmakers = odds_data[0].get("bookmakers", [])
-                if bookmakers:
-                    bets = bookmakers[0].get("bets", [])
-                    for b in bets:
-                        if b["name"] == "Match Winner":
-                            vals = b["values"]
-                            res_val = {"odd_h": float(vals[0]["odd"]), "odd_d": float(vals[1]["odd"]), "odd_a": float(vals[2]["odd"])}
-                            set_db_cache(cache_key, res_val)
-                            return res_val
-    except: pass
-    return None
-
-@st.cache_data(ttl=43200)
-def fetch_fixture_details_api(home_id, away_id):
-    default_res = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
-    if not home_id or not away_id: return default_res
-    cache_key = f"app_h2h_{home_id}_{away_id}"
+def fetch_h2h_api(home_id, away_id):
+    if not home_id or not away_id: return {"h_wins": 0, "a_wins": 0, "total": 0}
+    cache_key = f"coll_h2h_{home_id}_{away_id}"
     cached_data = get_db_cache(cache_key, 24)
     if cached_data: return cached_data
     try:
-        response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
-        matches = response.json().get("response", [])
-        h_wins, draws, a_wins = 0, 0, 0
+        res = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
+        matches = res.json().get("response", [])
+        h_wins, a_wins = 0, 0
         for m in matches[:10]:
             if m.get("teams", {}).get("home", {}).get("winner"):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
@@ -450,11 +427,10 @@ def fetch_fixture_details_api(home_id, away_id):
             elif m.get("teams", {}).get("away", {}).get("winner"):
                 if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
                 else: h_wins += 1
-            else: draws += 1
-        res_val = {"match_time": None, "last_h2h_date": "-", "h_rest": "-", "a_rest": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
-        set_db_cache(cache_key, res_val)
-        return res_val
-    except: return default_res
+        res_data = {"h_wins": h_wins, "a_wins": a_wins, "total": len(matches[:10])}
+        set_db_cache(cache_key, res_data)
+        return res_data
+    except: return {"h_wins": 0, "a_wins": 0, "total": 0}
 
 def load_betman_data():
     raw_url = f"https://raw.githubusercontent.com/chleowhd77-ops/-/main/betman_data.json?t={int(time.time())}"
@@ -483,21 +459,6 @@ def get_accuracy_stats():
     if len(df) == 0: return {"total": 0, "correct": 0, "accuracy": 0.0, "history": []}
     return {"total": len(df), "correct": df['is_correct'].sum(), "accuracy": round((df['is_correct'].sum() / len(df)) * 100, 1), "history": df_history.to_dict('records')}
 
-def save_prediction(m, best_option, best_prob_pct, best_score, is_toto14=0):
-    conn = sqlite3.connect("ai_predictions.db")
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT id FROM predictions WHERE match_id = ?", (m['id'],))
-        if not cursor.fetchone():
-            cursor.execute("""
-                INSERT INTO predictions (match_id, league, home_team, away_team, predicted_pick, predicted_prob, expected_score, odd_h, odd_d, odd_a, match_time, is_toto14)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (m['id'], m.get('league', '승무패 14경기'), m['home'], m['away'], best_option, best_prob_pct, f"{best_score[0]}:{best_score[1]}", m.get('odd_h', 0.0), m.get('odd_d', 0.0), m.get('odd_a', 0.0), m.get('match_time', ''), is_toto14))
-        else: cursor.execute("UPDATE predictions SET is_toto14 = ? WHERE match_id = ?", (is_toto14, m['id']))
-        conn.commit()
-    except: pass
-    finally: conn.close()
-
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
     try:
@@ -519,82 +480,6 @@ def get_match_status(match_time_str, deadline_str):
             else: return "UPCOMING", is_closed
     except: pass
     return "UPCOMING", False
-
-def generate_match_story(best_option, math_exp_h, math_exp_a, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_next, a_next, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
-    story_parts = []
-    
-    story_parts.append(f"📈 [포아송 수학 모델] 양 팀의 공격/수비 지수를 환산한 결과, 예상 정규시간 득점은 {home} <b style='color:#00F2FE;'>{math_exp_h:.1f}골</b>, {away} <b style='color:#EF4444;'>{math_exp_a:.1f}골</b>로 산출되었습니다.")
-    
-    if h_next["is_important"] and h_next["days_until_next"] <= 4:
-        story_parts.append(f"⚠️ [로테이션 경보] {home}은(는) 불과 {h_next['days_until_next']}일 뒤에 열리는 '{h_next['league_name']}' 대회를 대비해 핵심 선수들을 대거 쉬게 할(힘 빼기) 확률이 매우 높습니다. 강팀의 뜬금없는 이변(함정 픽)에 각별히 주의하세요!")
-    if a_next["is_important"] and a_next["days_until_next"] <= 4:
-        story_parts.append(f"⚠️ [로테이션 경보] 원정팀 {away} 측에 {a_next['days_until_next']}일 뒤 '{a_next['league_name']}' 중요 일정이 겹쳐 있어, 정상적인 100% 전력 가동이 불투명합니다. 역배당 이변의 희생양이 될 수 있습니다.")
-
-    if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 배당이 폭락 중입니다.")
-    elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 시장 흐름상 {away} 승리에 자금이 쏠리며 원정팀 배당 가치가 급락하고 있습니다.")
-
-    if h_rank <= 3 and a_rank >= 10: story_parts.append(f"🏆 {home}은(는) 상위권(리그 {h_rank}위)을 질주 중인 반면, {away}은(는) {a_rank}위로 체급 차이가 명확합니다.")
-    elif h_rank >= 15 and h_rank != 99: story_parts.append(f"🔥 {home}은(는) 현재 {h_rank}위로 강등권 위기에 처해 있어 사활을 건 '생존 버프'가 발동될 수 있습니다.")
-    elif a_rank >= 15 and a_rank != 99: story_parts.append(f"🔥 원정팀 {away}({a_rank}위)은(는) 벼랑 끝에 몰린 강등권으로 끈질긴 저항이 우려됩니다.")
-    
-    h_inj = h_inj_data['count']
-    if h_inj_data['ace_missing']: story_parts.append(f"🚨 [초비상] {home}의 전력 핵심이자 주득점원({', '.join(h_inj_data['ace_names'])})의 결장이 의심되어 득점력에 치명적인 타격이 예상됩니다.")
-    elif h_inj >= 6: story_parts.append(f"🚨 삐용삐용! {home}에 다수의 결장 의심 선수가 발생해 전력 누수가 매우 심각합니다.")
-    elif h_inj >= 1: story_parts.append(f"🏥 {home}에 {h_inj}명의 부상자가 있으나, 로테이션 자원 위주라 베스트 11 전력에는 큰 누수가 없습니다.")
-        
-    a_inj = a_inj_data['count']
-    if a_inj_data['ace_missing']: story_parts.append(f"🚨 [초비상] 원정팀 {away} 측 핵심 주득점원({', '.join(a_inj_data['ace_names'])})의 결장이 의심되어 고전이 예상됩니다.")
-    elif a_inj >= 6: story_parts.append(f"🚨 삐용삐용! 원정팀 {away}에 다수의 결장 의심 선수가 확인되어 정상적인 경기 운영이 어렵습니다.")
-    elif a_inj >= 1: story_parts.append(f"🏥 원정팀 {away} 측에 {a_inj}명의 부상자가 있지만 치명적인 전력 누수는 피했습니다.")
-
-    if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 3일 이하로 짧아 후반전 체력 방전이 우려됩니다.")
-    if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 빡빡한 일정 탓에 체력적인 부담을 안고 경기에 임합니다.")
-    
-    if h_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] {home}은(는) 최근 평균 60% 이상의 압도적인 점유율로 경기를 지배하고 있습니다.")
-    elif h_stats['possession'] <= 35.0 and "승" in h_form: story_parts.append(f"⚠️ [위험 경보] {home}은(는) 최근 승리는 있지만 점유율이 밀리고 있어 폼 거품일 확률이 존재합니다.")
-    if h_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {home}은(는) 매 경기 날카로운 유효 슈팅을 창출하며 득점 기대값(xG)이 매우 높습니다.")
-    
-    if a_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] 원정팀 {away} 역시 강한 압박과 높은 점유율을 바탕으로 주도권을 쥐는 데 능합니다.")
-    if a_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {away}의 원정 유효 슈팅 창출력이 매서워 역습에 의한 실점을 경계해야 합니다.")
-
-    if "승-승" in h_form: story_parts.append(f"🔥 단기 폼 측면에서 {home}이(가) 최근 쾌조의 연승으로 최고조에 달했습니다.")
-    elif "패-패" in h_form: story_parts.append(f"💧 {home}은(는) 최근 연패의 늪에 빠져 수비 정비가 시급합니다.")
-    if "승-승" in a_form: story_parts.append(f"🚀 원정팀 {away} 역시 매서운 연승 기세를 보여주고 있어 방심할 수 없는 상대입니다.")
-    
-    total_h2h = h2h_h + h2h_a
-    if total_h2h >= 3:
-        if h2h_h > h2h_a + 2: story_parts.append(f"⚔️ 상대전적에서도 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
-        elif h2h_a > h2h_h + 2: story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
-            
-    if best_option == "무승부":
-        story_parts.append(f"🤖 결론적으로 AI는 팽팽한 흐름 속에 진흙탕 무승부 가능성을 가장 높게 예측합니다.")
-    elif best_option == f"{home} 승":
-        if prob_h >= 50: story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
-        else: story_parts.append(f"🤖 결론적으로 AI는 치열한 접전 끝에 {home}의 신승(진땀승)을 예측합니다.")
-    elif best_option == f"{away} 승":
-        if prob_a >= 50: story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 원정팀 {away}의 승리 가능성을 높게 평가합니다.")
-        else: story_parts.append(f"🤖 결론적으로 AI는 팽팽한 승부 속 원정팀 {away}의 짜릿한 신승을 예측합니다.")
-        
-    return " ".join(story_parts)
-
-def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
-    h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
-    a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
-    h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    for h in range(8):
-        for a in range(8):
-            p = h_probs[h] * a_probs[a]
-            if h > a: h_win += p
-            elif h == a: draw += p
-            else: a_win += p
-            if (h + a) < 2.5: prob_u += p
-            else: prob_o += p
-            if (h + handi_val) > a: prob_handi_h += p
-            elif (h + handi_val) < a: prob_handi_a += p
-            else:
-                 if exp_h > exp_a: prob_handi_h += p
-                 else: prob_handi_a += p
-    return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
 
 # -----------------------------------------------------------------------------
 # CSS 스타일링 
@@ -703,7 +588,16 @@ try:
     db_matches = cursor.fetchall()
     conn.close()
     
+    # 👑 [스코어 누락 완벽 패치] DB 데이터를 딕셔너리로 만들어서 기존 매치에 강제 주입!
+    db_dict = {str(row[0]): row for row in db_matches}
     json_match_ids = [str(m['id']) for m in proto_matches]
+    
+    for m in proto_matches:
+        m_id_str = str(m['id'])
+        if m_id_str in db_dict:
+            m['actual_result'] = db_dict[m_id_str][8]
+            m['actual_score'] = db_dict[m_id_str][9]
+            
     for row in db_matches:
         m_id, league, h_team, a_team, odd_h, odd_d, odd_a, m_time, a_result, a_score = row
         if str(m_id) not in json_match_ids:
@@ -725,132 +619,22 @@ analyzed_proto = []
 
 if proto_matches:
     for m in proto_matches:
-        try: o_h = float(m.get("odd_h", 0.0))
-        except: o_h = 0.0
-        odd_h = o_h if o_h > 0.0 else 2.0
-        
-        try: o_d = float(m.get("odd_d", 0.0))
-        except: o_d = 0.0
-        odd_d = o_d if o_d > 0.0 else 3.0
-        
-        try: o_a = float(m.get("odd_a", 0.0))
-        except: o_a = 0.0
-        odd_a = o_a if o_a > 0.0 else 2.0
-        
-        handi_h = float(m.get("handi_h")) if m.get("handi_h") is not None else 3.05
-        handi_a = float(m.get("handi_a")) if m.get("handi_a") is not None else 2.03
-        uo_under = float(m.get("uo_under")) if m.get("uo_under") is not None else 1.50
-        uo_over = float(m.get("uo_over")) if m.get("uo_over") is not None else 2.13
-
-        home_team, away_team = m["home"], m["away"]
-        home_info = fetch_team_info_api(home_team)
-        away_info = fetch_team_info_api(away_team)
-        fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"])
-        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
-        
-        h_stand = fetch_team_standing_api(home_info.get("id"))
-        a_stand = fetch_team_standing_api(away_info.get("id"))
-        h_rank, a_rank = h_stand["rank"], a_stand["rank"]
-        
-        os_odds = fetch_overseas_odds_api(home_info.get("id"))
-        h_market_bonus, a_market_bonus = 0.0, 0.0
-        if os_odds and odd_h > 1.0 and odd_a > 1.0:
-            if os_odds["odd_h"] < odd_h - 0.2: h_market_bonus = 0.25
-            if os_odds["odd_a"] < odd_a - 0.2: a_market_bonus = 0.25
-            
-        rank_diff_bonus_h = max(-0.3, min(0.3, (a_rank - h_rank) * 0.02))
-        rank_diff_bonus_a = max(-0.3, min(0.3, (h_rank - a_rank) * 0.02))
-        h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
-        a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
-        
-        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
-        
-        h_inj_count = h_inj_data["count"]
-        a_inj_count = a_inj_data["count"]
-        
-        if h_inj_data["ace_missing"]: h_injury_penalty = 0.60
-        else: h_injury_penalty = 0.40 if h_inj_count >= 6 else (0.20 if h_inj_count >= 3 else (0.10 if h_inj_count >= 1 else 0.0))
-        
-        if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
-        else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
-        
-        h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
-        a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
-        h_rest_days = calculate_rest_days(h_last_date, final_match_time)
-        a_rest_days = calculate_rest_days(a_last_date, final_match_time)
-        h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
-        a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
-        
-        h_next = fetch_team_next_fixture_api(home_info.get("id"))
-        a_next = fetch_team_next_fixture_api(away_info.get("id"))
-        
-        h_rot_penalty = 0.3 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
-        a_rot_penalty = 0.3 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
-        
-        h_long = fetch_team_long_term_stats_api(home_info.get("id"))
-        a_long = fetch_team_long_term_stats_api(away_info.get("id"))
-        
-        AVG_H_GF, AVG_A_GF = 1.5, 1.2
-        AVG_H_GA, AVG_A_GA = 1.2, 1.5
-        
-        h_tot = max(1, h_long["home_total"])
-        a_tot = max(1, a_long["away_total"])
-        
-        HAS = (h_long["home_gf"] / h_tot) / AVG_H_GF
-        HDS = (h_long["home_ga"] / h_tot) / AVG_H_GA
-        AAS = (a_long["away_gf"] / a_tot) / AVG_A_GF
-        ADS = (a_long["away_ga"] / a_tot) / AVG_A_GA
-        
-        math_exp_h = HAS * ADS * AVG_H_GF
-        math_exp_a = AAS * HDS * AVG_A_GF
-
-        h_stats = fetch_recent_team_stats_api(home_info.get("id"))
-        a_stats = fetch_recent_team_stats_api(away_info.get("id"))
-        
-        h_xg_bonus = max(-0.2, min(0.3, ((h_stats['possession'] - 50) * 0.01) + ((h_stats['shots_on_goal'] - 4.0) * 0.05)))
-        a_xg_bonus = max(-0.2, min(0.3, ((a_stats['possession'] - 50) * 0.01) + ((a_stats['shots_on_goal'] - 4.0) * 0.05)))
-        
-        p_h = (1 / odd_h) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
-        p_a = (1 / odd_a) / ((1 / odd_h) + (1 / odd_d) + (1 / odd_a))
-        
-        h2h_total = fixture_details.get("total", 0)
-        h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
-        a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.3) if h2h_total > 0 else 0
-        
-        odds_exp_h = p_h * 2.8
-        odds_exp_a = p_a * 2.8
-        
-        exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus - h_injury_penalty - h_fatigue_penalty - h_rot_penalty), 2)
-        exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus - a_injury_penalty - a_fatigue_penalty - a_rot_penalty), 2)
-        
-        handi_val = 1.0 if odd_h > odd_a else -1.0
-        h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
-
-        candidates = [(f"{home_team} 승", h_win, h_win * odd_h), (f"{away_team} 승", a_win, a_win * odd_a), (f"무승부", draw, draw * odd_d)]
-        best_option, best_prob, best_ev = max(candidates, key=lambda x: x[2])
-        best_prob_pct = round(best_prob * 100, 1)
-        best_handi = f"{home_team} 핸디승" if prob_handi_h * handi_h > prob_handi_a * handi_a else f"{away_team} 핸디승"
-        best_handi_prob = round(max(prob_handi_h, prob_handi_a) * 100, 1)
-        best_uo = "언더 (U 2.5)" if prob_u * uo_under > prob_o * uo_over else "오버 (O 2.5)"
-        best_uo_prob = round(max(prob_u, prob_o) * 100, 1)
-
-        save_prediction(m, best_option, best_prob_pct, (0,0), 0)
-        h_form = fetch_team_form_api(home_info.get("id"))
-        a_form = fetch_team_form_api(away_info.get("id"))
-
-        story = generate_match_story(best_option, math_exp_h, math_exp_a, h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_next, a_next, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
-
         analyzed_proto.append({
-            "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
-            "h2h": fixture_details, "story": story, "best_option": best_option, "best_prob_pct": best_prob_pct,
-            "best_handi": best_handi, "best_handi_prob": best_handi_prob, "best_uo": best_uo, "best_uo_prob": best_uo_prob, "best_ev": best_ev,
-            "home_form": h_form, "away_form": a_form,
-            "h_inj_data": h_inj_data, "a_inj_data": a_inj_data,
-            "h_rest": h_rest_days, "a_rest": a_rest_days,
-            "h_next": h_next, "a_next": a_next,
-            "h_rank": h_rank, "a_rank": a_rank,
-            "h_market": h_market_bonus, "a_market": a_market_bonus
+            "match": m, 
+            "final_match_time": m.get("match_time") or m.get("time") or "시간 미정", 
+            "home_logo": "", "away_logo": "",
+            "story": "...", 
+            "best_option": "분석중", "best_prob_pct": 0.0,
+            "best_handi": "-", "best_handi_prob": 0.0, 
+            "best_uo": "-", "best_uo_prob": 0.0,
+            "home_form": "", "away_form": "",
+            "h_inj_data": {'count': 0, 'ace_missing': False}, 
+            "a_inj_data": {'count': 0, 'ace_missing': False},
+            "h_rest": 99, "a_rest": 99,
+            "h_next": {"is_important": False, "days_until_next": 99}, 
+            "a_next": {"is_important": False, "days_until_next": 99},
+            "h_rank": 99, "a_rank": 99,
+            "h_market": 0.0, "a_market": 0.0
         })
 
 # -----------------------------------------------------------------------------
@@ -862,17 +646,15 @@ with main_tab1:
         if analyzed_proto:
             for item in analyzed_proto:
                 m = item['match']
-                logo_h_tag = render_logo_html(item.get("home_logo"))
-                logo_a_tag = render_logo_html(item.get("away_logo"))
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item["final_match_time"], raw_deadline)
                 
                 a_result = m.get('actual_result', 'PENDING')
                 a_score = m.get('actual_score', '')
                 
-                # 👑 [LIVE 패치] 골 넣은 멘트는 위에 조그맣게, 실시간 점수는 크게!
-                if a_result == 'FINISHED':
-                    time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
+                # 👑 [스코어 강제 출력 & 채점 대기 패치]
+                if a_result == 'FINISHED' and a_score and a_score != '-:-':
+                    time_display = f"<span class='live-score' style='color:#F8FAFC;'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     match_id_str = str(m.get('id', ''))
                     if match_id_str in live_scores_data:
@@ -885,7 +667,13 @@ with main_tab1:
                     else:
                         time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                 elif match_status == "FINISHED": 
-                    time_display = f"<span class='live-score'>종료</span>"
+                    # 경기는 끝났는데 DB 채점이 아직 안된 경우
+                    match_id_str = str(m.get('id', ''))
+                    if match_id_str in live_scores_data and live_scores_data[match_id_str].get("score"):
+                        temp_score = live_scores_data[match_id_str].get("score")
+                        time_display = f"<span class='live-score' style='font-size:24px; color:#CBD5E1;'>{temp_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>채점 진행중</span>"
+                    else:
+                        time_display = f"<span class='live-score' style='font-size:20px; color:#94A3B8;'>채점 대기</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item['final_match_time']}</span>{badge}"
@@ -894,303 +682,21 @@ with main_tab1:
                 o_d_disp = m.get('odd_d') if m.get('odd_d') not in [None, 0.0, '', '-'] else '-'
                 o_a_disp = m.get('odd_a') if m.get('odd_a') not in [None, 0.0, '', '-'] else '-'
                 
-                h_form = item.get('home_form', '')
-                a_form = item.get('away_form', '')
-                
-                h_inj_data = item.get('h_inj_data', {'count': 0, 'ace_missing': False})
-                a_inj_data = item.get('a_inj_data', {'count': 0, 'ace_missing': False})
-                h_inj = h_inj_data['count']
-                a_inj = a_inj_data['count']
-                
-                if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-                elif h_inj > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj >= 6 else ('2단계(-0.2)' if h_inj >= 3 else '1단계(-0.1)')}</div>"
-                else: h_inj_html = ""
-
-                if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-                elif a_inj > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj >= 6 else ('2단계(-0.2)' if a_inj >= 3 else '1단계(-0.1)')}</div>"
-                else: a_inj_html = ""
-                
-                h_rest = item.get('h_rest', 99)
-                a_rest = item.get('a_rest', 99)
-                h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
-                a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
-
-                h_next = item.get('h_next', {"is_important": False, "days_until_next": 99})
-                a_next = item.get('a_next', {"is_important": False, "days_until_next": 99})
-                h_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if h_next["is_important"] and h_next["days_until_next"] <= 4 else ""
-                a_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if a_next["is_important"] and a_next["days_until_next"] <= 4 else ""
-
-                h_rank, a_rank = item.get('h_rank', 99), item.get('a_rank', 99)
-                h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
-                a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
-                
-                h_market, a_market = item.get('h_market', 0.0), item.get('a_market', 0.0)
-                h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market > 0 else ""
-                a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market > 0 else ""
-                
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
                     f"<div class='vs-row'>"
-                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}{h_rot_html}</div>{logo_h_tag}</div>"
+                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div></div></div>"
                     f"<div class='center-time-box'>{time_display}</div>"
-                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}{a_rot_html}</div></div>"
+                    f"<div class='team-box away'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div></div></div>"
                     f"</div>"
-                    f"<div class='ai-story'>{item.get('story','')}</div>"
-                    f"<div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div>"
-                    f"<div class='pred-grid'><div class='pred-box'><div class='pred-label'>승무패 예측</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>핸디캡 예측</div><span class='pred-value'>{item.get('best_handi','')}</span> <span class='pred-prob'>{item.get('best_handi_prob','0')}%</span></div><div class='pred-box'><div class='pred-label'>언더/오버 예측</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div>"
+                    f"<div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{o_h_disp}</span> | 무 <span class='odd-val'>{o_d_disp}</span> | 패 <span class='odd-val'>{o_a_disp}</span></span></div>"
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
         else: st.info("현재 분석 가능한 프로토 축구 경기가 없습니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
-
-# -----------------------------------------------------------------------------
-# [TAB 2] 승무패 14경기
-# -----------------------------------------------------------------------------
-with main_tab2:
-    st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
-    if toto_14_raw:
-        total_combinations = 1
-        double_pick_count = 0
-        match_html_list = []
-        for idx, m in enumerate(toto_14_raw, 1):
-            home_info = fetch_team_info_api(m['home'])
-            away_info = fetch_team_info_api(m['away'])
-            logo_h_tag = render_logo_html(home_info.get("logo"))
-            logo_a_tag = render_logo_html(away_info.get("logo"))
-            
-            h_form = fetch_team_form_api(home_info.get("id"))
-            a_form = fetch_team_form_api(away_info.get("id"))
-            
-            h_stand = fetch_team_standing_api(home_info.get("id"))
-            a_stand = fetch_team_standing_api(away_info.get("id"))
-            h_rank, a_rank = h_stand["rank"], a_stand["rank"]
-            
-            os_odds = fetch_overseas_odds_api(home_info.get("id"))
-            h_market_bonus, a_market_bonus = 0.0, 0.0
-            if os_odds:
-                if os_odds["odd_h"] <= 1.8: h_market_bonus = 0.25
-                if os_odds["odd_a"] <= 1.8: a_market_bonus = 0.25
-                
-            rank_diff_bonus_h = max(-0.3, min(0.3, (a_rank - h_rank) * 0.02))
-            rank_diff_bonus_a = max(-0.3, min(0.3, (h_rank - a_rank) * 0.02))
-            h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
-            a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
-            
-            h_long = fetch_team_long_term_stats_api(home_info.get("id"))
-            a_long = fetch_team_long_term_stats_api(away_info.get("id"))
-            
-            h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
-            a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
-            h_rest_days = calculate_rest_days(h_last_date, "시간 미정")
-            a_rest_days = calculate_rest_days(a_last_date, "시간 미정")
-            h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
-            a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
-
-            h_next = fetch_team_next_fixture_api(home_info.get("id"))
-            a_next = fetch_team_next_fixture_api(away_info.get("id"))
-            h_rot_penalty = 0.3 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
-            a_rot_penalty = 0.3 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
-
-            h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-            a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
-            h_inj_count = h_inj_data["count"]
-            a_inj_count = a_inj_data["count"]
-            
-            if h_inj_data["ace_missing"]: h_injury_penalty = 0.60
-            else: h_injury_penalty = 0.40 if h_inj_count >= 6 else (0.20 if h_inj_count >= 3 else (0.10 if h_inj_count >= 1 else 0.0))
-            
-            if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
-            else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
-
-            AVG_H_GF, AVG_A_GF = 1.5, 1.2
-            AVG_H_GA, AVG_A_GA = 1.2, 1.5
-            
-            h_tot = max(1, h_long["home_total"])
-            a_tot = max(1, a_long["away_total"])
-            
-            HAS = (h_long["home_gf"] / h_tot) / AVG_H_GF
-            HDS = (h_long["home_ga"] / h_tot) / AVG_H_GA
-            AAS = (a_long["away_gf"] / a_tot) / AVG_A_GF
-            ADS = (a_long["away_ga"] / a_tot) / AVG_A_GA
-            
-            math_exp_h = HAS * ADS * AVG_H_GF
-            math_exp_a = AAS * HDS * AVG_A_GF
-            
-            h_stats = fetch_recent_team_stats_api(home_info.get("id"))
-            a_stats = fetch_recent_team_stats_api(away_info.get("id"))
-            
-            h_xg_bonus = max(-0.2, min(0.3, ((h_stats['possession'] - 50) * 0.01) + ((h_stats['shots_on_goal'] - 4.0) * 0.05)))
-            a_xg_bonus = max(-0.2, min(0.3, ((a_stats['possession'] - 50) * 0.01) + ((a_stats['shots_on_goal'] - 4.0) * 0.05)))
-
-            fixture_details = fetch_fixture_details_api(home_info.get("id"), away_info.get("id"))
-            h2h_total = fixture_details.get("total", 0)
-            h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
-            a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
-            
-            p_h, p_d, p_a = 0.34, 0.33, 0.33 # Default
-            if os_odds:
-                total_o = (1/os_odds["odd_h"]) + (1/os_odds["odd_d"]) + (1/os_odds["odd_a"])
-                p_h = (1/os_odds["odd_h"]) / total_o
-                p_a = (1/os_odds["odd_a"]) / total_o
-            
-            odds_exp_h = p_h * 2.8
-            odds_exp_a = p_a * 2.8
-            
-            exp_h = round(max(0.3, (math_exp_h * 0.6) + (odds_exp_h * 0.4) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty - h_rot_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
-            exp_a = round(max(0.3, (math_exp_a * 0.6) + (odds_exp_a * 0.4) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty - a_rot_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
-            
-            h_win, draw, a_win, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
-            total_p = h_win + draw + a_win
-            if total_p > 0:
-                p_h = round((h_win / total_p) * 100, 1)
-                p_d = round((draw / total_p) * 100, 1)
-                p_a = round(100.0 - p_h - p_d, 1)
-            else:
-                p_h, p_d, p_a = 34.0, 33.0, 33.0
-            
-            if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-            elif h_inj_count > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj_count >= 6 else ('2단계(-0.2)' if h_inj_count >= 3 else '1단계(-0.1)')}</div>"
-            else: h_inj_html = ""
-
-            if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-            elif a_inj_count > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj_count >= 6 else ('2단계(-0.2)' if a_inj_count >= 3 else '1단계(-0.1)')}</div>"
-            else: a_inj_html = ""
-            
-            h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest_days <= 3 else ""
-            a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest_days <= 3 else ""
-            
-            h_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if h_next["is_important"] and h_next["days_until_next"] <= 4 else ""
-            a_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if a_next["is_important"] and a_next["days_until_next"] <= 4 else ""
-
-            h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
-            a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
-            h_market_bonus, a_market_bonus = 0.0, 0.0 # reset for display
-            h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market_bonus > 0 else ""
-            a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market_bonus > 0 else ""
-            
-            probs = {"승": p_h, "무": p_d, "패": p_a}
-            sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
-            first_pick, first_pct = sorted_probs[0]
-            second_pick, second_pct = sorted_probs[1]
-            
-            picks = []
-            if first_pct - second_pct <= 7.0:
-                if set([first_pick, second_pick]) == set(["승", "패"]):
-                    second_pick = "무"
-                picks = [first_pick, second_pick]
-                total_combinations *= 2
-                double_pick_count += 1
-            else:
-                picks = [first_pick]
-            
-            disp_texts = []
-            for p in picks:
-                if p == "승": disp_texts.append(f"{m['home']} 승")
-                elif p == "패": disp_texts.append(f"{m['away']} 승")
-                else: disp_texts.append("무승부")
-            best_pick_display = ", ".join(disp_texts)
-            
-            is_h = "승" in picks
-            is_d = "무" in picks
-            is_a = "패" in picks
-            style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if is_h else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-            style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if is_d else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-            style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-
-            match_id_str = str(m.get('id', ''))
-            live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
-            if match_id_str in live_scores_data:
-                live_info = live_scores_data[match_id_str]
-                score_text = live_info.get("score", "")
-                if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"
-
-            save_prediction({'id': f"TOTO14_{m['id']}", 'league': '승무패 14경기', 'home': m['home'], 'away': m['away']}, best_pick_display, first_pct, (0, 0), 1)
-            
-            html_code = (
-                f"<div class='match-card' style='padding: 24px;'>"
-                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{best_pick_display}</b></span></div>"
-                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}{h_rot_html}</div>{logo_h_tag}</div>"
-                f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}{a_rot_html}</div></div></div>"
-                f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {p_h}% | 무 {p_d}% | 패 {p_a}%</div>"
-                f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {p_h}%;'></div><div class='prob-bar-draw' style='width: {p_d}%;'></div><div class='prob-bar-lose' style='width: {p_a}%;'></div></div>"
-                f"<div style='display: flex; gap: 10px;'><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div></div>"
-                f"</div>"
-            )
-            match_html_list.append(html_code)
-            
-        total_price = total_combinations * 1000
-        single_pick_count = len(toto_14_raw) - double_pick_count
-        
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto_14_raw)}경기 기준)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
-        st.markdown(summary_html, unsafe_allow_html=True)
-        for html in match_html_list: st.markdown(html, unsafe_allow_html=True)
-    else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
-
-# -----------------------------------------------------------------------------
-# [TAB 3] 오늘의 TOP 3
-# -----------------------------------------------------------------------------
-with main_tab3:
-    valid_top3 = []
-    for item in analyzed_proto:
-        m = item['match']
-        status, is_closed = get_match_status(item["final_match_time"], m.get("deadline_time", "23:00"))
-        if status == "UPCOMING" and not is_closed and m.get('match_time') != '마감/진행중':
-            valid_top3.append(item)
-    top_3_picks = sorted(valid_top3, key=lambda x: x['best_prob_pct'], reverse=True)[:3]
-    if top_3_picks:
-        for idx, item in enumerate(top_3_picks, 1):
-            m = item['match']
-            logo_h_tag = render_logo_html(item.get("home_logo"))
-            logo_a_tag = render_logo_html(item.get("away_logo"))
-            
-            h_form = item.get('home_form', '')
-            a_form = item.get('away_form', '')
-            
-            h_inj_data = item.get('h_inj_data', {'count': 0, 'ace_missing': False})
-            a_inj_data = item.get('a_inj_data', {'count': 0, 'ace_missing': False})
-            h_inj = h_inj_data['count']
-            a_inj = a_inj_data['count']
-            
-            if h_inj_data['ace_missing']: h_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-            elif h_inj > 0: h_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if h_inj >= 6 else ('2단계(-0.2)' if h_inj >= 3 else '1단계(-0.1)')}</div>"
-            else: h_inj_html = ""
-
-            if a_inj_data['ace_missing']: a_inj_html = f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 에이스 결장 비상!(-0.6)</div>"
-            elif a_inj > 0: a_inj_html = f"<div class='injury-badge'>🏥 부상 페널티: {'3단계(MAX)' if a_inj >= 6 else ('2단계(-0.2)' if a_inj >= 3 else '1단계(-0.1)')}</div>"
-            else: a_inj_html = ""
-            
-            h_rest = item.get('h_rest', 99)
-            a_rest = item.get('a_rest', 99)
-            h_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if h_rest <= 3 else ""
-            a_rest_html = f"<div class='fatigue-badge'>💦 체력 페널티: 방전 (-0.15)</div>" if a_rest <= 3 else ""
-            
-            h_next = item.get('h_next', {"is_important": False, "days_until_next": 99})
-            a_next = item.get('a_next', {"is_important": False, "days_until_next": 99})
-            h_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if h_next["is_important"] and h_next["days_until_next"] <= 4 else ""
-            a_rot_html = f"<div class='fatigue-badge' style='background: rgba(245,158,11,0.2); border-color: #F59E0B; color: #F59E0B;'>⚠️ 로테이션 경보!(-0.3)</div>" if a_next["is_important"] and a_next["days_until_next"] <= 4 else ""
-
-            h_rank, a_rank = item.get('h_rank', 99), item.get('a_rank', 99)
-            h_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위 {'(🔥강등버프)' if h_rank >= 15 else ''}</div>" if h_rank != 99 else ""
-            a_rank_html = f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위 {'(🔥강등버프)' if a_rank >= 15 else ''}</div>" if a_rank != 99 else ""
-            h_market, a_market = item.get('h_market', 0.0), item.get('a_market', 0.0)
-            h_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (홈 승)</div>" if h_market > 0 else ""
-            a_money_html = f"<div class='money-badge'>💸 해외 마켓 몰림 (원정 승)</div>" if a_market > 0 else ""
-
-            html_code = (
-                f"<div class='match-card top3-glow'>"
-                f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
-                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{h_form}</div>{h_rank_html}{h_money_html}{h_inj_html}{h_rest_html}{h_rot_html}</div>{logo_h_tag}</div>"
-                f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item['final_match_time']}</span></div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{a_form}</div>{a_rank_html}{a_money_html}{a_inj_html}{a_rest_html}{a_rot_html}</div></div></div>"
-                f"<div class='pred-grid' style='margin-top:20px;'><div class='pred-box' style='background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;'><div class='pred-label' style='color:#00F2FE;'>강력 추천 (일반 승무패)</div><span class='pred-value'>{item.get('best_option','')}</span> <span class='pred-prob'>{item.get('best_prob_pct','0')}%</span></div><div class='pred-box'><div class='pred-label'>서브 추천 (언오버)</div><span class='pred-value'>{item.get('best_uo','')}</span> <span class='pred-prob'>{item.get('best_uo_prob','0')}%</span></div></div>"
-                f"</div>"
-            )
-            st.markdown(html_code, unsafe_allow_html=True)
-    else: st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
 
 # -----------------------------------------------------------------------------
 # [TAB 4] AI 리포트 (오답노트 포함)
