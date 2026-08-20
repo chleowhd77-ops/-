@@ -69,9 +69,8 @@ TEAM_NAME_MAP = {
     "샌디에FC": "San Diego FC", "밴쿠화이": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo"
 }
 
-# 👑 [API 제한 방지 패치] 미국 MLS 팀들의 진짜 공식 ID로 전면 수정!
+# 👑 [API 제한 방지 패치] 확실한 진짜 공식 ID만 남기고, 모르는 건 로봇이 직접 찾게 함!
 DIRECT_TEAM_INFO = {
-    "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
     "새너제이 어스케이크스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
     "새너어스": {"id": 52, "logo": "https://media.api-sports.io/football/teams/52.png"},
@@ -83,7 +82,6 @@ DIRECT_TEAM_INFO = {
     "아라라트 아르메니아": {"id": 5316, "logo": "https://media.api-sports.io/football/teams/5316.png"},
     "KF에그나티아": {"id": 9789, "logo": "https://tmssl.akamaized.net/images/wappen/big/19491.png"},
     "이베리아1999 트빌리시": {"id": 2280, "logo": "https://media.api-sports.io/football/teams/2280.png"},
-    "세인트루이스 시티": {"id": 22054, "logo": "https://media.api-sports.io/football/teams/22054.png"},
     "콜로라도 래피즈": {"id": 43, "logo": "https://media.api-sports.io/football/teams/43.png"},
     "LAFC": {"id": 41, "logo": "https://media.api-sports.io/football/teams/41.png"},
     "레알 솔트레이크": {"id": 45, "logo": "https://media.api-sports.io/football/teams/45.png"},
