@@ -75,6 +75,8 @@ TEAM_NAME_MAP = {
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
+DIRECT_LOGO_MAP = {}
+
 # 👑 [무적 패치] 말썽 피우는 팀들 ID와 로고 강제 주입!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
@@ -269,7 +271,7 @@ def fetch_team_standing_api(team_id):
 def fetch_league_top_scorers(league_id, season):
     if not league_id or not season: return []
     cache_key = f"topscorers_{league_id}_{season}"
-    cached_data = get_db_cache(cache_key, 168) # 7일 캐싱!
+    cached_data = get_db_cache(cache_key, 168) # 7일 캐싱
     if cached_data: return cached_data
     try:
         res = requests.get(f"https://{API_HOST}/players/topscorers", headers=headers, params={"league": league_id, "season": season}, timeout=5)
@@ -500,7 +502,8 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
+# 👑 [동기화 패치] 파라미터 맨 앞에 'best_option'을 추가했습니다.
+def generate_match_story(best_option, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
     story_parts = []
     
     if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 글로벌 도박사들의 거액 자금이 {home} 승리 쪽으로 몰리며 배당이 폭락 중입니다.")
@@ -545,9 +548,19 @@ def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h
         if h2h_h > h2h_a + 2: story_parts.append(f"⚔️ 상대전적에서도 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
         elif h2h_a > h2h_h + 2: story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
             
-    if prob_h > 55: story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
-    elif prob_a > 55: story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 {away}의 승리 가능성을 높게 평가합니다.")
-    elif prob_d >= 30 or abs(prob_h - prob_a) <= 10: story_parts.append(f"🤖 결론적으로 AI는 팽팽한 주도권 싸움 끝에 진흙탕 무승부 가능성을 배제하지 않고 있습니다.")
+    # 👑 [동기화 패치] 예측 결과 박스(best_option)에 맞춰서 코멘트를 강제로 고정시킵니다!
+    if best_option == "무승부":
+        story_parts.append(f"🤖 결론적으로 AI는 팽팽한 흐름 속에 진흙탕 무승부 가능성을 가장 높게 예측합니다.")
+    elif best_option == f"{home} 승":
+        if prob_h >= 50:
+            story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
+        else:
+            story_parts.append(f"🤖 결론적으로 AI는 치열한 접전 끝에 {home}의 신승(진땀승)을 예측합니다.")
+    elif best_option == f"{away} 승":
+        if prob_a >= 50:
+            story_parts.append(f"🤖 결론적으로 AI는 전력차를 바탕으로 원정팀 {away}의 승리 가능성을 높게 평가합니다.")
+        else:
+            story_parts.append(f"🤖 결론적으로 AI는 팽팽한 승부 속 원정팀 {away}의 짜릿한 신승을 예측합니다.")
         
     if not story_parts: return f"🔍 뚜렷한 전력차가 없는 경기! {home}과(와) {away}의 치열한 전술 싸움이 키포인트입니다."
         
@@ -737,9 +750,9 @@ if proto_matches:
         h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
         a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
         
-        # [PHASE 2] 에이스 결장 확인!
-        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+        # [PHASE 2] 에이스 결장 확인 로직
+        h_inj_data = fetch_team_injuries_api(h_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+        a_inj_data = fetch_team_injuries_api(a_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
         
         h_inj_count = h_inj_data["count"]
         a_inj_count = a_inj_data["count"]
@@ -750,15 +763,15 @@ if proto_matches:
         if a_inj_data["ace_missing"]: a_injury_penalty = 0.60
         else: a_injury_penalty = 0.40 if a_inj_count >= 6 else (0.20 if a_inj_count >= 3 else (0.10 if a_inj_count >= 1 else 0.0))
         
-        h_last_date = fetch_team_last_match_date_api(home_info.get("id"))
-        a_last_date = fetch_team_last_match_date_api(away_info.get("id"))
+        h_last_date = fetch_team_last_match_date_api(h_info.get("id"))
+        a_last_date = fetch_team_last_match_date_api(a_info.get("id"))
         h_rest_days = calculate_rest_days(h_last_date, final_match_time)
         a_rest_days = calculate_rest_days(a_last_date, final_match_time)
         h_fatigue_penalty = 0.15 if h_rest_days <= 3 else 0.0
         a_fatigue_penalty = 0.15 if a_rest_days <= 3 else 0.0
         
-        h_long = fetch_team_long_term_stats_api(home_info.get("id"))
-        a_long = fetch_team_long_term_stats_api(away_info.get("id"))
+        h_long = fetch_team_long_term_stats_api(h_info.get("id"))
+        a_long = fetch_team_long_term_stats_api(a_info.get("id"))
         h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
         a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
 
@@ -796,7 +809,8 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
+        # 👑 [동기화 패치] best_option을 함께 넘겨서 예측과 코멘트를 묶어줍니다!
+        story = generate_match_story(best_option, h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
 
         analyzed_proto.append({
             "match": m, "final_match_time": final_match_time, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
