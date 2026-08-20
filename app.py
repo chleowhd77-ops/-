@@ -60,7 +60,7 @@ TEAM_NAME_MAP = {
     # 일본 J리그 추가
     "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
     
-    # MLS (다중인격 띄어쓰기/풀네임 완벽 맵핑)
+    # MLS
     "FC신시내": "FC Cincinnati", "FC신시내티": "FC Cincinnati", "뉴욕시티": "New York City FC", "뉴욕 시티FC": "New York City FC",
     "콜럼크루": "Columbus Crew", "콜럼버스 크루": "Columbus Crew", "CF몽레알": "CF Montreal",
     "DC유나이": "DC United", "DC유나이티드": "DC United", "뉴잉레벌": "New England Revolution", "뉴잉글랜드 레벌루션": "New England Revolution",
@@ -71,14 +71,18 @@ TEAM_NAME_MAP = {
     "미네유나": "Minnesota United", "미네소타 유나이티드FC": "Minnesota United", "애틀유나": "Atlanta United", "애틀랜타 유나이티드FC": "Atlanta United",
     "콜로래피": "Colorado Rapids", "콜로라도 래피즈": "Colorado Rapids", "LAFC": "Los Angeles FC", "레알솔트": "Real Salt Lake", "레알 솔트레이크": "Real Salt Lake", "FC댈러스": "FC Dallas",
     "시애사운": "Seattle Sounders", "시애틀 사운더스FC": "Seattle Sounders", "시애틀 사운더스": "Seattle Sounders",
-    "오스틴FC": "Austin FC", "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
-    "새너어스": "San Jose Earthquakes", "새너제이 어스퀘이크스": "San Jose Earthquakes",
+    "LA갤럭시": "Los Angeles Galaxy", "LA 갤럭시": "Los Angeles Galaxy", 
     "포틀팀버": "Portland Timbers", "포틀랜드 팀버스": "Portland Timbers",
     "샌디에FC": "San Diego FC", "샌디에이고FC": "San Diego FC",
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
-DIRECT_LOGO_MAP = {}
+# [NEW] 말썽 피우는 팀들 ID와 로고 강제 주입!
+DIRECT_TEAM_INFO = {
+    "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
+    "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
+    "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"}
+}
 
 # -----------------------------------------------------------------------------
 # 영구 DB 캐싱 엔진
@@ -144,11 +148,13 @@ def fetch_team_info_api(team_name):
     cache_key = f"team_info_{team_name}"
     cached_data = get_db_cache(cache_key, 8760) 
     if cached_data: return cached_data
-    logo = DIRECT_LOGO_MAP.get(team_name)
-    if logo: 
-        res = {"id": None, "logo": logo}
+    
+    # [NEW] 강제 주입 딕셔너리에 있으면 API 호출 안 하고 바로 리턴!
+    if team_name in DIRECT_TEAM_INFO:
+        res = DIRECT_TEAM_INFO[team_name]
         set_db_cache(cache_key, res)
         return res
+        
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     try:
         response = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
@@ -257,9 +263,6 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
-# -----------------------------------------------------------------------------
-# [PHASE 1] xG 및 경기력(슈팅/점유율) 분석 엔진 추가
-# -----------------------------------------------------------------------------
 @st.cache_data(ttl=43200)
 def fetch_recent_team_stats_api(team_id):
     default_res = {"possession": 50, "shots_on_goal": 4.0}
@@ -459,7 +462,6 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# [PHASE 1] 스토리텔링에 xG 및 점유율 파라미터 추가
 def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj, a_inj, h_rest, a_rest, h_rank, a_rank, h_market, a_market, h_stats, a_stats):
     story_parts = []
     
@@ -481,7 +483,6 @@ def generate_match_story(prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h
     if h_rest <= 3: story_parts.append(f"💦 {home}은(는) 휴식일이 3일 이하로 짧아 후반전 체력 방전이 우려됩니다.")
     if a_rest <= 3: story_parts.append(f"💦 원정팀 {away}은(는) 빡빡한 일정 탓에 체력적인 부담을 안고 경기에 임합니다.")
     
-    # [PHASE 1] xG 및 점유율 스토리 추가
     if h_stats['possession'] >= 60.0: story_parts.append(f"📊 [경기력 지표] {home}은(는) 최근 평균 60% 이상의 압도적인 점유율로 경기를 지배하고 있습니다.")
     elif h_stats['possession'] <= 35.0 and "승" in h_form: story_parts.append(f"⚠️ [위험 경보] {home}은(는) 최근 승리는 있지만 점유율이 심각하게 밀리고 있어 폼 거품일 확률이 존재합니다.")
     if h_stats['shots_on_goal'] >= 6.0: story_parts.append(f"🎯 [xG 데이터] {home}은(는) 매 경기 날카로운 유효 슈팅을 창출하며 득점 기대값(xG)이 매우 높습니다.")
@@ -713,11 +714,9 @@ if proto_matches:
         h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
         a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
 
-        # [PHASE 1] xG 및 점유율 데이터 호출
         h_stats = fetch_recent_team_stats_api(home_info.get("id"))
         a_stats = fetch_recent_team_stats_api(away_info.get("id"))
         
-        # 경기력 보너스 계산 (점유율 기준 50%, 유효슈팅 기준 4.0개 초과 시 가중치 부여)
         h_xg_bonus = max(-0.2, min(0.3, ((h_stats['possession'] - 50) * 0.01) + ((h_stats['shots_on_goal'] - 4.0) * 0.05)))
         a_xg_bonus = max(-0.2, min(0.3, ((a_stats['possession'] - 50) * 0.01) + ((a_stats['shots_on_goal'] - 4.0) * 0.05)))
         
@@ -731,7 +730,6 @@ if proto_matches:
         h_bigdata_bonus = h_home_win_rate * 0.6 
         a_bigdata_bonus = a_away_win_rate * 0.6 
         
-        # [PHASE 1] exp_h, exp_a 에 xG 보너스 합산 반영
         exp_h = round(max(0.3, (p_h * 2.2) + h_h2h_bonus + h_bigdata_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
         exp_a = round(max(0.3, (p_a * 2.0) + a_h2h_bonus + a_bigdata_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
         
@@ -750,7 +748,6 @@ if proto_matches:
         h_form = fetch_team_form_api(home_info.get("id"))
         a_form = fetch_team_form_api(away_info.get("id"))
 
-        # [PHASE 1] 함수 파라미터에 h_stats, a_stats 추가
         story = generate_match_story(h_win*100, draw*100, a_win*100, fixture_details.get('h_wins', 0), fixture_details.get('a_wins', 0), home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_injuries, a_injuries, h_rest_days, a_rest_days, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats)
 
         analyzed_proto.append({
@@ -895,11 +892,9 @@ with main_tab2:
             h_home_win_rate = (h_long["home_wins"] / max(1, h_long["home_total"])) if h_long["home_total"] > 0 else 0.33
             a_away_win_rate = (a_long["away_wins"] / max(1, a_long["away_total"])) if a_long["away_total"] > 0 else 0.33
             
-            # [PHASE 1] xG 및 점유율 데이터 호출
             h_stats = fetch_recent_team_stats_api(home_info.get("id"))
             a_stats = fetch_recent_team_stats_api(away_info.get("id"))
             
-            # 경기력 보너스 산출
             h_xg_bonus = max(-0.2, min(0.3, ((h_stats['possession'] - 50) * 0.01) + ((h_stats['shots_on_goal'] - 4.0) * 0.05)))
             a_xg_bonus = max(-0.2, min(0.3, ((a_stats['possession'] - 50) * 0.01) + ((a_stats['shots_on_goal'] - 4.0) * 0.05)))
 
@@ -908,7 +903,6 @@ with main_tab2:
             h_h2h_bonus = (fixture_details.get("h_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             a_h2h_bonus = (fixture_details.get("a_wins", 0) / h2h_total * 0.4) if h2h_total > 0 else 0.15
             
-            # [PHASE 1] exp_h, exp_a 에 xG 보너스 합산 반영
             exp_h = round(max(0.3, 1.2 + (h_home_win_rate * 0.8) + h_h2h_bonus - h_injury_penalty - h_fatigue_penalty + rank_diff_bonus_h + h_desperation + h_market_bonus + h_xg_bonus), 2)
             exp_a = round(max(0.3, 1.0 + (a_away_win_rate * 0.8) + a_h2h_bonus - a_injury_penalty - a_fatigue_penalty + rank_diff_bonus_a + a_desperation + a_market_bonus + a_xg_bonus), 2)
             
