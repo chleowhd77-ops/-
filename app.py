@@ -77,13 +77,13 @@ TEAM_NAME_MAP = {
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
-# [NEW] 말썽 피우는 팀들 ID와 로고 강제 주입!
+DIRECT_LOGO_MAP = {}
+
+# 👑 [무적 패치] 말썽 피우는 팀들 ID와 로고 강제 주입!
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
     "새너어스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
-    
-    # 👇 오늘 마크/전적 누락된 팀들 완벽 타겟팅!
     "LDU키토": {"id": 2939, "logo": "https://media.api-sports.io/football/teams/2939.png"},
     "신트 트라위던VV": {"id": 742, "logo": "https://media.api-sports.io/football/teams/742.png"},
     "OFI크레타": {"id": 354, "logo": "https://media.api-sports.io/football/teams/354.png"},
@@ -156,15 +156,14 @@ def set_db_cache(key, value):
 @st.cache_data(ttl=86400)
 def fetch_team_info_api(team_name):
     if not team_name: return {"id": None, "logo": None}
+    
+    # 👑 [무적 패치] 과거 찌꺼기 DB를 뒤지기 전에, VIP 명단부터 0순위로 확인!
+    if team_name in DIRECT_TEAM_INFO:
+        return DIRECT_TEAM_INFO[team_name]
+        
     cache_key = f"team_info_{team_name}"
     cached_data = get_db_cache(cache_key, 8760) 
     if cached_data: return cached_data
-    
-    # [NEW] 강제 주입 딕셔너리에 있으면 API 호출 안 하고 바로 리턴!
-    if team_name in DIRECT_TEAM_INFO:
-        res = DIRECT_TEAM_INFO[team_name]
-        set_db_cache(cache_key, res)
-        return res
         
     search_name = TEAM_NAME_MAP.get(team_name, team_name)
     try:
@@ -274,6 +273,9 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
+# -----------------------------------------------------------------------------
+# [PHASE 1] xG 및 경기력(슈팅/점유율) 분석 엔진
+# -----------------------------------------------------------------------------
 @st.cache_data(ttl=43200)
 def fetch_recent_team_stats_api(team_id):
     default_res = {"possession": 50, "shots_on_goal": 4.0}
