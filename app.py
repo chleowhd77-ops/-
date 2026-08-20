@@ -68,8 +68,6 @@ TEAM_NAME_MAP = {
     "밴쿠화이": "Vancouver Whitecaps", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "휴스다이": "Houston Dynamo", "휴스턴 다이너모FC": "Houston Dynamo"
 }
 
-DIRECT_LOGO_MAP = {}
-
 DIRECT_TEAM_INFO = {
     "오스틴FC": {"id": 16133, "logo": "https://media.api-sports.io/football/teams/16133.png"},
     "새너제이 어스퀘이크스": {"id": 16055, "logo": "https://media.api-sports.io/football/teams/16055.png"},
@@ -328,7 +326,6 @@ def fetch_team_last_match_date_api(team_id):
     except: pass
     return None
 
-# 👑 [PHASE 4] 미래 일정 탐색용 엔진 (v4로 업데이트: 40시간 이내의 당일 경기는 완벽 무시!)
 @st.cache_data(ttl=43200)
 def fetch_team_next_fixture_api(team_id):
     default_res = {"days_until_next": 99, "is_important": False, "league_name": ""}
@@ -342,17 +339,14 @@ def fetch_team_next_fixture_api(team_id):
         for next_fix in data:
             next_date_str = next_fix["fixture"]["date"]
             league_name = next_fix["league"]["name"]
-            
             next_dt = datetime.fromisoformat(next_date_str.replace('Z', '+00:00'))
             now = datetime.now(timezone(timedelta(hours=9)))
             diff_hours = (next_dt - now).total_seconds() / 3600.0
             
-            # 현재 시간 기준 40시간(거의 이틀) 이내의 경기는 무조건 당일/이번 라운드 경기로 간주하고 패스!
             if diff_hours > 40:
-                days_until = max(1, int(diff_hours / 24)) # 최소 1일 뒤로 표기 (0일 뒤 원천 차단)
+                days_until = max(1, int(diff_hours / 24))
                 important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
                 is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
-                
                 res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
                 set_db_cache(cache_key, res_val)
                 return res_val
@@ -640,9 +634,9 @@ st.markdown("""
 
     .team-logo { width: 55px !important; height: 55px !important; object-fit: contain; }
     
-    .center-time-box { width: 140px; text-align: center; flex-shrink: 0; }
+    .center-time-box { width: 140px; text-align: center; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
     .match-time-text { color: #CBD5E1; font-size: 15px; font-weight: 700; display: block; margin-bottom: 4px;}
-    .live-score { font-size: 28px; font-weight: 900; color: #00F2FE; display: block; margin-bottom: 4px; text-shadow: 0 0 10px rgba(0,242,254,0.5); }
+    .live-score { font-size: 32px; font-weight: 900; color: #00F2FE; display: block; margin-bottom: 4px; text-shadow: 0 0 10px rgba(0,242,254,0.6); }
     .deadline-open { color: #00F2FE; font-size: 12px; font-weight: 900; border: 1px solid #00F2FE; padding: 3px 8px; border-radius: 4px; display: inline-block;}
     .deadline-closed { color: #EF4444; font-size: 12px; font-weight: 900; background: rgba(239, 68, 68, 0.1); border: 1px solid #EF4444; padding: 3px 8px; border-radius: 4px; display: inline-block;}
     .odd-bar { display: flex; justify-content: space-between; background: #111827; border-radius: 6px; padding: 12px 20px; margin-bottom: 15px; border: 1px solid #1F2937; }
@@ -659,6 +653,8 @@ st.markdown("""
     .prob-bar-draw { background-color: #10B981; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
+    
+    @keyframes blink { 50% { opacity: 0.5; } }
     
     @media (max-width: 640px) {
         .vs-row { align-items: flex-start !important; }
@@ -874,6 +870,7 @@ with main_tab1:
                 a_result = m.get('actual_result', 'PENDING')
                 a_score = m.get('actual_score', '')
                 
+                # 👑 [LIVE 패치] 골 넣은 멘트는 위에 조그맣게, 실시간 점수는 크게!
                 if a_result == 'FINISHED':
                     time_display = f"<span class='live-score'>{a_score}</span><span class='deadline-closed' style='background:#475569; border-color:#475569;'>종료</span>"
                 elif match_status == "LIVE" or m.get('match_time') == '마감/진행중':
@@ -882,10 +879,11 @@ with main_tab1:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "진행중")
                         event_text = live_info.get("event", "")
-                        time_display = f"<span class='live-score'>{score_text}</span><span class='deadline-closed'>LIVE</span>"
-                        if event_text: time_display += f"<div style='margin-top:4px; font-size:12px; color:#10B981; font-weight:900;'>{event_text}</div>"
+                        
+                        event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
+                        time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                     else:
-                        time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed'>LIVE</span>"
+                        time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                 elif match_status == "FINISHED": 
                     time_display = f"<span class='live-score'>종료</span>"
                 else:
