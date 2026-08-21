@@ -162,7 +162,12 @@ def get_match_status(match_time_str, deadline_str):
             if dead_match:
                 dh, dm = map(int, dead_match.groups())
                 d_dt = m_dt.replace(hour=dh, minute=dm)
-                if d_dt >= m_dt: d_dt -= timedelta(days=1)
+                # 마감시간이 00시 경기인데 21시로 적혀있는 등 하루 전날인 경우
+                if dh > m_dt.hour + 12: 
+                    d_dt -= timedelta(days=1)
+                # 마감시간이 경기시간보다 늦게 파싱되는 오류 방지 (10분 전 강제 세팅)
+                elif d_dt >= m_dt:
+                    d_dt = m_dt - timedelta(minutes=10)
             is_closed = now >= d_dt
             if m_dt <= now <= m_dt + timedelta(hours=2): return "LIVE", is_closed
             elif now > m_dt + timedelta(hours=2): return "FINISHED", is_closed
