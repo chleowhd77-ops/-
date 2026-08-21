@@ -5,6 +5,8 @@ import requests
 import sqlite3
 import pandas as pd
 import time
+from datetime import datetime, timezone, timedelta
+import re
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
@@ -23,7 +25,6 @@ GITHUB_REPO = "chleowhd77-ops/-"
 # -----------------------------------------------------------------------------
 # 1. 초경량 데이터 로더 (API 호출 & 수학 계산 전부 로봇에게 떠넘김)
 # -----------------------------------------------------------------------------
-# 까만 창(로봇)이 20분마다 미리 싹 다 계산해서 구워놓은 'dashboard_data.json' 하나만 가져옵니다!
 def load_dashboard_data():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dashboard_data.json?t={int(time.time())}"
     try:
@@ -49,7 +50,6 @@ def download_db():
                 f.write(res.content)
     except: pass
 
-# 앱 켜질 때 DB 파일만 쓱 가져옵니다. (오답 노트용)
 download_db()
 
 # -----------------------------------------------------------------------------
@@ -145,10 +145,8 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
     "프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "AI 리포트"
 ])
 
-# 로봇이 구워놓은 완성품 데이터 가져오기!
 dashboard_data = load_dashboard_data()
 live_scores_data = load_live_scores()
-import re
 
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
@@ -201,7 +199,6 @@ with main_tab1:
                 displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                # 라이브 스코어 연동 (로봇이 올려둔 live_scores.json 참조)
                 if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
@@ -216,7 +213,7 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
                 
-                # 로봇이 구워놓은 HTML 덩어리들을 그대로 조립만 합니다. (속도 향상의 핵심!)
+                # 👑 [수술 적용] 핸디캡 출력 부분에 m.get('handi_d', '-') 추가!
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
@@ -226,7 +223,11 @@ with main_tab1:
                     f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_money_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}{item.get('a_rot_html','')}</div></div>"
                     f"</div>"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
-                    f"<div class='odd-bar'><span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span><span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_a', '-')}</span></span><span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span></div>"
+                    f"<div class='odd-bar'>"
+                    f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
+                    f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
+                    f"<span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>"
+                    f"</div>"
                     f"<div class='pred-grid'>{item.get('pred_boxes_html','')}</div>"
                     f"</div>"
                 )
@@ -259,7 +260,6 @@ with main_tab2:
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
             
-            # 라이브 스코어 연동
             match_id_str = f"TOTO14_{m['id']}"
             live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
             if match_id_str in live_scores_data:
@@ -280,7 +280,8 @@ with main_tab2:
             )
             st.markdown(html_code, unsafe_allow_html=True)
     else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다. (로봇이 데이터를 수집 중입니다)")
-        # -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
@@ -309,7 +310,6 @@ with main_tab3:
 # [TAB 4] AI 리포트 (오답노트 포함)
 # -----------------------------------------------------------------------------
 with main_tab4:
-    # 👑 앱에서는 무거운 API 통신 없이, 다운받은 로컬 DB만 가볍게 읽어서 보여줍니다.
     def get_accuracy_stats_lite():
         try:
             conn = sqlite3.connect("ai_predictions.db")
@@ -328,14 +328,13 @@ with main_tab4:
                     if match:
                         mo, d, h, m = map(int, match.groups())
                         m_dt = datetime(now.year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
-                        # 경기 시작 후 2시간이 지났으면 채점 리스트에 표시
                         if now > m_dt + timedelta(hours=2): 
                             is_finished_time = True
                 except: pass
                 if is_finished_time:
                     scoring_list.append(row.to_dict())
             
-            df_valid = df[df['actual_result'] == 'FINISHED'] # 취소경기는 승률계산 제외
+            df_valid = df[df['actual_result'] == 'FINISHED']
             history_list = df_history.to_dict('records')
             
             if len(df_valid) == 0: 
@@ -343,7 +342,7 @@ with main_tab4:
             
             correct_cnt = df_valid['is_correct'].sum()
             total_cnt = len(df_valid)
-            return {"total": total_cnt, "correct": correct_cnt, "accuracy": round((correct_cnt / total_cnt) * 100, 1), "history": history_list, "scoring": scoring_list}
+            return {"total": total_cnt, "correct": int(correct_cnt), "accuracy": round((correct_cnt / total_cnt) * 100, 1), "history": history_list, "scoring": scoring_list}
         except:
             return {"total": 0, "correct": 0, "accuracy": 0.0, "history": [], "scoring": []}
 
@@ -357,10 +356,8 @@ with main_tab4:
     if scoring_data or history_data:
         table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
         
-        # 아직 공식 채점이 안 끝난 채점 대기중 리스트 (라이브 스코어 연동)
         for row in scoring_data:
             m_id_str = str(row['match_id'])
-            
             temp_score = row.get('actual_score', '-:-')
             if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
                 temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
@@ -368,7 +365,6 @@ with main_tab4:
             result_mark = "<span style='color:#F59E0B; font-weight:900;'>채점중</span>"
             table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{temp_score}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
 
-        # 채점 완료된 히스토리
         for row in history_data:
             if row.get('actual_result') == 'CANCELED':
                 result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>취소</span><br><span style='color:#94A3B8; font-weight:900;'>무효</span>"
