@@ -615,13 +615,12 @@ def generate_match_story(best_option, math_exp_h, math_exp_a, prob_h, prob_d, pr
         if h2h_h > h2h_a + 2: story_parts.append(f"⚔️ 상대전적에서도 {home}이(가) 확실한 천적 관계를 형성하며 자신감을 보이고 있습니다.")
         elif h2h_a > h2h_h + 2: story_parts.append(f"⚔️ {away}이(가) 원정임에도 상대전적에서 압도적인 우위를 점하고 있습니다.")
             
-    # 👑 AI 스토리를 유연하게 처리하도록 로직 변경 (순위가 바뀌어도 고장나지 않도록)
     if "언더" in best_option:
-        story_parts.append(f"🤖 결론적으로 AI는 양 팀의 공격력 빈곤 또는 수비적 전술을 고려하여 저득점(언더) 양상을 가장 높게 예측합니다.")
+        story_parts.append(f"🤖 결론적으로 AI는 40% 이상의 안정적인 확률을 바탕으로 저득점(언더) 양상을 최고의 배당 가치 픽으로 추천합니다.")
     elif "오버" in best_option:
-        story_parts.append(f"🤖 결론적으로 AI는 양 팀의 화력과 전술적 특성을 고려하여 다득점(오버) 난타전을 가장 높게 예측합니다.")
+        story_parts.append(f"🤖 결론적으로 AI는 40% 이상의 안정적인 확률을 바탕으로 다득점(오버) 난타전을 최고의 배당 가치 픽으로 추천합니다.")
     elif "무승부" in best_option:
-        story_parts.append(f"🤖 결론적으로 AI는 팽팽한 흐름 속에 진흙탕 무승부 가능성을 가장 높게 예측합니다.")
+        story_parts.append(f"🤖 결론적으로 AI는 팽팽한 흐름 속에 진흙탕 무승부 가능성을 최고의 꿀배당 가치 픽으로 가장 높게 평가합니다.")
     elif home in best_option:
         if "핸디" in best_option: story_parts.append(f"🤖 결론적으로 AI는 주어진 핸디캡 기준점 대비 {home}의 배팅 가치가 가장 높다고 예측합니다.")
         else: story_parts.append(f"🤖 결론적으로 AI는 각종 지표의 우위를 바탕으로 {home}의 무난한 승리를 예측합니다.")
@@ -631,7 +630,6 @@ def generate_match_story(best_option, math_exp_h, math_exp_a, prob_h, prob_d, pr
         
     return " ".join(story_parts)
 
-# 👑 [수학 버그 완벽 수정] 핸디무(정확히 1골차 승리) 억지 포함 버그 제거!
 def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
     h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
     a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
@@ -646,14 +644,11 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0):
             if (h + a) < 2.5: prob_u += p
             else: prob_o += p
             
-            # 정확하게 기준점을 넘길 때만(초과/미만) 해당 팀의 핸디캡 승리로 판정. (동점이면 핸디무 처리되어 양쪽 다 확률 증가 X)
             if (h + handi_val) > a: prob_handi_h += p
             elif (h + handi_val) < a: prob_handi_a += p
             
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a
-    # -----------------------------------------------------------------------------
-# 메인 로직 및 데이터 전처리
-# -----------------------------------------------------------------------------
+
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -699,15 +694,11 @@ st.markdown("""
     .odd-val { color: #F1F5F9; font-weight: 900; margin-left: 6px; }
     .ai-story { background: rgba(0, 242, 254, 0.05); border-left: 3px solid #00F2FE; padding: 12px 15px; font-size: 14px; color: #E2E8F0; font-weight: 700; border-radius: 4px; margin-bottom: 15px; line-height: 1.6; }
     
-    /* 👑 예측 박스 디자인 전면 개편 */
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center; }
     .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 10px; }
     
-    /* 글자 크기 살짝 키우고, 박스 안 터지게 자동 줄바꿈 적용 */
     .pred-value { display: block; font-size: 16px; color: #F8FAFC; font-weight: 900; line-height: 1.4; margin-bottom: 12px; word-break: keep-all; text-align: center; }
-    
-    /* 확률을 눈에 띄는 연녹색 알약 배지로 성형 */
     .pred-prob { display: inline-block; font-size: 14px; color: #0B0F19; font-weight: 900; background-color: #10B981; padding: 4px 14px; border-radius: 20px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
     
     .prob-bar-container { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; background: #1E293B;}
@@ -897,9 +888,11 @@ if proto_matches:
         handi_val = 1.0 if odd_h > odd_a else -1.0
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_val)
 
-        # 👑 [기획 패치] 3가지 항목(승무패, 핸디, 언옵) 각각의 최고 확률 구하기
-        wdl_cands = [(f"{home_team} 승", h_win), (f"{away_team} 승", a_win), ("무승부", draw)]
-        best_wdl_pick, best_wdl_prob = max(wdl_cands, key=lambda x: x[1])
+        # 👑 [스마트 밸류 하이브리드 수술] 3가지 항목(승무패, 핸디, 언옵) 각각의 최고 확률 및 배당가치(EV) 계산
+        wdl_cands = [(f"{home_team} 승", h_win, odd_h), (f"{away_team} 승", a_win, odd_a), ("무승부", draw, odd_d)]
+        best_wdl = max(wdl_cands, key=lambda x: x[1])
+        best_wdl_pick, best_wdl_prob, best_wdl_odd = best_wdl
+        best_wdl_ev = best_wdl_prob * best_wdl_odd
         
         handi_str_raw = f"[{handi_val:+1.1f}] "
         handi_str_html = f"<span style='color:#00F2FE; font-size:13px; font-weight:900;'>[{handi_val:+1.1f}]</span><br>"
@@ -907,27 +900,35 @@ if proto_matches:
             best_handi_raw = f"{handi_str_raw}{home_team} 핸디승"
             best_handi_html = f"{handi_str_html}{home_team} 핸디승"
             best_handi_prob = prob_handi_h
+            best_handi_odd = handi_h
         else:
             best_handi_raw = f"{handi_str_raw}{away_team} 핸디승"
             best_handi_html = f"{handi_str_html}{away_team} 핸디승"
             best_handi_prob = prob_handi_a
+            best_handi_odd = handi_a
+        best_handi_ev = best_handi_prob * best_handi_odd
             
         if prob_u > prob_o:
             best_uo_raw = "언더 (U 2.5)"
             best_uo_prob = prob_u
+            best_uo_odd = uo_under
         else:
             best_uo_raw = "오버 (O 2.5)"
             best_uo_prob = prob_o
+            best_uo_odd = uo_over
+        best_uo_ev = best_uo_prob * best_uo_odd
 
-        # 👑 [기획 패치] 승/핸/언옵 확률들을 한곳에 모아 "가장 높은 놈"을 맨 앞으로(내림차순) 정렬!
+        # 👑 [핵심] 승/핸/언옵을 1순위: 안전망(승률 40% 이상 여부), 2순위: 배당 가치(EV)로 정렬!
         all_picks = [
-            {"label": "일반 승무패 예측", "raw_pick": best_wdl_pick, "html_pick": best_wdl_pick, "prob": best_wdl_prob},
-            {"label": "핸디캡 예측", "raw_pick": best_handi_raw, "html_pick": best_handi_html, "prob": best_handi_prob},
-            {"label": "언더/오버 예측", "raw_pick": best_uo_raw, "html_pick": best_uo_raw, "prob": best_uo_prob}
+            {"label": "일반 승무패 예측", "raw_pick": best_wdl_pick, "html_pick": best_wdl_pick, "prob": best_wdl_prob, "ev": best_wdl_ev},
+            {"label": "핸디캡 예측", "raw_pick": best_handi_raw, "html_pick": best_handi_html, "prob": best_handi_prob, "ev": best_handi_ev},
+            {"label": "언더/오버 예측", "raw_pick": best_uo_raw, "html_pick": best_uo_raw, "prob": best_uo_prob, "ev": best_uo_ev}
         ]
-        all_picks.sort(key=lambda x: x["prob"], reverse=True) # 무조건 확률 제일 높은 게 0번 인덱스!
         
-        best_option = all_picks[0]["raw_pick"] # DB 저장용 전체 1등 픽
+        # 확률 40% 이상(0.40)이면 1점, 미만이면 0점 부여 후 EV 내림차순 정렬
+        all_picks.sort(key=lambda x: (1 if x["prob"] >= 0.40 else 0, x["ev"]), reverse=True)
+        
+        best_option = all_picks[0]["raw_pick"] # 완벽하게 걸러진 1순위 대표 픽 (DB 저장용)
         best_prob_pct = round(all_picks[0]["prob"] * 100, 1)
 
         save_prediction(m, best_option, best_prob_pct, (0,0), 0)
@@ -947,8 +948,7 @@ if proto_matches:
             "h_rank": h_rank, "a_rank": a_rank,
             "h_market": h_market_bonus, "a_market": a_market_bonus
         })
-
-# -----------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
 # -----------------------------------------------------------------------------
 with main_tab1:
@@ -1250,8 +1250,8 @@ with main_tab3:
         if status == "UPCOMING" and not is_closed and m.get('match_time') != '마감/진행중':
             valid_top3.append(item)
             
-    # 👑 TOP 3 정렬 기준도 완벽하게 1순위 대표 확률을 기준으로 줄을 세움!
-    top_3_picks = sorted(valid_top3, key=lambda x: x['best_prob_pct'], reverse=True)[:3]
+    # 👑 TOP 3 정렬 기준도 스마트 밸류(안전망+EV) 로직으로 완벽하게 연동!
+    top_3_picks = sorted(valid_top3, key=lambda x: (1 if x['sorted_picks'][0]['prob'] >= 0.40 else 0, x['sorted_picks'][0]['ev']), reverse=True)[:3]
     
     if top_3_picks:
         for idx, item in enumerate(top_3_picks, 1):
