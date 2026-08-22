@@ -162,12 +162,8 @@ def get_match_status(match_time_str, deadline_str):
             if dead_match:
                 dh, dm = map(int, dead_match.groups())
                 d_dt = m_dt.replace(hour=dh, minute=dm)
-                # 마감시간이 00시 경기인데 21시로 적혀있는 등 하루 전날인 경우
-                if dh > m_dt.hour + 12: 
-                    d_dt -= timedelta(days=1)
-                # 마감시간이 경기시간보다 늦게 파싱되는 오류 방지 (10분 전 강제 세팅)
-                elif d_dt >= m_dt:
-                    d_dt = m_dt - timedelta(minutes=10)
+                if dh > m_dt.hour + 12: d_dt -= timedelta(days=1)
+                elif d_dt >= m_dt: d_dt = m_dt - timedelta(minutes=10)
             is_closed = now >= d_dt
             if m_dt <= now <= m_dt + timedelta(hours=2): return "LIVE", is_closed
             elif now > m_dt + timedelta(hours=2): return "FINISHED", is_closed
@@ -180,26 +176,24 @@ def render_logo_html(logo_url):
     return ""
 
 # -----------------------------------------------------------------------------
-# 🌟 [신규 추가] 박스 렌더링 함수 (무조건 파란 테두리 왼쪽 고정 + 별점 부여)
+# 🌟 [개선] 박스 렌더링 함수 (무조건 왼쪽 고정 폐기! 원래 자리에 두되 테두리만 하이라이트)
 # -----------------------------------------------------------------------------
 def generate_pred_boxes(picks, is_top3_tab=False):
     if not picks: return ""
-    # 1. 0번째는 EV가 가장 높은 픽 (파란 테두리 주인공, collector에서 정렬해둠)
-    best_pick = picks[0]
-    # 2. 나머지 픽들은 순수 확률(%) 높은 순으로 정렬
-    other_picks = sorted(picks[1:], key=lambda x: x['prob'], reverse=True)
-    # 3. 파란 테두리를 무조건 맨 왼쪽(0번째 인덱스)에 고정!
-    display_picks = [best_pick] + other_picks
+    # collector.py에서 넘어오는 picks(ev_sorted_picks)의 0번째는 EV 1등 픽임.
+    best_pick_raw = picks[0]['raw_pick']
+    
+    # 억지로 맨 왼쪽에 두지 않고, 전체 픽을 "순수 확률순"으로 정렬해서 자연스럽게 배치
+    display_picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
     
     html = ""
     for i, pick in enumerate(display_picks):
-        is_best = (i == 0)
+        is_best = (pick['raw_pick'] == best_pick_raw) # 자기 자리에 그대로 있으면서 테두리만 파랗게 칠함
         prob_pct = round(pick.get('prob', 0) * 100, 1)
         
         if is_best:
             bg_style = "background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;"
             title_color = "color:#00F2FE;"
-            # 🔥 AI 신뢰도 별점 시스템 자동 적용
             if prob_pct >= 65: stars = "⭐⭐⭐"
             elif prob_pct >= 50: stars = "⭐⭐"
             else: stars = "⭐"
@@ -209,7 +203,7 @@ def generate_pred_boxes(picks, is_top3_tab=False):
             bg_style = ""
             title_color = "color:#64748B;"
             if is_top3_tab:
-                label = f"🥈 서브 추천 ({pick.get('label', '')})" if i == 1 else f"🥉 서브 추천 ({pick.get('label', '')})"
+                label = f"서브 추천 ({pick.get('label', '')})" 
             else:
                 label = pick.get('label', '')
                 
@@ -225,7 +219,27 @@ with main_tab1:
         st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
         
         proto_list = dashboard_data.get("proto", [])
+        
+        # 🎛️ [신규 UI] 리그 필터 및 마감 임박순 정렬 스위치
         if proto_list:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                all_leagues = sorted(list(set([m.get('league', '기타') for m in proto_list])))
+                selected_league = st.selectbox("🏆 리그 필터링", ["전체 리그 보기"] + all_leagues)
+            with col2:
+                st.write("") # 세로 여백 맞춤
+                sort_urgent = st.toggle("🔥 마감 임박순 보기")
+                
+            st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
+            
+            # 필터링 적용
+            if selected_league != "전체 리그 보기":
+                proto_list = [m for m in proto_list if m.get('league') == selected_league]
+                
+            # 마감 임박 정렬 적용
+            if sort_urgent:
+                proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
+                
             displayed_count = 0
             for item in proto_list:
                 m = item['match']
@@ -255,7 +269,6 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
                 
-                # 👑 [수술 적용] 렌더링 함수 호출!
                 dynamic_pred_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=False)
                 
                 html_code = (
@@ -278,11 +291,12 @@ with main_tab1:
                 st.markdown(html_code, unsafe_allow_html=True)
             
             if displayed_count == 0:
-                st.info("현재 진행 중이거나 예정된 경기가 없습니다. 종료된 경기는 [AI 리포트] 탭을 확인해주세요.")
+                st.info("조건에 맞는 경기가 없거나 모두 종료되었습니다.")
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
-        # -----------------------------------------------------------------------------
+        
+# -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
 with main_tab2:
@@ -293,9 +307,10 @@ with main_tab2:
         total_combinations = dashboard_data.get("toto14_meta", {}).get("total_combinations", 1)
         single_pick_count = dashboard_data.get("toto14_meta", {}).get("single_pick_count", 0)
         double_pick_count = dashboard_data.get("toto14_meta", {}).get("double_pick_count", 0)
-        total_price = total_combinations * 1000
+        # 💸 [신규 UI] 조합 구매 예산 
+        total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 최종 분석 결과 (현재 수집된 {len(toto14_list)}경기 기준)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 (결장/순위/피로도 완벽 반영)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
 
         for idx, item in enumerate(toto14_list, 1):
@@ -336,7 +351,6 @@ with main_tab3:
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
             
-            # 👑 [수술 적용] TOP3 렌더링 함수 호출!
             dynamic_top3_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=True)
             
             html_code = (
