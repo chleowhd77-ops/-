@@ -180,6 +180,43 @@ def render_logo_html(logo_url):
     return ""
 
 # -----------------------------------------------------------------------------
+# 🌟 [신규 추가] 박스 렌더링 함수 (무조건 파란 테두리 왼쪽 고정 + 별점 부여)
+# -----------------------------------------------------------------------------
+def generate_pred_boxes(picks, is_top3_tab=False):
+    if not picks: return ""
+    # 1. 0번째는 EV가 가장 높은 픽 (파란 테두리 주인공, collector에서 정렬해둠)
+    best_pick = picks[0]
+    # 2. 나머지 픽들은 순수 확률(%) 높은 순으로 정렬
+    other_picks = sorted(picks[1:], key=lambda x: x['prob'], reverse=True)
+    # 3. 파란 테두리를 무조건 맨 왼쪽(0번째 인덱스)에 고정!
+    display_picks = [best_pick] + other_picks
+    
+    html = ""
+    for i, pick in enumerate(display_picks):
+        is_best = (i == 0)
+        prob_pct = round(pick.get('prob', 0) * 100, 1)
+        
+        if is_best:
+            bg_style = "background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;"
+            title_color = "color:#00F2FE;"
+            # 🔥 AI 신뢰도 별점 시스템 자동 적용
+            if prob_pct >= 65: stars = "⭐⭐⭐"
+            elif prob_pct >= 50: stars = "⭐⭐"
+            else: stars = "⭐"
+            
+            label = f"🥇 강력 추천 ({pick.get('label', '')}) {stars}" if is_top3_tab else f"🥇 {pick.get('label', '')} {stars}"
+        else:
+            bg_style = ""
+            title_color = "color:#64748B;"
+            if is_top3_tab:
+                label = f"🥈 서브 추천 ({pick.get('label', '')})" if i == 1 else f"🥉 서브 추천 ({pick.get('label', '')})"
+            else:
+                label = pick.get('label', '')
+                
+        html += f"<div class='pred-box' style='{bg_style}'><div class='pred-label' style='{title_color}'>{label}</div><span class='pred-value'>{pick.get('html_pick', '')}</span><span class='pred-prob'>{prob_pct}%</span></div>"
+    return html
+
+# -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
 # -----------------------------------------------------------------------------
 with main_tab1:
@@ -218,7 +255,9 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
                 
-                # 👑 [수술 적용] 핸디캡 출력 부분에 m.get('handi_d', '-') 추가!
+                # 👑 [수술 적용] 렌더링 함수 호출!
+                dynamic_pred_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=False)
+                
                 html_code = (
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
@@ -233,7 +272,7 @@ with main_tab1:
                     f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
                     f"<span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>"
                     f"</div>"
-                    f"<div class='pred-grid'>{item.get('pred_boxes_html','')}</div>"
+                    f"<div class='pred-grid'>{dynamic_pred_boxes}</div>"
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
@@ -243,8 +282,7 @@ with main_tab1:
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
-
-# -----------------------------------------------------------------------------
+        # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
 with main_tab2:
@@ -298,13 +336,16 @@ with main_tab3:
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
             
+            # 👑 [수술 적용] TOP3 렌더링 함수 호출!
+            dynamic_top3_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=True)
+            
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
                 f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_money_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}{item.get('h_rot_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_money_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}{item.get('a_rot_html','')}</div></div></div>"
-                f"<div class='pred-grid' style='margin-top:20px;'>{item.get('top3_pred_boxes_html', '')}</div>"
+                f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
