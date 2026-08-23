@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 셀렉트박스 메인 바 및 팝오버 다크모드 완벽 고정
+# 2. 디자인 (CSS) - 셀렉트박스 메인 바 글자/배경 및 팝오버 다크모드 완벽 고정
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -113,14 +113,16 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
     
-    /* 🎨 리그 필터링 셀렉트박스 메인 바 및 드롭다운 완벽 다크모드 커스텀 */
-    .stSelectbox div[data-baseweb="select"] {
+    /* 🎨 [핵심] 평소 메인 바 및 드롭다운 전체 다크모드 + 하얀색 글씨 고정 */
+    .stSelectbox [data-baseweb="select"] {
         background-color: #1E293B !important;
         color: #F8FAFC !important;
         border: 1px solid #334155 !important;
         border-radius: 8px !important;
     }
-    .stSelectbox div[data-baseweb="select"] * {
+    .stSelectbox [data-baseweb="select"] span,
+    .stSelectbox [data-baseweb="select"] div,
+    .stSelectbox [data-baseweb="select"] p {
         color: #F8FAFC !important;
     }
     .stSelectbox label {
