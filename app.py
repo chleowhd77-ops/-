@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 셀렉트박스 및 드롭다운 팝오버 다크모드 완벽 커스텀
+# 2. 디자인 (CSS) - 셀렉트박스 메인 바 및 팝오버 다크모드 완벽 고정
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -113,26 +113,26 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
     
-    /* 🎨 리그 필터링 셀렉트박스 및 드롭다운 팝오버 완벽 다크모드 커스텀 */
+    /* 🎨 리그 필터링 셀렉트박스 메인 바 및 드롭다운 완벽 다크모드 커스텀 */
     .stSelectbox div[data-baseweb="select"] {
         background-color: #1E293B !important;
         color: #F8FAFC !important;
         border: 1px solid #334155 !important;
         border-radius: 8px !important;
     }
-    .stSelectbox span {
+    .stSelectbox div[data-baseweb="select"] * {
         color: #F8FAFC !important;
     }
-    .stSelectbox svg {
-        fill: #00F2FE !important;
+    .stSelectbox label {
+        color: #94A3B8 !important;
+        font-weight: 900 !important;
     }
-    /* 드롭다운 리스트 팝업 전체 강제 다크화 */
     div[data-baseweb="popover"], div[data-baseweb="menu"], ul[data-baseweb="menu"] {
         background-color: #0B0F19 !important;
         border: 1px solid #334155 !important;
         border-radius: 8px !important;
     }
-    div[data-baseweb="popover"] div, div[data-baseweb="menu"] div, span[data-baseweb="tag"] {
+    div[data-baseweb="popover"] div, div[data-baseweb="menu"] div {
         background-color: transparent !important;
         color: #F8FAFC !important;
     }
@@ -286,13 +286,14 @@ with main_tab1:
                 if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
-                        score_text = live_info.get("score", "진행중")
+                        score_text = live_info.get("score", "0:0")
+                        if not score_text or score_text == "-": score_text = "0:0"
                         event_text = live_info.get("event", "")
                         
                         event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                     else:
-                        time_display = f"<span class='live-score'>진행중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
+                        time_display = f"<span class='live-score'>0:0</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
@@ -349,7 +350,8 @@ with main_tab2:
             live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
             if match_id_str in live_scores_data:
                 live_info = live_scores_data[match_id_str]
-                score_text = live_info.get("score", "")
+                score_text = live_info.get("score", "0:0")
+                if not score_text or score_text == "-": score_text = "0:0"
                 if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"
 
             html_code = (
