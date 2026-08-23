@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 셀렉트박스 흰색 배경 박멸 초강력 통합본
+# 2. 디자인 (CSS) 
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -112,47 +112,6 @@ st.markdown("""
     .prob-bar-draw { background-color: #10B981; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
-    
-    /* 🎨 [초강력 최종보스] 셀렉트박스 메인 바 및 내부 래퍼 흰색 배경 강제 박멸 */
-    .stSelectbox div[data-baseweb="select"] {
-        background-color: #1E293B !important;
-        border: 1px solid #334155 !important;
-        border-radius: 8px !important;
-    }
-    .stSelectbox div[data-baseweb="select"] > div {
-        background-color: #1E293B !important;
-        color: #F8FAFC !important;
-    }
-    .stSelectbox > div > div > div {
-        background-color: #1E293B !important;
-    }
-    .stSelectbox span, .stSelectbox p, .stSelectbox div {
-        color: #F8FAFC !important;
-    }
-    .stSelectbox label {
-        color: #94A3B8 !important;
-        font-weight: 900 !important;
-    }
-    
-    /* 드롭다운 리스트 팝오버 */
-    div[data-baseweb="popover"], div[data-baseweb="menu"], ul[data-baseweb="menu"] {
-        background-color: #0B0F19 !important;
-        border: 1px solid #334155 !important;
-        border-radius: 8px !important;
-    }
-    div[data-baseweb="popover"] div, div[data-baseweb="menu"] div {
-        background-color: transparent !important;
-        color: #F8FAFC !important;
-    }
-    div[data-baseweb="menu"] li, div[role="option"] {
-        background-color: #0B0F19 !important;
-        color: #F8FAFC !important;
-    }
-    div[data-baseweb="menu"] li:hover, div[role="option"]:hover {
-        background-color: #00F2FE !important;
-        color: #0B0F19 !important;
-        font-weight: bold !important;
-    }
 
     @keyframes blink { 50% { opacity: 0.5; } }
     
@@ -291,7 +250,10 @@ with main_tab1:
                 displayed_count += 1
                 match_id_str = str(m.get('id', ''))
                 
-                if match_status == "LIVE" or m.get('match_time') == '마감/진행중':
+                # 🚀 [핵심 수정] 실시간 스코어 데이터에 아이디가 존재하면 시간 무시하고 무조건 라이브 강제 적용!
+                is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
+                
+                if is_live_now:
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "0:0")
