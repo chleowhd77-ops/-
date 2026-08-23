@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 셀렉트박스 메인 바 및 내부 모든 자식 태그 강제 다크화 (오타 수정완료)
+# 2. 디자인 (CSS) - 셀렉트박스 흰색 배경 박멸 초강력 통합본
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -113,7 +113,7 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
     
-    /* 🎨 리그 필터링 셀렉트박스 메인 바 및 내부 모든 자식 태그 강제 다크화 */
+    /* 🎨 [초강력 최종보스] 셀렉트박스 메인 바 및 내부 래퍼 흰색 배경 강제 박멸 */
     .stSelectbox div[data-baseweb="select"] {
         background-color: #1E293B !important;
         border: 1px solid #334155 !important;
@@ -123,6 +123,9 @@ st.markdown("""
         background-color: #1E293B !important;
         color: #F8FAFC !important;
     }
+    .stSelectbox > div > div > div {
+        background-color: #1E293B !important;
+    }
     .stSelectbox span, .stSelectbox p, .stSelectbox div {
         color: #F8FAFC !important;
     }
@@ -130,6 +133,8 @@ st.markdown("""
         color: #94A3B8 !important;
         font-weight: 900 !important;
     }
+    
+    /* 드롭다운 리스트 팝오버 */
     div[data-baseweb="popover"], div[data-baseweb="menu"], ul[data-baseweb="menu"] {
         background-color: #0B0F19 !important;
         border: 1px solid #334155 !important;
