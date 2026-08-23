@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS)
+# 2. 디자인 (CSS) - 셀렉트박스 다크모드 커스텀 포함
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -113,6 +113,29 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
     
+    /* 🎨 리그 필터링 셀렉트박스 다크모드 완벽 커스텀 */
+    .stSelectbox div[data-baseweb="select"] {
+        background-color: #1E293B !important;
+        color: #F8FAFC !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+    }
+    .stSelectbox span {
+        color: #F8FAFC !important;
+    }
+    .stSelectbox svg {
+        fill: #00F2FE !important;
+    }
+    div[data-baseweb="popover"] div {
+        background-color: #1E293B !important;
+        color: #F8FAFC !important;
+    }
+    div[data-baseweb="menu"] li:hover {
+        background-color: #00F2FE !important;
+        color: #0B0F19 !important;
+        font-weight: bold !important;
+    }
+
     @keyframes blink { 50% { opacity: 0.5; } }
     
     @media (max-width: 640px) {
@@ -176,19 +199,17 @@ def render_logo_html(logo_url):
     return ""
 
 # -----------------------------------------------------------------------------
-# 🌟 [개선] 박스 렌더링 함수 (무조건 왼쪽 고정 폐기! 원래 자리에 두되 테두리만 하이라이트)
+# 🌟 박스 렌더링 함수
 # -----------------------------------------------------------------------------
 def generate_pred_boxes(picks, is_top3_tab=False):
     if not picks: return ""
-    # collector.py에서 넘어오는 picks(ev_sorted_picks)의 0번째는 EV 1등 픽임.
     best_pick_raw = picks[0]['raw_pick']
     
-    # 억지로 맨 왼쪽에 두지 않고, 전체 픽을 "순수 확률순"으로 정렬해서 자연스럽게 배치
     display_picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
     
     html = ""
     for i, pick in enumerate(display_picks):
-        is_best = (pick['raw_pick'] == best_pick_raw) # 자기 자리에 그대로 있으면서 테두리만 파랗게 칠함
+        is_best = (pick['raw_pick'] == best_pick_raw)
         prob_pct = round(pick.get('prob', 0) * 100, 1)
         
         if is_best:
@@ -220,23 +241,20 @@ with main_tab1:
         
         proto_list = dashboard_data.get("proto", [])
         
-        # 🎛️ [신규 UI] 리그 필터 및 마감 임박순 정렬 스위치
         if proto_list:
             col1, col2 = st.columns([3, 1])
             with col1:
                 all_leagues = sorted(list(set([m.get('league', '기타') for m in proto_list])))
                 selected_league = st.selectbox("🏆 리그 필터링", ["전체 리그 보기"] + all_leagues)
             with col2:
-                st.write("") # 세로 여백 맞춤
+                st.write("") 
                 sort_urgent = st.toggle("🔥 마감 임박순 보기")
                 
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
-            # 필터링 적용
             if selected_league != "전체 리그 보기":
                 proto_list = [m for m in proto_list if m.get('league') == selected_league]
                 
-            # 마감 임박 정렬 적용
             if sort_urgent:
                 proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
                 
@@ -307,7 +325,6 @@ with main_tab2:
         total_combinations = dashboard_data.get("toto14_meta", {}).get("total_combinations", 1)
         single_pick_count = dashboard_data.get("toto14_meta", {}).get("single_pick_count", 0)
         double_pick_count = dashboard_data.get("toto14_meta", {}).get("double_pick_count", 0)
-        # 💸 [신규 UI] 조합 구매 예산 
         total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
         
         summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 (결장/순위/피로도 완벽 반영)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
