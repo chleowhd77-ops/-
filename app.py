@@ -23,7 +23,7 @@ st.set_page_config(
 GITHUB_REPO = "chleowhd77-ops/-"
 
 # -----------------------------------------------------------------------------
-# 1. 초경량 데이터 로더 (API 호출 & 수학 계산 전부 로봇에게 떠넘김)
+# 1. 초경량 데이터 로더
 # -----------------------------------------------------------------------------
 def load_dashboard_data():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dashboard_data.json?t={int(time.time())}"
@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 🔥 리포트 폰트 확대 & 리얼 오답노트 스타일 추가!
+# 2. 디자인 (CSS)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -61,7 +61,6 @@ st.markdown("""
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
-    /* 🔥 [수정] 화면 좁아 보이지 않도록 좌우 여백을 넓고 시원하게 복구! */
     .block-container { max-width: 1300px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
@@ -70,8 +69,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 30px !important; }
     .stTabs [data-baseweb="tab"] { color: #64748B !important; font-weight: 900 !important; font-size: 20px !important; padding: 14px 0px !important; border: none !important; }
     .stTabs [aria-selected="true"] { color: #00F2FE !important; border-bottom: 4px solid #00F2FE !important; }
-    .match-card { background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s ease, border-color 0.2s ease; }
-    .match-card:hover { border-color: #334155; transform: translateY(-2px); }
+    .match-card { background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
     .top3-glow { border: 2px solid #00F2FE !important; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15) !important; background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important; }
     .league-title { font-size: 13px; color: #94A3B8; font-weight: 900; letter-spacing: 1px; margin-bottom: 15px; }
     
@@ -88,8 +86,6 @@ st.markdown("""
     .injury-badge { display: block; color: #F87171; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(248,113,113,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F87171; }
     .fatigue-badge { display: block; color: #F59E0B; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(245,158,11,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #F59E0B; }
     .rank-badge { display: block; color: #38BDF8; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(56,189,248,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #38BDF8; }
-    .money-badge { display: block; color: #10B981; font-size: 11px; font-weight: 900; margin-top: 3px; background: rgba(16,185,129,0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #10B981; animation: pulse 2s infinite; }
-    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16,185,129, 0.4); } 70% { box-shadow: 0 0 0 5px rgba(16,185,129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129, 0); } }
 
     .team-logo { width: 55px !important; height: 55px !important; object-fit: contain; }
     
@@ -107,7 +103,7 @@ st.markdown("""
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center; }
     .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 10px; }
     .pred-value { display: block; font-size: 16px; color: #F8FAFC; font-weight: 900; line-height: 1.4; margin-bottom: 12px; word-break: keep-all; text-align: center; }
-    .pred-prob { display: inline-block; font-size: 14px; color: #0B0F19; font-weight: 900; background-color: #10B981; padding: 4px 14px; border-radius: 20px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
+    .pred-prob { display: inline-block; font-size: 14px; color: #0B0F19; font-weight: 900; background-color: #10B981; padding: 4px 14px; border-radius: 20px; }
     
     .prob-bar-container { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; background: #1E293B;}
     .prob-bar-win { background-color: #00F2FE; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
@@ -120,8 +116,6 @@ st.markdown("""
     .report-team { font-size: 18px; font-weight: 900; color: #CBD5E1; }
     .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 14px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 14px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
-
-    @keyframes blink { 50% { opacity: 0.5; } }
     </style>
 """, unsafe_allow_html=True)
 
@@ -166,7 +160,7 @@ def get_match_status(match_time_str, deadline_str):
     return "UPCOMING", False
 
 def render_logo_html(logo_url):
-    if logo_url: return f"<img src='{logo_url}' class='team-logo' onerror=\"this.style.display='none';\">"
+    if logo_url: return f"<img src='{logo_url}' class='team-logo'>"
     return ""
 
 def generate_pred_boxes(picks, is_top3_tab=False):
@@ -180,24 +174,23 @@ def generate_pred_boxes(picks, is_top3_tab=False):
         if is_best:
             bg_style = "background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;"
             title_color = "color:#00F2FE;"
-            if prob_pct >= 65: stars = "⭐⭐⭐"
-            elif prob_pct >= 50: stars = "⭐⭐"
-            else: stars = "⭐"
+            stars = "⭐⭐⭐" if prob_pct >= 65 else ("⭐⭐" if prob_pct >= 50 else "⭐")
             label = f"🥇 강력 추천 ({pick.get('label', '')}) {stars}" if is_top3_tab else f"🥇 {pick.get('label', '')} {stars}"
         else:
             bg_style = ""
             title_color = "color:#64748B;"
             label = f"서브 추천 ({pick.get('label', '')})" if is_top3_tab else pick.get('label', '')
-                
+            
         html += f"<div class='pred-box' style='{bg_style}'><div class='pred-label' style='{title_color}'>{label}</div><span class='pred-value'>{pick.get('html_pick', '')}</span><span class='pred-prob'>{prob_pct}%</span></div>"
     return html
-    # -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
 # -----------------------------------------------------------------------------
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 리얼 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 채점이 완료된 경기는 [AI 리포트] 탭의 리얼 오답노트에 반영됩니다.</div>", unsafe_allow_html=True)
         
         proto_list = dashboard_data.get("proto", [])
         if proto_list:
@@ -223,7 +216,6 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
                 
                 match_id_str = str(m.get('id', ''))
-                # 라이브 강제 유지 로직
                 is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
                 
                 if match_status == "FINISHED" and not is_live_now: continue
@@ -236,9 +228,9 @@ with main_tab1:
                         if not score_text or score_text == "-": score_text = "0:0"
                         event_text = live_info.get("event", "")
                         event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
-                        time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
+                        time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                     else:
-                        time_display = f"<span class='live-score'>0:0</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
+                        time_display = f"<span class='live-score'>0:0</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
@@ -249,9 +241,9 @@ with main_tab1:
                     f"<div class='match-card'>"
                     f"<div class='league-title'>{m.get('league','축구')}</div>"
                     f"<div class='vs-row'>"
-                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_money_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}{item.get('h_rot_html','')}</div>{logo_h_tag}</div>"
+                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}</div>{logo_h_tag}</div>"
                     f"<div class='center-time-box'>{time_display}</div>"
-                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_money_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}{item.get('a_rot_html','')}</div></div>"
+                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
                     f"</div>"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
                     f"<div class='odd-bar'>"
@@ -281,7 +273,7 @@ with main_tab2:
         double_pick_count = dashboard_data.get("toto14_meta", {}).get("double_pick_count", 0)
         total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 (결장/순위/피로도 완벽 반영)</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
 
         for idx, item in enumerate(toto14_list, 1):
@@ -300,16 +292,16 @@ with main_tab2:
             html_code = (
                 f"<div class='match-card' style='padding: 24px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{item.get('best_pick_display', '')}</b></span></div>"
-                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_money_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}{item.get('h_rot_html','')}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_money_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}{item.get('a_rot_html','')}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}</div></div></div>"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {item.get('p_h')}% | 무 {item.get('p_d')}% | 패 {item.get('p_a')}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {item.get('p_h')}%;'></div><div class='prob-bar-draw' style='width: {item.get('p_d')}%;'></div><div class='prob-bar-lose' style='width: {item.get('p_a')}%;'></div></div>"
                 f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}</div>"
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
-    else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다. (로봇이 데이터를 수집 중입니다)")
+    else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
 # -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3
@@ -325,57 +317,51 @@ with main_tab3:
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
-                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_money_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}{item.get('h_rot_html','')}</div>{logo_h_tag}</div>"
+                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_money_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}{item.get('a_rot_html','')}</div></div></div>"
+                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
                 f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
-    else: 
-        st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
-        # -----------------------------------------------------------------------------
+    else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
+
+# -----------------------------------------------------------------------------
 # [TAB 4] 🔥 AI 리포트 (V3 듀얼 채점 & 리얼 오답노트)
 # -----------------------------------------------------------------------------
 with main_tab4:
     def get_v3_accuracy_stats():
         try:
             conn = sqlite3.connect("ai_predictions.db")
-            # 스키마 검사 (V3 적용되었는지)
             cursor = conn.cursor()
             cursor.execute("PRAGMA table_info(predictions)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'ev_pick' not in columns:
                 conn.close()
-                return None # V3 아직 적용 안됨
+                return None
                 
             df_finished = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED' ORDER BY match_time DESC", conn)
-            
-            # 통계 분리 (일반 승부식 vs 승무패 14경기)
             df_proto = df_finished[df_finished['is_toto14'] == 0]
             df_toto = df_finished[df_finished['is_toto14'] == 1]
             
-            # 라이브 채점중 경기들 (화면에 보여주기 위함)
             df_pending = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 ORDER BY match_time DESC", conn)
             conn.close()
             
-            # 일반 승부식 통계 계산 (확률픽 vs 꿀픽 맞짱)
             proto_total = len(df_proto)
-            proto_prob_hit = df_proto['is_correct_prob'].sum() if proto_total > 0 else 0
-            proto_ev_hit = df_proto['is_correct_ev'].sum() if proto_total > 0 else 0
+            proto_prob_hit = int(df_proto['is_correct_prob'].sum()) if proto_total > 0 else 0
+            proto_ev_hit = int(df_proto['is_correct_ev'].sum()) if proto_total > 0 else 0
             
             proto_prob_acc = round((proto_prob_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
             proto_ev_acc = round((proto_ev_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
 
-            # 승무패 14경기 통계 (단일 확률픽 기준)
             toto_total = len(df_toto)
-            toto_hit = df_toto['is_correct_prob'].sum() if toto_total > 0 else 0
+            toto_hit = int(df_toto['is_correct_prob'].sum()) if toto_total > 0 else 0
             toto_acc = round((toto_hit / toto_total) * 100, 1) if toto_total > 0 else 0.0
             
             return {
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
-                "history": df_proto.head(50).to_dict('records'), # 최근 50경기 리얼 오답노트용
+                "history": df_proto.head(50).to_dict('records'),
                 "pending": df_pending.to_dict('records')
             }
         except Exception as e:
@@ -389,10 +375,8 @@ with main_tab4:
         p_stats = stats['proto']
         t_stats = stats['toto']
         
-        # 📊 [UI 혁신] 분리된 듀얼 통계판
         st.markdown(f"""
         <div style='display:flex; gap:20px; margin-bottom:30px;'>
-            <!-- 승부식 통계판 -->
             <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'>
                 <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:15px;'>📊 라이브 승부식 A/B 채점 (총 {p_stats['total']}경기)</span>
                 <div style='display:flex; justify-content:space-between; align-items:center;'>
@@ -409,7 +393,6 @@ with main_tab4:
                     </div>
                 </div>
             </div>
-            <!-- 14경기 통계판 -->
             <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B; display:flex; flex-direction:column; justify-content:center; align-items:center;'>
                 <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:5px;'>🏆 승무패 14경기 단통 적중률</span>
                 <span style='color:#00F2FE; font-size:40px; font-weight:900;'>{t_stats['acc']}%</span>
@@ -418,11 +401,9 @@ with main_tab4:
         </div>
         """, unsafe_allow_html=True)
         
-        # 📜 [UI 혁신] 리얼 오답노트 히스토리 피드 (글씨 1.5배 확대)
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 딥러닝 리얼 오답노트 피드</h4>", unsafe_allow_html=True)
         
         history_data = stats['history']
-        
         if not history_data:
             st.info("아직 채점이 완료된 종료 경기가 없습니다. 로봇이 V3 모드로 열심히 경기 결과를 감시 중입니다!")
         
@@ -438,7 +419,6 @@ with main_tab4:
             prob_ok = row.get('is_correct_prob', 0) == 1
             ev_ok = row.get('is_correct_ev', 0) == 1
             
-            # 취소/무효 처리
             if row.get('actual_result') == 'CANCELED':
                 score_html = "<span class='report-score' style='color:#94A3B8 !important;'>취소/무효</span>"
                 note_style = "real-ai-note"
@@ -476,7 +456,6 @@ with main_tab4:
             """
             st.markdown(html, unsafe_allow_html=True)
             
-# ⏳ [채점 대기중 목록] - 🔥 [수정] 점수 글씨 개미눈꼽만하던 것 대형 폰트로 확대!
         pending_data = stats['pending']
         if pending_data:
             st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 현재 채점 대기 중인 경기</h4>", unsafe_allow_html=True)
@@ -488,7 +467,7 @@ with main_tab4:
                     
                 st.markdown(f"""
                 <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'>
-                    <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>
+                    <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_net', row.get('away_team'))}</div>
                     <div style='display:flex; align-items:center; gap:15px;'>
                         <span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>
                         <span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 대기중</span>
