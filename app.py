@@ -60,7 +60,10 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
-    .block-container { max-width: 1000px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
+    
+    /* 🔥 [수정] 화면 좁아 보이지 않도록 좌우 여백을 넓고 시원하게 복구! */
+    .block-container { max-width: 1300px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; }
+    
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
     .app-header h1 { color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; letter-spacing: 2px; margin: 0; background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .app-header p { color: #64748B; font-size: 14px; font-weight: 700; letter-spacing: 1px; margin-top: 5px; }
@@ -112,7 +115,6 @@ st.markdown("""
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
 
-    /* 🔥 [V3 핵심] 리포트 전용 스타일 (글씨 1.5배 & 리얼 오답노트 박스) */
     .report-card { background: #0F172A; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
     .report-score { font-size: 28px !important; font-weight: 900 !important; color: #F8FAFC !important; letter-spacing: 2px; }
     .report-team { font-size: 18px; font-weight: 900; color: #CBD5E1; }
@@ -120,22 +122,6 @@ st.markdown("""
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 14px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
 
     @keyframes blink { 50% { opacity: 0.5; } }
-    
-    @media (max-width: 640px) {
-        .vs-row { align-items: flex-start !important; }
-        .team-box { flex-direction: column !important; justify-content: flex-start !important; gap: 8px !important; }
-        .team-box.home { flex-direction: column-reverse !important; } 
-        .team-box.away { flex-direction: column !important; } 
-        .team-info-wrapper { align-items: center !important; text-align: center !important; }
-        .team-name-text { font-size: 15px !important; white-space: normal; }
-        .team-form-text { font-size: 10px !important; }
-        .center-time-box { width: 70px !important; margin-top: 15px; }
-        .team-logo { width: 40px !important; height: 40px !important; }
-        .odd-bar { flex-direction: column !important; text-align: center; gap: 10px; }
-        .pred-grid { flex-direction: column !important; }
-        .report-score { font-size: 22px !important; }
-        .report-team { font-size: 15px !important; }
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -490,7 +476,7 @@ with main_tab4:
             """
             st.markdown(html, unsafe_allow_html=True)
             
-        # ⏳ [채점 대기중 목록]
+# ⏳ [채점 대기중 목록] - 🔥 [수정] 점수 글씨 개미눈꼽만하던 것 대형 폰트로 확대!
         pending_data = stats['pending']
         if pending_data:
             st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 현재 채점 대기 중인 경기</h4>", unsafe_allow_html=True)
@@ -501,8 +487,11 @@ with main_tab4:
                     temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
                     
                 st.markdown(f"""
-                <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:8px; padding:12px 15px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;'>
-                    <div style='color:#CBD5E1; font-size:14px; font-weight:700;'>{row.get('home_team')} <span style='color:#475569;'>VS</span> {row.get('away_team')}</div>
-                    <div style='color:#F59E0B; font-size:14px; font-weight:900;'>{temp_score} <span style='font-size:11px; font-weight:700; background:rgba(245,158,11,0.1); padding:2px 6px; border-radius:4px; margin-left:5px;'>채점 대기중</span></div>
+                <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'>
+                    <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>
+                    <div style='display:flex; align-items:center; gap:15px;'>
+                        <span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>
+                        <span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 대기중</span>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
