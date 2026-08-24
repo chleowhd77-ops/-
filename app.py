@@ -11,7 +11,7 @@ import re
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
 # -----------------------------------------------------------------------------
-APP_TITLE = "D.J PROTO ANALYTICS"
+APP_TITLE = "D.J PROTO ANALYTICS V3"
 
 st.set_page_config(
     page_title=APP_TITLE, 
@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) 
+# 2. 디자인 (CSS) - 🔥 리포트 폰트 확대 & 리얼 오답노트 스타일 추가!
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -103,7 +103,6 @@ st.markdown("""
     .pred-grid { display: flex; gap: 12px; }
     .pred-box { flex: 1; background: #0D1424; border: 1px solid #1E293B; border-radius: 8px; padding: 16px; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center; }
     .pred-label { font-size: 12px; color: #64748B; font-weight: 900; margin-bottom: 10px; }
-    
     .pred-value { display: block; font-size: 16px; color: #F8FAFC; font-weight: 900; line-height: 1.4; margin-bottom: 12px; word-break: keep-all; text-align: center; }
     .pred-prob { display: inline-block; font-size: 14px; color: #0B0F19; font-weight: 900; background-color: #10B981; padding: 4px 14px; border-radius: 20px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
     
@@ -112,6 +111,13 @@ st.markdown("""
     .prob-bar-draw { background-color: #10B981; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .prob-bar-lose { background-color: #EF4444; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color:#000; }
     .badge-primary { background: rgba(0, 242, 254, 0.1); color: #00F2FE; border: 1px solid #00F2FE; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; }
+
+    /* 🔥 [V3 핵심] 리포트 전용 스타일 (글씨 1.5배 & 리얼 오답노트 박스) */
+    .report-card { background: #0F172A; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .report-score { font-size: 28px !important; font-weight: 900 !important; color: #F8FAFC !important; letter-spacing: 2px; }
+    .report-team { font-size: 18px; font-weight: 900; color: #CBD5E1; }
+    .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 14px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
+    .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 14px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
 
     @keyframes blink { 50% { opacity: 0.5; } }
     
@@ -127,6 +133,8 @@ st.markdown("""
         .team-logo { width: 40px !important; height: 40px !important; }
         .odd-bar { flex-direction: column !important; text-align: center; gap: 10px; }
         .pred-grid { flex-direction: column !important; }
+        .report-score { font-size: 22px !important; }
+        .report-team { font-size: 15px !important; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -136,13 +144,13 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class='app-header'>
-    <h1>D.J PROTO ANALYTICS</h1>
-    <p>AI 예측 기반 스마트 프로토 대시보드</p>
+    <h1>D.J PROTO ANALYTICS V3</h1>
+    <p>투트랙(안전/꿀픽) A/B 채점 & 딥러닝 리얼 오답노트 시스템</p>
 </div>
 """, unsafe_allow_html=True)
 
 main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
-    "프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "AI 리포트"
+    "프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "🔥 AI 리포트 (V3)"
 ])
 
 dashboard_data = load_dashboard_data()
@@ -175,49 +183,37 @@ def render_logo_html(logo_url):
     if logo_url: return f"<img src='{logo_url}' class='team-logo' onerror=\"this.style.display='none';\">"
     return ""
 
-# -----------------------------------------------------------------------------
-# 🌟 박스 렌더링 함수
-# -----------------------------------------------------------------------------
 def generate_pred_boxes(picks, is_top3_tab=False):
     if not picks: return ""
     best_pick_raw = picks[0]['raw_pick']
-    
     display_picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
-    
     html = ""
     for i, pick in enumerate(display_picks):
         is_best = (pick['raw_pick'] == best_pick_raw)
         prob_pct = round(pick.get('prob', 0) * 100, 1)
-        
         if is_best:
             bg_style = "background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;"
             title_color = "color:#00F2FE;"
             if prob_pct >= 65: stars = "⭐⭐⭐"
             elif prob_pct >= 50: stars = "⭐⭐"
             else: stars = "⭐"
-            
             label = f"🥇 강력 추천 ({pick.get('label', '')}) {stars}" if is_top3_tab else f"🥇 {pick.get('label', '')} {stars}"
         else:
             bg_style = ""
             title_color = "color:#64748B;"
-            if is_top3_tab:
-                label = f"서브 추천 ({pick.get('label', '')})" 
-            else:
-                label = pick.get('label', '')
+            label = f"서브 추천 ({pick.get('label', '')})" if is_top3_tab else pick.get('label', '')
                 
         html += f"<div class='pred-box' style='{bg_style}'><div class='pred-label' style='{title_color}'>{label}</div><span class='pred-value'>{pick.get('html_pick', '')}</span><span class='pred-prob'>{prob_pct}%</span></div>"
     return html
-
-# -----------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
 # -----------------------------------------------------------------------------
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 완전히 채점이 완료된 종료 경기는 [AI 리포트] 탭의 리얼 오답노트에 영구 보관됩니다.</div>", unsafe_allow_html=True)
         
         proto_list = dashboard_data.get("proto", [])
-        
         if proto_list:
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -229,11 +225,8 @@ with main_tab1:
                 
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
-            if selected_league != "전체 리그 보기":
-                proto_list = [m for m in proto_list if m.get('league') == selected_league]
-                
-            if sort_urgent:
-                proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
+            if selected_league != "전체 리그 보기": proto_list = [m for m in proto_list if m.get('league') == selected_league]
+            if sort_urgent: proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
                 
             displayed_count = 0
             for item in proto_list:
@@ -243,23 +236,19 @@ with main_tab1:
                 raw_deadline = m.get("deadline_time", "23:00")
                 match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
                 
-                a_result = m.get('actual_result', 'PENDING')
-                if match_status == "FINISHED" or a_result == 'FINISHED':
-                    continue
-                
-                displayed_count += 1
                 match_id_str = str(m.get('id', ''))
-                
-                # 🚀 [핵심 수정] 실시간 스코어 데이터에 아이디가 존재하면 시간 무시하고 무조건 라이브 강제 적용!
+                # 라이브 강제 유지 로직
                 is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
                 
+                if match_status == "FINISHED" and not is_live_now: continue
+                
+                displayed_count += 1
                 if is_live_now:
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "0:0")
                         if not score_text or score_text == "-": score_text = "0:0"
                         event_text = live_info.get("event", "")
-                        
                         event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444; animation: blink 2s infinite;'>🔴 LIVE</span>"
                     else:
@@ -288,9 +277,7 @@ with main_tab1:
                     f"</div>"
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
-            
-            if displayed_count == 0:
-                st.info("조건에 맞는 경기가 없거나 모두 종료되었습니다.")
+            if displayed_count == 0: st.info("조건에 맞는 경기가 없거나 모두 종료되었습니다.")
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
@@ -343,15 +330,12 @@ with main_tab2:
 # -----------------------------------------------------------------------------
 with main_tab3:
     top3_list = dashboard_data.get("top3", [])
-    
     if top3_list:
         for idx, item in enumerate(top3_list, 1):
             m = item['match']
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
-            
             dynamic_top3_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=True)
-            
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
@@ -363,87 +347,162 @@ with main_tab3:
             )
             st.markdown(html_code, unsafe_allow_html=True)
     else: 
-        st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다. (로봇이 데이터를 수집 중입니다)")
-
-# -----------------------------------------------------------------------------
-# [TAB 4] AI 리포트 (오답노트 포함)
+        st.info("현재 배팅 가능한 분석 경기가 없어 추천 픽을 산출할 수 없습니다.")
+        # -----------------------------------------------------------------------------
+# [TAB 4] 🔥 AI 리포트 (V3 듀얼 채점 & 리얼 오답노트)
 # -----------------------------------------------------------------------------
 with main_tab4:
-    def get_accuracy_stats_lite():
+    def get_v3_accuracy_stats():
         try:
             conn = sqlite3.connect("ai_predictions.db")
-            df = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED' OR actual_result = 'CANCELED'", conn)
-            df_history = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result IN ('FINISHED', 'CANCELED') ORDER BY id DESC LIMIT 50", conn)
-            df_pending = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'PENDING'", conn)
+            # 스키마 검사 (V3 적용되었는지)
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(predictions)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'ev_pick' not in columns:
+                conn.close()
+                return None # V3 아직 적용 안됨
+                
+            df_finished = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED' ORDER BY match_time DESC", conn)
+            
+            # 통계 분리 (일반 승부식 vs 승무패 14경기)
+            df_proto = df_finished[df_finished['is_toto14'] == 0]
+            df_toto = df_finished[df_finished['is_toto14'] == 1]
+            
+            # 라이브 채점중 경기들 (화면에 보여주기 위함)
+            df_pending = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 ORDER BY match_time DESC", conn)
             conn.close()
             
-            scoring_list = []
-            now = datetime.now(timezone(timedelta(hours=9)))
-            for _, row in df_pending.iterrows():
-                m_time = row['match_time']
-                is_finished_time = False
-                try:
-                    match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', m_time)
-                    if match:
-                        mo, d, h, m = map(int, match.groups())
-                        m_dt = datetime(now.year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
-                        if now > m_dt + timedelta(hours=2): 
-                            is_finished_time = True
-                except: pass
-                if is_finished_time:
-                    scoring_list.append(row.to_dict())
+            # 일반 승부식 통계 계산 (확률픽 vs 꿀픽 맞짱)
+            proto_total = len(df_proto)
+            proto_prob_hit = df_proto['is_correct_prob'].sum() if proto_total > 0 else 0
+            proto_ev_hit = df_proto['is_correct_ev'].sum() if proto_total > 0 else 0
             
-            df_valid = df[df['actual_result'] == 'FINISHED']
-            history_list = df_history.to_dict('records')
-            
-            if len(df_valid) == 0: 
-                return {"total": 0, "correct": 0, "accuracy": 0.0, "history": history_list, "scoring": scoring_list}
-            
-            correct_cnt = df_valid['is_correct'].sum()
-            total_cnt = len(df_valid)
-            return {"total": total_cnt, "correct": int(correct_cnt), "accuracy": round((correct_cnt / total_cnt) * 100, 1), "history": history_list, "scoring": scoring_list}
-        except:
-            return {"total": 0, "correct": 0, "accuracy": 0.0, "history": [], "scoring": []}
+            proto_prob_acc = round((proto_prob_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
+            proto_ev_acc = round((proto_ev_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
 
-    stats = get_accuracy_stats_lite()
-    
-    st.markdown(f"<div style='display:flex; align-items:center; gap:20px; margin-bottom:30px; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'><div><span style='color:#94A3B8; font-size:14px; font-weight:700; display:block;'>전체 누적 적중률</span><span style='color:#00F2FE; font-size:40px; font-weight:900;'>{stats['accuracy']}%</span></div><div style='border-left:1px solid #334155; padding-left:20px;'><span style='color:#CBD5E1; font-size:14px; display:block;'>종료된 경기: {stats['total']} 경기</span><span style='color:#10B981; font-size:14px; display:block; margin-top:5px;'>적중: {stats['correct']} 경기</span><span style='color:#EF4444; font-size:14px; display:block; margin-top:5px;'>실패: {stats['total'] - stats['correct']} 경기</span></div></div><h4 style='color:#F8FAFC; font-weight:900; margin-bottom:10px;'>📜 최근 경기 학습(오답) 노트</h4>", unsafe_allow_html=True)
-    
-    scoring_data = stats.get('scoring', [])
-    history_data = stats.get('history', [])
-    
-    if scoring_data or history_data:
-        table_html = "<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center;'><thead><tr><th style='background:#1E293B; color:#94A3B8; padding:10px;'>경기</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>예측</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>결과</th><th style='background:#1E293B; color:#94A3B8; padding:10px;'>상태</th></tr></thead><tbody>"
-        
-        for row in scoring_data:
-            m_id_str = str(row['match_id'])
-            temp_score = row.get('actual_score', '-:-')
-            if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
-                temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
-                
-            result_mark = "<span style='color:#F59E0B; font-weight:900;'>채점중</span>"
-            table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{temp_score}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
+            # 승무패 14경기 통계 (단일 확률픽 기준)
+            toto_total = len(df_toto)
+            toto_hit = df_toto['is_correct_prob'].sum() if toto_total > 0 else 0
+            toto_acc = round((toto_hit / toto_total) * 100, 1) if toto_total > 0 else 0.0
+            
+            return {
+                "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
+                "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
+                "history": df_proto.head(50).to_dict('records'), # 최근 50경기 리얼 오답노트용
+                "pending": df_pending.to_dict('records')
+            }
+        except Exception as e:
+            return None
 
-        for row in history_data:
-            if row.get('actual_result') == 'CANCELED':
-                result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>취소</span><br><span style='color:#94A3B8; font-weight:900;'>무효</span>"
-            elif row.get('is_correct',0) == 1:
-                result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>종료</span><br><span style='color:#10B981; font-weight:900;'>적중</span>"
-            else:
-                result_mark = "<span style='color:#94A3B8; font-weight:700; font-size:11px;'>종료</span><br><span style='color:#EF4444; font-weight:900;'>실패</span>"
-            
-            table_html += f"<tr><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:700;'>{row.get('home_team','')} vs {row.get('away_team','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #00F2FE;'>{row.get('predicted_pick','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B; color: #F8FAFC; font-weight:900;'>{row.get('actual_score','')}</td><td style='padding: 12px 10px; border-bottom: 1px solid #1E293B;'>{result_mark}</td></tr>"
-            
-        table_html += "</tbody></table>"
-        st.markdown(table_html, unsafe_allow_html=True)
-        
-        st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:30px; margin-bottom:10px;'>💡 AI 학습(분석) 노트 내용</h4>", unsafe_allow_html=True)
-        has_failure = False
-        for row in history_data:
-            if row.get('failure_reason'):
-                has_failure = True
-                st.markdown(f"<div style='background:#1E293B; padding:12px; border-radius:6px; margin-bottom:8px; font-size:13px; color:#CBD5E1;'><b>[{row.get('home_team','')} vs {row.get('away_team','')}]</b><br>{row.get('failure_reason','')}</div>", unsafe_allow_html=True)
-        if not has_failure:
-            st.info("아직 분석된 정답/오답 노트가 없습니다.")
+    stats = get_v3_accuracy_stats()
+    
+    if stats is None:
+        st.warning("⚠️ 백그라운드 로봇이 V3 듀얼 엔진으로 업그레이드 중입니다. 잠시 후 다시 확인해주세요!")
     else:
-        st.info("아직 채점이 완료된 종료 경기가 없습니다.")
+        p_stats = stats['proto']
+        t_stats = stats['toto']
+        
+        # 📊 [UI 혁신] 분리된 듀얼 통계판
+        st.markdown(f"""
+        <div style='display:flex; gap:20px; margin-bottom:30px;'>
+            <!-- 승부식 통계판 -->
+            <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'>
+                <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:15px;'>📊 라이브 승부식 A/B 채점 (총 {p_stats['total']}경기)</span>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <div style='text-align:center;'>
+                        <span style='color:#CBD5E1; font-size:12px; display:block;'>안전제일 확률픽</span>
+                        <span style='color:#10B981; font-size:32px; font-weight:900;'>{p_stats['prob_acc']}%</span>
+                        <span style='color:#64748B; font-size:12px; display:block;'>({p_stats['prob_hit']}건 적중)</span>
+                    </div>
+                    <div style='color:#334155; font-size:24px; font-weight:100;'>VS</div>
+                    <div style='text-align:center;'>
+                        <span style='color:#CBD5E1; font-size:12px; display:block;'>역배수익 꿀픽</span>
+                        <span style='color:#F59E0B; font-size:32px; font-weight:900;'>{p_stats['ev_acc']}%</span>
+                        <span style='color:#64748B; font-size:12px; display:block;'>({p_stats['ev_hit']}건 적중)</span>
+                    </div>
+                </div>
+            </div>
+            <!-- 14경기 통계판 -->
+            <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B; display:flex; flex-direction:column; justify-content:center; align-items:center;'>
+                <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:5px;'>🏆 승무패 14경기 단통 적중률</span>
+                <span style='color:#00F2FE; font-size:40px; font-weight:900;'>{t_stats['acc']}%</span>
+                <span style='color:#64748B; font-size:13px;'>총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 📜 [UI 혁신] 리얼 오답노트 히스토리 피드 (글씨 1.5배 확대)
+        st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 딥러닝 리얼 오답노트 피드</h4>", unsafe_allow_html=True)
+        
+        history_data = stats['history']
+        
+        if not history_data:
+            st.info("아직 채점이 완료된 종료 경기가 없습니다. 로봇이 V3 모드로 열심히 경기 결과를 감시 중입니다!")
+        
+        for row in history_data:
+            h_team = row.get('home_team', '')
+            a_team = row.get('away_team', '')
+            m_time = row.get('match_time', '')
+            score = row.get('actual_score', '-:-')
+            note = row.get('ai_note', '')
+            
+            prob_pick = row.get('prob_pick', '')
+            ev_pick = row.get('ev_pick', '')
+            prob_ok = row.get('is_correct_prob', 0) == 1
+            ev_ok = row.get('is_correct_ev', 0) == 1
+            
+            # 취소/무효 처리
+            if row.get('actual_result') == 'CANCELED':
+                score_html = "<span class='report-score' style='color:#94A3B8 !important;'>취소/무효</span>"
+                note_style = "real-ai-note"
+            else:
+                score_html = f"<span class='report-score'>{score}</span>"
+                note_style = "real-ai-note" if (prob_ok or ev_ok) else "real-ai-note-fail"
+
+            prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
+            ev_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if ev_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
+
+            html = f"""
+            <div class='report-card'>
+                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #1E293B; padding-bottom:15px;'>
+                    <div>
+                        <span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {row.get('league','')}</span>
+                        <span class='report-team'>{h_team} <span style='color:#475569;'>VS</span> {a_team}</span>
+                    </div>
+                    <div style='text-align:right;'>
+                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>최종 결과</span>
+                        {score_html}
+                    </div>
+                </div>
+                <div style='display:flex; gap:15px; margin-bottom:10px;'>
+                    <div style='flex:1; background:#06080F; padding:10px; border-radius:6px; border:1px solid #1E293B;'>
+                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 확률픽 예측</span>
+                        <div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>
+                    </div>
+                    <div style='flex:1; background:#06080F; padding:10px; border-radius:6px; border:1px solid #1E293B;'>
+                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 꿀픽 예측</span>
+                        <div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>
+                    </div>
+                </div>
+                <div class='{note_style}'>{note}</div>
+            </div>
+            """
+            st.markdown(html, unsafe_allow_html=True)
+            
+        # ⏳ [채점 대기중 목록]
+        pending_data = stats['pending']
+        if pending_data:
+            st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 현재 채점 대기 중인 경기</h4>", unsafe_allow_html=True)
+            for row in pending_data:
+                m_id_str = str(row['match_id'])
+                temp_score = row.get('actual_score', '-:-')
+                if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
+                    temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
+                    
+                st.markdown(f"""
+                <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:8px; padding:12px 15px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;'>
+                    <div style='color:#CBD5E1; font-size:14px; font-weight:700;'>{row.get('home_team')} <span style='color:#475569;'>VS</span> {row.get('away_team')}</div>
+                    <div style='color:#F59E0B; font-size:14px; font-weight:900;'>{temp_score} <span style='font-size:11px; font-weight:700; background:rgba(245,158,11,0.1); padding:2px 6px; border-radius:4px; margin-left:5px;'>채점 대기중</span></div>
+                </div>
+                """, unsafe_allow_html=True)
