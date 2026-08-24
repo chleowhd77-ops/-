@@ -22,13 +22,20 @@ st.set_page_config(
 
 GITHUB_REPO = "chleowhd77-ops/-"
 
+# 🔥 [핵심 수술 1] 캐시 완전 무효화 헤더 추가 (CDN 지연 원천 차단)
+NO_CACHE_HEADERS = {
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+}
+
 # -----------------------------------------------------------------------------
-# 1. 초경량 데이터 로더
+# 1. 초경량 데이터 로더 (헤더 장착 완료)
 # -----------------------------------------------------------------------------
 def load_dashboard_data():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dashboard_data.json?t={int(time.time())}"
     try:
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
         if res.status_code == 200: return res.json()
     except: pass
     return {"proto": [], "toto14": [], "top3": []}
@@ -36,7 +43,7 @@ def load_dashboard_data():
 def load_live_scores():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_scores.json?t={int(time.time())}"
     try:
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
         if res.status_code == 200: return res.json()
     except: pass
     return {}
@@ -44,7 +51,7 @@ def load_live_scores():
 def download_db():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
     try:
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
         if res.status_code == 200:
             with open("ai_predictions.db", "wb") as f:
                 f.write(res.content)
@@ -224,6 +231,7 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
                 
                 match_id_str = str(m.get('id', ''))
+                # 🔥 [핵심 수술] live_scores_data에 있으면 무조건 is_live_now = True
                 is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
                 
                 if match_status == "FINISHED" and not is_live_now: continue
@@ -470,15 +478,28 @@ with main_tab4:
             for row in pending_data:
                 m_id_str = str(row['match_id'])
                 temp_score = row.get('actual_score', '-:-')
-                if temp_score == '-:-' and m_id_str in live_scores_data and live_scores_data[m_id_str].get("score"):
-                    temp_score = live_scores_data[m_id_str].get("score").replace(" : ", ":")
-                    
+                
+                # 🔥 [핵심 수술 2] AI 리포트 탭에서도 🔴 LIVE 뱃지와 실시간 스코어/이벤트를 강렬하게 표출
+                badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 대기중</span>"
+                event_html = ""
+
+                if m_id_str in live_scores_data:
+                    live_info = live_scores_data[m_id_str]
+                    if live_info.get("score"):
+                        temp_score = live_info["score"].replace(" : ", ":")
+                    if live_info.get("event"):
+                        event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px;'>{live_info['event']}</div>"
+                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(239,68,68,0.15); color:#EF4444; border:1px solid #EF4444; padding:4px 10px; border-radius:6px;'>🔴 LIVE</span>"
+                
                 st.markdown(f"""
                 <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'>
-                    <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>
+                    <div>
+                        <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>
+                        {event_html}
+                    </div>
                     <div style='display:flex; align-items:center; gap:15px;'>
                         <span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>
-                        <span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 대기중</span>
+                        {badge_html}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
