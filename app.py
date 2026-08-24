@@ -53,7 +53,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - PC와 모바일 모두 완벽하게 호환되는 오리지널 고품격 스타일 복구
+# 2. 디자인 (CSS) - 기획자님이 가장 좋아하셨던 오리지널 PC 완벽 고정 스타일
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -61,7 +61,8 @@ st.markdown("""
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
-    .block-container { max-width: 1300px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; padding-left: 2rem !important; padding-right: 2rem !important; margin: 0 auto !important; width: 100% !important; }
+    /* 🔥 [오리지널 복원] PC 화면에서 가장 예쁘고 안정감 있는 중앙 정렬 폭 설정 */
+    .block-container { max-width: 1300px !important; padding-top: 2rem !important; padding-bottom: 2rem !important; margin: 0 auto !important; }
     
     .app-header { text-align: center; padding: 30px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 30px; }
     .app-header h1 { color: #FFFFFF !important; font-size: 36px !important; font-weight: 900 !important; letter-spacing: 2px; margin: 0; background: -webkit-linear-gradient(45deg, #00F2FE, #4FACFE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
