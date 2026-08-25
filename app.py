@@ -525,15 +525,6 @@ with main_tab4:
                         event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px;'>{live_info['event']}</div>"
                     badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(239,68,68,0.15); color:#EF4444; border:1px solid #EF4444; padding:4px 10px; border-radius:6px;'>🔴 LIVE</span>"
                 
-                st.markdown(f"""
-                <div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'>
-                    <div>
-                        <div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>
-                        {event_html}
-                    </div>
-                    <div style='display:flex; align-items:center; gap:15px;'>
-                        <span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>
-                        {badge_html}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                # 🔥 [버그 픽스] Streamlit이 코드를 출력하지 않도록 HTML을 띄어쓰기/엔터 없이 한 줄로 꽉 붙임 (Stitching)
+                html_str = f"<div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'><div><div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>{event_html}</div><div style='display:flex; align-items:center; gap:15px;'><span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>{badge_html}</div></div>"
+                st.markdown(html_str, unsafe_allow_html=True)
