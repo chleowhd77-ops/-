@@ -270,6 +270,11 @@ with main_tab1:
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
                 
                 dynamic_pred_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=False)
+
+                # 🔥 [NEW] 여기에 역배 레이더(Upset Radar) 경고창 코드를 추가했습니다!
+                upset_html = ""
+                if item.get('upset_warning'):
+                    upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color: #ffcccc; border-radius: 4px; margin-bottom: 15px; line-height: 1.6;'><span style='background-color: #FFD700; color: #000; font-weight: 900; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px;'>VIP 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
                 
                 html_code = (
                     f"<div class='match-card'>"
@@ -280,6 +285,7 @@ with main_tab1:
                     f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
                     f"</div>"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
+                    f"{upset_html}"
                     f"<div class='odd-bar'>"
                     f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
                     f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
@@ -293,7 +299,7 @@ with main_tab1:
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
-        
+
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
@@ -490,7 +496,6 @@ with main_tab4:
             """
             st.markdown(html, unsafe_allow_html=True)
             
-        # 🔥 [핵심 패치] 오늘 저녁 경기들이 '에러/대기중'으로 보여서 화나게 만들었던 UI 착시 해결
         pending_data = stats['pending']
         if pending_data:
             st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 향후 경기 일정 및 분석 현황</h4>", unsafe_allow_html=True)
@@ -512,18 +517,14 @@ with main_tab4:
                 temp_score = row.get('actual_score', '-:-')
                 m_time_str = row.get('match_time', '')
                 
-                # 로봇이 현재 시간과 경기 시간을 비교해서 똑똑하게 뱃지를 바꿔치기 합니다.
                 m_dt = parse_time_for_ui(m_time_str)
                 now = datetime.now(timezone(timedelta(hours=9)))
                 
                 if now < m_dt:
-                    # 미래 경기 (오늘 저녁 예정 등)
                     badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(56,189,248,0.15); color:#38BDF8; border:1px solid #38BDF8; padding:4px 10px; border-radius:6px;'>진행 예정</span>"
                 elif now < m_dt + timedelta(hours=2.5):
-                    # 막 시작했거나 한창 뛰고 있는 경기
                     badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid #10B981; padding:4px 10px; border-radius:6px;'>경기 진행중</span>"
                 else:
-                    # 끝났는데 로봇이 결과 취합하고 있는 진짜 '채점 대기' 상태
                     badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 로봇 분석중</span>"
 
                 event_html = ""
