@@ -131,6 +131,40 @@ st.markdown("""
     .report-team { font-size: 16px; font-weight: 900; color: #CBD5E1; }
     .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
+
+    /* 🔥📱 [모바일 반응형 완벽 대응] 핸드폰에서 글자 세로로 찌그러지는 현상 박멸! */
+    @media (max-width: 768px) {
+        .app-header h1 { font-size: 24px !important; }
+        .stTabs [data-baseweb="tab-list"] { gap: 10px !important; }
+        .stTabs [data-baseweb="tab"] { font-size: 14px !important; padding: 10px 0px !important; }
+        
+        /* 플래시스코어처럼 양 팀을 세로로 펴서 정렬 (로고가 위로, 텍스트가 아래로) */
+        .vs-row { align-items: flex-start !important; gap: 5px; }
+        .team-box { width: 40%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
+        
+        /* 홈팀/원정팀 모두 동일하게 (로고 위, 글자 아래) 정렬 */
+        .team-box.home { flex-direction: column-reverse !important; }
+        .team-box.away { flex-direction: column !important; }
+        
+        .team-box.home .team-info-wrapper, .team-box.away .team-info-wrapper { align-items: center !important; text-align: center !important; width: 100% !important; }
+        
+        .team-logo { width: 45px !important; height: 45px !important; margin: 0 auto; }
+        /* 단어 도중에 줄바꿈 방지(keep-all) & 억지로 세로로 내려가지 않도록(normal) 설정 */
+        .team-name-text { font-size: 14px !important; word-break: keep-all !important; white-space: normal !important; line-height: 1.3; margin-top: 5px; }
+        
+        .center-time-box { width: 20%; margin-top: 5px; }
+        .live-score { font-size: 20px !important; }
+        .match-time-text { font-size: 11px !important; }
+        
+        /* 박스 및 배당률 세로로 펴주기 */
+        .odd-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+        .pred-grid { flex-direction: column; }
+        
+        /* AI 리포트 탭 모바일 최적화 */
+        .report-card > div:first-child { flex-direction: column; text-align: center; gap: 15px; }
+        .report-card > div:first-child > div { text-align: center !important; }
+        .report-card > div:nth-child(2) { flex-direction: column; }
+    }
     </style>
 """, unsafe_allow_html=True)
 
