@@ -21,17 +21,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 2. 데이터 불러오기 (GitHub 클라우드에서 최신 JSON 연동)
+# 2. 데이터 불러오기 (강철 방패 방어 로직 추가)
 # ---------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_data():
-    # 기획자님의 깃허브 JSON 주소를 여기에 유지합니다 (예시 주소)
-    # url = "https://raw.githubusercontent.com/기획자님아이디/저장소/main/dashboard_data.json"
-    url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/dashboard_data.json" # 임시 주소 (실제 주소로 맞춰주세요)
+    url = "https://raw.githubusercontent.com/chleowhd77-ops/-/main/dashboard_data.json"
     try:
         response = requests.get(url)
-        return response.json()
-    except:
+        if response.status_code == 200:
+            data = response.json()
+            # 🚨 깃허브가 이상한 텍스트를 던지면 무시하고 정상적인 리스트(배열)일 때만 통과!
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                # 혹시 데이터가 matches라는 상자 안에 담겨올 경우
+                if 'matches' in data:
+                    return data['matches']
+                return [] # 깃허브 에러 메시지(404 등)면 빈 깡통 반환
+        return []
+    except Exception as e:
         return []
 
 data = load_data()
@@ -48,19 +56,24 @@ tab1, tab2, tab3, tab4 = st.tabs(["🔥 AI 리포트", "🏆 오늘의 TOP 3", "
 with tab1:
     st.subheader("📊 전체 경기 AI 예측 리포트")
     
-    if not data:
-        st.warning("현재 분석된 경기 데이터가 없습니다. 로봇이 데이터를 수집 중입니다.")
+    # 데이터가 아예 비어있으면 안전하게 경고창만 띄움
+    if not data or len(data) == 0:
+        st.warning("현재 분석된 경기 데이터가 없습니다. 로봇이 데이터를 수집 중이거나, 깃허브 동기화를 기다리는 중입니다. ⏳")
     
     current_time = datetime.now()
 
     for match in data:
+        # 🚨 최후의 방어막: 데이터가 사전(dict) 형태가 아니면 에러 띄우지 말고 조용히 건너뜀!
+        if not isinstance(match, dict):
+            continue
+            
         # 경기 시간 파싱
         try:
             match_time = datetime.strptime(match.get('datetime', '2099-12-31 00:00'), '%Y-%m-%d %H:%M')
         except:
             match_time = current_time
         
-        # 상태 표시 로직 (오늘 우리가 수정한 핵심 부분!)
+        # 상태 표시 로직
         if match.get('status') == '종료':
             status_html = f"<span class='status-done'>종료</span>"
         elif match_time > current_time:
@@ -76,7 +89,7 @@ with tab1:
                     <h4 style="margin:0;">{match.get('home_team', '홈팀')} <img src="{match.get('home_logo', '')}" width="30"> vs <img src="{match.get('away_logo', '')}" width="30"> {match.get('away_team', '원정팀')}</h4>
                     <div>{status_html}</div>
                 </div>
-                <p style="color: gray; font-size: 14px;">경기일시: {match.get('datetime', '미정')} | 리그: {match.get('league', 'K리그1')}</p>
+                <p style="color: gray; font-size: 14px;">경기일시: {match.get('datetime', '미정')} | 리그: {match.get('league', '알 수 없음')}</p>
             """, unsafe_allow_html=True)
             
             # --- 일반 분석 (베이직 티어용) ---
@@ -89,7 +102,6 @@ with tab1:
                 st.warning(f"**언더오버 예측**\n\n📈 {match.get('predict_unover', '분석중')} (기준점: {match.get('base_unover', '2.5')})")
             
             # --- [NEW] VIP 역배 레이더 발동 영역 ---
-            # 로봇이 JSON에 'upset_warning' 데이터를 담아 보내면 이 경고창이 뜹니다.
             if match.get('upset_warning'):
                 st.markdown(f"""
                 <div class="upset-alert">
