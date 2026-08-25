@@ -22,7 +22,6 @@ st.set_page_config(
 
 GITHUB_REPO = "chleowhd77-ops/-"
 
-# 🔥 [핵심 수술 1] 캐시 완전 무효화 헤더 추가 (CDN 지연 원천 차단)
 NO_CACHE_HEADERS = {
     'Cache-Control': 'no-cache, no-store, must-revalidate',
     'Pragma': 'no-cache',
@@ -30,7 +29,7 @@ NO_CACHE_HEADERS = {
 }
 
 # -----------------------------------------------------------------------------
-# 1. 초경량 데이터 로더 (헤더 장착 완료)
+# 1. 초경량 데이터 로더
 # -----------------------------------------------------------------------------
 def load_dashboard_data():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dashboard_data.json?t={int(time.time())}"
@@ -60,7 +59,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS) - 기획자님이 원하셨던 '중앙 집중형' 오리지널 폭으로 복구!
+# 2. 디자인 (CSS)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -68,7 +67,6 @@ st.markdown("""
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
     [data-testid="stSidebar"] { display: none; }
     
-    /* 🔥 [핵심 수정] 가로폭을 1000px로 줄이고 무조건 중앙에 예쁘게 안착하도록 고정 */
     .block-container { 
         max-width: 1000px !important; 
         padding-top: 2rem !important; 
@@ -132,35 +130,22 @@ st.markdown("""
     .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
 
-    /* 🔥📱 [모바일 반응형 완벽 대응] 핸드폰에서 글자 세로로 찌그러지는 현상 박멸! */
     @media (max-width: 768px) {
         .app-header h1 { font-size: 24px !important; }
         .stTabs [data-baseweb="tab-list"] { gap: 10px !important; }
         .stTabs [data-baseweb="tab"] { font-size: 14px !important; padding: 10px 0px !important; }
-        
-        /* 플래시스코어처럼 양 팀을 세로로 펴서 정렬 (로고가 위로, 텍스트가 아래로) */
         .vs-row { align-items: flex-start !important; gap: 5px; }
         .team-box { width: 40%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
-        
-        /* 홈팀/원정팀 모두 동일하게 (로고 위, 글자 아래) 정렬 */
         .team-box.home { flex-direction: column-reverse !important; }
         .team-box.away { flex-direction: column !important; }
-        
         .team-box.home .team-info-wrapper, .team-box.away .team-info-wrapper { align-items: center !important; text-align: center !important; width: 100% !important; }
-        
         .team-logo { width: 45px !important; height: 45px !important; margin: 0 auto; }
-        /* 단어 도중에 줄바꿈 방지(keep-all) & 억지로 세로로 내려가지 않도록(normal) 설정 */
         .team-name-text { font-size: 14px !important; word-break: keep-all !important; white-space: normal !important; line-height: 1.3; margin-top: 5px; }
-        
         .center-time-box { width: 20%; margin-top: 5px; }
         .live-score { font-size: 20px !important; }
         .match-time-text { font-size: 11px !important; }
-        
-        /* 박스 및 배당률 세로로 펴주기 */
         .odd-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
         .pred-grid { flex-direction: column; }
-        
-        /* AI 리포트 탭 모바일 최적화 */
         .report-card > div:first-child { flex-direction: column; text-align: center; gap: 15px; }
         .report-card > div:first-child > div { text-align: center !important; }
         .report-card > div:nth-child(2) { flex-direction: column; }
@@ -265,7 +250,6 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
                 
                 match_id_str = str(m.get('id', ''))
-                # 🔥 [핵심 수술] live_scores_data에 있으면 무조건 is_live_now = True
                 is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
                 
                 if match_status == "FINISHED" and not is_live_now: continue
@@ -377,7 +361,7 @@ with main_tab3:
     else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 4] 🔥 AI 리포트 (V3 듀얼 채점 & 리얼 오답노트)
+# [TAB 4] 🔥 AI 리포트 (UI 오해 완벽 해결)
 # -----------------------------------------------------------------------------
 with main_tab4:
     def get_v3_accuracy_stats():
@@ -506,17 +490,43 @@ with main_tab4:
             """
             st.markdown(html, unsafe_allow_html=True)
             
+        # 🔥 [핵심 패치] 오늘 저녁 경기들이 '에러/대기중'으로 보여서 화나게 만들었던 UI 착시 해결
         pending_data = stats['pending']
         if pending_data:
-            st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 현재 채점 대기 중인 경기</h4>", unsafe_allow_html=True)
+            st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 향후 경기 일정 및 분석 현황</h4>", unsafe_allow_html=True)
+            
+            def parse_time_for_ui(t_str):
+                now = datetime.now(timezone(timedelta(hours=9)))
+                if not t_str or t_str in ["시간 미정", "마감/진행중"]: return now - timedelta(hours=3)
+                try:
+                    m = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', t_str)
+                    if m:
+                        mo, d, h, mn = map(int, m.groups())
+                        yr = now.year if mo <= now.month + 1 else now.year - 1
+                        return datetime(yr, mo, d, h, mn, tzinfo=timezone(timedelta(hours=9)))
+                except: pass
+                return now - timedelta(hours=3)
+
             for row in pending_data:
                 m_id_str = str(row['match_id'])
                 temp_score = row.get('actual_score', '-:-')
+                m_time_str = row.get('match_time', '')
                 
-                # 🔥 [핵심 수술 2] AI 리포트 탭에서도 🔴 LIVE 뱃지와 실시간 스코어/이벤트를 강렬하게 표출
-                badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 대기중</span>"
-                event_html = ""
+                # 로봇이 현재 시간과 경기 시간을 비교해서 똑똑하게 뱃지를 바꿔치기 합니다.
+                m_dt = parse_time_for_ui(m_time_str)
+                now = datetime.now(timezone(timedelta(hours=9)))
+                
+                if now < m_dt:
+                    # 미래 경기 (오늘 저녁 예정 등)
+                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(56,189,248,0.15); color:#38BDF8; border:1px solid #38BDF8; padding:4px 10px; border-radius:6px;'>진행 예정</span>"
+                elif now < m_dt + timedelta(hours=2.5):
+                    # 막 시작했거나 한창 뛰고 있는 경기
+                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid #10B981; padding:4px 10px; border-radius:6px;'>경기 진행중</span>"
+                else:
+                    # 끝났는데 로봇이 결과 취합하고 있는 진짜 '채점 대기' 상태
+                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 로봇 분석중</span>"
 
+                event_html = ""
                 if m_id_str in live_scores_data:
                     live_info = live_scores_data[m_id_str]
                     if live_info.get("score"):
@@ -525,6 +535,5 @@ with main_tab4:
                         event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px;'>{live_info['event']}</div>"
                     badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(239,68,68,0.15); color:#EF4444; border:1px solid #EF4444; padding:4px 10px; border-radius:6px;'>🔴 LIVE</span>"
                 
-                # 🔥 [버그 픽스] Streamlit이 코드를 출력하지 않도록 HTML을 띄어쓰기/엔터 없이 한 줄로 꽉 붙임 (Stitching)
-                html_str = f"<div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'><div><div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>{event_html}</div><div style='display:flex; align-items:center; gap:15px;'><span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>{badge_html}</div></div>"
+                html_str = f"<div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'><div><div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{m_time_str}</div><div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>{event_html}</div><div style='display:flex; align-items:center; gap:15px;'><span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>{badge_html}</div></div>"
                 st.markdown(html_str, unsafe_allow_html=True)
