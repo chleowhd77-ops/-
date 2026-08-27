@@ -243,6 +243,10 @@ with main_tab1:
                 
             displayed_count = 0
             for item in proto_list:
+                # 🔥 기획자님 피드백 반영: TAB 1 시간 미정 1차 방어막
+                if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
+                    continue
+                    
                 m = item['match']
                 logo_h_tag = render_logo_html(item.get("home_logo"))
                 logo_a_tag = render_logo_html(item.get("away_logo"))
@@ -271,7 +275,6 @@ with main_tab1:
                 
                 dynamic_pred_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=False)
 
-                # 🔥 [NEW] 여기에 역배 레이더(Upset Radar) 경고창 코드를 추가했습니다!
                 upset_html = ""
                 if item.get('upset_warning'):
                     upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color: #ffcccc; border-radius: 4px; margin-bottom: 15px; line-height: 1.6;'><span style='background-color: #FFD700; color: #000; font-weight: 900; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px;'>VIP 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
@@ -349,14 +352,20 @@ with main_tab2:
 with main_tab3:
     top3_list = dashboard_data.get("top3", [])
     if top3_list:
+        displayed_top3 = 0
         for idx, item in enumerate(top3_list, 1):
+            # 🔥 기획자님 피드백 반영: TAB 3 시간 미정 2차 방어막
+            if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
+                continue
+                
+            displayed_top3 += 1
             m = item['match']
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
             dynamic_top3_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=True)
             html_code = (
                 f"<div class='match-card top3-glow'>"
-                f"<div class='league-title' style='color:#00F2FE;'># {idx} 최고 가치 추천 픽 • {m.get('league','')}</div>"
+                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} 최고 가치 추천 픽 • {m.get('league','')}</div>"
                 f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
@@ -364,10 +373,11 @@ with main_tab3:
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
+        if displayed_top3 == 0: st.info("현재 배팅 가능한 추천 분석 경기가 없습니다.")
     else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
 
 # -----------------------------------------------------------------------------
-# [TAB 4] 🔥 AI 리포트 (UI 오해 완벽 해결)
+# [TAB 4] 🔥 AI 리포트
 # -----------------------------------------------------------------------------
 with main_tab4:
     def get_v3_accuracy_stats():
@@ -512,10 +522,17 @@ with main_tab4:
                 except: pass
                 return now - timedelta(hours=3)
 
+            displayed_pending = 0
             for row in pending_data:
+                m_time_str = row.get('match_time', '')
+                
+                # 🔥 기획자님 피드백 반영: TAB 4 시간 미정 최종 방어막 (핵심)
+                if m_time_str == "시간 미정":
+                    continue
+                    
+                displayed_pending += 1
                 m_id_str = str(row['match_id'])
                 temp_score = row.get('actual_score', '-:-')
-                m_time_str = row.get('match_time', '')
                 
                 m_dt = parse_time_for_ui(m_time_str)
                 now = datetime.now(timezone(timedelta(hours=9)))
@@ -538,3 +555,6 @@ with main_tab4:
                 
                 html_str = f"<div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'><div><div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{m_time_str}</div><div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>{event_html}</div><div style='display:flex; align-items:center; gap:15px;'><span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>{badge_html}</div></div>"
                 st.markdown(html_str, unsafe_allow_html=True)
+                
+            if displayed_pending == 0:
+                st.info("현재 대기 중인 향후 경기 일정이 없습니다.")
