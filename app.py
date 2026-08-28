@@ -7,6 +7,7 @@ import pandas as pd
 import time
 from datetime import datetime, timezone, timedelta
 import re
+import hashlib
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
@@ -17,7 +18,7 @@ st.set_page_config(
     page_title=APP_TITLE, 
     page_icon="⚡", 
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" # 로그인 메뉴를 보여주기 위해 처음엔 열어둡니다
 )
 
 GITHUB_REPO = "chleowhd77-ops/-"
@@ -59,13 +60,57 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 디자인 (CSS)
+# 2. 보안 및 유저 DB 엔진 (새로 이식된 수익화 뼈대!)
+# -----------------------------------------------------------------------------
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+def init_user_db():
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS userstable(username TEXT PRIMARY KEY, password TEXT, is_vip INTEGER DEFAULT 0)')
+    conn.commit()
+    conn.close()
+
+def add_user(username, password):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('INSERT INTO userstable(username, password, is_vip) VALUES (?,?,?)', (username, password, 0))
+    conn.commit()
+    conn.close()
+
+def login_user(username, password):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('SELECT * FROM userstable WHERE username = ? AND password = ?', (username, password))
+    data = c.fetchall()
+    conn.close()
+    return data
+
+def get_all_users():
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('SELECT username, is_vip FROM userstable')
+    data = c.fetchall()
+    conn.close()
+    return data
+
+def upgrade_to_vip(username):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('UPDATE userstable SET is_vip = 1 WHERE username = ?', (username,))
+    conn.commit()
+    conn.close()
+
+init_user_db()
+
+# -----------------------------------------------------------------------------
+# 3. 디자인 (CSS)
 # -----------------------------------------------------------------------------
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
     html, body, .stApp { background-color: #06080F !important; font-family: 'Noto Sans KR', sans-serif !important; color: #E2E8F0; overflow-x: hidden !important; }
-    [data-testid="stSidebar"] { display: none; }
     
     .block-container { 
         max-width: 1000px !important; 
@@ -153,8 +198,92 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+
 # -----------------------------------------------------------------------------
-# 3. 레이아웃 뼈대 생성
+# 4. 사이드바 (로그인 / 회원가입 / 멤버십)
+# -----------------------------------------------------------------------------
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'is_vip' not in st.session_state:
+    st.session_state['is_vip'] = False
+if 'username' not in st.session_state:
+    st.session_state['username'] = ""
+
+st.sidebar.title("👑 멤버십 라운지")
+
+if not st.session_state['logged_in']:
+    menu = ["로그인", "회원가입"]
+    choice = st.sidebar.selectbox("메뉴 선택", menu)
+
+    if choice == "로그인":
+        st.sidebar.subheader("접속하기")
+        username = st.sidebar.text_input("아이디")
+        password = st.sidebar.text_input("비밀번호", type='password')
+        if st.sidebar.button("로그인"):
+            hashed_pswd = make_hashes(password)
+            result = login_user(username, hashed_pswd)
+            if result:
+                st.session_state['logged_in'] = True
+                st.session_state['username'] = username
+                st.session_state['is_vip'] = bool(result[0][2])
+                st.success(f"환영합니다, {username}님!")
+                st.rerun()
+            else:
+                st.sidebar.warning("아이디 또는 비밀번호가 틀렸습니다.")
+
+    elif choice == "회원가입":
+        st.sidebar.subheader("새 계정 만들기")
+        new_user = st.sidebar.text_input("사용할 아이디")
+        new_password = st.sidebar.text_input("비밀번호", type='password')
+        
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("**[필수] 서비스 이용 약관**")
+        st.sidebar.caption("본 서비스는 디지털 정보(픽) 제공 상품으로, VIP 등급 전환 및 유료 정보 열람 즉시 상품의 가치가 소모된 것으로 간주하여 **전자상거래법 제17조 2항에 의거 환불이 절대 불가**합니다.")
+        agree = st.sidebar.checkbox("위 환불 불가 정책에 동의합니다.")
+        
+        if st.sidebar.button("가입하기"):
+            if not agree:
+                st.sidebar.error("환불 정책에 동의하셔야 가입이 가능합니다.")
+            elif new_user == "" or new_password == "":
+                st.sidebar.error("아이디와 비밀번호를 입력해주세요.")
+            else:
+                try:
+                    add_user(new_user, make_hashes(new_password))
+                    st.sidebar.success("가입 성공! 상단 메뉴에서 로그인해주세요.")
+                except sqlite3.IntegrityError:
+                    st.sidebar.error("이미 존재하는 아이디입니다.")
+
+else:
+    st.sidebar.success(f"👤 {st.session_state['username']} 님 접속 중")
+    if st.session_state['is_vip']:
+        st.sidebar.markdown("💎 **등급: VIP 프리미엄**")
+        st.sidebar.info("모든 경기의 잠금이 해제되었습니다.")
+    else:
+        st.sidebar.markdown("🥉 **등급: 일반 회원** (무료 3픽 제공)")
+        st.sidebar.info("VIP 후원 계좌: 국민은행 123456-00-000000 (4만원)")
+        st.sidebar.caption("입금 시 '입금자명=아이디'로 입금 후 텔레그램(@아이디)으로 연락주세요!")
+
+    if st.sidebar.button("로그아웃"):
+        st.session_state['logged_in'] = False
+        st.session_state['is_vip'] = False
+        st.session_state['username'] = ""
+        st.rerun()
+
+    # 🔥 기획자님 전용 관리자 모드
+    if st.session_state['username'] == "admin":
+        st.sidebar.markdown("---")
+        st.sidebar.error("👑 관리자(CEO) 전용 모드")
+        users = get_all_users()
+        user_df = pd.DataFrame(users, columns=["아이디", "VIP상태(1=VIP)"])
+        st.sidebar.dataframe(user_df)
+        
+        upgrade_target = st.sidebar.text_input("VIP 승급시킬 아이디 입력")
+        if st.sidebar.button("VIP 권한 부여"):
+            upgrade_to_vip(upgrade_target)
+            st.sidebar.success(f"[{upgrade_target}] VIP 승급 완료!")
+
+# -----------------------------------------------------------------------------
+# 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class='app-header'>
@@ -224,7 +353,7 @@ def generate_pred_boxes(picks, is_top3_tab=False):
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 채점이 완료된 경기는 [AI 리포트] 탭의 리얼 오답노트에 반영됩니다.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 비회원 및 일반 회원은 1일 3경기만 확인 가능합니다. (VIP 가입 시 모든 잠금 해제)</div>", unsafe_allow_html=True)
         
         proto_list = dashboard_data.get("proto", [])
         if proto_list:
@@ -242,8 +371,9 @@ with main_tab1:
             if sort_urgent: proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
                 
             displayed_count = 0
+            paywall_shown = False
+
             for item in proto_list:
-                # 🔥 기획자님 피드백 반영: TAB 1 시간 미정 1차 방어막
                 if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
                     continue
                     
@@ -259,6 +389,20 @@ with main_tab1:
                 if match_status == "FINISHED" and not is_live_now: continue
                 
                 displayed_count += 1
+
+                # 🔥 페이월(Paywall) 로직: 4번째 경기부터 잠금
+                if displayed_count > 3 and not st.session_state['is_vip']:
+                    if not paywall_shown:
+                        st.markdown("""
+                        <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
+                            <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 VIP 프리미엄 전용 분석</h2>
+                            <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터는 VIP 회원에게만 제공됩니다.<br>적중률 높은 숨겨진 역배 꿀픽과 모든 데이터를 확인하세요!</p>
+                            <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>👉 좌측 사이드바(화살표 클릭)에서 로그인/회원가입 후 VIP 승급을 요청해주세요.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        paywall_shown = True
+                    continue # 실제 카드는 렌더링하지 않고 넘깁니다
+
                 if is_live_now:
                     if match_id_str in live_scores_data:
                         live_info = live_scores_data[match_id_str]
@@ -319,7 +463,25 @@ with main_tab2:
         summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
 
+        toto_displayed = 0
+        toto_paywall_shown = False
+
         for idx, item in enumerate(toto14_list, 1):
+            toto_displayed += 1
+
+            # 🔥 페이월(Paywall): 승무패 14경기는 3경기까지만 보여주고 잠금!
+            if toto_displayed > 3 and not st.session_state['is_vip']:
+                if not toto_paywall_shown:
+                    st.markdown("""
+                    <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
+                        <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 승무패 14경기 전체 보기 잠금</h2>
+                        <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터의 마킹 전략은 VIP 회원에게만 공개됩니다.</p>
+                        <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>👉 좌측 사이드바에서 VIP 승급을 진행해주세요.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    toto_paywall_shown = True
+                continue
+
             m = item['match']
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
@@ -354,7 +516,6 @@ with main_tab3:
     if top3_list:
         displayed_top3 = 0
         for idx, item in enumerate(top3_list, 1):
-            # 🔥 기획자님 피드백 반영: TAB 3 시간 미정 2차 방어막
             if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
                 continue
                 
@@ -526,7 +687,6 @@ with main_tab4:
             for row in pending_data:
                 m_time_str = row.get('match_time', '')
                 
-                # 🔥 기획자님 피드백 반영: TAB 4 시간 미정 최종 방어막 (핵심)
                 if m_time_str == "시간 미정":
                     continue
                     
