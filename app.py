@@ -18,7 +18,7 @@ st.set_page_config(
     page_title=APP_TITLE, 
     page_icon="⚡", 
     layout="wide",
-    initial_sidebar_state="expanded" # 로그인 메뉴를 보여주기 위해 처음엔 열어둡니다
+    initial_sidebar_state="expanded" 
 )
 
 GITHUB_REPO = "chleowhd77-ops/-"
@@ -60,7 +60,7 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 보안 및 유저 DB 엔진 (새로 이식된 수익화 뼈대!)
+# 2. 보안 및 유저 DB 엔진
 # -----------------------------------------------------------------------------
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
@@ -198,7 +198,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
 # -----------------------------------------------------------------------------
 # 4. 사이드바 (로그인 / 회원가입 / 멤버십)
 # -----------------------------------------------------------------------------
@@ -322,6 +321,17 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
+# 🔥 라이브 경기 판별 함수 (정렬을 위해 추가됨!)
+def check_is_live(item):
+    m = item.get('match', {})
+    match_id_str = str(m.get('id', ''))
+    if match_id_str in live_scores_data: return True
+    if m.get('match_time') == '마감/진행중': return True
+    raw_deadline = m.get("deadline_time", "23:00")
+    match_status, _ = get_match_status(item.get("final_match_time", ""), raw_deadline)
+    if match_status == "LIVE": return True
+    return False
+
 def render_logo_html(logo_url):
     if logo_url: return f"<img src='{logo_url}' class='team-logo'>"
     return ""
@@ -367,8 +377,18 @@ with main_tab1:
                 
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
-            if selected_league != "전체 리그 보기": proto_list = [m for m in proto_list if m.get('league') == selected_league]
-            if sort_urgent: proto_list = sorted(proto_list, key=lambda x: x.get('timestamp', 9999999999))
+            # 필터링
+            if selected_league != "전체 리그 보기": 
+                proto_list = [m for m in proto_list if m.get('league') == selected_league]
+            
+            # 🔥 핵심: 정렬 로직 완벽 적용 (LIVE를 최상단 0순위로 강제 고정!)
+            proto_list = sorted(
+                proto_list, 
+                key=lambda x: (
+                    not check_is_live(x), # LIVE인 애들은 0(위로), 아닌 애들은 1(밑으로)
+                    x.get('timestamp', 9999999999) if sort_urgent else 0 # 그다음 시간순 정렬
+                )
+            )
                 
             displayed_count = 0
             paywall_shown = False
@@ -384,7 +404,7 @@ with main_tab1:
                 match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
                 
                 match_id_str = str(m.get('id', ''))
-                is_live_now = (match_status == "LIVE") or (m.get('match_time') == '마감/진행중') or (match_id_str in live_scores_data)
+                is_live_now = check_is_live(item)
                 
                 if match_status == "FINISHED" and not is_live_now: continue
                 
@@ -401,7 +421,7 @@ with main_tab1:
                         </div>
                         """, unsafe_allow_html=True)
                         paywall_shown = True
-                    continue # 실제 카드는 렌더링하지 않고 넘깁니다
+                    continue 
 
                 if is_live_now:
                     if match_id_str in live_scores_data:
@@ -469,7 +489,6 @@ with main_tab2:
         for idx, item in enumerate(toto14_list, 1):
             toto_displayed += 1
 
-            # 🔥 페이월(Paywall): 승무패 14경기는 3경기까지만 보여주고 잠금!
             if toto_displayed > 3 and not st.session_state['is_vip']:
                 if not toto_paywall_shown:
                     st.markdown("""
