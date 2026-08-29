@@ -178,6 +178,8 @@ def register_user(username: str, password: str, display_name: str = "") -> tuple
         return True, "가입이 완료되었습니다."
     except sqlite3.IntegrityError:
         return False, "이미 사용 중인 아이디입니다."
+    except sqlite3.Error:
+        return False, "회원 정보를 저장하지 못했습니다. 잠시 후 다시 시도해주세요."
 
 
 def authenticate_user(username: str, password: str) -> dict[str, Any] | None:

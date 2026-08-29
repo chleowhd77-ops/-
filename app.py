@@ -180,6 +180,21 @@ st.markdown("""
     .report-team { font-size: 16px; font-weight: 900; color: #CBD5E1; }
     .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
+    .report-head { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 15px; border-bottom: 1px solid #1E293B; padding-bottom: 15px; }
+    .report-match { min-width: 0; flex: 1 1 auto; }
+    .report-result { flex: 0 0 auto; text-align: right; }
+    .report-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-bottom: 10px; }
+    .report-pick-box { min-width: 0; background: #06080F; padding: 10px; border-radius: 6px; border: 1px solid #1E293B; }
+    .pending-report-card { min-width: 0; background: #0B0F19; border: 1px solid #1E293B; border-radius: 10px; padding: 16px 20px; margin-bottom: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; }
+    .pending-report-match { min-width: 0; }
+    .pending-report-teams { color: #F8FAFC; font-size: 16px; font-weight: 900; overflow-wrap: anywhere; word-break: keep-all; }
+    .pending-report-status { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 15px; }
+    .pending-report-score { color: #00F2FE; font-size: 24px; font-weight: 900; letter-spacing: 1px; white-space: nowrap; }
+    .pending-report-badge { display: inline-flex; align-items: center; justify-content: center; max-width: 100%; font-size: 12px; font-weight: 900; padding: 4px 10px; border-radius: 6px; line-height: 1.35; text-align: center; white-space: normal; }
+    .pending-report-badge.upcoming { background: rgba(56,189,248,0.15); color: #38BDF8; border: 1px solid #38BDF8; }
+    .pending-report-badge.playing { background: rgba(16,185,129,0.15); color: #10B981; border: 1px solid #10B981; }
+    .pending-report-badge.grading { background: rgba(245,158,11,0.15); color: #F59E0B; border: 1px solid #F59E0B; }
+    .pending-report-badge.live { background: rgba(239,68,68,0.15); color: #EF4444; border: 1px solid #EF4444; }
 
     /* ------------------------------------------------------------------
        UI/UX REDESIGN · 분석과 권한 로직은 그대로 두고 표현만 개선
@@ -497,6 +512,32 @@ st.markdown("""
         border-color: var(--dj-line) !important;
         border-radius: 18px !important;
         box-shadow: 0 14px 32px rgba(0, 0, 0, .18);
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+    }
+    .report-card *, .pending-report-card * { box-sizing: border-box; min-width: 0; }
+    .report-team, .report-pick-box, .real-ai-note, .real-ai-note-fail,
+    .pending-report-match, .pending-report-teams { overflow-wrap: anywhere; word-break: keep-all; white-space: normal; }
+
+    .join-strip {
+        margin: 0 0 16px;
+        padding: 15px 17px;
+        border: 1px solid rgba(25, 230, 242, .24);
+        border-radius: 14px;
+        background: linear-gradient(120deg, rgba(25, 230, 242, .07), rgba(79, 140, 255, .045));
+    }
+    .join-strip strong { display: block; color: #F8FAFC; font-size: 15px; margin-bottom: 4px; }
+    .join-strip span { color: #9AA9BD; font-size: 12px; line-height: 1.6; }
+    .notice-strip {
+        margin: 0 0 14px;
+        padding: 11px 14px;
+        border-left: 3px solid var(--dj-gold);
+        border-radius: 10px;
+        background: rgba(248, 198, 92, .07);
+        color: #E8D8B1;
+        font-size: 12px;
+        overflow-wrap: anywhere;
     }
 
     .stButton > button {
@@ -515,7 +556,9 @@ st.markdown("""
     }
 
     @media (max-width: 768px) {
+        html, body, .stApp, [data-testid="stAppViewContainer"], .main { max-width: 100vw !important; overflow-x: hidden !important; }
         .block-container { padding: .65rem .72rem 3rem !important; }
+        .block-container, [data-testid="stVerticalBlock"], [data-testid="stMarkdownContainer"] { min-width: 0 !important; max-width: 100% !important; }
         .brand-shell { padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
         .brand-row { align-items: flex-start; gap: 12px; }
         .brand-mark { width: 48px; height: 48px; flex-basis: 48px; }
@@ -543,9 +586,18 @@ st.markdown("""
         .pred-grid { grid-template-columns: 1fr !important; }
         .pred-box { min-height: 104px; }
         .section-intro { align-items: flex-start; flex-direction: column; gap: 5px; }
-        .report-card > div:first-child { flex-direction: column; text-align: center; gap: 15px; }
-        .report-card > div:first-child > div { text-align: center !important; }
-        .report-card > div:nth-child(2) { flex-direction: column; }
+        .report-card { padding: 15px 13px !important; }
+        .report-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+        .report-match, .report-result { width: 100%; text-align: left !important; }
+        .report-picks { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+        .report-team { font-size: 14px; line-height: 1.45; }
+        .report-score { font-size: 22px !important; }
+        .real-ai-note, .real-ai-note-fail { padding: 12px; font-size: 12px; line-height: 1.65; }
+        .pending-report-card { grid-template-columns: minmax(0, 1fr); padding: 14px; gap: 11px; }
+        .pending-report-status { justify-content: flex-start; flex-wrap: wrap; gap: 9px; }
+        .pending-report-teams { font-size: 14px; line-height: 1.45; }
+        .pending-report-score { font-size: 21px; }
+        .join-strip { padding: 13px 14px; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -570,51 +622,173 @@ if st_autorefresh is not None:
 st.sidebar.title("D.J 회원 라운지")
 st.sidebar.caption("로그인하면 내 등급과 이용 가능한 분석을 확인할 수 있습니다.")
 
+
+def begin_user_session(user):
+    st.session_state['logged_in'] = True
+    st.session_state['user_id'] = user['id']
+    st.session_state['username'] = user['username']
+    st.session_state['role'] = user['role']
+
+
+def submit_registration(username, display_name, password, password_check,
+                        adult_confirm, service_agree, privacy_agree):
+    if not username.strip() or not password:
+        return False, "아이디와 비밀번호를 입력해주세요."
+    if password != password_check:
+        return False, "비밀번호 확인이 일치하지 않습니다."
+    if not adult_confirm:
+        return False, "만 19세 이상 확인이 필요합니다."
+    if not service_agree:
+        return False, "서비스 이용 안내에 동의해주세요."
+    if not privacy_agree:
+        return False, "개인정보 수집·이용에 동의해주세요."
+    return register_user(username, password, display_name)
+
+
+def render_signup_guide():
+    st.markdown("**서비스 이용 안내 (필수)**")
+    st.caption(
+        "경기 통계와 추천 확률은 참고 정보이며 적중·수익을 보장하지 않습니다. "
+        "구매 대행·베팅 중개·불법 사이트 알선은 제공하지 않으며, 이용 판단과 책임은 본인에게 있습니다."
+    )
+    st.markdown("**개인정보 수집·이용 안내 (필수)**")
+    st.caption(
+        "수집 항목: 아이디, 표시 이름(선택), 암호화된 비밀번호 · "
+        "이용 목적: 가입, 로그인, 회원 등급 및 부정 이용 관리 · "
+        "보유 기간: 회원 탈퇴 또는 이용 목적 달성 시까지(관계 법령상 보존이 필요한 경우 제외). "
+        "동의를 거부할 수 있으나 가입은 제한됩니다."
+    )
+    st.caption("도박 문제 상담: 국번 없이 1336")
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("D.J SPORTS 로그인")
+    def open_login_dialog():
+        st.caption("가입한 아이디로 접속하면 회원 등급에 맞는 분석이 열립니다.")
+        with st.form("dialog-login-form"):
+            dialog_user = st.text_input("아이디", key="dialog-login-user")
+            dialog_password = st.text_input(
+                "비밀번호", type="password", key="dialog-login-password"
+            )
+            dialog_login = st.form_submit_button("로그인", use_container_width=True)
+        if dialog_login:
+            user = authenticate_user(dialog_user, dialog_password)
+            if user:
+                begin_user_session(user)
+                st.session_state['auth_flash'] = f"환영합니다, {user['display_name']}님!"
+                st.rerun()
+            else:
+                st.error("아이디 또는 비밀번호가 틀렸습니다.")
+
+
+    @st.dialog("무료 회원가입")
+    def open_signup_dialog():
+        st.caption("회원가입은 무료이며 기본 등급은 일반회원입니다.")
+        with st.form("dialog-signup-form"):
+            dialog_new_user = st.text_input("사용할 아이디", key="dialog-signup-user")
+            dialog_display_name = st.text_input(
+                "표시 이름 (선택)", key="dialog-signup-display"
+            )
+            dialog_new_password = st.text_input(
+                "비밀번호 (8자 이상)", type="password", key="dialog-signup-password"
+            )
+            dialog_password_check = st.text_input(
+                "비밀번호 확인", type="password", key="dialog-signup-password-check"
+            )
+            st.markdown("---")
+            render_signup_guide()
+            dialog_adult = st.checkbox(
+                "만 19세 이상입니다.", key="dialog-signup-adult"
+            )
+            dialog_service = st.checkbox(
+                "서비스 이용 안내에 동의합니다.", key="dialog-signup-service"
+            )
+            dialog_privacy = st.checkbox(
+                "개인정보 수집·이용에 동의합니다.", key="dialog-signup-privacy"
+            )
+            dialog_submit = st.form_submit_button("가입하기", use_container_width=True)
+        if dialog_submit:
+            ok, message = submit_registration(
+                dialog_new_user, dialog_display_name, dialog_new_password,
+                dialog_password_check, dialog_adult, dialog_service, dialog_privacy
+            )
+            if ok:
+                st.session_state['auth_flash'] = f"{message} 이제 로그인해주세요."
+                st.session_state['next_auth_menu'] = "로그인"
+                st.rerun()
+            else:
+                st.error(message)
+
+
+if st.session_state.get('next_auth_menu'):
+    st.session_state['auth_menu'] = st.session_state.pop('next_auth_menu')
+
+auth_flash = st.session_state.pop('auth_flash', None)
+if auth_flash:
+    st.sidebar.success(auth_flash)
+    try:
+        st.toast(auth_flash, icon="✅")
+    except Exception:
+        pass
+
 if not st.session_state['logged_in']:
     menu = ["로그인", "회원가입"]
-    choice = st.sidebar.selectbox("메뉴 선택", menu)
+    choice = st.sidebar.selectbox("메뉴 선택", menu, key="auth_menu")
 
     if choice == "로그인":
         st.sidebar.subheader("접속하기")
-        username = st.sidebar.text_input("아이디")
-        password = st.sidebar.text_input("비밀번호", type='password')
-        if st.sidebar.button("로그인", use_container_width=False):
+        with st.sidebar.form("sidebar-login-form"):
+            username = st.text_input("아이디", key="sidebar-login-user")
+            password = st.text_input(
+                "비밀번호", type='password', key="sidebar-login-password"
+            )
+            login_submitted = st.form_submit_button("로그인", use_container_width=True)
+        if login_submitted:
             user = authenticate_user(username, password)
             if user:
-                st.session_state['logged_in'] = True
-                st.session_state['user_id'] = user['id']
-                st.session_state['username'] = user['username']
-                st.session_state['role'] = user['role']
-                st.sidebar.success(f"환영합니다, {user['display_name']}님!")
+                begin_user_session(user)
+                st.session_state['auth_flash'] = f"환영합니다, {user['display_name']}님!"
                 st.rerun()
             else:
                 st.sidebar.warning("아이디 또는 비밀번호가 틀렸습니다.")
 
     elif choice == "회원가입":
         st.sidebar.subheader("새 계정 만들기")
-        new_user = st.sidebar.text_input("사용할 아이디")
-        new_display_name = st.sidebar.text_input("표시 이름 (선택)")
-        new_password = st.sidebar.text_input("비밀번호", type='password')
-        new_password_check = st.sidebar.text_input("비밀번호 확인", type='password')
-        
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("**[필수] 이용 안내**")
-        st.sidebar.caption("분석 확률과 추천은 참고 자료이며 경기 적중이나 수익을 보장하지 않습니다. 가입 정보는 로그인과 회원 등급 관리에만 사용합니다.")
-        agree = st.sidebar.checkbox("이용 안내와 개인정보 처리에 동의합니다.")
-        
-        if st.sidebar.button("가입하기", use_container_width=False):
-            if not agree:
-                st.sidebar.error("이용 안내에 동의해주세요.")
-            elif new_user == "" or new_password == "":
-                st.sidebar.error("아이디와 비밀번호를 입력해주세요.")
-            elif new_password != new_password_check:
-                st.sidebar.error("비밀번호 확인이 일치하지 않습니다.")
+        with st.sidebar.form("sidebar-signup-form"):
+            new_user = st.text_input("사용할 아이디", key="sidebar-signup-user")
+            new_display_name = st.text_input(
+                "표시 이름 (선택)", key="sidebar-signup-display"
+            )
+            new_password = st.text_input(
+                "비밀번호 (8자 이상)", type='password', key="sidebar-signup-password"
+            )
+            new_password_check = st.text_input(
+                "비밀번호 확인", type='password', key="sidebar-signup-password-check"
+            )
+            st.markdown("---")
+            render_signup_guide()
+            adult_confirm = st.checkbox(
+                "만 19세 이상입니다.", key="sidebar-signup-adult"
+            )
+            service_agree = st.checkbox(
+                "서비스 이용 안내에 동의합니다.", key="sidebar-signup-service"
+            )
+            privacy_agree = st.checkbox(
+                "개인정보 수집·이용에 동의합니다.", key="sidebar-signup-privacy"
+            )
+            signup_submitted = st.form_submit_button("가입하기", use_container_width=True)
+
+        if signup_submitted:
+            ok, message = submit_registration(
+                new_user, new_display_name, new_password, new_password_check,
+                adult_confirm, service_agree, privacy_agree
+            )
+            if ok:
+                st.session_state['auth_flash'] = f"{message} 로그인 메뉴에서 접속해주세요."
+                st.session_state['next_auth_menu'] = "로그인"
+                st.rerun()
             else:
-                ok, message = register_user(new_user, new_password, new_display_name)
-                if ok:
-                    st.sidebar.success(f"{message} 로그인 메뉴에서 접속해주세요.")
-                else:
-                    st.sidebar.error(message)
+                st.sidebar.error(message)
 
 else:
     current_role = st.session_state.get('role', ROLE_MEMBER)
@@ -742,6 +916,92 @@ st.markdown(f"""
     <div class='status-cell'><small>이용 상태</small><strong>{member_label}</strong></div>
 </div>
 """, unsafe_allow_html=True)
+
+# 사이드바가 접힌 모바일 방문자도 첫 화면에서 바로 가입·로그인할 수 있다.
+if not st.session_state.get('logged_in'):
+    st.markdown(
+        """
+        <div class='join-strip'>
+            <strong>무료 추천 3픽을 먼저 확인해보세요</strong>
+            <span>무료 회원가입 후 채점 기록을 함께 볼 수 있고, 후원회원 전환 시 전체 분석이 열립니다.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    signup_cta, login_cta = st.columns(2)
+    if hasattr(st, "popover"):
+        with signup_cta.popover("무료 회원가입", use_container_width=True):
+            st.caption("간단한 계정을 만들면 채점 기록과 회원 기능을 이어서 이용할 수 있습니다.")
+            with st.form("main-signup-form"):
+                main_new_user = st.text_input("사용할 아이디", key="main-signup-user")
+                main_display_name = st.text_input(
+                    "표시 이름 (선택)", key="main-signup-display"
+                )
+                main_new_password = st.text_input(
+                    "비밀번호 (8자 이상)", type="password", key="main-signup-password"
+                )
+                main_password_check = st.text_input(
+                    "비밀번호 확인", type="password", key="main-signup-password-check"
+                )
+                render_signup_guide()
+                main_adult = st.checkbox("만 19세 이상입니다.", key="main-signup-adult")
+                main_service = st.checkbox(
+                    "서비스 이용 안내에 동의합니다.", key="main-signup-service"
+                )
+                main_privacy = st.checkbox(
+                    "개인정보 수집·이용에 동의합니다.", key="main-signup-privacy"
+                )
+                main_submit = st.form_submit_button("가입하기", use_container_width=True)
+            if main_submit:
+                ok, message = submit_registration(
+                    main_new_user, main_display_name, main_new_password,
+                    main_password_check, main_adult, main_service, main_privacy
+                )
+                if ok:
+                    st.session_state['auth_flash'] = message
+                    st.session_state['next_auth_menu'] = "로그인"
+                    st.rerun()
+                else:
+                    st.error(message)
+
+        with login_cta.popover("로그인", use_container_width=True):
+            with st.form("main-login-form"):
+                main_login_user = st.text_input("아이디", key="main-login-user")
+                main_login_password = st.text_input(
+                    "비밀번호", type="password", key="main-login-password"
+                )
+                main_login_submit = st.form_submit_button("로그인", use_container_width=True)
+            if main_login_submit:
+                user = authenticate_user(main_login_user, main_login_password)
+                if user:
+                    begin_user_session(user)
+                    st.rerun()
+                else:
+                    st.error("아이디 또는 비밀번호를 확인해주세요.")
+    else:
+        if signup_cta.button("무료 회원가입", key="main-signup-cta", use_container_width=True):
+            st.session_state['next_auth_menu'] = "회원가입"
+            st.info("왼쪽 위의 메뉴(>>)를 열어 회원가입을 진행해주세요.")
+        if login_cta.button("로그인", key="main-login-cta", use_container_width=True):
+            st.session_state['next_auth_menu'] = "로그인"
+            st.info("왼쪽 위의 메뉴(>>)를 열어 로그인해주세요.")
+
+# 관리자가 인증 게시판에 작성한 최신 공지는 첫 화면에도 자동 노출한다.
+try:
+    latest_notice = next(
+        (post for post in list_posts(limit=30) if post.get("category") == "notice"),
+        None,
+    )
+except Exception:
+    latest_notice = None
+
+if latest_notice:
+    notice_title = escape(str(latest_notice.get("title", "서비스 공지")))
+    notice_preview = escape(str(latest_notice.get("body", ""))[:180])
+    st.markdown(
+        f"<div class='notice-strip'><strong>📢 {notice_title}</strong><br>{notice_preview}</div>",
+        unsafe_allow_html=True,
+    )
 
 # 방문자가 가장 먼저 무료 추천을 보도록 탭의 표시 순서만 변경한다.
 main_tab3, main_tab1, main_tab2, main_tab4, main_tab5 = st.tabs([
@@ -1123,14 +1383,15 @@ with main_tab4:
             st.info("아직 채점이 완료된 종료 경기가 없습니다. 로봇이 V3 모드로 열심히 경기 결과를 감시 중입니다!")
         
         for row in history_data:
-            h_team = row.get('home_team', '')
-            a_team = row.get('away_team', '')
-            m_time = row.get('match_time', '')
-            score = row.get('actual_score', '-:-')
-            note = row.get('ai_note', '')
+            h_team = escape(str(row.get('home_team', '')))
+            a_team = escape(str(row.get('away_team', '')))
+            m_time = escape(str(row.get('match_time', '')))
+            score = escape(str(row.get('actual_score', '-:-')))
+            note = escape(str(row.get('ai_note', '')))
+            league_name = escape(str(row.get('league', '')))
             
-            prob_pick = row.get('prob_pick', '')
-            ev_pick = row.get('ev_pick', '')
+            prob_pick = escape(str(row.get('prob_pick', '')))
+            ev_pick = escape(str(row.get('ev_pick', '')))
             prob_ok = row.get('is_correct_prob', 0) == 1
             ev_ok = row.get('is_correct_ev', 0) == 1
             
@@ -1144,31 +1405,31 @@ with main_tab4:
             prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
             ev_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if ev_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
 
-            html = f"""
-            <div class='report-card'>
-                <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #1E293B; padding-bottom:15px;'>
-                    <div>
-                        <span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {row.get('league','')}</span>
-                        <span class='report-team'>{h_team} <span style='color:#475569;'>VS</span> {a_team}</span>
-                    </div>
-                    <div style='text-align:right;'>
-                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>최종 결과</span>
-                        {score_html}
-                    </div>
-                </div>
-                <div style='display:flex; gap:15px; margin-bottom:10px;'>
-                    <div style='flex:1; background:#06080F; padding:10px; border-radius:6px; border:1px solid #1E293B;'>
-                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 확률픽 예측</span>
-                        <div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>
-                    </div>
-                    <div style='flex:1; background:#06080F; padding:10px; border-radius:6px; border:1px solid #1E293B;'>
-                        <span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 꿀픽 예측</span>
-                        <div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>
-                    </div>
-                </div>
-                <div class='{note_style}'>{note}</div>
-            </div>
-            """
+            html = (
+                f"<div class='report-card'>"
+                f"<div class='report-head'>"
+                f"<div class='report-match'>"
+                f"<span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {league_name}</span>"
+                f"<span class='report-team'>{h_team} <span style='color:#475569;'>VS</span> {a_team}</span>"
+                f"</div>"
+                f"<div class='report-result'>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>최종 결과</span>"
+                f"{score_html}"
+                f"</div>"
+                f"</div>"
+                f"<div class='report-picks'>"
+                f"<div class='report-pick-box'>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 확률픽 예측</span>"
+                f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>"
+                f"</div>"
+                f"<div class='report-pick-box'>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 꿀픽 예측</span>"
+                f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>"
+                f"</div>"
+                f"</div>"
+                f"<div class='{note_style}'>{note}</div>"
+                f"</div>"
+            )
             st.markdown(html, unsafe_allow_html=True)
             
         pending_data = stats['pending']
@@ -1202,22 +1463,40 @@ with main_tab4:
                 now = datetime.now(timezone(timedelta(hours=9)))
                 
                 if now < m_dt:
-                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(56,189,248,0.15); color:#38BDF8; border:1px solid #38BDF8; padding:4px 10px; border-radius:6px;'>진행 예정</span>"
+                    badge_html = "<span class='pending-report-badge upcoming'>진행 예정</span>"
                 elif now < m_dt + timedelta(hours=2.5):
-                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid #10B981; padding:4px 10px; border-radius:6px;'>경기 진행중</span>"
+                    badge_html = "<span class='pending-report-badge playing'>경기 진행중</span>"
                 else:
-                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(245,158,11,0.15); color:#F59E0B; border:1px solid #F59E0B; padding:4px 10px; border-radius:6px;'>채점 로봇 분석중</span>"
+                    badge_html = "<span class='pending-report-badge grading'>채점 로봇 분석중</span>"
 
                 event_html = ""
                 if m_id_str in live_scores_data:
                     live_info = live_scores_data[m_id_str]
                     if live_info.get("score"):
-                        temp_score = live_info["score"].replace(" : ", ":")
+                        temp_score = str(live_info["score"]).replace(" : ", ":")
                     if live_info.get("event"):
-                        event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px;'>{live_info['event']}</div>"
-                    badge_html = "<span style='font-size:12px; font-weight:900; background:rgba(239,68,68,0.15); color:#EF4444; border:1px solid #EF4444; padding:4px 10px; border-radius:6px;'>🔴 LIVE</span>"
-                
-                html_str = f"<div style='background:#0B0F19; border:1px solid #1E293B; border-radius:10px; padding:16px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;'><div><div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{m_time_str}</div><div style='color:#F8FAFC; font-size:16px; font-weight:900;'>{row.get('home_team')} <span style='color:#64748B;'>VS</span> {row.get('away_team')}</div>{event_html}</div><div style='display:flex; align-items:center; gap:15px;'><span style='color:#00F2FE; font-size:24px; font-weight:900; letter-spacing:1px;'>{temp_score}</span>{badge_html}</div></div>"
+                        safe_event = escape(str(live_info['event']))
+                        event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px; overflow-wrap:anywhere;'>{safe_event}</div>"
+                    badge_html = "<span class='pending-report-badge live'>🔴 LIVE</span>"
+
+                safe_time = escape(str(m_time_str))
+                safe_home = escape(str(row.get('home_team', '')))
+                safe_away = escape(str(row.get('away_team', '')))
+                safe_score = escape(str(temp_score))
+                 
+                html_str = (
+                    f"<div class='pending-report-card'>"
+                    f"<div class='pending-report-match'>"
+                    f"<div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{safe_time}</div>"
+                    f"<div class='pending-report-teams'>{safe_home} <span style='color:#64748B;'>VS</span> {safe_away}</div>"
+                    f"{event_html}"
+                    f"</div>"
+                    f"<div class='pending-report-status'>"
+                    f"<span class='pending-report-score'>{safe_score}</span>"
+                    f"{badge_html}"
+                    f"</div>"
+                    f"</div>"
+                )
                 st.markdown(html_str, unsafe_allow_html=True)
                 
             if displayed_pending == 0:
