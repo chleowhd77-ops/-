@@ -302,11 +302,15 @@ def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
     try:
         now = datetime.now(timezone(timedelta(hours=9)))
-        year = now.year
         match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
         if match:
             mo, d, h, m = map(int, match.groups())
-            m_dt = datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+            # 연말/연초에도 가장 가까운 실제 날짜를 선택한다.
+            candidates = [
+                datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+                for year in (now.year - 1, now.year, now.year + 1)
+            ]
+            m_dt = min(candidates, key=lambda value: abs((value - now).total_seconds()))
             d_dt = m_dt - timedelta(minutes=10)
             dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
             if dead_match:
@@ -325,12 +329,8 @@ def get_match_status(match_time_str, deadline_str):
 def check_is_live(item):
     m = item.get('match', {})
     match_id_str = str(m.get('id', ''))
-    if match_id_str in live_scores_data: return True
-    if m.get('match_time') == '마감/진행중': return True
-    raw_deadline = m.get("deadline_time", "23:00")
-    match_status, _ = get_match_status(item.get("final_match_time", ""), raw_deadline)
-    if match_status == "LIVE": return True
-    return False
+    live_info = live_scores_data.get(match_id_str, {})
+    return live_info.get("is_live") is True
 
 def render_logo_html(logo_url):
     if logo_url: return f"<img src='{logo_url}' class='team-logo'>"
@@ -506,9 +506,10 @@ with main_tab2:
             logo_a_tag = render_logo_html(item.get("away_logo"))
             
             match_id_str = f"TOTO14_{m['id']}"
-            live_score_html = "<b style='color:#475569; font-size:16px;'>VS</b>"
-            if match_id_str in live_scores_data:
-                live_info = live_scores_data[match_id_str]
+            toto_match_time = m.get("match_time", "시간 미정")
+            live_score_html = f"<span class='match-time-text'>{toto_match_time}</span><b style='color:#475569; font-size:16px;'>VS</b>"
+            live_info = live_scores_data.get(match_id_str, {})
+            if live_info.get("is_live") is True:
                 score_text = live_info.get("score", "0:0")
                 if not score_text or score_text == "-": score_text = "0:0"
                 if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"

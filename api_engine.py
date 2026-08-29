@@ -1,0 +1,989 @@
+import os
+import json
+import sqlite3
+import re
+import math
+import requests
+import difflib
+from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY = os.getenv("API_KEY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+
+if not API_KEY or not GITHUB_TOKEN:
+    print("🚨 [보안 경고] .env 파일에서 키를 찾을 수 없습니다! 서버 세팅을 확인하세요.")
+
+GITHUB_REPO = "chleowhd77-ops/-"
+API_HOST = "v3.football.api-sports.io"
+headers = {'x-apisports-key': API_KEY}
+DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
+STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
+
+TEAM_NAME_MAP = {
+    "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "포항 스틸러스": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", 
+    "FC안양": "FC Anyang", "FC 안양": "FC Anyang", "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen", 
+    "충북청주": "Chungbuk Cheongju", "충북청주 프로축구단": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons", "전남 드래곤즈": "Jeonnam Dragons",
+    "김해FC": "Gimhae", "김해FC 2008": "Gimhae", "경남FC": "Gyeongnam FC", "수원삼성": "Suwon Samsung", "수원 삼성블루윙즈": "Suwon Samsung", "수원FC": "Suwon FC",
+    "부산아이": "Busan I Park", "부산 아이파크": "Busan I Park", "화성FC": "Hwaseong", "인천유나": "Incheon United", "인천 유나이티드": "Incheon United",
+    "김천상무": "Gimcheon Sangmu", "김천상무 프로축구단": "Gimcheon Sangmu", "부천FC": "Bucheon FC 1995", "부천FC 1995": "Bucheon FC 1995", 
+    "전북현대": "Jeonbuk Motors", "전북 현대모터스": "Jeonbuk Motors", "울산HDFC": "Ulsan Hyundai", "울산 HDFC": "Ulsan Hyundai", "강원FC": "Gangwon FC",
+    "서울이랜드": "Seoul E-Land", "서울 이랜드": "Seoul E-Land", "안산그리": "Ansan Greeners", "안산 그리너스": "Ansan Greeners", "대구FC": "Daegu FC", 
+    "충남아산": "Chungnam Asan", "충남아산 프로축구단": "Chungnam Asan", "김포FC": "Gimpo FC", "천안시티": "Cheonan City", "천안 시티FC": "Cheonan City", 
+    "파주프런": "Paju Citizen", "파주 프런티어": "Paju Citizen", "성남FC": "Seongnam FC", "용인FC": "Yongin",
+    "맨체스C": "Manchester City", "맨체스터 시티": "Manchester City", "리버풀": "Liverpool", "뉴캐슬U": "Newcastle", "뉴캐슬 유나이티드": "Newcastle",
+    "본머스": "Bournemouth", "AFC본머스": "Bournemouth", "브라이턴": "Brighton", "브라이턴&호브 앨비언": "Brighton", "A빌라": "Aston Villa", "애스턴 빌라": "Aston Villa",
+    "노팅엄F": "Nottingham Forest", "노팅엄 포리스트": "Nottingham Forest", "리즈U": "Leeds", "리즈 유나이티드": "Leeds", "에버턴": "Everton",
+    "크리스털": "Crystal Palace", "크리스털 팰리스": "Crystal Palace", "입스위치": "Ipswich", "입스위치 타운": "Ipswich", "선덜랜드": "Sunderland",
+    "브렌트퍼": "Brentford", "브렌트퍼드": "Brentford", "토트넘": "Tottenham", "토트넘 홋스퍼": "Tottenham", "아스널": "Arsenal",
+    "맨유": "Manchester United", "맨체스터 유나이티드": "Manchester United", "웨스트햄 유나이티드": "West Ham", "웨스트브로미치 앨비언": "West Brom", "번리": "Burnley",
+    "코번트리 시티": "Coventry", "버밍엄 시티": "Birmingham", "브리스틀 시티": "Bristol City", "링컨 시티": "Lincoln", "포츠머스": "Portsmouth",
+    "밀월": "Millwall", "노리치 시티": "Norwich City", "헐 시티": "Hull City", "블랙번 로버스": "Blackburn", "미들즈브러": "Middlesbrough",
+    "더비 카운티": "Derby", "카디프 시티": "Cardiff City", "프레스턴 노스엔드": "Preston", "울버햄튼 원더러스": "Wolves", "울버햄튼": "Wolves",
+    "퀸즈파크 레인저스": "QPR", "볼턴 원더러스": "Bolton", "사우샘프턴": "Southampton", "스토크 시티": "Stoke City", "스완지 시티": "Swansea",
+    "셰필드 유나이티드": "Sheffield Utd", "찰턴 애슬레틱": "Charlton", "렉섬": "Wrexham", "왓포드": "Watford", "풀럼": "Fulham", "첼시": "Chelsea",
+    "프로시노": "Frosinone", "프로시노네": "Frosinone", "유벤투스": "Juventus", "베네치아": "Venezia", "US레체": "Lecce",
+    "아탈란타": "Atalanta", "아탈란타BC": "Atalanta", "사수올로": "Sassuolo", "US사수올로": "Sassuolo", "토리노": "Torino", "AC밀란": "AC Milan",
+    "제노아": "Genoa", "나폴리": "Napoli", "SSC나폴리": "Napoli", "파르마": "Parma", "칼리아리": "Cagliari", "인테르나치오날레 밀라노": "Inter",
+    "인테르": "Inter", "AC몬차": "Monza", "우디네세": "Udinese", "코모1907": "Como", "볼로냐": "Bologna", "SS라치오": "Lazio", "AS로마": "Roma", "ACF피오렌티나": "Fiorentina",
+    "레알 마드리드": "Real Madrid", "바르셀로나": "Barcelona", "아틀레티코 마드리드": "Atletico Madrid", "비야레알": "Villarreal",
+    "레알 베티스": "Real Betis", "레알 소시에다드": "Real Sociedad", "발렌시아": "Valencia", "RC셀타데비고": "Celta Vigo", 
+    "RCD에스파뇰": "Espanyol", "헤타페": "Getafe", "라싱 산탄데르": "Racing Santander", "엘체": "Elche", "오사수나": "Osasuna", "레반테": "Levante", "말라가": "Malaga", "데포르티보 아코루냐": "Deportivo La Coruna",
+    "파리 생제르맹": "Paris Saint Germain", "AS모나코": "Monaco", "올랭피크드 마르세유": "Marseille", "올랭피크 리옹": "Lyon",
+    "RC스트라스부르": "Strasbourg", "RC랑스": "Lens", "AJ오세르": "Auxerre", "르망FC": "Le Mans", "스타드 브레스투아29": "Brest",
+    "OGC니스": "Nice", "로리앙": "Lorient", "툴루즈": "Toulouse", "트루아AC": "Troyes", "파리FC": "Paris FC", "스타드 렌": "Rennes",
+    "르아브르AC": "Le Havre", "앙제SCO": "Angers", "릴OSC": "Lille",
+    "도르트문트": "Borussia Dortmund", "바이에른 뮌헨": "Bayern Munich",
+    "포르튀나 시타르트": "Fortuna Sittard", "AZ알크마르": "AZ Alkmaar", "스파르타 로테르담": "Sparta Rotterdam", "위트레흐트": "Utrecht",
+    "SC헤이렌베인": "Heerenveen", "PEC즈볼러": "PEC Zwolle", "고어헤드 이글스": "Go Ahead Eagles", "ADO덴하흐": "ADO Den Haag",
+    "PSV에인트호번": "PSV Eindhoven", "흐로닝언": "Groningen", "SC캄뷔르": "Cambuur", "페예노르트": "Feyenoord",
+    "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
+    "가시마 앤틀러스": "Kashima Antlers", "아비스파 후쿠오카": "Avispa Fukuoka", "파지아노 오카야마": "Fagiano Okayama", "도쿄 베르디": "Tokyo Verdy",
+    "나고야 그램퍼스": "Nagoya Grampus", "감바 오사카": "Gamba Osaka", "교토 상가FC": "Kyoto Sanga", "미토 홀리호크": "Mito Hollyhock",
+    "세레소 오사카": "Cerezo Osaka", "시미즈 에스펄스": "Shimizu S-Pulse", "산프레체 히로시마": "Sanfrecce Hiroshima", "가와사키 프론탈레": "Kawasaki Frontale",
+    "요코하마 F마리노스": "Yokohama F. Marinos", "비셀 고베": "Vissel Kobe", "FC마치다 젤비아": "Machida Zelvia", "우라와 레드": "Urawa Red Diamonds",
+    "콘사도레 삿포로": "Consadole Sapporo", "RB오미야 아르디자": "Omiya Ardija", "오미야 아르디자": "Omiya Ardija",
+    "반라우레 하치노헤FC": "Vanraure Hachinohe", "반라우레 하치노헤": "Vanraure Hachinohe", "베갈타 센다이": "Vegalta Sendai", 
+    "블라우블리츠 아키타": "Blaublitz Akita", "반포레 고후": "Ventforet", "카탈레 도야마": "Kataller", 
+    "FC이마바리": "Imabari", "이마바리": "Imabari", "몬테디오 야마가타": "Montedio Yamagata", "요코하마FC": "Yokohama FC", 
+    "알비렉스 니가타": "Albirex Niigata", "후지에다 MYFC": "Fujieda", "주빌로 이와타": "Jubilo Iwata", 
+    "도쿠시마 보르티스": "Tokushima Vortis", "사간 도스": "Sagan Tosu", "도치기 시티FC": "Tochigi", "도치기": "Tochigi",
+    "오이타 트리니타": "Oita Trinita", "이와키FC": "Iwaki", "이와키": "Iwaki", "테게바자로 미야자키": "Tegevajaro", 
+    "쇼난 벨마레": "Shonan Bellmare",
+    "태국": "Thailand", "베트남": "Vietnam",
+    "샬럿FC": "Charlotte", "DC유나이티드": "DC United", "FC신시내티": "FC Cincinnati", "시애틀 사운더스FC": "Seattle Sounders",
+    "인터 마이애미CF": "Inter Miami", "토론토FC": "Toronto FC", "CF몽레알": "Montreal Impact", "LA 갤럭시": "LA Galaxy",
+    "뉴욕 레드불스": "New York Red Bulls", "시카고 파이어FC": "Chicago Fire", "올랜도 시티SC": "Orlando City", "레알 솔트레이크": "Real Salt Lake",
+    "오스틴FC": "Austin", "필라델피아 유니언": "Philadelphia Union", "내슈빌SC": "Nashville SC", "콜럼버스 크루": "Columbus Crew",
+    "세인트루이스 시티SC": "St. Louis City", "휴스턴 다이너모FC": "Houston Dynamo", "밴쿠버 화이트캡스FC": "Vancouver Whitecaps", "FC댈러스": "FC Dallas",
+    "LAFC": "Los Angeles FC", "포틀랜드 팀버스": "Portland Timbers", "샌디에이고FC": "San Diego", "콜로라도 래피즈": "Colorado Rapids",
+    "새너제이 어스퀘이크스": "San Jose Earthquakes", "미네소타 유나이티드FC": "Minnesota United", "뉴잉글랜드 레벌루션": "New England Revolution",
+    "뉴욕 시티FC": "New York City FC", "애틀랜타 유나이티드FC": "Atlanta United", "스포팅 캔자스시티": "Sporting Kansas City",
+    "AEK아테": "AEK Athens", "L소피아": "Lokomotiv Sofia", "비킹FK": "Viking FK", "D자그레": "Dinamo Zagreb",
+    "NK첼레": "NK Celje", "슬로반브": "Slovan Bratislava", "리옹": "Lyon", "페네르SK": "Fenerbahce",
+    "이베리아": "Iberia 1999", "야기엘로": "Jagiellonia Bialystok", "오모니아": "Omonia Nicosia", "신트트라": "Sint-Truiden",
+    "플젠": "Viktoria Plzen", "츠르베나": "Crvena Zvezda", "릴레스트": "Lillestrom", "에그나티": "Egnatia",
+    "잘츠부르": "Red Bull Salzburg", "미엘뷔": "Mjallby", "카우노잘": "Kauno Zalgiris", "베식타시": "Besiktas",
+    "FC툰": "FC Thun", "L포즈난": "Lech Poznan", "C소피아": "CSKA Sofia", "OFI크레": "OFI Crete",
+    "페렌츠바": "Ferencvaros", "트라브존": "Trabzonspor", "안더레흐": "Anderlecht", "카이라트": "Kairat Almaty",
+    "LASK": "LASK Linz", "셀틱": "Celtic"
+}
+
+MANUAL_TEAM_MAP = {
+    "아라라트 아르메니아": "Ararat-Armenia", "우니베르시타테아 크라이오바": "Universitatea Craiova",
+    "이베리아1999 트빌리시": "Iberia 1999", "야기엘로니아 비아위스토크": "Jagiellonia",
+    "카우노 잘기리스": "Kauno Zalgiris", "레흐 포즈난": "Lech Poznan",
+    "SK슬로반 브라티슬라바": "Slovan Bratislava", "레프스키 소피아": "Levski Sofia",
+    "GNK디나모 자그레브": "Dinamo Zagreb", "신트 트라위던VV": "Sint-Truiden",
+    "RSC안더레흐트": "Anderlecht", "비킹FK": "Viking", "OFI크레타": "OFI Crete",
+    "페렌츠바로시TC": "Ferencvarosi", "트라브존스포르": "Trabzonspor",
+    "카이라트 알마티": "Kairat", "미엘뷔AIF": "Mjallby", "KF에그나티아": "Egnatia",
+    "AC오모니아": "Omonia", "빅토리아 플젠": "Viktoria Plzen",
+    "FK츠르베나 즈베즈다": "Crvena Zvezda", "릴레스트룀SK": "Lillestrom",
+    "NK첼레": "Celje", "AEK아테네": "AEK Athens", "CSKA소피아": "CSKA Sofia",
+    "AGF오르후스": "Aarhus", "SL벤피카": "Benfica", "FC툰": "Thun",
+    "RC셀타데비고": "Celta Vigo", "오사수나": "Osasuna", "바르셀로나": "Barcelona",
+    "아틀레틱 빌바오": "Athletic Club", "레알 마드리드": "Real Madrid",
+    "아틀레티코 마드리드": "Atletico Madrid", "세비야FC": "Sevilla",
+    "발렌시아CF": "Valencia", "레알 소시에다드": "Real Sociedad",
+    "레알 베티스": "Real Betis", "비야레알CF": "Villarreal",
+    "클루브 아메리카": "Club America", "콜럼버스 크루": "Columbus Crew",
+    "인터 마이애미": "Inter Miami", "맨체스터 시티": "Manchester City",
+    "맨체스터 유나이티드": "Manchester United", "토트넘 홋스퍼": "Tottenham",
+    "노팅엄 포레스트": "Nottingham Forest", "울버햄튼": "Wolverhampton",
+    "인터 밀란": "Inter", "AC밀란": "AC Milan", "유벤투스": "Juventus",
+    "파리 생제르맹": "Paris Saint Germain", "울산 HD": "Ulsan Hyundai",
+    "전북 현대": "Jeonbuk Motors", "FC서울": "FC Seoul", "포항 스틸러스": "Pohang Steelers"
+}
+
+# 기획자님이 주셨던 100% 원본 딕셔너리에 + 캡처로 주신 팀만 안전하게 추가!
+DIRECT_TEAM_INFO = {
+    "제주 SKFC": {"id": 2977, "logo": "https://media.api-sports.io/football/teams/2977.png"},
+    "제주": {"id": 2977, "logo": "https://media.api-sports.io/football/teams/2977.png"},
+    "제주 유나이티드": {"id": 2977, "logo": "https://media.api-sports.io/football/teams/2977.png"},
+    "울산 HDFC": {"id": 2975, "logo": "https://media.api-sports.io/football/teams/2975.png"},
+    "울산HD": {"id": 2975, "logo": "https://media.api-sports.io/football/teams/2975.png"},
+    "김천상무": {"id": 2978, "logo": "https://media.api-sports.io/football/teams/2978.png"},
+    "김천상무 프로축구단": {"id": 2978, "logo": "https://media.api-sports.io/football/teams/2978.png"},
+    "강원FC": {"id": 2972, "logo": "https://media.api-sports.io/football/teams/2972.png"},
+    "포항스틸": {"id": 2974, "logo": "https://media.api-sports.io/football/teams/2974.png"},
+    "포항 스틸러스": {"id": 2974, "logo": "https://media.api-sports.io/football/teams/2974.png"},
+    "FC서울": {"id": 2766, "logo": "https://media.api-sports.io/football/teams/2766.png"},
+    "FC 서울": {"id": 2766, "logo": "https://media.api-sports.io/football/teams/2766.png"},
+    "서울FC": {"id": 2766, "logo": "https://media.api-sports.io/football/teams/2766.png"},
+    "수원FC": {"id": 2980, "logo": "https://media.api-sports.io/football/teams/2980.png"},
+    "광주FC": {"id": 2983, "logo": "https://media.api-sports.io/football/teams/2983.png"},
+    "인천유나": {"id": 2973, "logo": "https://media.api-sports.io/football/teams/2973.png"},
+    "인천 유나이티드": {"id": 2973, "logo": "https://media.api-sports.io/football/teams/2973.png"},
+    "전북현대": {"id": 2971, "logo": "https://media.api-sports.io/football/teams/2971.png"},
+    "전북 현대모터스": {"id": 2971, "logo": "https://media.api-sports.io/football/teams/2971.png"},
+    "대전하나": {"id": 2985, "logo": "https://media.api-sports.io/football/teams/2985.png"},
+    "대전 하나시티즌": {"id": 2985, "logo": "https://media.api-sports.io/football/teams/2985.png"},
+    "FC안양": {"id": 2986, "logo": "https://media.api-sports.io/football/teams/2986.png"},
+    "FC 안양": {"id": 2986, "logo": "https://media.api-sports.io/football/teams/2986.png"},
+    "전남드래": {"id": 2988, "logo": "https://media.api-sports.io/football/teams/2988.png"},
+    "전남 드래곤즈": {"id": 2988, "logo": "https://media.api-sports.io/football/teams/2988.png"},
+    "서울이랜드": {"id": 2987, "logo": "https://media.api-sports.io/football/teams/2987.png"},
+    "서울 이랜드": {"id": 2987, "logo": "https://media.api-sports.io/football/teams/2987.png"},
+    "수원삼성": {"id": 2976, "logo": "https://media.api-sports.io/football/teams/2976.png"},
+    "수원 삼성블루윙즈": {"id": 2976, "logo": "https://media.api-sports.io/football/teams/2976.png"},
+    "부산아이": {"id": 2990, "logo": "https://media.api-sports.io/football/teams/2990.png"},
+    "부산 아이파크": {"id": 2990, "logo": "https://media.api-sports.io/football/teams/2990.png"},
+    "부천FC": {"id": 2984, "logo": "https://media.api-sports.io/football/teams/2984.png"},
+    "부천FC 1995": {"id": 2984, "logo": "https://media.api-sports.io/football/teams/2984.png"},
+    "김포FC": {"id": 10453, "logo": "https://media.api-sports.io/football/teams/10453.png"},
+    "충남아산": {"id": 3155, "logo": "https://media.api-sports.io/football/teams/3155.png"},
+    "충남아산 프로축구단": {"id": 3155, "logo": "https://media.api-sports.io/football/teams/3155.png"},
+    "충북청주": {"id": 10452, "logo": "https://media.api-sports.io/football/teams/10452.png"},
+    "충북청주 프로축구단": {"id": 10452, "logo": "https://media.api-sports.io/football/teams/10452.png"},
+    "안산그리": {"id": 2989, "logo": "https://media.api-sports.io/football/teams/2989.png"},
+    "안산 그리너스": {"id": 2989, "logo": "https://media.api-sports.io/football/teams/2989.png"},
+    "경남FC": {"id": 2981, "logo": "https://media.api-sports.io/football/teams/2981.png"},
+    "천안시티": {"id": 3410, "logo": "https://media.api-sports.io/football/teams/3410.png"},
+    "천안 시티FC": {"id": 3410, "logo": "https://media.api-sports.io/football/teams/3410.png"},
+    "베트남": {"id": 24, "logo": "https://media.api-sports.io/football/teams/24.png"},
+    "태국": {"id": 25, "logo": "https://media.api-sports.io/football/teams/25.png"},
+    "프레스턴 라이온스": {"id": 15001, "logo": DEFAULT_LOGO},
+    "사우스 멜버른": {"id": 6542, "logo": "https://media.api-sports.io/football/teams/6542.png"},
+    "인디펜디엔테 델바예": {"id": 1133, "logo": "https://media.api-sports.io/football/teams/1133.png"},
+    "데포르테스 톨리마": {"id": 1184, "logo": "https://media.api-sports.io/football/teams/1184.png"},
+    "발렌시아": {"id": 532, "logo": "https://media.api-sports.io/football/teams/532.png"},
+    "레알 베티스": {"id": 543, "logo": "https://media.api-sports.io/football/teams/543.png"},
+    "버밍엄 시티": {"id": 33, "logo": "https://media.api-sports.io/football/teams/33.png"},
+    "브렌트퍼드": {"id": 55, "logo": "https://media.api-sports.io/football/teams/55.png"},
+    "노팅엄 포리스트": {"id": 65, "logo": "https://media.api-sports.io/football/teams/65.png"},
+    "리즈 유나이티드": {"id": 63, "logo": "https://media.api-sports.io/football/teams/63.png"},
+    "LASK": {"id": 649, "logo": "https://media.api-sports.io/football/teams/649.png"},
+    "셀틱": {"id": 247, "logo": "https://media.api-sports.io/football/teams/247.png"},
+    "FK보되 글림트": {"id": 353, "logo": "https://media.api-sports.io/football/teams/353.png"},
+    "NEC네이메헌": {"id": 417, "logo": "https://media.api-sports.io/football/teams/417.png"},
+    "블랙번 로버스": {"id": 43, "logo": "https://media.api-sports.io/football/teams/43.png"},
+    "셰필드 유나이티드": {"id": 62, "logo": "https://media.api-sports.io/football/teams/62.png"},
+    "사우샘프턴": {"id": 41, "logo": "https://media.api-sports.io/football/teams/41.png"},
+    "웨스트햄 유나이티드": {"id": 48, "logo": "https://media.api-sports.io/football/teams/48.png"},
+    "스토크 시티": {"id": 68, "logo": "https://media.api-sports.io/football/teams/68.png"},
+    "헐 시티": {"id": 66, "logo": "https://media.api-sports.io/football/teams/66.png"},
+    "CF몬테레이": {"id": 2284, "logo": "https://media.api-sports.io/football/teams/2284.png"},
+    "클루브 레온": {"id": 2288, "logo": "https://media.api-sports.io/football/teams/2288.png"},
+    "마카비 하이파": {"id": 4440, "logo": "https://media.api-sports.io/football/teams/4440.png"},
+    "시카고 파이어FC": {"id": 254, "logo": "https://media.api-sports.io/football/teams/254.png"},
+    "레알 솔트레이크": {"id": 257, "logo": "https://media.api-sports.io/football/teams/257.png"},
+    "사바FK": {"id": 20456, "logo": "https://media.api-sports.io/football/teams/20456.png"},
+    "하포엘 베르셰바": {"id": 4443, "logo": "https://media.api-sports.io/football/teams/4443.png"},
+    "야기엘로": {"id": 336, "logo": "https://media.api-sports.io/football/teams/336.png"},
+    "신트트라": {"id": 738, "logo": "https://media.api-sports.io/football/teams/738.png"},
+    "퀸즐랜드 라이온스": {"id": 6516, "logo": "https://media.api-sports.io/football/teams/6516.png"},
+    "아라라트 아르메니아": {"id": 5934, "logo": "https://tmssl.akamaized.net/images/wappen/head/53453.png"},
+    "신트 트라위던vv": {"id": 738, "logo": "https://media.api-sports.io/football/teams/738.png"},
+    "잘츠부르크": {"id": 571, "logo": "https://media.api-sports.io/football/teams/571.png"},
+    "OFI크레타": {"id": 249, "logo": "https://media.api-sports.io/football/teams/249.png"},
+    "데포르티보 톨루카": {"id": 2282, "logo": "https://media.api-sports.io/football/teams/2282.png"},
+    "신트 트라위던VV": {"id": 738, "logo": "https://media.api-sports.io/football/teams/738.png"},
+    "FC툰": {"id": 1012, "logo": "https://media.api-sports.io/football/teams/1012.png"},
+    "FC 툰": {"id": 1012, "logo": "https://media.api-sports.io/football/teams/1012.png"},
+    "미들즈브러": {"id": 61, "logo": "https://media.api-sports.io/football/teams/61.png"},
+    "웨스트브로미치 앨비언": {"id": 60, "logo": "https://media.api-sports.io/football/teams/60.png"},
+    "브리스틀 시티": {"id": 59, "logo": "https://media.api-sports.io/football/teams/59.png"},
+    "포츠머스": {"id": 67, "logo": "https://media.api-sports.io/football/teams/67.png"},
+    "카디프 시티": {"id": 64, "logo": "https://media.api-sports.io/football/teams/64.png"},
+    "우니온 베를린": {"id": 182, "logo": "https://media.api-sports.io/football/teams/182.png"},
+    "장크트 파울리": {"id": 186, "logo": "https://media.api-sports.io/football/teams/186.png"},
+    "쾰른": {"id": 192, "logo": "https://media.api-sports.io/football/teams/192.png"},
+    "TSG1899 호펜하임": {"id": 167, "logo": "https://media.api-sports.io/football/teams/167.png"},
+    "엘버스베르크": {"id": 3514, "logo": "https://media.api-sports.io/football/teams/3514.png"},
+    "바이어04 레버쿠젠": {"id": 168, "logo": "https://media.api-sports.io/football/teams/168.png"}
+}
+
+def init_cache_db():
+    try:
+        conn = sqlite3.connect("ai_predictions.db")
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS db_meta (version INTEGER)")
+        cursor.execute("SELECT version FROM db_meta")
+        row = cursor.fetchone()
+        if not row or row[0] < 3:
+            cursor.execute("DROP TABLE IF EXISTS predictions")
+            cursor.execute("DELETE FROM db_meta")
+            cursor.execute("INSERT INTO db_meta (version) VALUES (3)")
+            conn.commit()
+        cursor.execute("CREATE TABLE IF NOT EXISTS api_cache (cache_key TEXT PRIMARY KEY, cache_value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT UNIQUE, league TEXT, home_team TEXT, away_team TEXT,
+                prob_pick TEXT, prob_pick_prob REAL,
+                ev_pick TEXT, ev_pick_prob REAL,
+                odd_h REAL, odd_d REAL, odd_a REAL,
+                actual_score TEXT DEFAULT '-:-', actual_result TEXT DEFAULT 'PENDING', 
+                is_correct_prob INTEGER DEFAULT 0, is_correct_ev INTEGER DEFAULT 0,
+                ai_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+                is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT ''
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
+
+def get_db_cache(key, ttl_hours):
+    try:
+        conn = sqlite3.connect("ai_predictions.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            val, updated_at = row
+            updated_time = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - updated_time < timedelta(hours=ttl_hours):
+                return json.loads(val)
+    except Exception as e: 
+        print(f"⚠️ [관제 봇 떡밥] DB 캐시 읽기 실패 ({key}): {e}")
+    return None
+
+def set_db_cache(key, value):
+    try:
+        conn = sqlite3.connect("ai_predictions.db")
+        cursor = conn.cursor()
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("INSERT OR REPLACE INTO api_cache (cache_key, cache_value, updated_at) VALUES (?, ?, ?)", (key, json.dumps(value), now_str))
+        conn.commit()
+        conn.close()
+    except Exception as e: 
+        print(f"⚠️ [관제 봇 떡밥] DB 캐시 쓰기 실패 ({key}): {e}")
+
+# ==============================================================
+# 🔥 [V4 엔진 업그레이드] 탐지 함수 및 메커니즘 영역
+# ==============================================================
+
+SMART_MAPPING_FILE = "smart_mapping.json"
+
+def load_smart_mapping():
+    if os.path.exists(SMART_MAPPING_FILE):
+        try:
+            with open(SMART_MAPPING_FILE, "r", encoding="utf-8") as f: return json.load(f)
+        except: pass
+    return {}
+
+def save_smart_mapping(mapping):
+    try:
+        with open(SMART_MAPPING_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=4)
+    except: pass
+
+def fetch_team_info_api(team_name):
+    if team_name in DIRECT_TEAM_INFO:
+        return {"id": DIRECT_TEAM_INFO[team_name]["id"], "name": team_name, "logo": DIRECT_TEAM_INFO[team_name]["logo"]}
+
+    fallback_res = {"id": 0, "name": team_name, "logo": DEFAULT_LOGO}
+    # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
+    # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
+    cache_key = f"team_info_v3_{team_name}"
+    cached_data = get_db_cache(cache_key, 8760)
+    if cached_data and cached_data.get("id"):
+        return cached_data
+
+    translated_name = MANUAL_TEAM_MAP.get(team_name, TEAM_NAME_MAP.get(team_name, team_name))
+    smart_mapping = load_smart_mapping()
+    search_name = smart_mapping.get(translated_name, translated_name)
+
+    try:
+        res = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
+        if res.status_code != 200:
+            print(f"⚠️ 팀 검색 실패({team_name}): HTTP {res.status_code}")
+            return fallback_res
+
+        payload = res.json()
+        if payload.get("errors"):
+            print(f"⚠️ 팀 검색 API 오류({team_name}): {payload.get('errors')}")
+            return fallback_res
+        data = payload.get("response", [])
+        if data:
+            # 첫 결과를 무조건 쓰지 않고 검색명과 가장 가까운 팀을 고른다.
+            def similarity(entry):
+                api_name = entry.get("team", {}).get("name", "")
+                return difflib.SequenceMatcher(None, search_name.casefold(), api_name.casefold()).ratio()
+            result = max(data, key=similarity)['team']
+            set_db_cache(cache_key, result)
+            return result
+            
+        if not data:
+            clean_name = re.sub(r'(FC|SK|GNK|VV|RSC|AC|AS|FK|KF|AGF|RC|CSKA|TC|AIF|NK|CF|UD|CD|19\d{2}|20\d{2})', '', translated_name, flags=re.IGNORECASE).strip()
+            if clean_name and clean_name != search_name:
+                res_retry = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": clean_name}, timeout=5)
+                if res_retry.status_code != 200:
+                    return fallback_res
+                retry_payload = res_retry.json()
+                data_retry = retry_payload.get("response", []) if not retry_payload.get("errors") else []
+                if data_retry:
+                    smart_mapping[translated_name] = clean_name
+                    save_smart_mapping(smart_mapping)
+                    result = max(
+                        data_retry,
+                        key=lambda entry: difflib.SequenceMatcher(
+                            None,
+                            clean_name.casefold(),
+                            entry.get("team", {}).get("name", "").casefold(),
+                        ).ratio(),
+                    )['team']
+                    set_db_cache(cache_key, result)
+                    return result
+
+        print(f"⚠️ API에서 팀을 찾지 못함: {team_name} (검색어: {search_name})")
+        return fallback_res
+
+    except Exception as e:
+        print(f"⚠️ 팀 검색 통신 오류({team_name}): {e}")
+        return fallback_res
+
+def parse_match_time(match_time_str):
+    now = datetime.now(timezone(timedelta(hours=9)))
+    if not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]:
+        return now - timedelta(hours=3)
+    try:
+        m_match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
+        if m_match:
+            mo, d, h, m = map(int, m_match.groups())
+            candidates = [
+                datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
+                for year in (now.year - 1, now.year, now.year + 1)
+            ]
+            return min(candidates, key=lambda value: abs((value - now).total_seconds()))
+    except Exception as e:
+        print(f"⚠️ [관제 봇 떡밥] 경기 시간 파싱 실패: {e}")
+    return now - timedelta(hours=3)
+
+def fetch_weather_api(city_name, ttl_h):
+    if not city_name: return "Clear"
+    clean_city = city_name.split(',')[0].strip()
+    cache_key = f"weather_{clean_city}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        res = requests.get(f"https://wttr.in/{clean_city}?format=j1", timeout=4)
+        data = res.json()
+        condition = data['current_condition'][0]['weatherDesc'][0]['value'].lower()
+        if 'rain' in condition or 'shower' in condition or 'drizzle' in condition: result = "Rain"
+        elif 'snow' in condition or 'blizzard' in condition: result = "Snow"
+        else: result = "Clear"
+        set_db_cache(cache_key, result)
+        return result
+    except: return "Clear"
+
+def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str="시간 미정"):
+    """두 팀과 경기 날짜가 모두 일치하는 API fixture만 반환한다.
+
+    예전 코드는 홈 팀의 다음/이전 경기로 대체해 다른 경기 점수가 LIVE로
+    붙을 수 있었다. 정확히 일치하지 않으면 fixture_id를 만들지 않는다.
+    """
+    if not home_id or not away_id or match_time_str in ["시간 미정", "마감/진행중"]:
+        return None
+
+    m_dt = parse_match_time(match_time_str)
+    date_str = m_dt.strftime('%Y-%m-%d')
+    cache_key = f"odds_fixture_v9_{home_id}_{away_id}_{date_str}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        # 같은 날짜의 경기 목록은 프로토 전체가 공동 사용한다. 주말 100여 경기를
+        # 경기마다 조회하던 호출을 날짜당 1회로 줄인다.
+        date_cache_key = f"fixtures_by_date_v1_{date_str}"
+        date_fixtures = get_db_cache(date_cache_key, min(max(ttl_h, 0.2), 2))
+        if date_fixtures is None:
+            res = requests.get(
+                f"https://{API_HOST}/fixtures",
+                headers=headers,
+                params={"date": date_str, "timezone": "Asia/Seoul"},
+                timeout=10,
+            )
+            if res.status_code != 200:
+                print(f"⚠️ 경기 ID 검색 실패({date_str}): HTTP {res.status_code}")
+                return None
+            payload = res.json()
+            if payload.get("errors"):
+                print(f"⚠️ 경기 ID API 오류({date_str}): {payload.get('errors')}")
+                return None
+            date_fixtures = payload.get("response", [])
+            set_db_cache(date_cache_key, date_fixtures)
+
+        target_ids = {int(home_id), int(away_id)}
+        exact_matches = []
+        for fixture_data in date_fixtures:
+            teams = fixture_data.get("teams", {})
+            candidate_ids = {
+                teams.get("home", {}).get("id"),
+                teams.get("away", {}).get("id"),
+            }
+            if candidate_ids == target_ids:
+                exact_matches.append(fixture_data)
+
+        if exact_matches:
+            match_data = min(
+                exact_matches,
+                key=lambda item: abs(
+                    int(item.get("fixture", {}).get("timestamp", 0)) - int(m_dt.timestamp())
+                ),
+            )
+            fix_id = match_data["fixture"]["id"]
+            referee_name = match_data["fixture"].get("referee")
+            city_name = match_data["fixture"].get("venue", {}).get("city")
+            res_val = {"fixture_id": fix_id, "odd_h": None, "odd_d": None, "odd_a": None, "referee": referee_name, "city": city_name}
+
+            # 베트맨 실제 배당이 이미 있으므로 해외 배당은 선택 기능으로 둔다.
+            # 기본 OFF는 경기당 추가 API 1회를 없애 주말 호출 폭주를 막는다.
+            if os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1":
+                odds_res = requests.get(f"https://{API_HOST}/odds", headers=headers, params={"fixture": fix_id}, timeout=5)
+                odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
+                odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
+                if odds_data:
+                    bookmakers = odds_data[0].get("bookmakers", [])
+                    if bookmakers:
+                        bets = bookmakers[0].get("bets", [])
+                        for b in bets:
+                            if b["name"] == "Match Winner":
+                                for value in b.get("values", []):
+                                    label = str(value.get("value", "")).casefold()
+                                    key = {"home": "odd_h", "draw": "odd_d", "away": "odd_a"}.get(label)
+                                    if key:
+                                        res_val[key] = float(value["odd"])
+            set_db_cache(cache_key, res_val)
+            return res_val
+        print(f"⚠️ 두 팀이 정확히 일치하는 경기 ID 없음: {home_id} vs {away_id} ({date_str})")
+    except Exception as e:
+        print(f"⚠️ 경기 ID/해외배당 조회 오류({home_id}-{away_id}): {e}")
+    return None
+
+def fetch_fixture_details_api(home_id, away_id, ttl_h):
+    default_res = {"match_time": None, "last_h2h_date": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    if not home_id or not away_id: return default_res
+    cache_key = f"app_h2h_{home_id}_{away_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
+        matches = response.json().get("response", [])
+        h_wins, draws, a_wins = 0, 0, 0
+        for m in matches[:10]:
+            if m.get("teams", {}).get("home", {}).get("winner"):
+                if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
+                else: a_wins += 1
+            elif m.get("teams", {}).get("away", {}).get("winner"):
+                if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
+                else: h_wins += 1
+            else: draws += 1
+        res_val = {"match_time": None, "last_h2h_date": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+        set_db_cache(cache_key, res_val)
+        return res_val
+    except: return default_res
+
+def fetch_team_recent_fixtures_api(team_id, ttl_h):
+    """최근 경기 원본을 팀당 한 번만 받아 전적/휴식/장기지표가 함께 쓴다."""
+    if not team_id:
+        return []
+    cache_key = f"recent_fixtures_v1_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data is not None:
+        return cached_data
+    try:
+        response = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 40}, timeout=8)
+        if response.status_code != 200:
+            print(f"⚠️ 최근 경기 조회 실패({team_id}): HTTP {response.status_code}")
+            return []
+        payload = response.json()
+        if payload.get("errors"):
+            print(f"⚠️ 최근 경기 API 오류({team_id}): {payload.get('errors')}")
+            return []
+        data = [
+            match for match in payload.get("response", [])
+            if match.get("fixture", {}).get("status", {}).get("short") in {"FT", "AET", "PEN"}
+        ]
+        data.sort(key=lambda match: int(match.get("fixture", {}).get("timestamp", 0)))
+        set_db_cache(cache_key, data)
+        return data
+    except Exception as e:
+        print(f"⚠️ 최근 경기 조회 오류({team_id}): {e}")
+        return []
+
+
+def fetch_team_form_api(team_id, ttl_h):
+    if not team_id: return ""
+    cache_key = f"form_v3_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data is not None: return cached_data
+    try:
+        data = fetch_team_recent_fixtures_api(team_id, ttl_h)[-5:]
+        form_list = []
+        for m in data:
+            home_id = m["teams"]["home"]["id"]
+            home_win = m["teams"]["home"]["winner"]
+            away_win = m["teams"]["away"]["winner"]
+            if home_id == team_id:
+                if home_win is True: form_list.append("승")
+                elif home_win is False and away_win is True: form_list.append("패")
+                else: form_list.append("무")
+            else:
+                if away_win is True: form_list.append("승")
+                elif away_win is False and home_win is True: form_list.append("패")
+                else: form_list.append("무")
+        res = "-".join(form_list) if form_list else ""
+        set_db_cache(cache_key, res)
+        return res
+    except Exception as e:
+        print(f"⚠️ 최근 전적 조회 오류({team_id}): {e}")
+        return ""
+
+def fetch_team_long_term_stats_api(team_id, ttl_h):
+    default_res = {"home_wins": 0, "home_total": 0, "home_gf": 0, "home_ga": 0, "away_wins": 0, "away_total": 0, "away_gf": 0, "away_ga": 0}
+    if not team_id: return default_res
+    cache_key = f"stats_v4_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        data = fetch_team_recent_fixtures_api(team_id, ttl_h)
+        for m in data:
+            home_id = m["teams"]["home"]["id"]
+            away_id = m["teams"]["away"]["id"]
+            winner_home = m["teams"]["home"]["winner"]
+            winner_away = m["teams"]["away"]["winner"]
+            goals_h = m.get("goals", {}).get("home")
+            goals_a = m.get("goals", {}).get("away")
+            gh = int(goals_h) if goals_h is not None else 0
+            ga = int(goals_a) if goals_a is not None else 0
+            if home_id == team_id:
+                default_res["home_total"] += 1
+                default_res["home_gf"] += gh
+                default_res["home_ga"] += ga
+                if winner_home is True: default_res["home_wins"] += 1
+            elif away_id == team_id:
+                default_res["away_total"] += 1
+                default_res["away_gf"] += ga
+                default_res["away_ga"] += gh
+                if winner_away is True: default_res["away_wins"] += 1
+        set_db_cache(cache_key, default_res)
+        return default_res
+    except: return default_res
+
+def fetch_team_standing_api(team_id, ttl_h):
+    default_res = {"rank": 99, "points": 0, "played": 0, "league_id": None, "season": None, "total_teams": 20, "team_goals": 0}
+    if not team_id: return default_res
+    cache_key = f"standing_v4_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        year = datetime.now().year
+        res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
+        data = res.json().get("response", [])
+        if not data:
+            res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
+            data = res.json().get("response", [])
+        if data:
+            for league_data in data:
+                league_id = league_data.get("league", {}).get("id")
+                season = league_data.get("league", {}).get("season")
+                standings_list = league_data.get("league", {}).get("standings", [])
+                for group in standings_list:
+                    for s in group:
+                        if s["team"]["id"] == team_id:
+                            played = s.get("all", {}).get("played", 0)
+                            team_goals = s.get("all", {}).get("goals", {}).get("for", 0)
+                            res_val = {"rank": s["rank"], "points": s["points"], "played": played, "league_id": league_id, "season": season, "total_teams": len(group), "team_goals": team_goals}
+                            set_db_cache(cache_key, res_val)
+                            return res_val
+    except: pass
+    set_db_cache(cache_key, default_res)
+    return default_res
+
+def fetch_league_key_players(league_id, season):
+    if not league_id or not season: return {}
+    cache_key = f"keyplayers_v4_{league_id}_{season}"
+    cached_data = get_db_cache(cache_key, 168)
+    if cached_data: return cached_data
+    
+    key_players = {}
+    try:
+        res_s = requests.get(f"https://{API_HOST}/players/topscorers", headers=headers, params={"league": league_id, "season": season}, timeout=5)
+        data_s = res_s.json().get("response", [])
+        for p in data_s: 
+            name = p["player"]["name"]
+            goals = p["statistics"][0].get("goals", {}).get("total", 0)
+            if goals: key_players[name] = {"goals": goals}
+            
+        res_a = requests.get(f"https://{API_HOST}/players/topassists", headers=headers, params={"league": league_id, "season": season}, timeout=5)
+        data_a = res_a.json().get("response", [])
+        for p in data_a: 
+            name = p["player"]["name"]
+            if name not in key_players: key_players[name] = {"goals": 0}
+            
+        set_db_cache(cache_key, key_players)
+        return key_players
+    except: return {}
+
+def fetch_team_injuries_api(team_id, league_id, season, ttl_h):
+    default_res = {"count": 0, "ace_missing": False, "ace_names": [], "missing_goals": 0}
+    if not team_id: return default_res
+    cache_key = f"inj_v4_{team_id}_{league_id}_{season}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data is not None: return cached_data
+    try:
+        last_fix = fetch_team_recent_fixtures_api(team_id, ttl_h)[-1:]
+        if last_fix:
+            fix_id = last_fix[0]["fixture"]["id"]
+            inj_res = requests.get(f"https://{API_HOST}/injuries", headers=headers, params={"fixture": fix_id}, timeout=5)
+            inj_data = inj_res.json().get("response", [])
+            injured_names = [x.get("player", {}).get("name", "") for x in inj_data if x.get("team", {}).get("id") == team_id]
+            count = len(injured_names)
+            
+            ace_missing = False
+            ace_names = []
+            missing_goals_total = 0
+            
+            if count > 0 and league_id and season:
+                key_players = fetch_league_key_players(league_id, season) 
+                for name in injured_names:
+                    if not name: continue
+                    n_lower = name.lower()
+                    for kp_name, kp_stats in key_players.items():
+                        kp_lower = kp_name.lower()
+                        if n_lower in kp_lower or kp_lower in n_lower:
+                            ace_missing = True
+                            if name not in ace_names: 
+                                ace_names.append(name)
+                                missing_goals_total += kp_stats.get("goals", 0)
+                                
+            res_val = {"count": count, "ace_missing": ace_missing, "ace_names": list(set(ace_names)), "missing_goals": missing_goals_total}
+            set_db_cache(cache_key, res_val)
+            return res_val
+        return default_res
+    except: return default_res
+
+def fetch_new_manager_status(team_id, ttl_h):
+    default_res = {"is_new_manager": False, "days_since_hired": 999}
+    if not team_id: return default_res
+    cache_key = f"coach_v4_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        res = requests.get(f"https://{API_HOST}/coachs", headers=headers, params={"team": team_id}, timeout=5)
+        data = res.json().get("response", [])
+        if data:
+            for coach in data:
+                career = coach.get("career", [])
+                for stint in career:
+                    if stint.get("team", {}).get("id") == team_id and stint.get("end") is None:
+                        start_date = stint.get("start")
+                        if start_date:
+                            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                            days_since = (datetime.now(timezone.utc) - start_dt).days
+                            is_new = days_since <= 21 
+                            res_val = {"is_new_manager": is_new, "days_since_hired": days_since}
+                            set_db_cache(cache_key, res_val)
+                            return res_val
+        return default_res
+    except: return default_res
+
+KNOWN_DERBIES = [
+    {"Manchester United", "Manchester City"}, {"Tottenham", "Arsenal"}, 
+    {"Real Madrid", "Barcelona"}, {"Atletico Madrid", "Real Madrid"},
+    {"AC Milan", "Inter"}, {"Lazio", "Roma"}, {"Juventus", "Torino"},
+    {"Liverpool", "Everton"}, {"FC Seoul", "Suwon Samsung"}, 
+    {"Ulsan Hyundai", "Pohang Steelers"}, {"Bayern Munich", "Borussia Dortmund"}, 
+    {"Paris Saint Germain", "Marseille"}
+]
+
+def check_derby_match(home_name, away_name):
+    h_name = MANUAL_TEAM_MAP.get(home_name, TEAM_NAME_MAP.get(home_name, home_name))
+    a_name = MANUAL_TEAM_MAP.get(away_name, TEAM_NAME_MAP.get(away_name, away_name))
+    for derby in KNOWN_DERBIES:
+        if h_name in derby and a_name in derby:
+            return True
+    return False
+
+def fetch_lineups_api(fixture_id, ttl_h):
+    default_res = {"home": [], "away": []}
+    if not fixture_id: return default_res
+    cache_key = f"lineups_v1_{fixture_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        res = requests.get(f"https://{API_HOST}/fixtures/lineups", headers=headers, params={"fixture": fixture_id}, timeout=5)
+        data = res.json().get("response", [])
+        res_val = {"home": [], "away": []}
+        if data and len(data) == 2:
+            for t in data:
+                t_id = t["team"]["id"]
+                starters = [x["player"]["name"] for x in t.get("startXI", [])]
+                res_val[str(t_id)] = starters
+        set_db_cache(cache_key, res_val)
+        return res_val
+    except: pass
+    return default_res
+
+def fetch_team_last_match_date_api(team_id, ttl_h):
+    default_res = {"date": None, "is_extreme_fatigue": False}
+    if not team_id: return default_res
+    cache_key = f"last_match_v5_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        data = fetch_team_recent_fixtures_api(team_id, ttl_h)[-1:]
+        if data:
+            match = data[0]
+            date_val = match["fixture"]["date"]
+            league_name = match["league"]["name"]
+            is_away = match["teams"]["away"]["id"] == team_id
+            continental_kws = ["Champions League", "Europa", "Conference", "Libertadores", "Sudamericana", "AFC", "World Cup"]
+            is_continental = any(kw.lower() in league_name.lower() for kw in continental_kws)
+            res_val = {"date": date_val, "is_extreme_fatigue": is_away and is_continental}
+            set_db_cache(cache_key, res_val)
+            return res_val
+    except: pass
+    return default_res
+
+def fetch_team_next_fixture_api(team_id, ttl_h):
+    default_res = {"days_until_next": 99, "is_important": False, "league_name": ""}
+    if not team_id: return default_res
+    cache_key = f"next_fix_v5_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        current_season = datetime.now().year
+        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "season": current_season, "next": 3}, timeout=5)
+        data = res.json().get("response", [])
+        for next_fix in data:
+            next_date_str = next_fix["fixture"]["date"]
+            league_name = next_fix["league"]["name"]
+            next_dt = datetime.fromisoformat(next_date_str.replace('Z', '+00:00'))
+            now = datetime.now(timezone(timedelta(hours=9)))
+            diff_hours = (next_dt - now).total_seconds() / 3600.0
+            if diff_hours > 40:
+                days_until = max(1, int(diff_hours / 24))
+                important_keywords = ["Champions League", "Europa", "Cup", "Copa", "Sudamericana", "Libertadores", "AFC", "FA Cup"]
+                is_important = any(kw.lower() in league_name.lower() for kw in important_keywords)
+                res_val = {"days_until_next": days_until, "is_important": is_important, "league_name": league_name}
+                set_db_cache(cache_key, res_val)
+                return res_val
+    except: pass
+    return default_res
+
+def fetch_recent_team_stats_api(team_id, ttl_h):
+    default_res = {"possession": 50, "shots_on_goal": 4.0, "corners": 4.5, "yellow_cards": 1.5}
+    if not team_id: return default_res
+    cache_key = f"recent_stats_v2_{team_id}"
+    cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data: return cached_data
+    try:
+        fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-2:]
+        total_possession, total_sog, total_corn, total_yc = 0, 0, 0, 0
+        valid_matches = 0
+        for f in fixtures:
+            fix_id = f["fixture"]["id"]
+            stat_res = requests.get(f"https://{API_HOST}/fixtures/statistics", headers=headers, params={"fixture": fix_id}, timeout=5)
+            stats_data = stat_res.json().get("response", [])
+            for team_stat in stats_data:
+                if team_stat["team"]["id"] == team_id:
+                    pos_val, sog_val, corn_val, yc_val = 50, 4.0, 4.5, 1.5
+                    for s in team_stat["statistics"]:
+                        if s["type"] == "Ball Possession" and s["value"]: pos_val = int(str(s["value"]).replace('%', ''))
+                        if s["type"] == "Shots on Goal" and s["value"]: sog_val = float(s["value"])
+                        if s["type"] == "Corner Kicks" and s["value"]: corn_val = float(s["value"])
+                        if s["type"] == "Yellow Cards" and s["value"]: yc_val = float(s["value"])
+                    total_possession += pos_val
+                    total_sog += sog_val
+                    total_corn += corn_val
+                    total_yc += yc_val
+                    valid_matches += 1
+                    break
+        if valid_matches > 0:
+            res_val = {"possession": round(total_possession / valid_matches, 1), "shots_on_goal": round(total_sog / valid_matches, 1), "corners": round(total_corn / valid_matches, 1), "yellow_cards": round(total_yc / valid_matches, 1)}
+        else: res_val = default_res
+        set_db_cache(cache_key, res_val)
+        return res_val
+    except: pass
+    return default_res
+
+def calculate_rest_days(last_date_iso, match_time_str):
+    if not last_date_iso or not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]: return 99
+    try:
+        last_dt = datetime.fromisoformat(last_date_iso.replace('Z', '+00:00'))
+        m_dt = parse_match_time(match_time_str)
+        diff = m_dt - last_dt
+        return max(0, diff.days)
+    except: pass
+    return 99
+
+def get_league_averages(league_name):
+    name = league_name.lower() if league_name else ""
+    if "프리미어" in name or "epl" in name: return 1.60, 1.35
+    if "분데스리가" in name: return 1.65, 1.45
+    if "에레디비시" in name: return 1.75, 1.45
+    if "라리가" in name or "스페인" in name: return 1.45, 1.20
+    if "세리에" in name or "이탈리아" in name: return 1.40, 1.15
+    if "k1" in name or "k리그1" in name: return 1.35, 1.20 
+    if "k2" in name or "k리그2" in name: return 1.30, 1.15
+    if "j1" in name or "j리그" in name: return 1.40, 1.25 
+    if "메이저리그" in name or "mls" in name: return 1.60, 1.30
+    if "챔피언스" in name or "유로파" in name: return 1.55, 1.25
+    return 1.50, 1.20
+
+def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5):
+    rho = -0.15 
+    h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
+    a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
+    matrix = [[0.0 for _ in range(8)] for _ in range(8)]
+    total_prob = 0.0
+    for h in range(8):
+        for a in range(8):
+            p = h_probs[h] * a_probs[a]
+            if h == 0 and a == 0: p *= max(0, 1 - (exp_h * exp_a * rho))
+            elif h == 1 and a == 0: p *= max(0, 1 + (exp_h * rho))
+            elif h == 0 and a == 1: p *= max(0, 1 + (exp_a * rho))
+            elif h == 1 and a == 1: p *= max(0, 1 - rho)
+            matrix[h][a] = p
+            total_prob += p
+    for h in range(8):
+        for a in range(8):
+            matrix[h][a] /= total_prob
+            
+    h_win, draw, a_win, prob_u, prob_o = 0.0, 0.0, 0.0, 0.0, 0.0
+    prob_handi_h, prob_handi_d, prob_handi_a = 0.0, 0.0, 0.0
+    for h in range(8):
+        for a in range(8):
+            p = matrix[h][a]
+            if h > a: h_win += p
+            elif h == a: draw += p
+            else: a_win += p
+            if (h + a) < uo_base: prob_u += p
+            else: prob_o += p
+            if (h + handi_val) > a: prob_handi_h += p
+            elif (h + handi_val) == a: prob_handi_d += p
+            elif (h + handi_val) < a: prob_handi_a += p
+            
+    return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a
+
+def generate_match_story(best_prob_pick, best_ev_pick, math_exp_h, math_exp_a, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_next, a_next, h_rank, a_rank, h_market, a_market, h_stats, a_stats, referee, weather, h_extreme, a_extreme, h_lineup_msg, a_lineup_msg):
+    story_parts = []
+    story_parts.append(f"📈 [딕슨-콜스 모델] 양 팀의 공격/수비 지수를 환산한 결과, 예상 정규시간 득점은 {home} <b style='color:#00F2FE;'>{math_exp_h:.1f}골</b>, {away} <b style='color:#EF4444;'>{math_exp_a:.1f}골</b>로 산출되었습니다.")
+    if referee and any(sr.lower() in referee.lower() for sr in STRICT_REFEREES): 
+        story_parts.append(f"🟨 [카드 캡처 주의] 악명 높은 엄격한 성향의 주심({referee})이 배정되었습니다. 예기치 않은 변수에 주의하세요.")
+    if weather in ["Rain", "Snow"]:
+        w_ko = "폭우" if weather == "Rain" else "폭설"
+        story_parts.append(f"⛈️ [기상 악화 특보] 경기장 현지에 {w_ko}가 예보되어 늪축구 양상(언더)이 예상됩니다.")
+    if h_extreme: story_parts.append(f"✈️ {home}은(는) 대륙간 장거리 원정으로 극심한 피로 누적이 우려됩니다.")
+    if a_extreme: story_parts.append(f"✈️ 원정팀 {away}은(는) 대륙간 장거리 원정 직후라 체력 방전이 뚜렷합니다.")
+     
+    if h_next["is_important"] and h_next["days_until_next"] <= 4: story_parts.append(f"⚠️ [조기 경보] {home}은(는) {h_next['days_until_next']}일 뒤 챔스/컵 일정이 겹쳐 있어, 정상 전력 가동이 불투명합니다. (배팅 시 로테이션 주의!)")
+    if a_next["is_important"] and a_next["days_until_next"] <= 4: story_parts.append(f"⚠️ [조기 경보] {away} 측은 {a_next['days_until_next']}일 뒤 중요 일정 탓에 선발 명단 변동 확률이 매우 높습니다.")
+     
+    if h_market > 0: story_parts.append(f"💸 [마켓 알럿] 글로벌 도박사들의 자금이 {home} 쪽으로 집중되며 정배 흐름이 강해지고 있습니다.")
+    elif a_market > 0: story_parts.append(f"💸 [마켓 알럿] 해외 시장에서 {away} 승리(역배)에 스마트머니가 쏠리며 가치가 급상승 중입니다!")
+     
+    if h_lineup_msg: story_parts.append(h_lineup_msg)
+    elif h_inj_data['ace_missing']: story_parts.append(f"🚨 [선제 타격] {home} 핵심 에이스({', '.join(h_inj_data['ace_names'])}) 결장 의심! 전력 누수가 치명적입니다.")
+    if a_lineup_msg: story_parts.append(a_lineup_msg)
+    elif a_inj_data['ace_missing']: story_parts.append(f"🚨 [선제 타격] 원정팀 {away} 핵심 자원({', '.join(a_inj_data['ace_names'])}) 결장 의심으로 공격 전 창의성이 떨어질 전망입니다.")
+     
+    if best_prob_pick == best_ev_pick:
+        story_parts.append(f"🤖 결론적으로 AI는 안정성과 배당 가치를 모두 충족하는 완벽한 추천 픽으로 **[{best_prob_pick}]**을(를) 강력 추천합니다.")
+    else:
+        story_parts.append(f"🤖 AI가 계산한 가장 안전한 **최고 확률 픽은 [{best_prob_pick}]**이며, 배당 가치(수익률)를 고려한 **최고의 꿀픽은 [{best_ev_pick}]**입니다. 성향에 맞게 선택하세요!")
+         
+    return " ".join(story_parts)
+
+def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
+    pick_str = str(pick_str).upper()
+    picks = [p.strip() for p in pick_str.split(",")]
+    
+    for pick in picks:
+        if ("승" in pick or "WIN" in pick) and "핸디" not in pick:
+            if goals_h > goals_a and (h_team in pick or pick == "승"): return 1
+            if goals_h < goals_a and (a_team in pick or pick == "패"): return 1
+        if ("무승부" in pick or pick == "무" or "DRAW" in pick) and "핸디" not in pick:
+            if goals_h == goals_a: return 1
+        if pick == "패" and "핸디" not in pick:
+            if goals_h < goals_a: return 1
+
+        if "핸디" in pick:
+            m_handi = re.search(r'\[([+-]?\d+\.\d+)\]', pick)
+            if m_handi:
+                h_base = float(m_handi.group(1))
+                if goals_h + h_base > goals_a and h_team in pick: return 1
+                if goals_h + h_base < goals_a and ("패" in pick or a_team in pick): return 1
+                if goals_h + h_base == goals_a and "무" in pick: return 1
+                
+        if "언더" in pick or "오버" in pick:
+            m_uo = re.search(r'(\d+\.\d+)', pick) 
+            if m_uo:
+                uo_base = float(m_uo.group(1))
+                if "언더" in pick and (goals_h + goals_a) < uo_base: return 1
+                if "오버" in pick and (goals_h + goals_a) > uo_base: return 1
+                
+    return 0
+
+def generate_real_ai_note(fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev):
+    try:
+        stat_res = requests.get(f"https://{API_HOST}/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=5)
+        evt_res = requests.get(f"https://{API_HOST}/fixtures/events", headers=headers, params={"fixture": fixture_id}, timeout=5)
+         
+        stats = stat_res.json().get("response", [])
+        events = evt_res.json().get("response", [])
+         
+        pos_h, pos_a = "50%", "50%"
+        sot_h, sot_a = 0, 0
+        if len(stats) == 2:
+            for s in stats[0]["statistics"]:
+                if s["type"] == "Ball Possession" and s["value"]: pos_h = str(s["value"])
+                if s["type"] == "Shots on Goal" and s["value"]: sot_h = int(s["value"])
+            for s in stats[1]["statistics"]:
+                if s["type"] == "Ball Possession" and s["value"]: pos_a = str(s["value"])
+                if s["type"] == "Shots on Goal" and s["value"]: sot_a = int(s["value"])
+
+        event_logs = []
+        late_goals = []
+        
+        for e in events:
+            elapsed = e.get('time', {}).get('elapsed', 0)
+            e_type = e.get('type')
+            e_detail = e.get('detail', '')
+            player_name = e.get('player', {}).get('name', '선수')
+
+            if e_type == 'Goal':
+                if elapsed >= 85: late_goals.append(f"{elapsed}' 극장골({player_name})")
+                else: event_logs.append(f"{elapsed}' ⚽득점({player_name})")
+            elif e_type == 'Card' and 'Red' in e_detail:
+                event_logs.append(f"{elapsed}' 🟥퇴장({player_name})")
+            elif e_type == 'subst':
+                event_logs.append(f"{elapsed}' 🔄교체OUT({player_name})")
+                 
+        note = f"📊 실제 데이터: 점유율({pos_h} vs {pos_a}), 유효슈팅({sot_h}개 vs {sot_a}개). "
+        
+        all_events = event_logs + late_goals
+        if all_events: note += f" | ⏱️ 매치 타임라인: {', '.join(all_events)}. "
+         
+        if is_correct_prob == 1 and is_correct_ev == 1: note = "💡 [퍼펙트 적중] AI의 분석이 경기 흐름과 정확히 일치했습니다! " + note
+        elif is_correct_prob == 1: note = "💡 [확률픽 적중 / 꿀픽 실패] 안정적인 예측은 통했으나, 역배당의 기적은 일어나지 않았습니다. " + note
+        elif is_correct_ev == 1: note = "💡 [꿀픽 적중 / 확률픽 실패] AI가 포착한 가치(역배/핸디)가 완벽히 들어맞아 큰 수익을 냈습니다! " + note
+        else: note = "💡 [전면 실패 오답노트] AI의 예상과 실제 경기 양상이 크게 엇갈렸습니다. 딥러닝 보정 데이터로 활용됩니다. " + note
+         
+        return note
+    except:
+        return "💡 API 스탯 조회 지연으로 상세 분석을 가져오지 못했습니다."
