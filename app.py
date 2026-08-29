@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone, timedelta
 import re
 import hashlib
+from html import escape
 
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 GITHUB_REPO = "chleowhd77-ops/-"
+DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 
 NO_CACHE_HEADERS = {
     'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -333,8 +335,12 @@ def check_is_live(item):
     return live_info.get("is_live") is True
 
 def render_logo_html(logo_url):
-    if logo_url: return f"<img src='{logo_url}' class='team-logo'>"
-    return ""
+    safe_logo = escape(str(logo_url or DEFAULT_TEAM_LOGO), quote=True)
+    safe_fallback = escape(DEFAULT_TEAM_LOGO, quote=True)
+    return (
+        f'<img src="{safe_logo}" class="team-logo" '
+        f'onerror="this.onerror=null;this.src=\'{safe_fallback}\';">'
+    )
 
 def generate_pred_boxes(picks, is_top3_tab=False):
     if not picks: return ""

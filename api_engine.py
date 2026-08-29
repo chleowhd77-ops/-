@@ -22,6 +22,29 @@ headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
 
+# API-Football이 실제 엠블럼 대신 '이미지 없음' 그림을 주는 국내 구단은
+# K리그 공식 엠블럼을 우선 사용한다. 팀 ID는 그대로 유지하므로 전적 조회에는
+# 영향을 주지 않고 화면의 로고만 정확하게 교체된다.
+OFFICIAL_TEAM_LOGOS = {
+    "김포": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
+    "김포FC": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
+    "Gimpo": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
+    "Gimpo FC": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
+    "충북청주": "https://www.kleague.com/assets/images/emblem/emblem_K37%403x.png",
+    "충북청주FC": "https://www.kleague.com/assets/images/emblem/emblem_K37%403x.png",
+    "충북청주 프로축구단": "https://www.kleague.com/assets/images/emblem/emblem_K37%403x.png",
+    "Chungbuk Cheongju": "https://www.kleague.com/assets/images/emblem/emblem_K37%403x.png",
+    "화성": "https://www.kleague.com/assets/images/emblem/emblem_K39%403x.png",
+    "화성FC": "https://www.kleague.com/assets/images/emblem/emblem_K39%403x.png",
+    "Hwaseong": "https://www.kleague.com/assets/images/emblem/emblem_K39%403x.png",
+    "Hwaseong FC": "https://www.kleague.com/assets/images/emblem/emblem_K39%403x.png",
+}
+
+OFFICIAL_TEAM_LOGOS_BY_ID = {
+    10453: "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
+    10452: "https://www.kleague.com/assets/images/emblem/emblem_K37%403x.png",
+}
+
 TEAM_NAME_MAP = {
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "포항 스틸러스": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", 
     "FC안양": "FC Anyang", "FC 안양": "FC Anyang", "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen", 
@@ -325,6 +348,21 @@ def _team_search_candidates(translated_name, saved_name=None):
 def _normalize_team_alias(value):
     return re.sub(r'[^0-9A-Za-z가-힣]+', '', str(value or '')).casefold()
 
+def _resolve_team_logo(team_name, team_id=0, api_logo=None):
+    """공식 예외 로고를 우선하고 나머지는 API 로고를 그대로 쓴다."""
+    try:
+        direct_logo = OFFICIAL_TEAM_LOGOS_BY_ID.get(int(team_id or 0))
+        if direct_logo:
+            return direct_logo
+    except (TypeError, ValueError):
+        pass
+
+    normalized_name = _normalize_team_alias(team_name)
+    for mapped_name, official_logo in OFFICIAL_TEAM_LOGOS.items():
+        if normalized_name == _normalize_team_alias(mapped_name):
+            return official_logo
+    return api_logo or DEFAULT_LOGO
+
 def _resolve_translated_team_name(team_name):
     """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
     if team_name in MANUAL_TEAM_MAP:
@@ -373,11 +411,16 @@ def fetch_team_info_api(team_name):
         return TEAM_INFO_MEMORY_CACHE[team_name]
 
     if team_name in DIRECT_TEAM_INFO:
-        result = {"id": DIRECT_TEAM_INFO[team_name]["id"], "name": team_name, "logo": DIRECT_TEAM_INFO[team_name]["logo"]}
+        direct = DIRECT_TEAM_INFO[team_name]
+        result = {
+            "id": direct["id"],
+            "name": team_name,
+            "logo": _resolve_team_logo(team_name, direct["id"], direct.get("logo")),
+        }
         TEAM_INFO_MEMORY_CACHE[team_name] = result
         return result
 
-    fallback_res = {"id": 0, "name": team_name, "logo": DEFAULT_LOGO}
+    fallback_res = {"id": 0, "name": team_name, "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO)}
     retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
     if retry_at and datetime.now(timezone.utc) < retry_at:
         return fallback_res
@@ -386,6 +429,9 @@ def fetch_team_info_api(team_name):
     cache_key = f"team_info_v3_{team_name}"
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
+        cached_data["logo"] = _resolve_team_logo(
+            team_name, cached_data.get("id"), cached_data.get("logo")
+        )
         TEAM_INFO_MEMORY_CACHE[team_name] = cached_data
         return cached_data
 
@@ -443,6 +489,10 @@ def fetch_team_info_api(team_name):
             result = best_entry.get('team', {})
             if not result.get("id"):
                 continue
+
+            result["logo"] = _resolve_team_logo(
+                team_name, result.get("id"), result.get("logo")
+            )
 
             if candidate.casefold() != candidates[0].casefold():
                 print(
@@ -612,38 +662,71 @@ def fetch_fixture_details_api(home_id, away_id, ttl_h):
         return res_val
     except: return default_res
 
+def _validate_recent_fixtures(matches, team_id):
+    """종료되고 해당 팀이 실제 참가한 경기만 중복 없이 시간순으로 정리한다."""
+    validated = {}
+    for match in matches or []:
+        fixture = match.get("fixture", {})
+        teams = match.get("teams", {})
+        home_id = teams.get("home", {}).get("id")
+        away_id = teams.get("away", {}).get("id")
+        status = fixture.get("status", {}).get("short")
+        fixture_id = fixture.get("id")
+        timestamp = int(fixture.get("timestamp") or 0)
+        goals = match.get("goals", {})
+
+        if status not in {"FT", "AET", "PEN"}:
+            continue
+        if team_id not in {home_id, away_id} or not fixture_id or timestamp <= 0:
+            continue
+        if goals.get("home") is None or goals.get("away") is None:
+            continue
+        validated[int(fixture_id)] = match
+
+    return sorted(
+        validated.values(),
+        key=lambda match: int(match.get("fixture", {}).get("timestamp") or 0),
+    )[-40:]
+
+
 def fetch_team_recent_fixtures_api(team_id, ttl_h):
     """최근 경기 원본을 팀당 한 번만 받아 전적/휴식/장기지표가 함께 쓴다."""
     if not team_id:
         return []
-    cache_key = f"recent_fixtures_v1_{team_id}"
+    cache_key = f"recent_fixtures_v2_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None:
         return cached_data
+    # 일시적인 API 장애 때 웹의 전적이 사라지지 않도록 마지막 정상본을 보존한다.
+    stale_data = get_db_cache(cache_key, 24 * 365 * 5)
     try:
-        response = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "last": 40}, timeout=8)
+        response = requests.get(
+            f"https://{API_HOST}/fixtures",
+            headers=headers,
+            params={"team": team_id, "last": 40, "timezone": "Asia/Seoul"},
+            timeout=12,
+        )
         if response.status_code != 200:
             print(f"⚠️ 최근 경기 조회 실패({team_id}): HTTP {response.status_code}")
-            return []
+            return stale_data or []
         payload = response.json()
         if payload.get("errors"):
             print(f"⚠️ 최근 경기 API 오류({team_id}): {payload.get('errors')}")
-            return []
-        data = [
-            match for match in payload.get("response", [])
-            if match.get("fixture", {}).get("status", {}).get("short") in {"FT", "AET", "PEN"}
-        ]
-        data.sort(key=lambda match: int(match.get("fixture", {}).get("timestamp", 0)))
-        set_db_cache(cache_key, data)
-        return data
+            return stale_data or []
+        data = _validate_recent_fixtures(payload.get("response", []), team_id)
+        if data:
+            set_db_cache(cache_key, data)
+            return data
+        print(f"⚠️ 완료된 최근 경기가 없음({team_id}) - 마지막 정상 기록을 사용합니다.")
+        return stale_data or []
     except Exception as e:
         print(f"⚠️ 최근 경기 조회 오류({team_id}): {e}")
-        return []
+        return stale_data or []
 
 
 def fetch_team_form_api(team_id, ttl_h):
     if not team_id: return ""
-    cache_key = f"form_v3_{team_id}"
+    cache_key = f"form_v4_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None: return cached_data
     try:
@@ -662,7 +745,9 @@ def fetch_team_form_api(team_id, ttl_h):
                 elif away_win is False and home_win is True: form_list.append("패")
                 else: form_list.append("무")
         res = "-".join(form_list) if form_list else ""
-        set_db_cache(cache_key, res)
+        # 빈 문자열은 장기 저장하지 않아 다음 수집 주기에 다시 시도한다.
+        if res:
+            set_db_cache(cache_key, res)
         return res
     except Exception as e:
         print(f"⚠️ 최근 전적 조회 오류({team_id}): {e}")
