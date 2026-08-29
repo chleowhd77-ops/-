@@ -1,4 +1,5 @@
 import os
+import hmac
 import streamlit as st
 import json
 import requests
@@ -18,6 +19,7 @@ from member_system import (
     ROLE_MEMBER,
     ROLE_SUPPORTER,
     authenticate_user,
+    bootstrap_admin,
     can_write_board,
     create_post,
     delete_post,
@@ -27,6 +29,7 @@ from member_system import (
     list_users,
     register_user,
     request_supporter,
+    review_support_request,
     set_user_role,
     set_user_status,
 )
@@ -93,6 +96,21 @@ download_db()
 # 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
 init_member_db()
+
+
+def get_private_setting(name: str) -> str:
+    """Read a deployment secret without exposing it in the public repository."""
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        return str(st.secrets.get(name, "")).strip()
+    except Exception:
+        return ""
+
+
+ADMIN_BOOTSTRAP_USERNAME = get_private_setting("DJ_ADMIN_USERNAME")
+ADMIN_BOOTSTRAP_TOKEN = get_private_setting("DJ_ADMIN_BOOTSTRAP_TOKEN")
 
 
 def image_data_uri(path: Path) -> str:
@@ -807,6 +825,40 @@ else:
                 )
                 (st.success if ok else st.error)(message)
 
+    # 서버 비밀 설정에 등록한 운영자 아이디에만 최초 관리자 인증창을 보여준다.
+    # 표시 이름을 "관리자"로 적는 것만으로는 절대 관리자 권한을 얻을 수 없다.
+    owner_username_matches = bool(
+        ADMIN_BOOTSTRAP_USERNAME
+        and hmac.compare_digest(
+            st.session_state['username'].casefold(),
+            ADMIN_BOOTSTRAP_USERNAME.casefold(),
+        )
+    )
+    if current_role != ROLE_ADMIN and owner_username_matches:
+        with st.sidebar.expander("🔐 운영자 권한 인증", expanded=True):
+            st.caption("Streamlit 비밀 설정에 등록한 관리자 인증키를 입력해주세요.")
+            with st.form("admin-bootstrap-form"):
+                admin_token = st.text_input(
+                    "관리자 인증키", type="password", key="admin-bootstrap-token"
+                )
+                admin_bootstrap_submit = st.form_submit_button(
+                    "관리자 권한 열기", use_container_width=True
+                )
+            if admin_bootstrap_submit:
+                ok, message = bootstrap_admin(
+                    int(st.session_state['user_id']),
+                    st.session_state['username'],
+                    admin_token,
+                    ADMIN_BOOTSTRAP_USERNAME,
+                    ADMIN_BOOTSTRAP_TOKEN,
+                )
+                if ok:
+                    st.session_state['role'] = ROLE_ADMIN
+                    st.session_state['auth_flash'] = message
+                    st.rerun()
+                else:
+                    st.error(message)
+
     if st.sidebar.button("로그아웃"):
         st.session_state['logged_in'] = False
         st.session_state['user_id'] = None
@@ -872,6 +924,28 @@ else:
                     st.write(f"{request['username']} · {request['depositor_name']}")
                     if request.get("note"):
                         st.caption(request["note"])
+                    approve_col, reject_col = st.columns(2)
+                    if approve_col.button(
+                        "승인", key=f"support-approve-{request['id']}",
+                        use_container_width=True,
+                    ):
+                        ok, message = review_support_request(
+                            int(st.session_state['user_id']), request["id"], "approved"
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
+                    if reject_col.button(
+                        "거절", key=f"support-reject-{request['id']}",
+                        use_container_width=True,
+                    ):
+                        ok, message = review_support_request(
+                            int(st.session_state['user_id']), request["id"], "rejected"
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
+                    st.divider()
             else:
                 st.caption("대기 중인 요청이 없습니다.")
 

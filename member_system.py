@@ -221,6 +221,50 @@ def list_users() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def bootstrap_admin(
+    user_id: int,
+    username: str,
+    supplied_token: str,
+    configured_username: str,
+    configured_token: str,
+) -> tuple[bool, str]:
+    """Promote the configured owner account after a one-time secret check.
+
+    The configured values must come from the hosting service's private secrets,
+    never from the public repository. Requiring both an existing signed-in user
+    and the private token prevents a display name such as "관리자" from granting
+    any permission.
+    """
+    configured_username = configured_username.strip()
+    configured_token = configured_token.strip()
+    supplied_token = supplied_token.strip()
+    if not configured_username or not configured_token:
+        return False, "서버에 최초 관리자 설정이 아직 등록되지 않았습니다."
+    if len(configured_token) < 16:
+        return False, "관리자 인증키는 16자 이상으로 설정해주세요."
+    if not hmac.compare_digest(username.casefold(), configured_username.casefold()):
+        return False, "이 계정은 서버에 등록된 운영자 아이디와 다릅니다."
+    if not hmac.compare_digest(supplied_token, configured_token):
+        return False, "관리자 인증키가 일치하지 않습니다."
+
+    with _connect() as conn:
+        user = conn.execute(
+            "SELECT id, username, status, role FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+        if not user or user["status"] != "active":
+            return False, "정상 상태의 로그인 계정을 찾지 못했습니다."
+        if not hmac.compare_digest(str(user["username"]).casefold(), username.casefold()):
+            return False, "로그인 정보가 변경되었습니다. 다시 로그인해주세요."
+        if user["role"] == ROLE_ADMIN:
+            return True, "이미 관리자 계정으로 설정되어 있습니다."
+        conn.execute("UPDATE users SET role=? WHERE id=?", (ROLE_ADMIN, user_id))
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (user_id, "bootstrap_admin", str(user["username"]), utc_now()),
+        )
+    return True, "최초 관리자 인증이 완료되었습니다."
+
+
 def set_user_role(actor_id: int, username: str, role: str) -> tuple[bool, str]:
     if role not in VALID_ROLES:
         return False, "지원하지 않는 등급입니다."
@@ -229,10 +273,17 @@ def set_user_role(actor_id: int, username: str, role: str) -> tuple[bool, str]:
         if not actor or actor["role"] != ROLE_ADMIN:
             return False, "관리자만 등급을 변경할 수 있습니다."
         target = conn.execute(
-            "SELECT id FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)
+            "SELECT id, role, status FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)
         ).fetchone()
         if not target:
             return False, "해당 회원을 찾지 못했습니다."
+        if target["role"] == ROLE_ADMIN and role != ROLE_ADMIN:
+            active_admins = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role=? AND status='active'",
+                (ROLE_ADMIN,),
+            ).fetchone()[0]
+            if int(active_admins) <= 1:
+                return False, "마지막 정상 관리자 계정은 강등할 수 없습니다."
         conn.execute("UPDATE users SET role=? WHERE id=?", (role, target["id"]))
         conn.execute(
             "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
@@ -249,10 +300,17 @@ def set_user_status(actor_id: int, username: str, status: str) -> tuple[bool, st
         if not actor or actor["role"] != ROLE_ADMIN:
             return False, "관리자만 계정 상태를 변경할 수 있습니다."
         target = conn.execute(
-            "SELECT id FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)
+            "SELECT id, role, status FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)
         ).fetchone()
         if not target:
             return False, "해당 회원을 찾지 못했습니다."
+        if target["role"] == ROLE_ADMIN and target["status"] == "active" and status == "suspended":
+            active_admins = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE role=? AND status='active'",
+                (ROLE_ADMIN,),
+            ).fetchone()[0]
+            if int(active_admins) <= 1:
+                return False, "마지막 정상 관리자 계정은 정지할 수 없습니다."
         conn.execute("UPDATE users SET status=? WHERE id=?", (status, target["id"]))
         conn.execute(
             "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
@@ -362,6 +420,51 @@ def list_support_requests() -> list[dict[str, Any]]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def review_support_request(
+    actor_id: int, request_id: int, decision: str
+) -> tuple[bool, str]:
+    """Approve or reject one supporter request and keep an audit record."""
+    if decision not in {"approved", "rejected"}:
+        return False, "지원하지 않는 처리 방식입니다."
+    with _connect() as conn:
+        actor = conn.execute(
+            "SELECT role, status FROM users WHERE id=?", (actor_id,)
+        ).fetchone()
+        if not actor or actor["role"] != ROLE_ADMIN or actor["status"] != "active":
+            return False, "관리자만 후원 확인 요청을 처리할 수 있습니다."
+        request = conn.execute(
+            "SELECT id, user_id, status FROM support_requests WHERE id=?", (request_id,)
+        ).fetchone()
+        if not request:
+            return False, "확인 요청을 찾지 못했습니다."
+        if request["status"] != "pending":
+            return False, "이미 처리된 요청입니다."
+
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE support_requests
+            SET status=?, reviewed_at=?, reviewed_by=?
+            WHERE id=?
+            """,
+            (decision, now, actor_id, request_id),
+        )
+        if decision == "approved":
+            conn.execute(
+                """
+                UPDATE users SET role=?
+                WHERE id=? AND role!=?
+                """,
+                (ROLE_SUPPORTER, request["user_id"], ROLE_ADMIN),
+            )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (actor_id, f"support_request_{decision}", str(request_id), now),
+        )
+    action_label = "승인" if decision == "approved" else "거절"
+    return True, f"후원회원 전환 요청을 {action_label}했습니다."
 
 
 init_member_db()
