@@ -7,8 +7,29 @@ import pandas as pd
 import time
 from datetime import datetime, timezone, timedelta
 import re
-import hashlib
+import base64
+from pathlib import Path
 from html import escape
+
+from member_system import (
+    ROLE_ADMIN,
+    ROLE_GUEST,
+    ROLE_LABELS,
+    ROLE_MEMBER,
+    ROLE_SUPPORTER,
+    authenticate_user,
+    can_write_board,
+    create_post,
+    delete_post,
+    init_member_db,
+    list_posts,
+    list_support_requests,
+    list_users,
+    register_user,
+    request_supporter,
+    set_user_role,
+    set_user_status,
+)
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -18,11 +39,13 @@ except ImportError:
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
 # -----------------------------------------------------------------------------
-APP_TITLE = "D.J PROTO ANALYTICS V3"
+APP_TITLE = "D.J SPORTS ANALYTICS"
+APP_DIR = Path(__file__).resolve().parent
+BRAND_LOGO_PATH = APP_DIR / "assets" / "dj-analytics-logo.svg"
 
 st.set_page_config(
     page_title=APP_TITLE, 
-    page_icon="⚡", 
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="auto" 
 )
@@ -67,49 +90,20 @@ def download_db():
 download_db()
 
 # -----------------------------------------------------------------------------
-# 2. 보안 및 유저 DB 엔진
+# 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
-def make_hashes(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
+init_member_db()
 
-def init_user_db():
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS userstable(username TEXT PRIMARY KEY, password TEXT, is_vip INTEGER DEFAULT 0)')
-    conn.commit()
-    conn.close()
 
-def add_user(username, password):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('INSERT INTO userstable(username, password, is_vip) VALUES (?,?,?)', (username, password, 0))
-    conn.commit()
-    conn.close()
+def image_data_uri(path: Path) -> str:
+    if not path.exists():
+        return ""
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    mime_type = "image/svg+xml" if path.suffix.lower() == ".svg" else "image/png"
+    return f"data:{mime_type};base64,{encoded}"
 
-def login_user(username, password):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM userstable WHERE username = ? AND password = ?', (username, password))
-    data = c.fetchall()
-    conn.close()
-    return data
 
-def get_all_users():
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('SELECT username, is_vip FROM userstable')
-    data = c.fetchall()
-    conn.close()
-    return data
-
-def upgrade_to_vip(username):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('UPDATE userstable SET is_vip = 1 WHERE username = ?', (username,))
-    conn.commit()
-    conn.close()
-
-init_user_db()
+BRAND_LOGO_URI = image_data_uri(BRAND_LOGO_PATH)
 
 # -----------------------------------------------------------------------------
 # 3. 디자인 (CSS)
@@ -131,7 +125,12 @@ st.markdown("""
     .app-header p { color: #64748B; font-size: 14px; font-weight: 700; letter-spacing: 1px; margin-top: 5px; }
     .stTabs [data-baseweb="tab-list"] { background-color: transparent !important; border-bottom: 1px solid #1E293B !important; gap: 30px !important; justify-content: center !important; }
     .stTabs [data-baseweb="tab"] { color: #64748B !important; font-weight: 900 !important; font-size: 18px !important; padding: 14px 0px !important; border: none !important; }
-    .stTabs [aria-selected="true"] { color: #00F2FE !important; border-bottom: 4px solid #00F2FE !important; }
+    .stTabs [aria-selected="true"] {
+        color: #FF4D5D !important;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+    }
     .match-card { background-color: #0B0F19; border: 1px solid #1E293B; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
     .top3-glow { border: 2px solid #00F2FE !important; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15) !important; background: linear-gradient(135deg, #0A192F 0%, #06080F 100%) !important; }
     .league-title { font-size: 13px; color: #94A3B8; font-weight: 900; letter-spacing: 1px; margin-bottom: 15px; }
@@ -241,6 +240,20 @@ st.markdown("""
         background: rgba(25, 230, 242, 0.10);
         filter: blur(4px);
     }
+    .brand-row {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 19px;
+    }
+    .brand-mark {
+        width: 68px;
+        height: 68px;
+        object-fit: contain;
+        flex: 0 0 68px;
+        filter: drop-shadow(0 10px 24px rgba(25, 230, 242, .20));
+    }
     .brand-kicker {
         color: var(--dj-cyan);
         font-size: 11px;
@@ -317,27 +330,80 @@ st.markdown("""
     }
     .section-intro p { color: var(--dj-muted); font-size: 12px; font-weight: 700; margin: 0; }
 
+    /* 메뉴는 버튼처럼 채우지 않고 선택된 글자만 빨간색으로 표시한다. */
     .stTabs [data-baseweb="tab-list"] {
         justify-content: flex-start !important;
-        gap: 6px !important;
-        padding: 5px !important;
+        gap: 24px !important;
+        padding: 0 !important;
         margin-bottom: 18px !important;
-        background: rgba(13, 19, 32, 0.78) !important;
-        border: 1px solid var(--dj-line) !important;
-        border-radius: 15px !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: 0 !important;
+        border-bottom: 1px solid var(--dj-line) !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
     }
-    .stTabs [data-baseweb="tab"] {
+    .stTabs [data-baseweb="tab"],
+    .stTabs button[role="tab"] {
         min-height: 42px !important;
-        padding: 8px 15px !important;
-        color: var(--dj-muted) !important;
+        padding: 9px 0 12px !important;
+        color: #A8B3C4 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
         font-size: 13px !important;
-        border-radius: 10px !important;
     }
-    .stTabs [aria-selected="true"] {
-        color: #061016 !important;
-        background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
-        border-bottom: none !important;
-        box-shadow: 0 8px 22px rgba(25, 230, 242, 0.18) !important;
+    .stTabs [data-baseweb="tab"]:hover,
+    .stTabs button[role="tab"]:hover {
+        color: #FFFFFF !important;
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"],
+    .stTabs button[role="tab"][aria-selected="true"] {
+        color: #FF4D5D !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        outline: 0 !important;
+    }
+    .stTabs button[role="tab"]::before,
+    .stTabs button[role="tab"]::after,
+    .stTabs [data-baseweb="tab"][aria-selected="true"]::before,
+    .stTabs [data-baseweb="tab"][aria-selected="true"]::after {
+        content: none !important;
+        display: none !important;
+        background: transparent !important;
+        border: 0 !important;
+    }
+    .stTabs [data-baseweb="tab"] > div,
+    .stTabs button[role="tab"] > div,
+    .stTabs [data-baseweb="tab"] p {
+        color: inherit !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] > div,
+    .stTabs button[role="tab"][aria-selected="true"] > div,
+    .stTabs button[role="tab"][aria-selected="true"] p {
+        color: #FF4D5D !important;
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"],
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        background: transparent !important;
+        border: 0 !important;
     }
 
     .match-card {
@@ -451,6 +517,8 @@ st.markdown("""
     @media (max-width: 768px) {
         .block-container { padding: .65rem .72rem 3rem !important; }
         .brand-shell { padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
+        .brand-row { align-items: flex-start; gap: 12px; }
+        .brand-mark { width: 48px; height: 48px; flex-basis: 48px; }
         .brand-title { font-size: 26px; }
         .brand-copy { font-size: 12px; padding-right: 18px; }
         .brand-trust { gap: 6px; margin-top: 15px; }
@@ -458,8 +526,8 @@ st.markdown("""
         .status-grid { gap: 6px; margin-bottom: 14px; }
         .status-cell { padding: 11px 9px; border-radius: 12px; }
         .status-cell strong { font-size: 14px; }
-        .stTabs [data-baseweb="tab-list"] { gap: 4px !important; overflow-x: auto !important; flex-wrap: nowrap !important; justify-content: flex-start !important; }
-        .stTabs [data-baseweb="tab"] { flex: 0 0 auto !important; font-size: 11px !important; padding: 8px 10px !important; }
+        .stTabs [data-baseweb="tab-list"] { gap: 18px !important; overflow-x: auto !important; flex-wrap: nowrap !important; justify-content: flex-start !important; }
+        .stTabs [data-baseweb="tab"] { flex: 0 0 auto !important; font-size: 11px !important; padding: 8px 0 10px !important; }
         .match-card { padding: 18px 14px !important; border-radius: 16px !important; }
         .vs-row { align-items: flex-start !important; gap: 5px; }
         .team-box { width: 40%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
@@ -487,17 +555,19 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
-if 'is_vip' not in st.session_state:
-    st.session_state['is_vip'] = False
+if 'user_id' not in st.session_state:
+    st.session_state['user_id'] = None
 if 'username' not in st.session_state:
     st.session_state['username'] = ""
+if 'role' not in st.session_state:
+    st.session_state['role'] = ROLE_GUEST
 
 # 서버의 live_scores.json은 5분마다 갱신된다. 브라우저도 1분마다 조용히
 # 다시 읽어야 사용자가 수동 새로고침을 하지 않아도 점수가 움직인다.
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
-st.sidebar.title("D.J 멤버 라운지")
+st.sidebar.title("D.J 회원 라운지")
 st.sidebar.caption("로그인하면 내 등급과 이용 가능한 분석을 확인할 수 있습니다.")
 
 if not st.session_state['logged_in']:
@@ -508,14 +578,14 @@ if not st.session_state['logged_in']:
         st.sidebar.subheader("접속하기")
         username = st.sidebar.text_input("아이디")
         password = st.sidebar.text_input("비밀번호", type='password')
-        if st.sidebar.button("로그인"):
-            hashed_pswd = make_hashes(password)
-            result = login_user(username, hashed_pswd)
-            if result:
+        if st.sidebar.button("로그인", use_container_width=False):
+            user = authenticate_user(username, password)
+            if user:
                 st.session_state['logged_in'] = True
-                st.session_state['username'] = username
-                st.session_state['is_vip'] = bool(result[0][2])
-                st.success(f"환영합니다, {username}님!")
+                st.session_state['user_id'] = user['id']
+                st.session_state['username'] = user['username']
+                st.session_state['role'] = user['role']
+                st.sidebar.success(f"환영합니다, {user['display_name']}님!")
                 st.rerun()
             else:
                 st.sidebar.warning("아이디 또는 비밀번호가 틀렸습니다.")
@@ -523,56 +593,116 @@ if not st.session_state['logged_in']:
     elif choice == "회원가입":
         st.sidebar.subheader("새 계정 만들기")
         new_user = st.sidebar.text_input("사용할 아이디")
+        new_display_name = st.sidebar.text_input("표시 이름 (선택)")
         new_password = st.sidebar.text_input("비밀번호", type='password')
+        new_password_check = st.sidebar.text_input("비밀번호 확인", type='password')
         
         st.sidebar.markdown("---")
-        st.sidebar.markdown("**[필수] 서비스 이용 약관**")
-        st.sidebar.caption("본 서비스는 디지털 정보(픽) 제공 상품으로, VIP 등급 전환 및 유료 정보 열람 즉시 상품의 가치가 소모된 것으로 간주하여 **전자상거래법 제17조 2항에 의거 환불이 절대 불가**합니다.")
-        agree = st.sidebar.checkbox("위 환불 불가 정책에 동의합니다.")
+        st.sidebar.markdown("**[필수] 이용 안내**")
+        st.sidebar.caption("분석 확률과 추천은 참고 자료이며 경기 적중이나 수익을 보장하지 않습니다. 가입 정보는 로그인과 회원 등급 관리에만 사용합니다.")
+        agree = st.sidebar.checkbox("이용 안내와 개인정보 처리에 동의합니다.")
         
-        if st.sidebar.button("가입하기"):
+        if st.sidebar.button("가입하기", use_container_width=False):
             if not agree:
-                st.sidebar.error("환불 정책에 동의하셔야 가입이 가능합니다.")
+                st.sidebar.error("이용 안내에 동의해주세요.")
             elif new_user == "" or new_password == "":
                 st.sidebar.error("아이디와 비밀번호를 입력해주세요.")
+            elif new_password != new_password_check:
+                st.sidebar.error("비밀번호 확인이 일치하지 않습니다.")
             else:
-                try:
-                    add_user(new_user, make_hashes(new_password))
-                    st.sidebar.success("가입 성공! 상단 메뉴에서 로그인해주세요.")
-                except sqlite3.IntegrityError:
-                    st.sidebar.error("이미 존재하는 아이디입니다.")
+                ok, message = register_user(new_user, new_password, new_display_name)
+                if ok:
+                    st.sidebar.success(f"{message} 로그인 메뉴에서 접속해주세요.")
+                else:
+                    st.sidebar.error(message)
 
 else:
+    current_role = st.session_state.get('role', ROLE_MEMBER)
     st.sidebar.success(f"👤 {st.session_state['username']} 님 접속 중")
-    if st.session_state['is_vip']:
-        st.sidebar.markdown("💎 **등급: VIP 프리미엄**")
-        st.sidebar.info("모든 경기의 잠금이 해제되었습니다.")
+    st.sidebar.markdown(f"**등급: {ROLE_LABELS.get(current_role, '일반회원')}**")
+    if current_role in {ROLE_SUPPORTER, ROLE_ADMIN}:
+        st.sidebar.info("전체 경기 분석과 후원회원 게시판 작성 권한이 열려 있습니다.")
     else:
-        st.sidebar.markdown("🥉 **등급: 일반 회원** (무료 3픽 제공)")
-        st.sidebar.info("VIP 후원 계좌: 국민은행 123456-00-000000 (4만원)")
-        st.sidebar.caption("입금 시 '입금자명=아이디'로 입금 후 텔레그램(@아이디)으로 연락주세요!")
+        st.sidebar.info("현재 무료 베타 운영 중입니다. 후원회원 전환은 확인 요청 후 관리자가 처리합니다.")
+        with st.sidebar.expander("후원회원 전환 확인 요청"):
+            depositor_name = st.text_input("확인용 입금자명", key="support-depositor")
+            support_note = st.text_area("관리자에게 남길 메모", key="support-note", height=80)
+            if st.button("확인 요청 보내기", key="support-request-submit"):
+                ok, message = request_supporter(
+                    int(st.session_state['user_id']), depositor_name, support_note
+                )
+                (st.success if ok else st.error)(message)
 
     if st.sidebar.button("로그아웃"):
         st.session_state['logged_in'] = False
-        st.session_state['is_vip'] = False
+        st.session_state['user_id'] = None
         st.session_state['username'] = ""
+        st.session_state['role'] = ROLE_GUEST
         st.rerun()
 
-    # 🔥 기획자님 전용 관리자 모드
-    if st.session_state['username'] == "admin":
+    # 관리자 전용 회원·권한 관리
+    if current_role == ROLE_ADMIN:
         st.sidebar.markdown("---")
-        st.sidebar.error("👑 관리자(CEO) 전용 모드")
-        users = get_all_users()
-        user_df = pd.DataFrame(users, columns=["아이디", "VIP상태(1=VIP)"])
-        st.sidebar.dataframe(user_df)
-        
-        upgrade_target = st.sidebar.text_input("VIP 승급시킬 아이디 입력")
-        if st.sidebar.button("VIP 권한 부여"):
-            upgrade_to_vip(upgrade_target)
-            st.sidebar.success(f"[{upgrade_target}] VIP 승급 완료!")
+        st.sidebar.error("관리자 전용 모드")
+        users = list_users()
+        if users:
+            user_df = pd.DataFrame(users).rename(columns={
+                "username": "아이디", "display_name": "표시 이름",
+                "role": "등급", "status": "상태", "created_at": "가입 시각",
+                "last_login_at": "최근 로그인",
+            })
+            visible_columns = ["아이디", "표시 이름", "등급", "상태", "가입 시각", "최근 로그인"]
+            st.sidebar.dataframe(user_df[visible_columns], hide_index=True, use_container_width=True)
+
+            target_username = st.sidebar.selectbox(
+                "관리할 회원", [user["username"] for user in users], key="admin-target-user"
+            )
+            target_user = next(user for user in users if user["username"] == target_username)
+            role_options = [ROLE_MEMBER, ROLE_SUPPORTER, ROLE_ADMIN]
+            selected_role = st.sidebar.selectbox(
+                "회원 등급",
+                role_options,
+                index=role_options.index(target_user["role"]),
+                format_func=lambda value: ROLE_LABELS[value],
+                key="admin-target-role",
+            )
+            if st.sidebar.button("등급 적용"):
+                ok, message = set_user_role(
+                    int(st.session_state['user_id']), target_username, selected_role
+                )
+                (st.sidebar.success if ok else st.sidebar.error)(message)
+                if ok:
+                    st.rerun()
+
+            selected_status = st.sidebar.selectbox(
+                "계정 상태",
+                ["active", "suspended"],
+                index=0 if target_user["status"] == "active" else 1,
+                format_func=lambda value: "정상" if value == "active" else "정지",
+                key="admin-target-status",
+            )
+            if st.sidebar.button("상태 적용"):
+                ok, message = set_user_status(
+                    int(st.session_state['user_id']), target_username, selected_status
+                )
+                (st.sidebar.success if ok else st.sidebar.error)(message)
+                if ok:
+                    st.rerun()
+
+        pending_requests = [
+            request for request in list_support_requests() if request["status"] == "pending"
+        ]
+        with st.sidebar.expander(f"후원 확인 대기 {len(pending_requests)}건"):
+            if pending_requests:
+                for request in pending_requests:
+                    st.write(f"{request['username']} · {request['depositor_name']}")
+                    if request.get("note"):
+                        st.caption(request["note"])
+            else:
+                st.caption("대기 중인 요청이 없습니다.")
 
 has_full_access = bool(
-    st.session_state.get('is_vip') or st.session_state.get('username') == "admin"
+    st.session_state.get('role') in {ROLE_SUPPORTER, ROLE_ADMIN}
 )
 
 # -----------------------------------------------------------------------------
@@ -584,17 +714,26 @@ live_scores_data = load_live_scores()
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
 live_total = sum(1 for value in live_scores_data.values() if value.get("is_live") is True)
-member_label = "VIP 전체 이용" if has_full_access else "무료 3픽 이용"
+member_label = "후원회원 전체 이용" if has_full_access else "무료 3픽 이용"
+brand_mark_html = (
+    f"<img class='brand-mark' src='{BRAND_LOGO_URI}' alt='D.J SPORTS ANALYTICS 로고'>"
+    if BRAND_LOGO_URI else "<div class='brand-mark' aria-label='DJ'>DJ</div>"
+)
 
 st.markdown(f"""
 <section class='brand-shell'>
-    <div class='brand-kicker'>DATA-DRIVEN FOOTBALL PICKS</div>
-    <div class='brand-title'>D.J PROTO <span>ANALYTICS</span></div>
-    <div class='brand-copy'>경기 데이터와 배당 흐름을 함께 읽는 축구 분석 서비스<br>확률은 참고 지표이며 적중이나 수익을 보장하지 않습니다.</div>
-    <div class='brand-trust'>
-        <span>실시간 경기 반영</span>
-        <span>확률·가치 분리 분석</span>
-        <span>경기 종료 후 자동 채점</span>
+    <div class='brand-row'>
+        {brand_mark_html}
+        <div>
+            <div class='brand-kicker'>MULTI-SPORT DATA INTELLIGENCE</div>
+            <div class='brand-title'>D.J SPORTS <span>ANALYTICS</span></div>
+            <div class='brand-copy'>축구를 시작으로 야구·농구까지 확장하는 스포츠 데이터 분석 플랫폼<br>확률은 참고 지표이며 적중이나 수익을 보장하지 않습니다.</div>
+            <div class='brand-trust'>
+                <span>PROTO 분석</span>
+                <span>데이터 기반 확률</span>
+                <span>경기 종료 후 자동 채점</span>
+            </div>
+        </div>
     </div>
 </section>
 <div class='status-grid'>
@@ -605,11 +744,11 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # 방문자가 가장 먼저 무료 추천을 보도록 탭의 표시 순서만 변경한다.
-main_tab3, main_tab1, main_tab2, main_tab4 = st.tabs([
-    f"오늘의 {top3_total or 3}픽", "전체 경기", "승무패 14", "채점 노트"
+main_tab3, main_tab1, main_tab2, main_tab4, main_tab5 = st.tabs([
+    f"오늘의 {top3_total or 3}픽", "전체 경기", "승무패 14", "채점 노트", "인증 게시판"
 ])
 
-if st.session_state.get('username') == "admin":
+if st.session_state.get('role') == ROLE_ADMIN:
     source_meta = dashboard_data.get("source_meta", {})
     if source_meta:
         proto_source = source_meta.get("betman_proto_count", 0)
@@ -703,7 +842,7 @@ with main_tab1:
             <div><h2>전체 경기 분석</h2><p>LIVE 경기를 먼저 보여주며 리그별로 빠르게 확인할 수 있습니다.</p></div>
         </div>
         <div style='background:rgba(25,230,242,.055); border:1px solid rgba(25,230,242,.20); color:#BEEEF2; padding:12px 14px; border-radius:12px; font-size:12px; font-weight:700; margin-bottom:20px;'>
-            무료 이용자는 오늘의 추천 3경기와 채점 노트를 볼 수 있습니다. 전체 경기 상세 분석은 VIP에서 열립니다.
+            무료 이용자는 오늘의 추천 3경기와 채점 노트를 볼 수 있습니다. 전체 경기 상세 분석은 후원회원에게 열립니다.
         </div>
         """, unsafe_allow_html=True)
         
@@ -754,9 +893,9 @@ with main_tab1:
                     if not paywall_shown:
                         st.markdown("""
                         <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
-                            <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 VIP 프리미엄 전용 분석</h2>
-                            <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터는 VIP 회원에게만 제공됩니다.<br>적중률 높은 숨겨진 역배 꿀픽과 모든 데이터를 확인하세요!</p>
-                            <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>👉 좌측 사이드바(화살표 클릭)에서 로그인/회원가입 후 VIP 승급을 요청해주세요.</p>
+                            <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 후원회원 전용 분석</h2>
+                            <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터는 후원회원에게만 제공됩니다.<br>숨겨진 역배 분석과 전체 데이터를 확인할 수 있습니다.</p>
+                            <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>좌측 회원 라운지에서 로그인 후 전환 확인을 요청해주세요.</p>
                         </div>
                         """, unsafe_allow_html=True)
                         paywall_shown = True
@@ -780,7 +919,7 @@ with main_tab1:
 
                 upset_html = ""
                 if item.get('upset_warning'):
-                    upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color: #ffcccc; border-radius: 4px; margin-bottom: 15px; line-height: 1.6;'><span style='background-color: #FFD700; color: #000; font-weight: 900; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px;'>VIP 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
+                    upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color:#ffcccc; border-radius:4px; margin-bottom:15px; line-height:1.6;'><span style='background-color:#FFD700; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>후원회원 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
                 
                 html_code = (
                     f"<div class='match-card'>"
@@ -833,8 +972,8 @@ with main_tab2:
                     st.markdown("""
                     <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
                         <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 승무패 14경기 전체 보기 잠금</h2>
-                        <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터의 마킹 전략은 VIP 회원에게만 공개됩니다.</p>
-                        <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>👉 좌측 사이드바에서 VIP 승급을 진행해주세요.</p>
+                        <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터의 마킹 전략은 후원회원에게만 공개됩니다.</p>
+                        <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>좌측 회원 라운지에서 후원회원 전환 확인을 요청해주세요.</p>
                     </div>
                     """, unsafe_allow_html=True)
                     toto_paywall_shown = True
@@ -936,7 +1075,8 @@ with main_tab4:
             return {
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
-                "history": df_proto.head(50).to_dict('records'),
+                # 오답노트는 회원 등급과 관계없이 전체 기록을 공개한다.
+                "history": df_proto.to_dict('records'),
                 "pending": df_pending.to_dict('records')
             }
         except Exception as e:
@@ -1082,3 +1222,72 @@ with main_tab4:
                 
             if displayed_pending == 0:
                 st.info("현재 대기 중인 향후 경기 일정이 없습니다.")
+
+# -----------------------------------------------------------------------------
+# [TAB 5] 인증 게시판 · 모두 열람, 후원회원/관리자 작성
+# -----------------------------------------------------------------------------
+with main_tab5:
+    st.markdown("""
+    <div class='section-intro'>
+        <div>
+            <h2>회원 인증 게시판</h2>
+            <p>분석 활용 후기와 적중 인증을 함께 확인하는 공간입니다.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.info("모든 방문자가 글을 읽을 수 있으며 후원회원과 관리자만 작성할 수 있습니다.")
+
+    current_role = st.session_state.get("role", ROLE_GUEST)
+    if can_write_board(current_role):
+        with st.expander("새 글 작성"):
+            with st.form("board-write-form", clear_on_submit=True):
+                category = st.selectbox(
+                    "분류",
+                    ["proof", "free", "notice"] if current_role == ROLE_ADMIN else ["proof", "free"],
+                    format_func=lambda value: {
+                        "proof": "적중 인증", "free": "자유 이야기", "notice": "공지"
+                    }[value],
+                )
+                post_title = st.text_input("제목", max_chars=80)
+                post_body = st.text_area("내용", max_chars=5000, height=150)
+                submitted = st.form_submit_button("등록")
+                if submitted:
+                    ok, message = create_post(
+                        int(st.session_state["user_id"]), post_title, post_body, category
+                    )
+                    (st.success if ok else st.error)(message)
+                    if ok:
+                        st.rerun()
+    elif st.session_state.get("logged_in"):
+        st.caption("글 작성은 후원회원 전환 후 이용할 수 있습니다.")
+    else:
+        st.caption("글 작성은 로그인한 후원회원만 이용할 수 있습니다.")
+
+    category_labels = {"proof": "적중 인증", "free": "자유", "notice": "공지"}
+    board_posts = list_posts(limit=100)
+    if not board_posts:
+        st.info("아직 등록된 글이 없습니다. 첫 인증 기록을 기다리고 있습니다.")
+
+    for post in board_posts:
+        with st.container(border=True):
+            title_col, meta_col = st.columns([4, 1])
+            with title_col:
+                st.markdown(f"#### {escape(post['title'])}")
+            with meta_col:
+                st.caption(category_labels.get(post["category"], "게시글"))
+            st.caption(
+                f"{post['display_name']} · {post['created_at'].replace('T', ' ')[:16]}"
+            )
+            st.write(post["body"])
+
+            may_delete = (
+                st.session_state.get("role") == ROLE_ADMIN
+                or st.session_state.get("username") == post["username"]
+            )
+            if may_delete and st.button("삭제", key=f"delete-post-{post['id']}"):
+                ok, message = delete_post(
+                    int(st.session_state["user_id"]), int(post["id"])
+                )
+                (st.success if ok else st.error)(message)
+                if ok:
+                    st.rerun()
