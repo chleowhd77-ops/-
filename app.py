@@ -246,6 +246,105 @@ st.markdown("""
     }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
     [data-testid="stSidebar"] label { color: #CFD8E6 !important; }
+    [data-testid="stSidebar"] > div:first-child { padding-top: 1rem; }
+    .sidebar-brand {
+        margin: 4px 0 18px;
+        padding-bottom: 17px;
+        border-bottom: 1px solid var(--dj-line);
+    }
+    .sidebar-brand strong {
+        display: block;
+        color: #F8FAFC;
+        font-size: 20px;
+        font-weight: 900;
+        letter-spacing: -.45px;
+        margin-bottom: 5px;
+    }
+    .sidebar-brand span { color: #7F8DA3; font-size: 11px; line-height: 1.55; }
+    .member-profile {
+        margin: 2px 0 12px;
+        padding: 13px;
+        border: 1px solid rgba(148, 163, 184, .14);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, .025);
+    }
+    .member-profile-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .member-avatar {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        border: 1px solid rgba(25, 230, 242, .25);
+        border-radius: 11px;
+        background: rgba(25, 230, 242, .08);
+        color: var(--dj-cyan);
+        font-size: 13px;
+        font-weight: 900;
+    }
+    .member-profile-copy { min-width: 0; flex: 1; }
+    .member-profile-copy strong {
+        display: block;
+        overflow: hidden;
+        color: #F8FAFC;
+        font-size: 13px;
+        font-weight: 850;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .member-online {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: #7F8DA3;
+        font-size: 10px;
+        margin-top: 3px;
+    }
+    .member-online::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--dj-green);
+        box-shadow: 0 0 0 3px rgba(23, 201, 139, .10);
+    }
+    .member-role {
+        flex: 0 0 auto;
+        padding: 4px 7px;
+        border: 1px solid rgba(148, 163, 184, .18);
+        border-radius: 999px;
+        color: #B7C3D4;
+        background: rgba(148, 163, 184, .06);
+        font-size: 9px;
+        font-weight: 850;
+    }
+    .member-role.supporter { color: #F3D995; border-color: rgba(248, 198, 92, .26); background: rgba(248, 198, 92, .07); }
+    .member-role.admin { color: #F3A9B0; border-color: rgba(255, 91, 104, .28); background: rgba(255, 91, 104, .07); }
+    .member-access-note {
+        margin: 0 0 12px;
+        padding: 10px 11px;
+        border-left: 2px solid rgba(25, 230, 242, .42);
+        border-radius: 8px;
+        background: rgba(25, 230, 242, .035);
+        color: #91A1B7;
+        font-size: 10px;
+        line-height: 1.6;
+    }
+    .admin-mode-label {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #B8C4D5;
+        font-size: 10px;
+        font-weight: 800;
+    }
+    .admin-mode-label::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--dj-red);
+    }
 
     .block-container {
         max-width: 1120px !important;
@@ -558,7 +657,8 @@ st.markdown("""
         overflow-wrap: anywhere;
     }
 
-    .stButton > button {
+    .main .stButton > button,
+    [data-testid="stAppViewContainer"] > .main .stButton > button {
         width: 100%;
         min-height: 42px;
         border-radius: 11px !important;
@@ -567,6 +667,57 @@ st.markdown("""
         background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
         font-weight: 900 !important;
     }
+    [data-testid="stSidebar"] .stButton > button,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button {
+        width: 100%;
+        min-height: 38px;
+        border: 1px solid rgba(148, 163, 184, .20) !important;
+        border-radius: 9px !important;
+        background: rgba(255, 255, 255, .025) !important;
+        color: #C7D1DF !important;
+        box-shadow: none !important;
+        font-size: 12px !important;
+        font-weight: 750 !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button:hover {
+        border-color: rgba(25, 230, 242, .34) !important;
+        color: #F8FAFC !important;
+        background: rgba(25, 230, 242, .055) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        border-color: rgba(148, 163, 184, .14) !important;
+        border-radius: 11px !important;
+        background: rgba(255, 255, 255, .015) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stAlert"] {
+        border-radius: 10px !important;
+        background: rgba(148, 163, 184, .05) !important;
+        border-color: rgba(148, 163, 184, .12) !important;
+    }
+    .grade-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 30px;
+    }
+    .grade-summary-card {
+        min-width: 0;
+        padding: 20px;
+        border: 1px solid var(--dj-line);
+        border-radius: 14px;
+        background: rgba(11, 15, 25, .92);
+        overflow: hidden;
+    }
+    .grade-summary-title { color: #94A3B8; font-size: 13px; font-weight: 900; margin-bottom: 15px; overflow-wrap: anywhere; }
+    .grade-dual-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+    .grade-metric { min-width: 0; text-align: center; }
+    .grade-metric-label, .grade-metric-note { display: block; color: #9EACC0; font-size: 11px; overflow-wrap: anywhere; }
+    .grade-metric-value { display: block; color: var(--dj-green); font-size: 31px; font-weight: 900; line-height: 1.15; }
+    .grade-metric-value.gold { color: #F59E0B; }
+    .grade-versus { color: #334155; font-size: 20px; font-weight: 700; }
+    .grade-toto { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    .grade-toto .grade-metric-value { color: var(--dj-cyan); font-size: 38px; }
     .stTextInput input, [data-baseweb="select"] > div {
         border-radius: 10px !important;
         background: rgba(8, 13, 23, .92) !important;
@@ -578,9 +729,9 @@ st.markdown("""
         .block-container { padding: .65rem .72rem 3rem !important; }
         .block-container, [data-testid="stVerticalBlock"], [data-testid="stMarkdownContainer"] { min-width: 0 !important; max-width: 100% !important; }
         .brand-shell { padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
-        .brand-row { align-items: flex-start; gap: 12px; }
+        .brand-row { align-items: flex-start; gap: 12px; min-width: 0; }
         .brand-mark { width: 48px; height: 48px; flex-basis: 48px; }
-        .brand-title { font-size: 26px; }
+        .brand-title { font-size: clamp(21px, 7vw, 26px); overflow-wrap: anywhere; }
         .brand-copy { font-size: 12px; padding-right: 18px; }
         .brand-trust { gap: 6px; margin-top: 15px; }
         .brand-trust span { font-size: 10px; padding: 6px 8px; }
@@ -616,6 +767,21 @@ st.markdown("""
         .pending-report-teams { font-size: 14px; line-height: 1.45; }
         .pending-report-score { font-size: 21px; }
         .join-strip { padding: 13px 14px; }
+        .grade-summary-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 22px; }
+        .grade-summary-card { padding: 15px 12px; }
+        .grade-dual-row { gap: 7px; }
+        .grade-metric-value { font-size: 25px; }
+        .grade-toto .grade-metric-value { font-size: 31px; }
+        .report-card, .pending-report-card { width: 100%; max-width: 100%; contain: inline-size; }
+        .report-card *, .pending-report-card * { max-width: 100%; }
+    }
+    @media (max-width: 430px) {
+        .brand-row { display: block; }
+        .brand-mark { margin-bottom: 14px; }
+        .status-cell small { font-size: 9px; }
+        .status-cell strong { font-size: 12px; }
+        .grade-dual-row { grid-template-columns: minmax(0, 1fr); }
+        .grade-dual-row > div:nth-child(2) { display: none; }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -637,8 +803,15 @@ if 'role' not in st.session_state:
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
-st.sidebar.title("D.J 회원 라운지")
-st.sidebar.caption("로그인하면 내 등급과 이용 가능한 분석을 확인할 수 있습니다.")
+st.sidebar.markdown(
+    """
+    <div class="sidebar-brand">
+        <strong>D.J 회원 라운지</strong>
+        <span>내 등급과 이용 가능한 분석을 확인하세요.</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def begin_user_session(user):
@@ -810,12 +983,40 @@ if not st.session_state['logged_in']:
 
 else:
     current_role = st.session_state.get('role', ROLE_MEMBER)
-    st.sidebar.success(f"👤 {st.session_state['username']} 님 접속 중")
-    st.sidebar.markdown(f"**등급: {ROLE_LABELS.get(current_role, '일반회원')}**")
+    current_username = str(st.session_state.get('username', '회원'))
+    safe_username = escape(current_username)
+    safe_initial = escape((current_username[:1] or "D").upper())
+    safe_role_label = escape(ROLE_LABELS.get(current_role, '일반회원'))
+    role_class = (
+        "admin" if current_role == ROLE_ADMIN
+        else "supporter" if current_role == ROLE_SUPPORTER
+        else "member"
+    )
+    st.sidebar.markdown(
+        f"""
+        <div class="member-profile">
+            <div class="member-profile-row">
+                <div class="member-avatar">{safe_initial}</div>
+                <div class="member-profile-copy">
+                    <strong>{safe_username}</strong>
+                    <span class="member-online">접속 중</span>
+                </div>
+            </div>
+            <span class="member-role {role_class}">{safe_role_label}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if current_role in {ROLE_SUPPORTER, ROLE_ADMIN}:
-        st.sidebar.info("전체 경기 분석과 후원회원 게시판 작성 권한이 열려 있습니다.")
+        access_note = "전체 경기 분석과 인증 게시판 작성 권한이 열려 있습니다."
     else:
-        st.sidebar.info("현재 무료 베타 운영 중입니다. 후원회원 전환은 확인 요청 후 관리자가 처리합니다.")
+        access_note = "추천 3픽과 공개 리포트를 이용 중입니다. 후원 확인 후 전체 분석이 열립니다."
+    st.sidebar.markdown(
+        f"<div class='member-access-note'>{escape(access_note)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if current_role not in {ROLE_SUPPORTER, ROLE_ADMIN}:
         with st.sidebar.expander("후원회원 전환 확인 요청"):
             depositor_name = st.text_input("확인용 입금자명", key="support-depositor")
             support_note = st.text_area("관리자에게 남길 메모", key="support-note", height=80)
@@ -859,7 +1060,7 @@ else:
                 else:
                     st.error(message)
 
-    if st.sidebar.button("로그아웃"):
+    if st.sidebar.button("로그아웃 →", key="sidebar-logout"):
         st.session_state['logged_in'] = False
         st.session_state['user_id'] = None
         st.session_state['username'] = ""
@@ -869,56 +1070,65 @@ else:
     # 관리자 전용 회원·권한 관리
     if current_role == ROLE_ADMIN:
         st.sidebar.markdown("---")
-        st.sidebar.error("관리자 전용 모드")
-        users = list_users()
-        if users:
-            user_df = pd.DataFrame(users).rename(columns={
-                "username": "아이디", "display_name": "표시 이름",
-                "role": "등급", "status": "상태", "created_at": "가입 시각",
-                "last_login_at": "최근 로그인",
-            })
-            visible_columns = ["아이디", "표시 이름", "등급", "상태", "가입 시각", "최근 로그인"]
-            st.sidebar.dataframe(user_df[visible_columns], hide_index=True, use_container_width=True)
-
-            target_username = st.sidebar.selectbox(
-                "관리할 회원", [user["username"] for user in users], key="admin-target-user"
-            )
-            target_user = next(user for user in users if user["username"] == target_username)
-            role_options = [ROLE_MEMBER, ROLE_SUPPORTER, ROLE_ADMIN]
-            selected_role = st.sidebar.selectbox(
-                "회원 등급",
-                role_options,
-                index=role_options.index(target_user["role"]),
-                format_func=lambda value: ROLE_LABELS[value],
-                key="admin-target-role",
-            )
-            if st.sidebar.button("등급 적용"):
-                ok, message = set_user_role(
-                    int(st.session_state['user_id']), target_username, selected_role
-                )
-                (st.sidebar.success if ok else st.sidebar.error)(message)
-                if ok:
-                    st.rerun()
-
-            selected_status = st.sidebar.selectbox(
-                "계정 상태",
-                ["active", "suspended"],
-                index=0 if target_user["status"] == "active" else 1,
-                format_func=lambda value: "정상" if value == "active" else "정지",
-                key="admin-target-status",
-            )
-            if st.sidebar.button("상태 적용"):
-                ok, message = set_user_status(
-                    int(st.session_state['user_id']), target_username, selected_status
-                )
-                (st.sidebar.success if ok else st.sidebar.error)(message)
-                if ok:
-                    st.rerun()
-
         pending_requests = [
             request for request in list_support_requests() if request["status"] == "pending"
         ]
-        with st.sidebar.expander(f"후원 확인 대기 {len(pending_requests)}건"):
+        with st.sidebar.expander(
+            f"관리자 도구 · 확인 대기 {len(pending_requests)}건", expanded=False
+        ):
+            st.markdown("<div class='admin-mode-label'>ADMIN CONSOLE</div>", unsafe_allow_html=True)
+            st.caption("회원 등급과 계정 상태를 관리합니다.")
+            users = list_users()
+            if users:
+                user_df = pd.DataFrame(users).rename(columns={
+                    "username": "아이디", "display_name": "표시 이름",
+                    "role": "등급", "status": "상태", "created_at": "가입 시각",
+                    "last_login_at": "최근 로그인",
+                })
+                visible_columns = ["아이디", "표시 이름", "등급", "상태", "가입 시각", "최근 로그인"]
+                st.dataframe(
+                    user_df[visible_columns], hide_index=True,
+                    use_container_width=True, height=min(230, 36 * (len(user_df) + 1)),
+                )
+
+                target_username = st.selectbox(
+                    "관리할 회원", [user["username"] for user in users],
+                    key="admin-target-user",
+                )
+                target_user = next(
+                    user for user in users if user["username"] == target_username
+                )
+                role_options = [ROLE_MEMBER, ROLE_SUPPORTER, ROLE_ADMIN]
+                selected_role = st.selectbox(
+                    "회원 등급", role_options,
+                    index=role_options.index(target_user["role"]),
+                    format_func=lambda value: ROLE_LABELS[value],
+                    key="admin-target-role",
+                )
+                if st.button("등급 적용", key="admin-role-apply", use_container_width=True):
+                    ok, message = set_user_role(
+                        int(st.session_state['user_id']), target_username, selected_role
+                    )
+                    (st.success if ok else st.error)(message)
+                    if ok:
+                        st.rerun()
+
+                selected_status = st.selectbox(
+                    "계정 상태", ["active", "suspended"],
+                    index=0 if target_user["status"] == "active" else 1,
+                    format_func=lambda value: "정상" if value == "active" else "정지",
+                    key="admin-target-status",
+                )
+                if st.button("상태 적용", key="admin-status-apply", use_container_width=True):
+                    ok, message = set_user_status(
+                        int(st.session_state['user_id']), target_username, selected_status
+                    )
+                    (st.success if ok else st.error)(message)
+                    if ok:
+                        st.rerun()
+
+            st.divider()
+            st.markdown(f"**후원 확인 대기 {len(pending_requests)}건**")
             if pending_requests:
                 for request in pending_requests:
                     st.write(f"{request['username']} · {request['depositor_name']}")
@@ -949,9 +1159,32 @@ else:
             else:
                 st.caption("대기 중인 요청이 없습니다.")
 
-has_full_access = bool(
-    st.session_state.get('role') in {ROLE_SUPPORTER, ROLE_ADMIN}
-)
+ACCESS_RULES = {
+    ROLE_GUEST: {
+        "status_label": "비회원 · 추천 3픽",
+        "full_analysis": False,
+        "match_limit": 3,
+    },
+    ROLE_MEMBER: {
+        "status_label": "일반회원 · 추천 3픽",
+        "full_analysis": False,
+        "match_limit": 3,
+    },
+    ROLE_SUPPORTER: {
+        "status_label": "후원회원 · 전체 이용",
+        "full_analysis": True,
+        "match_limit": None,
+    },
+    ROLE_ADMIN: {
+        "status_label": "관리자 · 전체 이용",
+        "full_analysis": True,
+        "match_limit": None,
+    },
+}
+active_role = st.session_state.get('role', ROLE_GUEST)
+access_profile = ACCESS_RULES.get(active_role, ACCESS_RULES[ROLE_GUEST])
+has_full_access = bool(access_profile["full_analysis"])
+visible_match_limit = access_profile["match_limit"]
 
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
@@ -962,7 +1195,7 @@ live_scores_data = load_live_scores()
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
 live_total = sum(1 for value in live_scores_data.values() if value.get("is_live") is True)
-member_label = "후원회원 전체 이용" if has_full_access else "무료 3픽 이용"
+member_label = access_profile["status_label"]
 brand_mark_html = (
     f"<img class='brand-mark' src='{BRAND_LOGO_URI}' alt='D.J SPORTS ANALYTICS 로고'>"
     if BRAND_LOGO_URI else "<div class='brand-mark' aria-label='DJ'>DJ</div>"
@@ -1223,7 +1456,11 @@ with main_tab1:
                 displayed_count += 1
 
                 # 🔥 페이월(Paywall) 로직: 4번째 경기부터 잠금
-                if displayed_count > 3 and not has_full_access:
+                if (
+                    visible_match_limit is not None
+                    and displayed_count > visible_match_limit
+                    and not has_full_access
+                ):
                     if not paywall_shown:
                         st.markdown("""
                         <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
@@ -1301,7 +1538,11 @@ with main_tab2:
         for idx, item in enumerate(toto14_list, 1):
             toto_displayed += 1
 
-            if toto_displayed > 3 and not has_full_access:
+            if (
+                visible_match_limit is not None
+                and toto_displayed > visible_match_limit
+                and not has_full_access
+            ):
                 if not toto_paywall_shown:
                     st.markdown("""
                     <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
@@ -1425,27 +1666,27 @@ with main_tab4:
         t_stats = stats['toto']
         
         st.markdown(f"""
-        <div style='display:flex; gap:20px; margin-bottom:30px;'>
-            <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B;'>
-                <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:15px;'>📊 라이브 승부식 A/B 채점 (총 {p_stats['total']}경기)</span>
-                <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <div style='text-align:center;'>
-                        <span style='color:#CBD5E1; font-size:12px; display:block;'>안전제일 확률픽</span>
-                        <span style='color:#10B981; font-size:32px; font-weight:900;'>{p_stats['prob_acc']}%</span>
-                        <span style='color:#64748B; font-size:12px; display:block;'>({p_stats['prob_hit']}건 적중)</span>
+        <div class='grade-summary-grid'>
+            <div class='grade-summary-card'>
+                <span class='grade-summary-title'>📊 라이브 승부식 A/B 채점 (총 {p_stats['total']}경기)</span>
+                <div class='grade-dual-row'>
+                    <div class='grade-metric'>
+                        <span class='grade-metric-label'>안전제일 확률픽</span>
+                        <span class='grade-metric-value probability'>{p_stats['prob_acc']}%</span>
+                        <span class='grade-metric-note'>({p_stats['prob_hit']}건 적중)</span>
                     </div>
-                    <div style='color:#334155; font-size:24px; font-weight:100;'>VS</div>
-                    <div style='text-align:center;'>
-                        <span style='color:#CBD5E1; font-size:12px; display:block;'>역배수익 꿀픽</span>
-                        <span style='color:#F59E0B; font-size:32px; font-weight:900;'>{p_stats['ev_acc']}%</span>
-                        <span style='color:#64748B; font-size:12px; display:block;'>({p_stats['ev_hit']}건 적중)</span>
+                    <div class='grade-versus'>VS</div>
+                    <div class='grade-metric'>
+                        <span class='grade-metric-label'>역배수익 꿀픽</span>
+                        <span class='grade-metric-value gold'>{p_stats['ev_acc']}%</span>
+                        <span class='grade-metric-note'>({p_stats['ev_hit']}건 적중)</span>
                     </div>
                 </div>
             </div>
-            <div style='flex:1; background:#0B0F19; padding:20px; border-radius:12px; border:1px solid #1E293B; display:flex; flex-direction:column; justify-content:center; align-items:center;'>
-                <span style='color:#94A3B8; font-size:14px; font-weight:900; display:block; margin-bottom:5px;'>🏆 승무패 14경기 단통 적중률</span>
-                <span style='color:#00F2FE; font-size:40px; font-weight:900;'>{t_stats['acc']}%</span>
-                <span style='color:#64748B; font-size:13px;'>총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중</span>
+            <div class='grade-summary-card grade-toto'>
+                <span class='grade-summary-title'>🏆 승무패 14경기 단통 적중률</span>
+                <span class='grade-metric-value toto'>{t_stats['acc']}%</span>
+                <span class='grade-metric-note'>총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
