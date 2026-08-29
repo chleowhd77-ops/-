@@ -248,6 +248,28 @@ st.markdown("""
         letter-spacing: 2.4px;
         margin-bottom: 12px;
     }
+    .brand-lockup {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 17px;
+    }
+    .dj-mark {
+        width: 66px;
+        height: 66px;
+        flex: 0 0 66px;
+        display: grid;
+        place-items: center;
+        color: #051015;
+        font-size: 23px;
+        font-weight: 1000;
+        letter-spacing: -2px;
+        border-radius: 19px 19px 7px 19px;
+        background: linear-gradient(145deg, #7AF5DC 0%, var(--dj-cyan) 48%, #4F8CFF 100%);
+        box-shadow: 0 12px 34px rgba(25, 230, 242, 0.22);
+    }
+    .brand-copy-wrap { min-width: 0; }
     .brand-title {
         color: #FFFFFF;
         font-size: 34px;
@@ -334,10 +356,11 @@ st.markdown("""
         border-radius: 10px !important;
     }
     .stTabs [aria-selected="true"] {
-        color: #061016 !important;
-        background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
-        border-bottom: none !important;
-        box-shadow: 0 8px 22px rgba(25, 230, 242, 0.18) !important;
+        color: var(--dj-cyan) !important;
+        background: rgba(25, 230, 242, 0.075) !important;
+        border: 1px solid rgba(25, 230, 242, 0.24) !important;
+        border-bottom: 1px solid rgba(25, 230, 242, 0.24) !important;
+        box-shadow: inset 0 -2px 0 var(--dj-cyan) !important;
     }
 
     .match-card {
@@ -437,10 +460,18 @@ st.markdown("""
         width: 100%;
         min-height: 42px;
         border-radius: 11px !important;
-        border: 1px solid rgba(25, 230, 242, .35) !important;
-        color: #061016 !important;
-        background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
+        border: 1px solid rgba(25, 230, 242, .28) !important;
+        color: #E9FCFF !important;
+        background: linear-gradient(135deg, rgba(25,230,242,.13), rgba(79,140,255,.10)) !important;
         font-weight: 900 !important;
+        box-shadow: 0 8px 20px rgba(0,0,0,.14) !important;
+        transition: .18s ease !important;
+    }
+    .stButton > button:hover {
+        color: #FFFFFF !important;
+        border-color: rgba(25,230,242,.65) !important;
+        background: linear-gradient(135deg, rgba(25,230,242,.20), rgba(79,140,255,.15)) !important;
+        transform: translateY(-1px);
     }
     .stTextInput input, [data-baseweb="select"] > div {
         border-radius: 10px !important;
@@ -451,6 +482,8 @@ st.markdown("""
     @media (max-width: 768px) {
         .block-container { padding: .65rem .72rem 3rem !important; }
         .brand-shell { padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
+        .brand-lockup { gap: 12px; align-items: flex-start; }
+        .dj-mark { width: 52px; height: 52px; flex-basis: 52px; border-radius: 15px 15px 6px 15px; font-size: 19px; }
         .brand-title { font-size: 26px; }
         .brand-copy { font-size: 12px; padding-right: 18px; }
         .brand-trust { gap: 6px; margin-top: 15px; }
@@ -584,29 +617,33 @@ live_scores_data = load_live_scores()
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
 live_total = sum(1 for value in live_scores_data.values() if value.get("is_live") is True)
-member_label = "VIP 전체 이용" if has_full_access else "무료 3픽 이용"
 
 st.markdown(f"""
 <section class='brand-shell'>
-    <div class='brand-kicker'>DATA-DRIVEN FOOTBALL PICKS</div>
-    <div class='brand-title'>D.J PROTO <span>ANALYTICS</span></div>
-    <div class='brand-copy'>경기 데이터와 배당 흐름을 함께 읽는 축구 분석 서비스<br>확률은 참고 지표이며 적중이나 수익을 보장하지 않습니다.</div>
+    <div class='brand-lockup'>
+        <div class='dj-mark'>D.J</div>
+        <div class='brand-copy-wrap'>
+            <div class='brand-kicker'>FOOTBALL ANALYTICS LAB</div>
+            <div class='brand-title'>D.J PROTO <span>ANALYTICS</span></div>
+            <div class='brand-copy'>정배의 안정성과 역배의 가치를 함께 추적하는 축구 전문 분석 시스템<br>확률은 참고 지표이며 적중이나 수익을 보장하지 않습니다.</div>
+        </div>
+    </div>
     <div class='brand-trust'>
-        <span>실시간 경기 반영</span>
-        <span>확률·가치 분리 분석</span>
-        <span>경기 종료 후 자동 채점</span>
+        <span>프로토 LIVE</span>
+        <span>정배·역배 가치 분석</span>
+        <span>A/B 자동 채점</span>
     </div>
 </section>
 <div class='status-grid'>
-    <div class='status-cell'><small>오늘 분석</small><strong>{proto_total}경기</strong></div>
-    <div class='status-cell'><small>현재 LIVE</small><strong class='accent'>{live_total}경기</strong></div>
-    <div class='status-cell'><small>이용 상태</small><strong>{member_label}</strong></div>
+    <div class='status-cell'><small>프로토 분석</small><strong>{proto_total}경기</strong></div>
+    <div class='status-cell'><small>실시간 LIVE</small><strong class='accent'>{live_total}경기</strong></div>
+    <div class='status-cell'><small>추천 분석</small><strong>TOP {top3_total or 3}</strong></div>
 </div>
 """, unsafe_allow_html=True)
 
-# 방문자가 가장 먼저 무료 추천을 보도록 탭의 표시 순서만 변경한다.
-main_tab3, main_tab1, main_tab2, main_tab4 = st.tabs([
-    f"오늘의 {top3_total or 3}픽", "전체 경기", "승무패 14", "채점 노트"
+# 서비스에서 사용하던 메뉴명과 순서를 그대로 유지한다.
+main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
+    "프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "AI 리포트 (V3)"
 ])
 
 if st.session_state.get('username') == "admin":
@@ -700,10 +737,10 @@ with main_tab1:
     with sub_soccer:
         st.markdown("""
         <div class='section-intro'>
-            <div><h2>전체 경기 분석</h2><p>LIVE 경기를 먼저 보여주며 리그별로 빠르게 확인할 수 있습니다.</p></div>
+            <div><h2>프로토 LIVE</h2><p>베트맨 프로토 경기와 실시간 스코어를 리그별로 확인할 수 있습니다.</p></div>
         </div>
         <div style='background:rgba(25,230,242,.055); border:1px solid rgba(25,230,242,.20); color:#BEEEF2; padding:12px 14px; border-radius:12px; font-size:12px; font-weight:700; margin-bottom:20px;'>
-            무료 이용자는 오늘의 추천 3경기와 채점 노트를 볼 수 있습니다. 전체 경기 상세 분석은 VIP에서 열립니다.
+            비회원 및 일반 회원은 추천 3경기를 확인할 수 있으며 VIP 회원은 전체 분석이 열립니다.
         </div>
         """, unsafe_allow_html=True)
         
@@ -873,7 +910,7 @@ with main_tab2:
 with main_tab3:
     st.markdown("""
     <div class='section-intro'>
-        <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
+        <div><h2>오늘의 TOP 3</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 우선 추천 분석입니다.</p></div>
     </div>
     """, unsafe_allow_html=True)
     top3_list = dashboard_data.get("top3", [])
