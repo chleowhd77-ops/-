@@ -23,7 +23,9 @@ from member_system import (
     can_write_board,
     create_post,
     delete_post,
+    get_post_image,
     init_member_db,
+    list_notices,
     list_posts,
     list_support_requests,
     list_users,
@@ -32,6 +34,7 @@ from member_system import (
     review_support_request,
     set_user_role,
     set_user_status,
+    set_notice_visibility,
 )
 
 try:
@@ -329,6 +332,16 @@ st.markdown("""
         color: #91A1B7;
         font-size: 10px;
         line-height: 1.6;
+    }
+    .sidebar-flash {
+        margin: 0 0 12px;
+        padding: 9px 11px;
+        border: 1px solid rgba(25, 230, 242, .14);
+        border-radius: 9px;
+        background: rgba(25, 230, 242, .025);
+        color: #9FB0C4;
+        font-size: 10px;
+        line-height: 1.55;
     }
     .admin-mode-label {
         display: flex;
@@ -656,6 +669,11 @@ st.markdown("""
         font-size: 12px;
         overflow-wrap: anywhere;
     }
+    .board-photo-caption {
+        margin: 7px 0 4px;
+        color: #718096;
+        font-size: 10px;
+    }
 
     .main .stButton > button,
     [data-testid="stAppViewContainer"] > .main .stButton > button {
@@ -916,7 +934,10 @@ if st.session_state.get('next_auth_menu'):
 
 auth_flash = st.session_state.pop('auth_flash', None)
 if auth_flash:
-    st.sidebar.success(auth_flash)
+    st.sidebar.markdown(
+        f"<div class='sidebar-flash'>✓ {escape(str(auth_flash))}</div>",
+        unsafe_allow_html=True,
+    )
     try:
         st.toast(auth_flash, icon="✅")
     except Exception:
@@ -1159,6 +1180,54 @@ else:
             else:
                 st.caption("대기 중인 요청이 없습니다.")
 
+            st.divider()
+            st.markdown("**첫 화면 공지 관리**")
+            st.caption("공개한 최신 공지 한 건이 모든 방문자의 첫 화면에 표시됩니다.")
+            with st.form("admin-notice-form", clear_on_submit=True):
+                notice_form_title = st.text_input(
+                    "공지 제목", max_chars=80, key="admin-notice-title"
+                )
+                notice_form_body = st.text_area(
+                    "공지 내용", max_chars=5000, height=100,
+                    key="admin-notice-body",
+                )
+                notice_form_submit = st.form_submit_button(
+                    "공지 등록", use_container_width=True
+                )
+            if notice_form_submit:
+                ok, message = create_post(
+                    int(st.session_state['user_id']),
+                    notice_form_title,
+                    notice_form_body,
+                    "notice",
+                )
+                (st.success if ok else st.error)(message)
+                if ok:
+                    st.rerun()
+
+            managed_notices = list_notices(include_hidden=True, limit=8)
+            if managed_notices:
+                for notice in managed_notices:
+                    notice_status = "공개 중" if notice["status"] == "visible" else "숨김"
+                    st.caption(f"{notice_status} · {notice['title']}")
+                    should_show = notice["status"] != "visible"
+                    action_label = "다시 공개" if should_show else "숨기기"
+                    if st.button(
+                        action_label,
+                        key=f"notice-visibility-{notice['id']}",
+                        use_container_width=True,
+                    ):
+                        ok, message = set_notice_visibility(
+                            int(st.session_state['user_id']),
+                            int(notice["id"]),
+                            should_show,
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
+            else:
+                st.caption("등록된 공지가 없습니다.")
+
 ACCESS_RULES = {
     ROLE_GUEST: {
         "status_label": "비회원 · 추천 3픽",
@@ -1293,12 +1362,10 @@ if not st.session_state.get('logged_in'):
             st.session_state['next_auth_menu'] = "로그인"
             st.info("왼쪽 위의 메뉴(>>)를 열어 로그인해주세요.")
 
-# 관리자가 인증 게시판에 작성한 최신 공지는 첫 화면에도 자동 노출한다.
+# 관리자가 공개한 최신 공지는 첫 화면에도 자동 노출한다.
 try:
-    latest_notice = next(
-        (post for post in list_posts(limit=30) if post.get("category") == "notice"),
-        None,
-    )
+    visible_notices = list_notices(include_hidden=False, limit=1)
+    latest_notice = visible_notices[0] if visible_notices else None
 except Exception:
     latest_notice = None
 
@@ -1837,17 +1904,31 @@ with main_tab5:
             with st.form("board-write-form", clear_on_submit=True):
                 category = st.selectbox(
                     "분류",
-                    ["proof", "free", "notice"] if current_role == ROLE_ADMIN else ["proof", "free"],
+                    ["proof", "free"],
                     format_func=lambda value: {
-                        "proof": "적중 인증", "free": "자유 이야기", "notice": "공지"
+                        "proof": "적중 인증", "free": "자유 이야기"
                     }[value],
                 )
                 post_title = st.text_input("제목", max_chars=80)
                 post_body = st.text_area("내용", max_chars=5000, height=150)
+                post_image = st.file_uploader(
+                    "인증 사진 (선택)",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=False,
+                    help="적중 인증 글에 JPG·PNG·WEBP 사진 1장, 최대 2MB까지 첨부할 수 있습니다.",
+                )
+                st.caption("사진은 개인정보와 계좌번호를 가린 뒤 올려주세요. 적중 인증 분류에서만 저장됩니다.")
                 submitted = st.form_submit_button("등록")
                 if submitted:
+                    uploaded_bytes = post_image.getvalue() if post_image else None
+                    uploaded_mime = post_image.type if post_image else None
                     ok, message = create_post(
-                        int(st.session_state["user_id"]), post_title, post_body, category
+                        int(st.session_state["user_id"]),
+                        post_title,
+                        post_body,
+                        category,
+                        image_bytes=uploaded_bytes,
+                        image_mime=uploaded_mime,
                     )
                     (st.success if ok else st.error)(message)
                     if ok:
@@ -1873,6 +1954,14 @@ with main_tab5:
                 f"{post['display_name']} · {post['created_at'].replace('T', ' ')[:16]}"
             )
             st.write(post["body"])
+            if post.get("has_image"):
+                attachment = get_post_image(int(post["id"]))
+                if attachment:
+                    st.markdown(
+                        "<div class='board-photo-caption'>첨부된 인증 사진</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.image(attachment[1], use_container_width=True)
 
             may_delete = (
                 st.session_state.get("role") == ROLE_ADMIN

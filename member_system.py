@@ -33,6 +33,8 @@ ROLE_LABELS = {
 
 PBKDF2_ROUNDS = 240_000
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9가-힣_]{3,24}$")
+MAX_POST_IMAGE_BYTES = 2 * 1024 * 1024
+ALLOWED_POST_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
 
 def utc_now() -> str:
@@ -98,6 +100,8 @@ def init_member_db() -> None:
                     CHECK(category IN ('proof', 'free', 'notice')),
                 title TEXT NOT NULL,
                 body TEXT NOT NULL,
+                image_mime TEXT,
+                image_data BLOB,
                 status TEXT NOT NULL DEFAULT 'visible'
                     CHECK(status IN ('visible', 'hidden', 'deleted')),
                 created_at TEXT NOT NULL,
@@ -129,6 +133,14 @@ def init_member_db() -> None:
             );
             """
         )
+        # 기존 users.db도 그대로 사용할 수 있도록 사진 열만 안전하게 추가한다.
+        post_columns = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(posts)")
+        }
+        if "image_mime" not in post_columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN image_mime TEXT")
+        if "image_data" not in post_columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN image_data BLOB")
         _migrate_legacy_users(conn)
 
 
@@ -323,8 +335,27 @@ def can_write_board(role: str) -> bool:
     return role in {ROLE_SUPPORTER, ROLE_ADMIN}
 
 
+def _detect_post_image_mime(image_bytes: bytes) -> str | None:
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if (
+        len(image_bytes) >= 12
+        and image_bytes[:4] == b"RIFF"
+        and image_bytes[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    return None
+
+
 def create_post(
-    author_id: int, title: str, body: str, category: str = "proof"
+    author_id: int,
+    title: str,
+    body: str,
+    category: str = "proof",
+    image_bytes: bytes | None = None,
+    image_mime: str | None = None,
 ) -> tuple[bool, str]:
     title = title.strip()
     body = body.strip()
@@ -335,19 +366,41 @@ def create_post(
     if len(body) < 5 or len(body) > 5000:
         return False, "내용은 5~5000자로 입력해주세요."
 
+    stored_image: bytes | None = None
+    stored_mime: str | None = None
+    if image_bytes:
+        if category != "proof":
+            return False, "사진은 적중 인증 글에만 첨부할 수 있습니다."
+        stored_image = bytes(image_bytes)
+        if len(stored_image) > MAX_POST_IMAGE_BYTES:
+            return False, "사진은 2MB 이하로 올려주세요."
+        stored_mime = _detect_post_image_mime(stored_image)
+        if stored_mime not in ALLOWED_POST_IMAGE_MIMES:
+            return False, "JPG, PNG, WEBP 사진만 올릴 수 있습니다."
+        if image_mime and image_mime not in ALLOWED_POST_IMAGE_MIMES:
+            return False, "지원하지 않는 사진 형식입니다."
+
     with _connect() as conn:
         user = conn.execute(
             "SELECT role, status FROM users WHERE id=?", (author_id,)
         ).fetchone()
         if not user or user["status"] != "active" or not can_write_board(user["role"]):
             return False, "후원회원과 관리자만 글을 작성할 수 있습니다."
+        if category == "notice" and user["role"] != ROLE_ADMIN:
+            return False, "공지사항은 관리자만 작성할 수 있습니다."
         now = utc_now()
         conn.execute(
             """
-            INSERT INTO posts(author_id, category, title, body, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO posts(
+                author_id, category, title, body, image_mime, image_data,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (author_id, category, title, body, now, now),
+            (
+                author_id, category, title, body, stored_mime, stored_image,
+                now, now,
+            ),
         )
     return True, "게시글을 등록했습니다."
 
@@ -358,7 +411,9 @@ def list_posts(limit: int = 100) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT p.id, p.category, p.title, p.body, p.status,
-                   p.created_at, p.updated_at, u.username, u.display_name, u.role
+                   p.created_at, p.updated_at,
+                   CASE WHEN p.image_data IS NULL THEN 0 ELSE 1 END AS has_image,
+                   p.image_mime, u.username, u.display_name, u.role
             FROM posts p JOIN users u ON u.id = p.author_id
             WHERE p.status = 'visible'
             ORDER BY p.created_at DESC LIMIT ?
@@ -366,6 +421,67 @@ def list_posts(limit: int = 100) -> list[dict[str, Any]]:
             (safe_limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_post_image(post_id: int) -> tuple[str, bytes] | None:
+    """Return one visible attachment without loading every board image into memory."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT image_mime, image_data FROM posts
+            WHERE id=? AND status='visible' AND image_data IS NOT NULL
+            """,
+            (post_id,),
+        ).fetchone()
+    if not row:
+        return None
+    image_data = bytes(row["image_data"])
+    detected_mime = _detect_post_image_mime(image_data)
+    if detected_mime not in ALLOWED_POST_IMAGE_MIMES:
+        return None
+    return detected_mime, image_data
+
+
+def list_notices(include_hidden: bool = False, limit: int = 20) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 100))
+    status_clause = "p.status IN ('visible', 'hidden')" if include_hidden else "p.status='visible'"
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.title, p.body, p.status, p.created_at, p.updated_at,
+                   u.username, u.display_name
+            FROM posts p JOIN users u ON u.id=p.author_id
+            WHERE p.category='notice' AND {status_clause}
+            ORDER BY p.created_at DESC LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_notice_visibility(
+    actor_id: int, post_id: int, visible: bool
+) -> tuple[bool, str]:
+    with _connect() as conn:
+        actor = conn.execute("SELECT role FROM users WHERE id=?", (actor_id,)).fetchone()
+        if not actor or actor["role"] != ROLE_ADMIN:
+            return False, "관리자만 공지 상태를 변경할 수 있습니다."
+        notice = conn.execute(
+            "SELECT id, status FROM posts WHERE id=? AND category='notice'",
+            (post_id,),
+        ).fetchone()
+        if not notice or notice["status"] == "deleted":
+            return False, "공지사항을 찾지 못했습니다."
+        next_status = "visible" if visible else "hidden"
+        conn.execute(
+            "UPDATE posts SET status=?, updated_at=? WHERE id=?",
+            (next_status, utc_now(), post_id),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (actor_id, "set_notice_visibility", f"{post_id}:{next_status}", utc_now()),
+        )
+    return True, "공지를 공개했습니다." if visible else "공지를 숨겼습니다."
 
 
 def delete_post(actor_id: int, post_id: int) -> tuple[bool, str]:
