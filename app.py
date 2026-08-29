@@ -24,7 +24,7 @@ st.set_page_config(
     page_title=APP_TITLE, 
     page_icon="⚡", 
     layout="wide",
-    initial_sidebar_state="expanded" 
+    initial_sidebar_state="auto" 
 )
 
 GITHUB_REPO = "chleowhd77-ops/-"
@@ -182,22 +182,299 @@ st.markdown("""
     .real-ai-note { background: rgba(16, 185, 129, 0.05); border-left: 4px solid #10B981; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
     .real-ai-note-fail { background: rgba(239, 68, 68, 0.05); border-left: 4px solid #EF4444; padding: 15px; font-size: 13px; color: #E2E8F0; margin-top: 15px; border-radius: 4px; line-height: 1.6; font-weight: 700; }
 
+    /* ------------------------------------------------------------------
+       UI/UX REDESIGN · 분석과 권한 로직은 그대로 두고 표현만 개선
+       ------------------------------------------------------------------ */
+    :root {
+        --dj-bg: #060912;
+        --dj-surface: #0D1320;
+        --dj-surface-2: #111A2B;
+        --dj-line: rgba(148, 163, 184, 0.16);
+        --dj-text: #F8FAFC;
+        --dj-muted: #8B9AB1;
+        --dj-cyan: #19E6F2;
+        --dj-blue: #4F8CFF;
+        --dj-green: #17C98B;
+        --dj-red: #FF5B68;
+        --dj-gold: #F8C65C;
+    }
+
+    html, body, .stApp {
+        background:
+            radial-gradient(circle at 50% -15%, rgba(30, 98, 180, 0.20), transparent 34rem),
+            radial-gradient(circle at 92% 12%, rgba(25, 230, 242, 0.08), transparent 24rem),
+            var(--dj-bg) !important;
+        color: var(--dj-text) !important;
+    }
+
+    [data-testid="stHeader"] { background: rgba(6, 9, 18, 0.72) !important; }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0B1120 0%, #070B13 100%) !important;
+        border-right: 1px solid var(--dj-line) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] label { color: #CFD8E6 !important; }
+
+    .block-container {
+        max-width: 1120px !important;
+        padding: 1.2rem 1.5rem 4rem !important;
+    }
+
+    .brand-shell {
+        position: relative;
+        overflow: hidden;
+        padding: 34px 36px 28px;
+        margin: 8px 0 18px;
+        border: 1px solid rgba(79, 140, 255, 0.24);
+        border-radius: 24px;
+        background: linear-gradient(135deg, rgba(15, 28, 50, 0.96), rgba(7, 13, 25, 0.94));
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.30);
+    }
+    .brand-shell::after {
+        content: "";
+        position: absolute;
+        width: 230px;
+        height: 230px;
+        right: -70px;
+        top: -115px;
+        border-radius: 50%;
+        background: rgba(25, 230, 242, 0.10);
+        filter: blur(4px);
+    }
+    .brand-kicker {
+        color: var(--dj-cyan);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 2.4px;
+        margin-bottom: 12px;
+    }
+    .brand-title {
+        color: #FFFFFF;
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: -1px;
+        line-height: 1.15;
+        margin-bottom: 9px;
+    }
+    .brand-title span { color: var(--dj-cyan); }
+    .brand-copy {
+        color: var(--dj-muted);
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.6;
+    }
+    .brand-trust {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+    }
+    .brand-trust span {
+        color: #CAD5E4;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 7px 10px;
+        border: 1px solid var(--dj-line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.035);
+    }
+
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 0 0 22px;
+    }
+    .status-cell {
+        border: 1px solid var(--dj-line);
+        background: rgba(13, 19, 32, 0.82);
+        border-radius: 15px;
+        padding: 14px 16px;
+    }
+    .status-cell small {
+        display: block;
+        color: var(--dj-muted);
+        font-size: 10px;
+        font-weight: 800;
+        margin-bottom: 4px;
+    }
+    .status-cell strong { color: #FFFFFF; font-size: 17px; font-weight: 900; }
+    .status-cell strong.accent { color: var(--dj-cyan); }
+
+    .section-intro {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 2px 18px;
+    }
+    .section-intro h2 {
+        color: #FFFFFF;
+        font-size: 22px;
+        font-weight: 900;
+        letter-spacing: -0.6px;
+        margin: 0 0 5px;
+    }
+    .section-intro p { color: var(--dj-muted); font-size: 12px; font-weight: 700; margin: 0; }
+
+    .stTabs [data-baseweb="tab-list"] {
+        justify-content: flex-start !important;
+        gap: 6px !important;
+        padding: 5px !important;
+        margin-bottom: 18px !important;
+        background: rgba(13, 19, 32, 0.78) !important;
+        border: 1px solid var(--dj-line) !important;
+        border-radius: 15px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        min-height: 42px !important;
+        padding: 8px 15px !important;
+        color: var(--dj-muted) !important;
+        font-size: 13px !important;
+        border-radius: 10px !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #061016 !important;
+        background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
+        border-bottom: none !important;
+        box-shadow: 0 8px 22px rgba(25, 230, 242, 0.18) !important;
+    }
+
+    .match-card {
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(145deg, rgba(15, 23, 38, 0.98), rgba(9, 14, 25, 0.98)) !important;
+        border: 1px solid var(--dj-line) !important;
+        border-radius: 20px !important;
+        padding: 25px !important;
+        margin-bottom: 16px !important;
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.20) !important;
+    }
+    .match-card::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 20px;
+        bottom: 20px;
+        width: 3px;
+        border-radius: 0 4px 4px 0;
+        background: linear-gradient(var(--dj-cyan), var(--dj-blue));
+        opacity: 0.72;
+    }
+    .top3-glow {
+        border-color: rgba(25, 230, 242, 0.42) !important;
+        background: linear-gradient(135deg, rgba(10, 33, 50, 0.98), rgba(8, 14, 26, 0.98)) !important;
+        box-shadow: 0 18px 44px rgba(2, 180, 196, 0.10) !important;
+    }
+    .league-title {
+        display: inline-flex;
+        align-items: center;
+        min-height: 25px;
+        color: #A9B7CB !important;
+        font-size: 11px !important;
+        letter-spacing: .3px !important;
+        padding: 5px 9px;
+        margin-bottom: 17px !important;
+        border: 1px solid var(--dj-line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.03);
+    }
+    .team-name-text { font-size: 19px !important; line-height: 1.25; }
+    .team-form-text { color: #7F8DA3 !important; letter-spacing: .2px !important; }
+    .team-logo {
+        width: 58px !important;
+        height: 58px !important;
+        padding: 6px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, .25);
+    }
+    .center-time-box {
+        min-height: 72px;
+        padding: 8px 6px;
+        border-radius: 14px;
+        background: rgba(6, 9, 18, 0.58);
+        border: 1px solid rgba(148, 163, 184, 0.10);
+    }
+    .match-time-text { color: #D7E1EF !important; font-size: 12px !important; }
+    .deadline-open { border-radius: 999px !important; padding: 4px 9px !important; }
+    .deadline-closed { border-radius: 999px !important; padding: 4px 9px !important; }
+
+    .ai-story {
+        color: #CFD8E6 !important;
+        font-size: 12px !important;
+        font-weight: 650 !important;
+        line-height: 1.75 !important;
+        padding: 15px 17px !important;
+        border: 1px solid rgba(25, 230, 242, 0.12);
+        border-left: 3px solid var(--dj-cyan) !important;
+        border-radius: 10px !important;
+        background: rgba(25, 230, 242, 0.045) !important;
+    }
+    .odd-bar {
+        padding: 11px 15px !important;
+        border-radius: 11px !important;
+        background: rgba(6, 9, 18, 0.62) !important;
+        border-color: var(--dj-line) !important;
+    }
+    .pred-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px !important; }
+    .pred-box {
+        min-height: 122px;
+        padding: 15px 12px !important;
+        border-radius: 13px !important;
+        background: rgba(17, 26, 43, 0.84) !important;
+        border-color: var(--dj-line) !important;
+    }
+    .pred-prob { background: var(--dj-green) !important; padding: 5px 13px !important; }
+    .report-card {
+        background: linear-gradient(145deg, rgba(15, 23, 38, .98), rgba(9, 14, 25, .98)) !important;
+        border-color: var(--dj-line) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, .18);
+    }
+
+    .stButton > button {
+        width: 100%;
+        min-height: 42px;
+        border-radius: 11px !important;
+        border: 1px solid rgba(25, 230, 242, .35) !important;
+        color: #061016 !important;
+        background: linear-gradient(135deg, var(--dj-cyan), #67F3C6) !important;
+        font-weight: 900 !important;
+    }
+    .stTextInput input, [data-baseweb="select"] > div {
+        border-radius: 10px !important;
+        background: rgba(8, 13, 23, .92) !important;
+        border-color: var(--dj-line) !important;
+    }
+
     @media (max-width: 768px) {
-        .app-header h1 { font-size: 24px !important; }
-        .stTabs [data-baseweb="tab-list"] { gap: 10px !important; }
-        .stTabs [data-baseweb="tab"] { font-size: 14px !important; padding: 10px 0px !important; }
+        .block-container { padding: .65rem .72rem 3rem !important; }
+        .brand-shell { padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
+        .brand-title { font-size: 26px; }
+        .brand-copy { font-size: 12px; padding-right: 18px; }
+        .brand-trust { gap: 6px; margin-top: 15px; }
+        .brand-trust span { font-size: 10px; padding: 6px 8px; }
+        .status-grid { gap: 6px; margin-bottom: 14px; }
+        .status-cell { padding: 11px 9px; border-radius: 12px; }
+        .status-cell strong { font-size: 14px; }
+        .stTabs [data-baseweb="tab-list"] { gap: 4px !important; overflow-x: auto !important; flex-wrap: nowrap !important; justify-content: flex-start !important; }
+        .stTabs [data-baseweb="tab"] { flex: 0 0 auto !important; font-size: 11px !important; padding: 8px 10px !important; }
+        .match-card { padding: 18px 14px !important; border-radius: 16px !important; }
         .vs-row { align-items: flex-start !important; gap: 5px; }
         .team-box { width: 40%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
         .team-box.home { flex-direction: column-reverse !important; }
         .team-box.away { flex-direction: column !important; }
         .team-box.home .team-info-wrapper, .team-box.away .team-info-wrapper { align-items: center !important; text-align: center !important; width: 100% !important; }
-        .team-logo { width: 45px !important; height: 45px !important; margin: 0 auto; }
+        .team-logo { width: 48px !important; height: 48px !important; margin: 0 auto; border-radius: 13px; }
         .team-name-text { font-size: 14px !important; word-break: keep-all !important; white-space: normal !important; line-height: 1.3; margin-top: 5px; }
         .center-time-box { width: 20%; margin-top: 5px; }
         .live-score { font-size: 20px !important; }
         .match-time-text { font-size: 11px !important; }
         .odd-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
-        .pred-grid { flex-direction: column; }
+        .pred-grid { grid-template-columns: 1fr !important; }
+        .pred-box { min-height: 104px; }
+        .section-intro { align-items: flex-start; flex-direction: column; gap: 5px; }
         .report-card > div:first-child { flex-direction: column; text-align: center; gap: 15px; }
         .report-card > div:first-child > div { text-align: center !important; }
         .report-card > div:nth-child(2) { flex-direction: column; }
@@ -220,7 +497,8 @@ if 'username' not in st.session_state:
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
-st.sidebar.title("👑 멤버십 라운지")
+st.sidebar.title("D.J 멤버 라운지")
+st.sidebar.caption("로그인하면 내 등급과 이용 가능한 분석을 확인할 수 있습니다.")
 
 if not st.session_state['logged_in']:
     menu = ["로그인", "회원가입"]
@@ -300,19 +578,36 @@ has_full_access = bool(
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
-st.markdown("""
-<div class='app-header'>
-    <h1>D.J PROTO ANALYTICS V3</h1>
-    <p>투트랙(안전/꿀픽) A/B 채점 & 딥러닝 리얼 오답노트 시스템</p>
+dashboard_data = load_dashboard_data()
+live_scores_data = load_live_scores()
+
+proto_total = len(dashboard_data.get("proto", []))
+top3_total = min(3, len(dashboard_data.get("top3", [])))
+live_total = sum(1 for value in live_scores_data.values() if value.get("is_live") is True)
+member_label = "VIP 전체 이용" if has_full_access else "무료 3픽 이용"
+
+st.markdown(f"""
+<section class='brand-shell'>
+    <div class='brand-kicker'>DATA-DRIVEN FOOTBALL PICKS</div>
+    <div class='brand-title'>D.J PROTO <span>ANALYTICS</span></div>
+    <div class='brand-copy'>경기 데이터와 배당 흐름을 함께 읽는 축구 분석 서비스<br>확률은 참고 지표이며 적중이나 수익을 보장하지 않습니다.</div>
+    <div class='brand-trust'>
+        <span>실시간 경기 반영</span>
+        <span>확률·가치 분리 분석</span>
+        <span>경기 종료 후 자동 채점</span>
+    </div>
+</section>
+<div class='status-grid'>
+    <div class='status-cell'><small>오늘 분석</small><strong>{proto_total}경기</strong></div>
+    <div class='status-cell'><small>현재 LIVE</small><strong class='accent'>{live_total}경기</strong></div>
+    <div class='status-cell'><small>이용 상태</small><strong>{member_label}</strong></div>
 </div>
 """, unsafe_allow_html=True)
 
-main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
-    "프로토 LIVE", "승무패 14경기", "오늘의 TOP 3", "🔥 AI 리포트 (V3)"
+# 방문자가 가장 먼저 무료 추천을 보도록 탭의 표시 순서만 변경한다.
+main_tab3, main_tab1, main_tab2, main_tab4 = st.tabs([
+    f"오늘의 {top3_total or 3}픽", "전체 경기", "승무패 14", "채점 노트"
 ])
-
-dashboard_data = load_dashboard_data()
-live_scores_data = load_live_scores()
 
 if st.session_state.get('username') == "admin":
     source_meta = dashboard_data.get("source_meta", {})
@@ -403,7 +698,14 @@ def generate_pred_boxes(picks, is_top3_tab=False):
 with main_tab1:
     sub_soccer, sub_baseball, sub_basketball = st.tabs(["축구", "야구", "농구"])
     with sub_soccer:
-        st.markdown("<div style='background:rgba(0, 242, 254, 0.1); border:1px solid #00F2FE; color:#00F2FE; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin-bottom:24px;'>💡 안내: 비회원 및 일반 회원은 1일 3경기만 확인 가능합니다. (VIP 가입 시 모든 잠금 해제)</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class='section-intro'>
+            <div><h2>전체 경기 분석</h2><p>LIVE 경기를 먼저 보여주며 리그별로 빠르게 확인할 수 있습니다.</p></div>
+        </div>
+        <div style='background:rgba(25,230,242,.055); border:1px solid rgba(25,230,242,.20); color:#BEEEF2; padding:12px 14px; border-radius:12px; font-size:12px; font-weight:700; margin-bottom:20px;'>
+            무료 이용자는 오늘의 추천 3경기와 채점 노트를 볼 수 있습니다. 전체 경기 상세 분석은 VIP에서 열립니다.
+        </div>
+        """, unsafe_allow_html=True)
         
         proto_list = dashboard_data.get("proto", [])
         if proto_list:
@@ -569,6 +871,11 @@ with main_tab2:
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
+    st.markdown("""
+    <div class='section-intro'>
+        <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
+    </div>
+    """, unsafe_allow_html=True)
     top3_list = dashboard_data.get("top3", [])
     if top3_list:
         displayed_top3 = 0
