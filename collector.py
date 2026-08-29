@@ -46,7 +46,7 @@ def upload_to_github(file_path):
         else: print(f"❌ GitHub 동기화 실패 ({file_path}): {r_put.json()}")
     except Exception as e: print(f"❌ [관제 봇 떡밥] GitHub 업로드 에러: {e}")
 
-def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id):
+def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id, analysis_stage="regular", confidence=0.0):
     conn = sqlite3.connect("ai_predictions.db")
     cursor = conn.cursor()
     try:
@@ -66,6 +66,35 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 SET api_fixture_id = ?, match_time = ?, league = ?, prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ? 
                 WHERE match_id = ?
             """, (final_fix_id, match_time, league, prob_pick, prob_val, ev_pick, ev_val, m_id))
+
+        cursor.execute("""
+            SELECT stage, confidence, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob
+            FROM prediction_snapshots
+            WHERE match_id = ?
+            ORDER BY id DESC LIMIT 1
+        """, (str(m_id),))
+        previous = cursor.fetchone()
+        current = (
+            str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
+            round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2)
+        )
+        previous_normalized = None
+        if previous:
+            previous_normalized = (
+                str(previous[0]), round(float(previous[1] or 0), 4), str(previous[2]),
+                round(float(previous[3] or 0), 2), str(previous[4]), round(float(previous[5] or 0), 2)
+            )
+        if previous_normalized != current:
+            cursor.execute("""
+                INSERT INTO prediction_snapshots (
+                    match_id, analysis_version, stage, confidence,
+                    prob_pick, prob_pick_prob, ev_pick, ev_pick_prob,
+                    odd_h, odd_d, odd_a, api_fixture_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                str(m_id), ANALYSIS_VERSION, analysis_stage, float(confidence or 0),
+                prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, int(fixture_id or 0)
+            ))
         conn.commit()
     except Exception as e: print(f"⚠️ [DB 에러] 듀얼 예측 저장 실패: {e}")
     finally: conn.close()
@@ -83,11 +112,7 @@ def fetch_team_squad_cached(team_id):
     if not team_id: return []
     if team_id in SQUAD_CACHE: return SQUAD_CACHE[team_id]
     try:
-        headers = {
-            'x-apisports-key': API_KEY,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
-        }
-        res = requests.get(f"https://{API_HOST}/players/squads?team={team_id}", headers=headers, timeout=5)
+        res = api_get("/players/squads", params={"team": team_id}, timeout=5)
         if res.status_code == 200:
             data = res.json()
             if data.get("response"):
@@ -135,8 +160,95 @@ def calculate_war_penalty(team_name, ace_names, total_inj_count, team_id):
     scaled_penalty = min(0.35, war_penalty * 0.08) 
     return scaled_penalty, details, war_penalty
 
+
+def get_expected_core_players(team_id, league_id, season):
+    """득점/도움 상위 선수와 보호 선수 중 현재 해당 팀 소속인 선수만 반환한다."""
+    if not team_id:
+        return []
+    core_players = []
+    key_players = fetch_league_key_players(league_id, season) if league_id and season else {}
+    for name, stats in key_players.items():
+        if stats.get("team_id") == team_id and name not in core_players:
+            core_players.append(name)
+
+    for player in fetch_team_squad_cached(team_id):
+        actual_name = player.get("name", "")
+        if actual_name and find_protected_star(actual_name) and actual_name not in core_players:
+            core_players.append(actual_name)
+    return core_players[:8]
+
+
+def find_missing_core_players(core_players, starters):
+    normalized_starters = [_normalize_player_name(name) for name in starters]
+    missing = []
+    for core in core_players:
+        target = _normalize_player_name(core)
+        found = any(
+            target == starter or (len(target) >= 6 and (target in starter or starter in target))
+            for starter in normalized_starters if starter
+        )
+        if not found:
+            missing.append(core)
+    return missing
+
+
+def calculate_data_confidence(home_info, away_info, fixture_id, h_stand, a_stand, h_long, a_long,
+                              h_recent, a_recent, h_stats, a_stats, h_inj_data, a_inj_data,
+                              diff_hours, lineup_confirmed):
+    """데이터가 부족한 경기는 확률을 낮춰 보이게 하고 TOP3 우선순위도 낮춘다."""
+    score = 0.35
+    if home_info.get("id") and away_info.get("id"):
+        score += 0.10
+    if fixture_id:
+        score += 0.10
+    if min(h_long.get("home_total", 0), a_long.get("away_total", 0)) >= 5:
+        score += 0.12
+    if h_stand.get("rank", 99) != 99 and a_stand.get("rank", 99) != 99:
+        score += 0.08
+    if min(h_recent.get("matches", 0), a_recent.get("matches", 0)) >= 4:
+        score += 0.08
+    if min(h_stats.get("sample_size", 0), a_stats.get("sample_size", 0)) >= 1:
+        score += 0.04
+    if h_inj_data.get("available") and a_inj_data.get("available"):
+        score += 0.05
+    if diff_hours > 1.5:
+        score += 0.03
+    elif lineup_confirmed:
+        score += 0.08
+    return round(max(0.35, min(0.95, score)), 3)
+
+
+def prediction_stage(diff_hours, lineup_confirmed=False):
+    if diff_hours <= 0:
+        return "locked"
+    if lineup_confirmed or diff_hours <= 0.5:
+        return "T-30-final"
+    if diff_hours <= 1.0:
+        return "T-60"
+    if diff_hours <= 1.5:
+        return "T-90"
+    return "regular"
+
+
+def annotate_pick_metrics(picks, confidence):
+    for pick in picks:
+        probability = float(pick.get("prob", 0) or 0)
+        market_probability = float(pick.get("market_prob", 0) or 0)
+        odd = float(pick.get("odd", 0) or 0)
+        edge = probability - market_probability if market_probability > 0 else 0.0
+        pick["edge"] = round(edge, 4)
+        pick["safe_score"] = round(probability * confidence, 4)
+        pick["value_score"] = round(max(0.0, edge) * confidence, 4)
+        pick["is_qualified_underdog"] = bool(
+            2.20 <= odd <= 6.00 and probability >= 0.24 and edge >= 0.04 and confidence >= 0.65
+        )
+        pick["recommendation_score"] = round(
+            (probability * 0.72) + (confidence * 0.20) + (min(max(edge, 0.0), 0.15) * 0.55), 4
+        )
+    return picks
+
 def build_dashboard_data():
-    print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 V4 프리-베이킹(사전 연산) 엔진 가동 중...")
+    print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     try:
         with open("betman_data.json", "r", encoding="utf-8") as f: betman_data = json.load(f)
     except: return
@@ -147,11 +259,40 @@ def build_dashboard_data():
     dashboard_toto14 = []
       
     for m in proto_matches:
+        home_team, away_team = m["home"], m["away"]
+        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
+        m_dt = parse_match_time(final_match_time)
+        home_info = fetch_team_info_api(home_team)
+        away_info = fetch_team_info_api(away_team)
+
         odd_h = float(m.get("odd_h") or 0)
         odd_d = float(m.get("odd_d") or 0)
         odd_a = float(m.get("odd_a") or 0)
         if min(odd_h, odd_d, odd_a) <= 1.0:
-            print(f"⚠️ 실제 승무패 배당이 없어 분석 제외: {m.get('home')} vs {m.get('away')}")
+            # 배당이 잠시 비어도 베트맨 원본 경기 자체는 화면에서 누락시키지 않는다.
+            dashboard_proto.append({
+                "match": m,
+                "final_match_time": final_match_time,
+                "timestamp": m_dt.timestamp(),
+                "league": m.get("league", "축구"),
+                "home_logo": home_info.get("logo"),
+                "away_logo": away_info.get("logo"),
+                "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
+                "ev_sorted_picks": [],
+                "home_form": "",
+                "away_form": "",
+                "analysis_version": ANALYSIS_VERSION,
+                "analysis_confidence": 0.0,
+                "analysis_stage": "waiting_odds",
+                "reliability_score": 0.0,
+                "h_inj_html": "",
+                "a_inj_html": "",
+                "h_rest_html": "",
+                "a_rest_html": "",
+                "h_rank_html": "",
+                "a_rank_html": "",
+            })
+            print(f"⚠️ 실제 승무패 배당 대기 중(경기는 유지): {home_team} vs {away_team}")
             continue
         handi_h = float(m.get("handi_h") or 0)
         handi_d = float(m.get("handi_d") or 0)
@@ -161,20 +302,14 @@ def build_dashboard_data():
         uo_over = float(m.get("uo_over") or 0)
         uo_base = float(m.get("uo_base") or 2.5)
 
-        home_team, away_team = m["home"], m["away"]
-        home_info = fetch_team_info_api(home_team)
-        away_info = fetch_team_info_api(away_team)
-         
-        final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         # 🔥 '시간 미정' 경기들 살리기 위해 예외처리(continue) 삭제!
-        m_dt = parse_match_time(final_match_time)
         now = datetime.now(timezone(timedelta(hours=9)))
         diff_hours = (m_dt - now).total_seconds() / 3600.0
 
         heavy_ttl = 24
-        inj_ttl = 12
-        odds_ttl = 0.2 if diff_hours <= 2 else 2
-        lineup_ttl = 0.2 if diff_hours <= 1.5 else 12
+        inj_ttl = 0.5 if diff_hours <= 1.5 else 12
+        odds_ttl = 0.5 if diff_hours <= 2 else 4
+        lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
         os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time)
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
@@ -189,69 +324,76 @@ def build_dashboard_data():
         
         h_manager = fetch_new_manager_status(home_info.get("id"), heavy_ttl)
         a_manager = fetch_new_manager_status(away_info.get("id"), heavy_ttl)
-        h_manager_buff = 0.3 if h_manager.get("is_new_manager") else 0.0
-        a_manager_buff = 0.3 if a_manager.get("is_new_manager") else 0.0
+        h_manager_buff = 0.08 if h_manager.get("is_new_manager") else 0.0
+        a_manager_buff = 0.08 if a_manager.get("is_new_manager") else 0.0
         is_derby = check_derby_match(home_team, away_team)
          
         h_market_bonus, a_market_bonus = 0.0, 0.0
         if os_data and os_data.get("odd_h") and odd_h > 1.0 and odd_a > 1.0:
-            if os_data["odd_h"] < odd_h - 0.15: h_market_bonus = 0.35
-            if os_data["odd_a"] < odd_a - 0.15: a_market_bonus = 0.35
+            if os_data["odd_h"] < odd_h - 0.15: h_market_bonus = 0.05
+            if os_data["odd_a"] < odd_a - 0.15: a_market_bonus = 0.05
              
-        rank_diff_bonus_h = max(-0.3, min(0.35, (a_rank - h_rank) * 0.025))
-        rank_diff_bonus_a = max(-0.3, min(0.35, (h_rank - a_rank) * 0.025))
+        rank_diff_bonus_h = max(-0.18, min(0.18, (a_rank - h_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
+        rank_diff_bonus_a = max(-0.18, min(0.18, (h_rank - a_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
         
-        h_desperation = 0.25 if h_rank >= 15 and h_rank != 99 else 0.0
-        a_desperation = 0.25 if a_rank >= 15 and a_rank != 99 else 0.0
+        h_desperation = 0.06 if h_rank >= 15 and h_rank != 99 else 0.0
+        a_desperation = 0.06 if a_rank >= 15 and a_rank != 99 else 0.0
         
-        h_title_buff = 0.25 if 1 <= h_rank <= 3 else 0.0
-        a_title_buff = 0.25 if 1 <= a_rank <= 3 else 0.0
+        h_title_buff = 0.06 if 1 <= h_rank <= 3 else 0.0
+        a_title_buff = 0.06 if 1 <= a_rank <= 3 else 0.0
         
         h_played = h_stand.get("played", 0)
         h_total_teams = h_stand.get("total_teams", 20)
         h_team_goals = h_stand.get("team_goals", 0)
         is_late_season_h = h_played > 0 and (h_played / max(1, (h_total_teams - 1) * 2)) >= 0.75
-        h_vacation = 0.25 if (is_late_season_h and 6 <= h_rank <= max(10, h_total_teams - 4)) else 0.0
+        h_vacation = 0.08 if (is_late_season_h and 6 <= h_rank <= max(10, h_total_teams - 4)) else 0.0
         
         a_played = a_stand.get("played", 0)
         a_total_teams = a_stand.get("total_teams", 20)
         a_team_goals = a_stand.get("team_goals", 0)
         is_late_season_a = a_played > 0 and (a_played / max(1, (a_total_teams - 1) * 2)) >= 0.75
-        a_vacation = 0.25 if (is_late_season_a and 6 <= a_rank <= max(10, a_total_teams - 4)) else 0.0
+        a_vacation = 0.08 if (is_late_season_a and 6 <= a_rank <= max(10, a_total_teams - 4)) else 0.0
          
-        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"), inj_ttl)
-        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"), inj_ttl)
+        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"), inj_ttl, api_fixture_id)
+        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"), inj_ttl, api_fixture_id)
         h_inj_count, a_inj_count = h_inj_data["count"], a_inj_data["count"]
         
         h_missing_goals = h_inj_data.get("missing_goals", 0)
         h_goal_dep_ratio = (h_missing_goals / h_team_goals) if h_team_goals > 0 else 0
-        h_oneman_penalty = 0.3 if h_goal_dep_ratio >= 0.25 else 0.0
+        h_oneman_penalty = 0.15 if h_goal_dep_ratio >= 0.25 else 0.0
         
         a_missing_goals = a_inj_data.get("missing_goals", 0)
         a_goal_dep_ratio = (a_missing_goals / a_team_goals) if a_team_goals > 0 else 0
-        a_oneman_penalty = 0.3 if a_goal_dep_ratio >= 0.25 else 0.0
+        a_oneman_penalty = 0.15 if a_goal_dep_ratio >= 0.25 else 0.0
         
         h_war_pct, h_war_details, h_war_score = calculate_war_penalty(home_team, h_inj_data["ace_names"], h_inj_count, home_info.get("id"))
         a_war_pct, a_war_details, a_war_score = calculate_war_penalty(away_team, a_inj_data["ace_names"], a_inj_count, away_info.get("id"))
 
         h_lineup_penalty, a_lineup_penalty = 0.0, 0.0
         h_lineup_msg, a_lineup_msg = "", ""
+        lineup_confirmed = False
         if diff_hours <= 1.5:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
             h_starters = lineup_data.get(str(home_info.get("id")), [])
             a_starters = lineup_data.get(str(away_info.get("id")), [])
-             
-            if h_starters and h_inj_data["ace_names"]:
-                missing_aces = [ace for ace in h_inj_data["ace_names"] if not any(ace.lower() in s.lower() for s in h_starters)]
-                if missing_aces:
-                    h_lineup_penalty = 0.40 
-                    h_lineup_msg = f"🚨 [선발 스나이핑] 홈팀 핵심 {', '.join(missing_aces)} 벤치/제외!"
-             
-            if a_starters and a_inj_data["ace_names"]:
-                missing_aces = [ace for ace in a_inj_data["ace_names"] if not any(ace.lower() in s.lower() for s in a_starters)]
-                if missing_aces:
-                    a_lineup_penalty = 0.40
-                    a_lineup_msg = f"🚨 [선발 스나이핑] 원정팀 핵심 {', '.join(missing_aces)} 벤치/제외!"
+            lineup_confirmed = bool(lineup_data.get("confirmed"))
+
+            if lineup_confirmed:
+                h_core = get_expected_core_players(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+                a_core = get_expected_core_players(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+                h_missing = find_missing_core_players(sorted(set(h_core + h_inj_data.get("ace_names", []))), h_starters)
+                a_missing = find_missing_core_players(sorted(set(a_core + a_inj_data.get("ace_names", []))), a_starters)
+
+                h_injury_names = {_normalize_player_name(name) for name in h_inj_data.get("ace_names", [])}
+                a_injury_names = {_normalize_player_name(name) for name in a_inj_data.get("ace_names", [])}
+                h_unexpected = [name for name in h_missing if _normalize_player_name(name) not in h_injury_names]
+                a_unexpected = [name for name in a_missing if _normalize_player_name(name) not in a_injury_names]
+                if h_missing:
+                    h_lineup_penalty = 0.12 if len(h_unexpected) == 1 else (0.20 if len(h_unexpected) >= 2 else 0.0)
+                    h_lineup_msg = f"🚨 [선발 확인] 홈팀 핵심 {', '.join(h_missing[:3])} 선발 제외"
+                if a_missing:
+                    a_lineup_penalty = 0.12 if len(a_unexpected) == 1 else (0.20 if len(a_unexpected) >= 2 else 0.0)
+                    a_lineup_msg = f"🚨 [선발 확인] 원정팀 핵심 {', '.join(a_missing[:3])} 선발 제외"
 
         h_last_data = fetch_team_last_match_date_api(home_info.get("id"), heavy_ttl)
         a_last_data = fetch_team_last_match_date_api(away_info.get("id"), heavy_ttl)
@@ -263,6 +405,8 @@ def build_dashboard_data():
         a_next = fetch_team_next_fixture_api(away_info.get("id"), heavy_ttl)
         h_long = fetch_team_long_term_stats_api(home_info.get("id"), heavy_ttl)
         a_long = fetch_team_long_term_stats_api(away_info.get("id"), heavy_ttl)
+        h_recent = fetch_team_recent_form_metrics(home_info.get("id"), heavy_ttl)
+        a_recent = fetch_team_recent_form_metrics(away_info.get("id"), heavy_ttl)
          
         league_n = m.get('league', '')
         AVG_H_GF, AVG_A_GF = get_league_averages(league_n)
@@ -279,6 +423,8 @@ def build_dashboard_data():
             
         math_exp_h = (HAS * ADS * AVG_H_GF * home_adv) * (0.8 if weather_condition in ["Rain", "Snow"] else 1.0)
         math_exp_a = (AAS * HDS * AVG_A_GF) * (0.8 if weather_condition in ["Rain", "Snow"] else 1.0)
+        math_exp_h *= 1.0 + h_recent.get("strength", 0.0)
+        math_exp_a *= 1.0 + a_recent.get("strength", 0.0)
 
         is_cup_or_intl = any(kw in league_n.lower() for kw in ["cup", "컵", "챔피언스", "유로파", "컨퍼런스", "월드컵", "친선", "fa", "코파", "afc", "네이션스"])
         if is_cup_or_intl:
@@ -293,8 +439,8 @@ def build_dashboard_data():
         a_corners = a_stats.get('corners', 4.5)
         a_cards = a_stats.get('yellow_cards', 1.5)
 
-        h_xg_multi = max(0.6, min(1.5, 1.0 + ((h_stats.get('possession',50) - 50) * 0.015) + ((h_stats.get('shots_on_goal',4.0) - 4.0) * 0.1) + ((h_corners - 4.5) * 0.025) - ((h_cards - 1.5) * 0.04)))
-        a_xg_multi = max(0.6, min(1.5, 1.0 + ((a_stats.get('possession',50) - 50) * 0.015) + ((a_stats.get('shots_on_goal',4.0) - 4.0) * 0.1) + ((a_corners - 4.5) * 0.025) - ((a_cards - 1.5) * 0.04)))
+        h_xg_multi = max(0.82, min(1.22, 1.0 + ((h_stats.get('possession',50) - 50) * 0.008) + ((h_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((h_corners - 4.5) * 0.012) - ((h_cards - 1.5) * 0.015)))
+        a_xg_multi = max(0.82, min(1.22, 1.0 + ((a_stats.get('possession',50) - 50) * 0.008) + ((a_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((a_corners - 4.5) * 0.012) - ((a_cards - 1.5) * 0.015)))
          
         base_exp_h = (math_exp_h * h_xg_multi * 0.85) + (((1/odd_h) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
         base_exp_a = (math_exp_a * a_xg_multi * 0.85) + (((1/odd_a) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
@@ -305,17 +451,17 @@ def build_dashboard_data():
         # 🔥 확률 떡락 방지 (최대 2개 악재만 반영하여 35% 캡 적용)
         h_fatigue_pct = (0.15 if h_extreme_fatigue else 0.08) if h_rest_days <= 3 else 0.0
         a_fatigue_pct = (0.15 if a_extreme_fatigue else 0.08) if a_rest_days <= 3 else 0.0
-        h_rot_pct = 0.25 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
-        a_rot_pct = 0.25 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
-        referee_pct = 0.05 if referee and any(sr.lower() in referee.lower() for sr in STRICT_REFEREES) else 0.0
+        h_rot_pct = 0.10 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
+        a_rot_pct = 0.10 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
 
-        h_penalties = [h_war_pct, h_fatigue_pct, h_rot_pct, referee_pct, h_lineup_penalty, h_vacation, h_oneman_penalty]
-        a_penalties = [a_war_pct, a_fatigue_pct, a_rot_pct, referee_pct, a_lineup_penalty, a_vacation, a_oneman_penalty]
+        # 주심 성향은 양 팀 전력 패널티가 아니라 카드/변동성 정보로만 사용한다.
+        h_penalties = [h_war_pct, h_fatigue_pct, h_rot_pct, h_lineup_penalty, h_vacation, h_oneman_penalty]
+        a_penalties = [a_war_pct, a_fatigue_pct, a_rot_pct, a_lineup_penalty, a_vacation, a_oneman_penalty]
         h_penalties.sort(reverse=True)
         a_penalties.sort(reverse=True)
         
-        h_total_penalty = min(0.35, sum(h_penalties[:2]) * h_depth_factor)
-        a_total_penalty = min(0.35, sum(a_penalties[:2]) * a_depth_factor)
+        h_total_penalty = min(0.30, sum(h_penalties[:2]) * h_depth_factor)
+        a_total_penalty = min(0.30, sum(a_penalties[:2]) * a_depth_factor)
         
         cross_boost_a = h_total_penalty * 0.4
         cross_boost_h = a_total_penalty * 0.4
@@ -324,21 +470,27 @@ def build_dashboard_data():
         h2h_total = fixture_details.get("total", 0)
         h_wins = fixture_details.get("h_wins", 0)
         a_wins = fixture_details.get("a_wins", 0)
-        h_h2h_bonus = (h_wins / h2h_total * 0.3) if h2h_total > 0 else 0
-        a_h2h_bonus = (a_wins / h2h_total * 0.3) if h2h_total > 0 else 0
+        h_h2h_bonus = max(-0.10, min(0.10, ((h_wins - a_wins) / h2h_total) * 0.12)) if h2h_total > 0 else 0
+        a_h2h_bonus = -h_h2h_bonus
         
         h_kryptonite, a_kryptonite = 0.0, 0.0
         h_matchup_msg, a_matchup_msg = "", ""
         if h2h_total >= 3:
             if (h_wins / h2h_total) >= 0.65:
-                h_kryptonite = 0.35
+                h_kryptonite = 0.04
                 h_matchup_msg = f"⚔️ 천적 상성 ({h_wins}승/{h2h_total}전)"
             elif (a_wins / h2h_total) >= 0.65:
-                a_kryptonite = 0.35
+                a_kryptonite = 0.04
                 a_matchup_msg = f"⚔️ 천적 상성 ({a_wins}승/{h2h_total}전)"
 
-        exp_h = round(max(0.3, (base_exp_h * (1 - h_total_penalty) + cross_boost_h) + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_market_bonus + h_manager_buff), 2)
-        exp_a = round(max(0.3, (base_exp_a * (1 - a_total_penalty) + cross_boost_a) + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_market_bonus + a_manager_buff), 2)
+        exp_h = round(max(0.3, min(3.2, (base_exp_h * (1 - h_total_penalty) + cross_boost_h) + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_market_bonus + h_manager_buff)), 2)
+        exp_a = round(max(0.3, min(3.2, (base_exp_a * (1 - a_total_penalty) + cross_boost_a) + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_market_bonus + a_manager_buff)), 2)
+
+        analysis_confidence = calculate_data_confidence(
+            home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
+            h_recent, a_recent, h_stats, a_stats, h_inj_data, a_inj_data,
+            diff_hours, lineup_confirmed,
+        )
          
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_base, uo_base)
 
@@ -349,14 +501,28 @@ def build_dashboard_data():
 
         is_low_score_league = any(kw in league_n.lower() for kw in ["k1", "k리그1", "k2", "k리그2", "j1", "j리그", "j2"])
         if is_low_score_league or is_cup_or_intl:
-            prob_o = min(0.99, prob_o * 1.15)
-            prob_u = 1.0 - prob_o
+            prob_u = min(0.90, prob_u * 1.08)
+            prob_o = 1.0 - prob_u
             draw = min(0.55, draw * 1.10) 
 
+        h_win, draw, a_win = calibrate_three_way_probabilities(
+            [h_win, draw, a_win], [odd_h, odd_d, odd_a], analysis_confidence
+        )
+        if uo_under > 1.0 and uo_over > 1.0:
+            prob_u, prob_o = calibrate_two_way_probabilities(
+                [prob_u, prob_o], [uo_under, uo_over], analysis_confidence
+            )
+        if min(handi_h, handi_d, handi_a) > 1.0:
+            prob_handi_h, prob_handi_d, prob_handi_a = calibrate_three_way_probabilities(
+                [prob_handi_h, prob_handi_d, prob_handi_a],
+                [handi_h, handi_d, handi_a], analysis_confidence,
+            )
+
+        wdl_market = normalize_probabilities([1 / odd_h, 1 / odd_d, 1 / odd_a])
         wdl_cands = [
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home_team} 승", "html_pick": f"{home_team} 승", "prob": h_win, "ev": h_win * odd_h},
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "html_pick": "무승부", "prob": draw, "ev": draw * odd_d},
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{away_team} 승", "html_pick": f"{away_team} 승", "prob": a_win, "ev": a_win * odd_a}
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home_team} 승", "html_pick": f"{home_team} 승", "prob": h_win, "ev": h_win * odd_h, "odd": odd_h, "market_prob": wdl_market[0]},
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "html_pick": "무승부", "prob": draw, "ev": draw * odd_d, "odd": odd_d, "market_prob": wdl_market[1]},
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{away_team} 승", "html_pick": f"{away_team} 승", "prob": a_win, "ev": a_win * odd_a, "odd": odd_a, "market_prob": wdl_market[2]}
         ]
          
         handi_str_raw = f"[{handi_base:+1.1f}] "
@@ -372,17 +538,19 @@ def build_dashboard_data():
         d_html = f"<span style='color:#00F2FE; font-size:14px; font-weight:900;'>핸디무 ({handi_base:+1.1f})</span><br>"
 
         handi_cands = []
-        if handi_h > 0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h})
-        if handi_d > 0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d})
-        if handi_a > 0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a}) 
+        handi_market = normalize_probabilities([1 / handi_h, 1 / handi_d, 1 / handi_a]) if min(handi_h, handi_d, handi_a) > 1.0 else [0, 0, 0]
+        if handi_h > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h, "odd": handi_h, "market_prob": handi_market[0]})
+        if handi_d > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d, "odd": handi_d, "market_prob": handi_market[1]})
+        if handi_a > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a, "odd": handi_a, "market_prob": handi_market[2]}) 
          
         uo_str_raw = f"(U/O {uo_base})"
         uo_str_html = f"<span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 {uo_base}]</span><br>"
         uo_cands = []
         if uo_under > 1.0 and uo_over > 1.0:
+            uo_market = normalize_probabilities([1 / uo_under, 1 / uo_over])
             uo_cands = [
-                {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under},
-                {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over}
+                {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under, "odd": uo_under, "market_prob": uo_market[0]},
+                {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over, "market_prob": uo_market[1]}
             ]
          
         base_wdl_pick = max(wdl_cands, key=lambda x: x["prob"])["raw_pick"]
@@ -395,28 +563,25 @@ def build_dashboard_data():
             elif away_team in base_wdl_pick and (handi_base > 0 and home_team in p_name and "핸디승" in p_name): is_contra = True 
             if not is_contra: valid_all_picks.append(pick)
              
-        highest_prob_pick = max(valid_all_picks, key=lambda x: x["prob"])
-        highest_ev_pick = max(valid_all_picks, key=lambda x: x["ev"])
+        annotate_pick_metrics(valid_all_picks, analysis_confidence)
+        highest_prob_pick = max(valid_all_picks, key=lambda x: (x["safe_score"], x["prob"]))
+        qualified_value_picks = [pick for pick in valid_all_picks if pick.get("is_qualified_underdog")]
+        highest_ev_pick = max(
+            qualified_value_picks or valid_all_picks,
+            key=lambda x: (x["value_score"], x["recommendation_score"], x["ev"]),
+        )
          
         for p in valid_all_picks:
             badges = []
             is_highest_prob = (p["raw_pick"] == highest_prob_pick["raw_pick"])
             is_highest_ev = (p["raw_pick"] == highest_ev_pick["raw_pick"])
             
-            pick_odd = 1.0
-            rp = p["raw_pick"]
-            if "승" in rp and "핸디" not in rp: pick_odd = odd_h
-            elif "무승부" in rp: pick_odd = odd_d
-            elif "패" in rp and "핸디" not in rp: pick_odd = odd_a
-            elif "핸디" in rp and "승" in rp: pick_odd = handi_h
-            elif "핸디" in rp and "패" in rp: pick_odd = handi_a
-            elif "오버" in rp: pick_odd = uo_over
-            elif "언더" in rp: pick_odd = uo_under
+            pick_odd = float(p.get("odd", 1.0) or 1.0)
 
             is_vip = False
-            if is_highest_prob and is_highest_ev and pick_odd >= 1.95:
+            if is_highest_prob and is_highest_ev and p.get("is_qualified_underdog"):
                 is_vip = True
-            elif is_highest_ev and pick_odd >= 2.20 and p["ev"] >= 1.15:
+            elif is_highest_ev and p.get("is_qualified_underdog"):
                 is_vip = True
 
             if is_vip:
@@ -435,12 +600,19 @@ def build_dashboard_data():
             if p not in top3_picks and len(top3_picks) < 3: top3_picks.append(p)
                  
         ev_sorted_picks = top3_picks
+        analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
+        reliability_score = round(
+            (highest_prob_pick.get("safe_score", 0) * 0.75)
+            + (highest_prob_pick.get("recommendation_score", 0) * 0.25), 4
+        )
+        underdog_signal = highest_ev_pick.get("raw_pick") if highest_ev_pick.get("is_qualified_underdog") else ""
          
         save_dual_predictions_to_local_db(
             m['id'], league_n, home_team, away_team, 
             highest_prob_pick["raw_pick"], round(highest_prob_pick["prob"] * 100, 1), 
             highest_ev_pick["raw_pick"], round(highest_ev_pick["prob"] * 100, 1),
-            odd_h, odd_d, odd_a, final_match_time, 0, api_fixture_id
+            odd_h, odd_d, odd_a, final_match_time, 0, api_fixture_id,
+            analysis_stage, analysis_confidence,
         )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
@@ -482,6 +654,9 @@ def build_dashboard_data():
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks, "home_form": h_form, "away_form": a_form,
+            "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
+            "analysis_stage": analysis_stage, "reliability_score": reliability_score,
+            "underdog_signal": underdog_signal,
             "h_inj_html": h_inj_html, "a_inj_html": a_inj_html, 
             "h_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if h_rest_days <= 3 else "", "a_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if a_rest_days <= 3 else "",
             "h_rank_html": f"<div class='rank-badge'>🏆 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 순위: {a_rank}위</div>" if a_rank != 99 else ""
@@ -500,8 +675,10 @@ def build_dashboard_data():
         diff_hours = (m_dt - now).total_seconds() / 3600.0
         
         heavy_ttl = 24
-        inj_ttl = 12
-        odds_ttl = 0.2 if diff_hours <= 2 else 2
+        # 경기 직전에는 결장 정보가 자주 바뀌므로 짧게 갱신한다.
+        inj_ttl = 0.5 if diff_hours <= 1.5 else 12
+        odds_ttl = 0.5 if diff_hours <= 2 else 4
+        lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
         os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, m.get("match_time") or "시간 미정")
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
@@ -515,43 +692,65 @@ def build_dashboard_data():
         
         h_manager = fetch_new_manager_status(home_info.get("id"), heavy_ttl)
         a_manager = fetch_new_manager_status(away_info.get("id"), heavy_ttl)
-        h_manager_buff = 0.3 if h_manager.get("is_new_manager") else 0.0
-        a_manager_buff = 0.3 if a_manager.get("is_new_manager") else 0.0
+        h_manager_buff = 0.08 if h_manager.get("is_new_manager") else 0.0
+        a_manager_buff = 0.08 if a_manager.get("is_new_manager") else 0.0
         is_derby = check_derby_match(home_team, away_team)
         
-        rank_diff_bonus_h = max(-0.3, min(0.3, (a_rank - h_rank) * 0.02))
-        rank_diff_bonus_a = max(-0.3, min(0.3, (h_rank - a_rank) * 0.02))
-        h_desperation = 0.15 if h_rank >= 15 and h_rank != 99 else 0.0
-        a_desperation = 0.15 if a_rank >= 15 and a_rank != 99 else 0.0
-        h_title_buff = 0.25 if 1 <= h_rank <= 3 else 0.0
-        a_title_buff = 0.25 if 1 <= a_rank <= 3 else 0.0
+        if h_rank != 99 and a_rank != 99:
+            rank_diff_bonus_h = max(-0.18, min(0.18, (a_rank - h_rank) * 0.012))
+            rank_diff_bonus_a = -rank_diff_bonus_h
+        else:
+            rank_diff_bonus_h = rank_diff_bonus_a = 0.0
+        h_desperation = 0.06 if h_rank >= 15 and h_rank != 99 else 0.0
+        a_desperation = 0.06 if a_rank >= 15 and a_rank != 99 else 0.0
+        h_title_buff = 0.06 if 1 <= h_rank <= 3 else 0.0
+        a_title_buff = 0.06 if 1 <= a_rank <= 3 else 0.0
         
         h_played = h_stand.get("played", 0)
         h_total_teams = h_stand.get("total_teams", 20)
         h_team_goals = h_stand.get("team_goals", 0)
         is_late_season_h = h_played > 0 and (h_played / max(1, (h_total_teams - 1) * 2)) >= 0.75
-        h_vacation = 0.25 if (is_late_season_h and 6 <= h_rank <= max(10, h_total_teams - 4)) else 0.0
+        h_vacation = 0.08 if (is_late_season_h and 6 <= h_rank <= max(10, h_total_teams - 4)) else 0.0
         
         a_played = a_stand.get("played", 0)
         a_total_teams = a_stand.get("total_teams", 20)
         a_team_goals = a_stand.get("team_goals", 0)
         is_late_season_a = a_played > 0 and (a_played / max(1, (a_total_teams - 1) * 2)) >= 0.75
-        a_vacation = 0.25 if (is_late_season_a and 6 <= a_rank <= max(10, a_total_teams - 4)) else 0.0
+        a_vacation = 0.08 if (is_late_season_a and 6 <= a_rank <= max(10, a_total_teams - 4)) else 0.0
 
-        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"), inj_ttl)
-        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"), inj_ttl)
+        h_inj_data = fetch_team_injuries_api(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"), inj_ttl, api_fixture_id)
+        a_inj_data = fetch_team_injuries_api(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"), inj_ttl, api_fixture_id)
         h_inj_count, a_inj_count = h_inj_data["count"], a_inj_data["count"]
         
         h_missing_goals = h_inj_data.get("missing_goals", 0)
         h_goal_dep_ratio = (h_missing_goals / h_team_goals) if h_team_goals > 0 else 0
-        h_oneman_penalty = 0.3 if h_goal_dep_ratio >= 0.25 else 0.0
+        h_oneman_penalty = 0.15 if h_goal_dep_ratio >= 0.25 else 0.0
         
         a_missing_goals = a_inj_data.get("missing_goals", 0)
         a_goal_dep_ratio = (a_missing_goals / a_team_goals) if a_team_goals > 0 else 0
-        a_oneman_penalty = 0.3 if a_goal_dep_ratio >= 0.25 else 0.0
+        a_oneman_penalty = 0.15 if a_goal_dep_ratio >= 0.25 else 0.0
         
         h_war_pct, _, _ = calculate_war_penalty(home_team, h_inj_data["ace_names"], h_inj_count, home_info.get("id"))
         a_war_pct, _, _ = calculate_war_penalty(away_team, a_inj_data["ace_names"], a_inj_count, away_info.get("id"))
+
+        h_lineup_penalty, a_lineup_penalty = 0.0, 0.0
+        lineup_confirmed = False
+        if 0 < diff_hours <= 1.5 and api_fixture_id:
+            lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
+            lineup_confirmed = bool(lineup_data.get("confirmed"))
+            if lineup_confirmed:
+                h_starters = lineup_data.get(str(home_info.get("id")), [])
+                a_starters = lineup_data.get(str(away_info.get("id")), [])
+                h_core = get_expected_core_players(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
+                a_core = get_expected_core_players(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
+                h_missing = find_missing_core_players(sorted(set(h_core + h_inj_data.get("ace_names", []))), h_starters)
+                a_missing = find_missing_core_players(sorted(set(a_core + a_inj_data.get("ace_names", []))), a_starters)
+                h_injury_names = {_normalize_player_name(name) for name in h_inj_data.get("ace_names", [])}
+                a_injury_names = {_normalize_player_name(name) for name in a_inj_data.get("ace_names", [])}
+                h_unexpected = [name for name in h_missing if _normalize_player_name(name) not in h_injury_names]
+                a_unexpected = [name for name in a_missing if _normalize_player_name(name) not in a_injury_names]
+                h_lineup_penalty = 0.12 if len(h_unexpected) == 1 else (0.20 if len(h_unexpected) >= 2 else 0.0)
+                a_lineup_penalty = 0.12 if len(a_unexpected) == 1 else (0.20 if len(a_unexpected) >= 2 else 0.0)
 
         h_last_data = fetch_team_last_match_date_api(home_info.get("id"), heavy_ttl)
         a_last_data = fetch_team_last_match_date_api(away_info.get("id"), heavy_ttl)
@@ -563,6 +762,8 @@ def build_dashboard_data():
         a_next = fetch_team_next_fixture_api(away_info.get("id"), heavy_ttl)
         h_long = fetch_team_long_term_stats_api(home_info.get("id"), heavy_ttl)
         a_long = fetch_team_long_term_stats_api(away_info.get("id"), heavy_ttl)
+        h_recent = fetch_team_recent_form_metrics(home_info.get("id"), heavy_ttl)
+        a_recent = fetch_team_recent_form_metrics(away_info.get("id"), heavy_ttl)
          
         league_n_14 = m.get('league', '')
         AVG_H_GF_14, AVG_A_GF_14 = get_league_averages(league_n_14)
@@ -579,6 +780,8 @@ def build_dashboard_data():
             
         math_exp_h = (HAS * ADS * AVG_H_GF_14 * home_adv) * (0.8 if weather_condition in ["Rain", "Snow"] else 1.0)
         math_exp_a = (AAS * HDS * AVG_A_GF_14) * (0.8 if weather_condition in ["Rain", "Snow"] else 1.0)
+        math_exp_h *= 1.0 + h_recent.get("strength", 0.0)
+        math_exp_a *= 1.0 + a_recent.get("strength", 0.0)
 
         is_cup_or_intl_14 = any(kw in league_n_14.lower() for kw in ["cup", "컵", "챔피언스", "유로파", "컨퍼런스", "월드컵", "친선", "fa", "코파", "afc", "네이션스"])
         if is_cup_or_intl_14:
@@ -588,21 +791,21 @@ def build_dashboard_data():
         h_depth_factor = 0.5 if h_rank <= 5 else (1.5 if h_rank >= 15 and h_rank != 99 else 1.0)
         a_depth_factor = 0.5 if a_rank <= 5 else (1.5 if a_rank >= 15 and a_rank != 99 else 1.0)
         
-        # 🔥 수정 2: 토토 14경기에도 확률 떡락 방지 (최대 2개 페널티만 합산)
+        # 중복 악재의 이중 계산을 막고 가장 큰 두 항목만 제한적으로 반영한다.
         h_inj_pct = h_war_pct
         a_inj_pct = a_war_pct
         h_fatigue_pct = (0.15 if h_extreme_fatigue else 0.08) if h_rest_days <= 3 else 0.0
         a_fatigue_pct = (0.15 if a_extreme_fatigue else 0.08) if a_rest_days <= 3 else 0.0
-        h_rot_pct = 0.25 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
-        a_rot_pct = 0.25 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
+        h_rot_pct = 0.10 if h_next["is_important"] and h_next["days_until_next"] <= 4 else 0.0
+        a_rot_pct = 0.10 if a_next["is_important"] and a_next["days_until_next"] <= 4 else 0.0
 
-        h_penalties = [h_inj_pct, h_fatigue_pct, h_rot_pct, h_vacation, h_oneman_penalty]
-        a_penalties = [a_inj_pct, a_fatigue_pct, a_rot_pct, a_vacation, a_oneman_penalty]
+        h_penalties = [h_inj_pct, h_fatigue_pct, h_rot_pct, h_lineup_penalty, h_vacation, h_oneman_penalty]
+        a_penalties = [a_inj_pct, a_fatigue_pct, a_rot_pct, a_lineup_penalty, a_vacation, a_oneman_penalty]
         h_penalties.sort(reverse=True)
         a_penalties.sort(reverse=True)
         
-        h_total_penalty = min(0.35, sum(h_penalties[:2]) * h_depth_factor)
-        a_total_penalty = min(0.35, sum(a_penalties[:2]) * a_depth_factor)
+        h_total_penalty = min(0.30, sum(h_penalties[:2]) * h_depth_factor)
+        a_total_penalty = min(0.30, sum(a_penalties[:2]) * a_depth_factor)
         
         cross_boost_a = h_total_penalty * 0.4
         cross_boost_h = a_total_penalty * 0.4
@@ -611,13 +814,13 @@ def build_dashboard_data():
         h2h_total = fixture_details.get("total", 0)
         h_wins = fixture_details.get("h_wins", 0)
         a_wins = fixture_details.get("a_wins", 0)
-        h_h2h_bonus = (h_wins / h2h_total * 0.4) if h2h_total > 0 else 0.15
-        a_h2h_bonus = (a_wins / h2h_total * 0.4) if h2h_total > 0 else 0.15
+        h_h2h_bonus = max(-0.10, min(0.10, ((h_wins - a_wins) / h2h_total) * 0.12)) if h2h_total > 0 else 0.0
+        a_h2h_bonus = -h_h2h_bonus
         
         h_kryptonite, a_kryptonite = 0.0, 0.0
         if h2h_total >= 3:
-            if (h_wins / h2h_total) >= 0.65: h_kryptonite = 0.35
-            elif (a_wins / h2h_total) >= 0.65: a_kryptonite = 0.35
+            if (h_wins / h2h_total) >= 0.65: h_kryptonite = 0.04
+            elif (a_wins / h2h_total) >= 0.65: a_kryptonite = 0.04
          
         p_h, p_d, p_a = 0.34, 0.33, 0.33
         if os_data and os_data.get("odd_h"):
@@ -628,19 +831,40 @@ def build_dashboard_data():
         odds_exp_h = p_h * 2.8
         odds_exp_a = p_a * 2.8
          
-        exp_h = round(max(0.3, ((math_exp_h * 0.6) + (odds_exp_h * 0.4)) * (1 - h_total_penalty) + cross_boost_h + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_manager_buff), 2)
-        exp_a = round(max(0.3, ((math_exp_a * 0.6) + (odds_exp_a * 0.4)) * (1 - a_total_penalty) + cross_boost_a + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_manager_buff), 2)
+        exp_h = round(max(0.3, min(3.2, ((math_exp_h * 0.75) + (odds_exp_h * 0.25)) * (1 - h_total_penalty) + cross_boost_h + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_manager_buff)), 2)
+        exp_a = round(max(0.3, min(3.2, ((math_exp_a * 0.75) + (odds_exp_a * 0.25)) * (1 - a_total_penalty) + cross_boost_a + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_manager_buff)), 2)
+
+        analysis_confidence = calculate_data_confidence(
+            home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
+            h_recent, a_recent, {}, {}, h_inj_data, a_inj_data,
+            diff_hours, lineup_confirmed,
+        )
          
         h_win, draw, a_win, _, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
         
         if is_derby: draw = min(0.55, draw * 1.15)
         if is_cup_or_intl_14: draw = min(0.55, draw * 1.10)
 
-        total_p = h_win + draw + a_win
-        if total_p > 0:
-            pct_h, pct_d, pct_a = round((h_win/total_p)*100, 1), round((draw/total_p)*100, 1), round(100.0 - round((h_win/total_p)*100, 1) - round((draw/total_p)*100, 1), 1)
-        else:
-            pct_h, pct_d, pct_a = 34.0, 33.0, 33.0
+        market_odds = []
+        if os_data and min(float(os_data.get("odd_h") or 0), float(os_data.get("odd_d") or 0), float(os_data.get("odd_a") or 0)) > 1.0:
+            market_odds = [os_data["odd_h"], os_data["odd_d"], os_data["odd_a"]]
+        h_win, draw, a_win = calibrate_three_way_probabilities(
+            [h_win, draw, a_win], market_odds, analysis_confidence
+        )
+
+        # 베트맨 투표율은 정답이 아닌 대중 심리라서, 배당을 못 찾았을 때만 8% 참고한다.
+        vote_values = [m.get("vote_h"), m.get("vote_d"), m.get("vote_a")]
+        if not market_odds and all(value is not None for value in vote_values):
+            vote_probs = normalize_probabilities(vote_values)
+            h_win, draw, a_win = normalize_probabilities([
+                h_win * 0.92 + vote_probs[0] * 0.08,
+                draw * 0.92 + vote_probs[1] * 0.08,
+                a_win * 0.92 + vote_probs[2] * 0.08,
+            ])
+
+        pct_h = round(h_win * 100, 1)
+        pct_d = round(draw * 100, 1)
+        pct_a = round(100.0 - pct_h - pct_d, 1)
 
         probs_dict = {"승": pct_h, "무": pct_d, "패": pct_a}
         sorted_probs = sorted(probs_dict.items(), key=lambda x: x[1], reverse=True)
@@ -668,15 +892,19 @@ def build_dashboard_data():
         style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
         picks_html = f"<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>"
          
+        analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
         save_dual_predictions_to_local_db(
             f"TOTO14_{m['id']}", '승무패 14경기', home_team, away_team, 
             best_pick_display, first_pct, best_pick_display, first_pct, 
-            0, 0, 0, m.get("match_time") or '시간 미정', 1, api_fixture_id
+            0, 0, 0, m.get("match_time") or '시간 미정', 1, api_fixture_id,
+            analysis_stage, analysis_confidence,
         )
 
         dashboard_toto14.append({
             "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
+            "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
+            "analysis_stage": analysis_stage,
             "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
             "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
         })
@@ -689,17 +917,32 @@ def build_dashboard_data():
     ]
     top_3_picks = sorted(
         upcoming_proto,
-        key=lambda x: max(p['prob'] for p in x['ev_sorted_picks']),
+        key=lambda x: (x.get("reliability_score", 0), x.get("analysis_confidence", 0)),
         reverse=True,
     )[:3]
 
     final_output = {
         "proto": dashboard_proto, "toto14": dashboard_toto14,
         "toto14_meta": {"total_combinations": total_combinations, "single_pick_count": len(toto_14_matches) - double_pick_count, "double_pick_count": double_pick_count, "budget": total_combinations * 1000},
-        "top3": top_3_picks
+        "top3": top_3_picks,
+        "source_meta": {
+            "analysis_version": ANALYSIS_VERSION,
+            "betman_proto_count": len(proto_matches),
+            "display_proto_count": len(dashboard_proto),
+            "betman_toto14_count": len(toto_14_matches),
+            "display_toto14_count": len(dashboard_toto14),
+            "proto_parity_ok": len(proto_matches) == len(dashboard_proto),
+            "toto14_parity_ok": len(toto_14_matches) == len(dashboard_toto14),
+            "api_usage": get_api_usage_status(),
+            "generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        },
     }
     with open("dashboard_data.json", "w", encoding="utf-8") as f: json.dump(final_output, f, ensure_ascii=False)
-    print("✅ 대시보드 데이터 패키징 완료! (확률 떡락 및 경기 실종 버그 패치 완료)")
+    if len(proto_matches) != len(dashboard_proto):
+        print(f"❌ 경기 수 불일치: 베트맨 {len(proto_matches)}경기 / 화면 데이터 {len(dashboard_proto)}경기")
+    else:
+        print(f"✅ 경기 수 일치 확인: 베트맨 = 화면 데이터 {len(dashboard_proto)}경기")
+    print(f"✅ 대시보드 데이터 패키징 완료! ({ANALYSIS_VERSION} 과신 방지·핵심선수·신뢰도 적용)")
 
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
@@ -730,11 +973,11 @@ def auto_score_matches():
             fixture_ids = sorted({str(int(row[6])) for row in batch if row[6]})
             if not fixture_ids:
                 continue
-            res = requests.get(
-                f"https://{API_HOST}/fixtures",
-                headers=headers,
+            res = api_get(
+                "/fixtures",
                 params={"ids": "-".join(fixture_ids), "timezone": "Asia/Seoul"},
                 timeout=8,
+                purpose="scoring",
             )
             api_call_count += 1
             payload = res.json() if res.status_code == 200 else {}
@@ -779,39 +1022,127 @@ def auto_score_matches():
     finally:
         if 'conn' in locals(): conn.close()
 
+def _api_fixture_datetime(match_info):
+    raw_date = match_info.get("fixture", {}).get("date")
+    if not raw_date:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone(timedelta(hours=9)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _request_fixture_board(params):
+    """일시적인 API 지연에는 한 번 재시도하고 오류 응답은 데이터로 쓰지 않는다."""
+    last_error = None
+    for attempt in range(2):
+        try:
+            response = api_get(
+                "/fixtures",
+                params=params,
+                timeout=12,
+                purpose="live",
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"API HTTP {response.status_code}")
+            payload = response.json()
+            if payload.get("errors"):
+                raise RuntimeError(str(payload.get("errors")))
+            return payload.get("response", [])
+        except Exception as error:
+            last_error = error
+            if attempt == 0:
+                time.sleep(1.5)
+    raise RuntimeError(str(last_error or "라이브 API 응답 없음"))
+
+
 def update_live_scores():
     print(f"\n[📡 {time.strftime('%Y-%m-%d %H:%M:%S')}] 실시간 라이브 데이터 업데이트 (5분 주기)...")
     try:
         conn = sqlite3.connect("ai_predictions.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT match_id, api_fixture_id FROM predictions WHERE actual_result = 'PENDING' AND api_fixture_id > 0")
+        cursor.execute("""
+            SELECT match_id, api_fixture_id, home_team, away_team, match_time
+            FROM predictions
+            WHERE actual_result = 'PENDING'
+        """)
         pending_matches = cursor.fetchall()
         conn.close()
 
-        pending_by_fixture = {int(fixture_id): str(match_id) for match_id, fixture_id in pending_matches}
-        live_data_dict = {}
+        # 한 API 경기가 프로토와 승무패14에 동시에 들어오더라도 둘 다 보존한다.
+        pending_by_fixture = {}
+        for row in pending_matches:
+            fixture_id = int(row[1] or 0)
+            if fixture_id:
+                pending_by_fixture.setdefault(fixture_id, []).append(row)
 
-        # 모든 예측 경기를 한 경기씩 조회하지 않고 현재 라이브 경기 전체를 한 번만 받는다.
-        res = requests.get(
-            f"https://{API_HOST}/fixtures",
-            headers=headers,
-            params={"live": "all", "timezone": "Asia/Seoul"},
-            timeout=8,
+        live_statuses = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'PEN', 'SUSP', 'INT', 'LIVE'}
+        board = _request_fixture_board({"live": "all", "timezone": "Asia/Seoul"})
+        live_fixtures = [
+            item for item in board
+            if item.get("fixture", {}).get("status", {}).get("short", "") in live_statuses
+        ]
+
+        # 일부 요금제/대회에서 live=all 응답이 비는 경우만 오늘 경기판을 한 번 확인한다.
+        now_kst = datetime.now(timezone(timedelta(hours=9)))
+        has_near_kickoff = any(
+            abs((parse_match_time(row[4]) - now_kst).total_seconds()) <= 4 * 3600
+            for row in pending_matches if row[4]
         )
-        if res.status_code != 200:
-            raise RuntimeError(f"API HTTP {res.status_code}")
-        payload = res.json()
-        if payload.get("errors"):
-            raise RuntimeError(str(payload.get("errors")))
+        if not live_fixtures and has_near_kickoff:
+            date_board = _request_fixture_board({
+                "date": now_kst.strftime("%Y-%m-%d"),
+                "timezone": "Asia/Seoul",
+            })
+            live_fixtures = [
+                item for item in date_board
+                if item.get("fixture", {}).get("status", {}).get("short", "") in live_statuses
+            ]
 
-        live_statuses = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'}
+        live_data_dict = {}
         score_updates = []
-        for match_info in payload.get("response", []):
+        fixture_updates = []
+        recovered_links = 0
+        used_match_ids = set()
+
+        for match_info in live_fixtures:
             fixture = match_info.get("fixture", {})
             fixture_id = int(fixture.get("id") or 0)
-            match_id = pending_by_fixture.get(fixture_id)
-            status = fixture.get('status', {}).get('short', '')
-            if not match_id or status not in live_statuses:
+            status_info = fixture.get("status", {})
+            status = status_info.get("short", "")
+            api_teams = match_info.get("teams", {})
+            api_home = api_teams.get("home", {})
+            api_away = api_teams.get("away", {})
+            api_dt = _api_fixture_datetime(match_info)
+
+            matched_rows = list(pending_by_fixture.get(fixture_id, []))
+            matched_ids = {str(row[0]) for row in matched_rows}
+
+            # fixture_id가 0이었던 경기는 팀 ID/영문명과 시작 시간을 함께 비교해 복구한다.
+            for row in pending_matches:
+                match_id, old_fixture_id, home_team, away_team, match_time = row
+                match_id = str(match_id)
+                if match_id in matched_ids or match_id in used_match_ids:
+                    continue
+                if api_dt is None or not match_time:
+                    continue
+                local_dt = parse_match_time(match_time)
+                if abs((local_dt - api_dt).total_seconds()) > 8 * 3600:
+                    continue
+                if not team_matches_api(home_team, api_home.get("name"), api_home.get("id")):
+                    continue
+                if not team_matches_api(away_team, api_away.get("name"), api_away.get("id")):
+                    continue
+                matched_rows.append(row)
+                matched_ids.add(match_id)
+                if int(old_fixture_id or 0) != fixture_id:
+                    fixture_updates.append((fixture_id, match_id))
+                    recovered_links += 1
+
+            if not matched_rows:
                 continue
 
             goals_h = match_info.get('goals', {}).get('home')
@@ -821,46 +1152,61 @@ def update_live_scores():
             score_str = f"{goals_h}:{goals_a}"
             event_str = ""
 
-            # 이벤트 API는 우리 DB에 있는 실제 라이브 경기에만 호출한다.
-            try:
-                evt_res = requests.get(
-                    f"https://{API_HOST}/fixtures/events",
-                    headers=headers,
-                    params={"fixture": fixture_id},
-                    timeout=5,
-                )
-                events = evt_res.json().get("response", []) if evt_res.status_code == 200 else []
-                if events:
-                    events.sort(key=lambda x: int(x.get('time', {}).get('elapsed') or 0), reverse=True)
-                    latest_evt = events[0]
-                    e_time = latest_evt.get('time', {}).get('elapsed', 0)
-                    e_type = latest_evt.get('type', '')
-                    e_detail = latest_evt.get('detail', '')
-                    e_player = latest_evt.get('player', {}).get('name', '')
-                    if e_type == "Goal": event_str = f"⚽ {e_time}' 득점! ({e_player})"
-                    elif e_type == "Card" and "Red" in e_detail: event_str = f"🟥 {e_time}' 퇴장! ({e_player})"
-                    elif e_type == "subst": event_str = f"🔄 {e_time}' 교체 - {e_player} OUT"
-            except Exception as event_error:
-                print(f"⚠️ 라이브 이벤트 조회 실패({fixture_id}): {event_error}")
+            # 점수판 1회 호출만으로 모든 경기 스코어를 갱신한다. 득점자/카드
+            # 이벤트는 경기당 추가 호출이 필요해 기본 OFF로 둔다.
+            if os.getenv("ENABLE_LIVE_EVENTS", "0") == "1":
+                try:
+                    evt_res = api_get(
+                        "/fixtures/events",
+                        params={"fixture": fixture_id},
+                        timeout=7,
+                        purpose="live",
+                    )
+                    events = evt_res.json().get("response", []) if evt_res.status_code == 200 else []
+                    if events:
+                        events.sort(key=lambda x: int(x.get('time', {}).get('elapsed') or 0), reverse=True)
+                        latest_evt = events[0]
+                        e_time = latest_evt.get('time', {}).get('elapsed', 0)
+                        e_type = latest_evt.get('type', '')
+                        e_detail = latest_evt.get('detail', '')
+                        e_player = latest_evt.get('player', {}).get('name', '')
+                        if e_type == "Goal": event_str = f"⚽ {e_time}' 득점! ({e_player})"
+                        elif e_type == "Card" and "Red" in e_detail: event_str = f"🟥 {e_time}' 퇴장! ({e_player})"
+                        elif e_type == "subst": event_str = f"🔄 {e_time}' 교체 - {e_player} OUT"
+                except Exception as event_error:
+                    print(f"⚠️ 라이브 이벤트 조회 실패({fixture_id}): {event_error}")
 
-            live_data_dict[match_id] = {
-                "score": score_str.replace(":", " : "),
-                "event": event_str,
-                "is_live": True,
-                "status": status,
-            }
-            score_updates.append((score_str, match_id))
+            for row in matched_rows:
+                match_id = str(row[0])
+                used_match_ids.add(match_id)
+                live_data_dict[match_id] = {
+                    "score": score_str.replace(":", " : "),
+                    "event": event_str,
+                    "is_live": True,
+                    "status": status,
+                    "elapsed": int(status_info.get("elapsed") or 0),
+                    "fixture_id": fixture_id,
+                }
+                score_updates.append((score_str, match_id))
 
-        if score_updates:
+        if score_updates or fixture_updates:
             conn_tmp = sqlite3.connect("ai_predictions.db")
             cur_tmp = conn_tmp.cursor()
-            cur_tmp.executemany("UPDATE predictions SET actual_score = ? WHERE match_id = ?", score_updates)
+            if score_updates:
+                cur_tmp.executemany("UPDATE predictions SET actual_score = ? WHERE match_id = ?", score_updates)
+            if fixture_updates:
+                cur_tmp.executemany("UPDATE predictions SET api_fixture_id = ? WHERE match_id = ?", fixture_updates)
             conn_tmp.commit()
             conn_tmp.close()
 
-        with open("live_scores.json", "w", encoding="utf-8") as f: json.dump(live_data_dict, f, ensure_ascii=False)
-        print(f"✅ 라이브 업데이트 완료! (현재 실제 진행 경기: {len(live_data_dict)}개)")
-    except Exception as e: print(f"❌ [관제 봇 떡밥] 라이브 스코어 에러: {e}")
+        with open("live_scores.json", "w", encoding="utf-8") as f:
+            json.dump(live_data_dict, f, ensure_ascii=False)
+        if recovered_links:
+            print(f"✅ 라이브 팀명/시간 자동 연결 복구: {recovered_links}건")
+        print(f"✅ 라이브 업데이트 완료! (현재 실제 진행 기록: {len(live_data_dict)}개)")
+    except Exception as e:
+        # 실패한 빈 응답으로 정상 스코어 파일을 덮어쓰지 않는다.
+        print(f"❌ [관제 봇 떡밥] 라이브 스코어 에러: {e} (마지막 정상 파일 보존)")
 
 def _parse_odd_buttons(market):
     values = []
@@ -1073,10 +1419,14 @@ def scrape_betman():
                 driver.execute_script("arguments[0].click();", visible_more[0])
                 time.sleep(1)
             all_proto_matches = parse_betman_proto_html(driver.page_source)
-            try:
-                proto_limit = max(0, int(os.getenv("MAX_PROTO_MATCHES", "30")))
-            except ValueError:
-                proto_limit = 30
+            # 운영 환경에서는 베트맨에 표시된 축구 경기 전부를 사용한다.
+            # 개발자가 명시적으로 허용한 경우에만 테스트용 개수 제한을 켤 수 있다.
+            proto_limit = 0
+            if os.getenv("ALLOW_PROTO_LIMIT", "0") == "1":
+                try:
+                    proto_limit = max(0, int(os.getenv("MAX_PROTO_MATCHES", "0")))
+                except ValueError:
+                    proto_limit = 0
             matches = all_proto_matches[:proto_limit] if proto_limit else all_proto_matches
             print(f"✅ 프로토 실제 축구 경기 발견: {len(all_proto_matches)}경기 / 분석 대상: {len(matches)}경기")
         except Exception as error:

@@ -34,16 +34,16 @@ TEAM_NAME_MAP = {
     "노팅엄F": "Nottingham Forest", "노팅엄 포리스트": "Nottingham Forest", "리즈U": "Leeds", "리즈 유나이티드": "Leeds", "에버턴": "Everton",
     "크리스털": "Crystal Palace", "크리스털 팰리스": "Crystal Palace", "입스위치": "Ipswich", "입스위치 타운": "Ipswich", "선덜랜드": "Sunderland",
     "브렌트퍼": "Brentford", "브렌트퍼드": "Brentford", "토트넘": "Tottenham", "토트넘 홋스퍼": "Tottenham", "아스널": "Arsenal",
-    "맨유": "Manchester United", "맨체스터 유나이티드": "Manchester United", "웨스트햄 유나이티드": "West Ham", "웨스트브로미치 앨비언": "West Brom", "번리": "Burnley",
-    "코번트리 시티": "Coventry", "버밍엄 시티": "Birmingham", "브리스틀 시티": "Bristol City", "링컨 시티": "Lincoln", "포츠머스": "Portsmouth",
-    "밀월": "Millwall", "노리치 시티": "Norwich City", "헐 시티": "Hull City", "블랙번 로버스": "Blackburn", "미들즈브러": "Middlesbrough",
+    "맨유": "Manchester United", "맨체스U": "Manchester United", "맨체스터 유나이티드": "Manchester United", "웨스트햄 유나이티드": "West Ham", "웨스트브로미치 앨비언": "West Brom", "번리": "Burnley",
+    "코번트리": "Coventry", "코번트리 시티": "Coventry", "버밍엄 시티": "Birmingham", "브리스틀 시티": "Bristol City", "링컨 시티": "Lincoln", "포츠머스": "Portsmouth",
+    "밀월": "Millwall", "노리치 시티": "Norwich City", "헐시티": "Hull City", "헐 시티": "Hull City", "블랙번 로버스": "Blackburn", "미들즈브러": "Middlesbrough",
     "더비 카운티": "Derby", "카디프 시티": "Cardiff City", "프레스턴 노스엔드": "Preston", "울버햄튼 원더러스": "Wolves", "울버햄튼": "Wolves",
     "퀸즈파크 레인저스": "QPR", "볼턴 원더러스": "Bolton", "사우샘프턴": "Southampton", "스토크 시티": "Stoke City", "스완지 시티": "Swansea",
     "셰필드 유나이티드": "Sheffield Utd", "찰턴 애슬레틱": "Charlton", "렉섬": "Wrexham", "왓포드": "Watford", "풀럼": "Fulham", "첼시": "Chelsea",
     "프로시노": "Frosinone", "프로시노네": "Frosinone", "유벤투스": "Juventus", "베네치아": "Venezia", "US레체": "Lecce",
     "아탈란타": "Atalanta", "아탈란타BC": "Atalanta", "사수올로": "Sassuolo", "US사수올로": "Sassuolo", "토리노": "Torino", "AC밀란": "AC Milan",
     "제노아": "Genoa", "나폴리": "Napoli", "SSC나폴리": "Napoli", "파르마": "Parma", "칼리아리": "Cagliari", "인테르나치오날레 밀라노": "Inter",
-    "인테르": "Inter", "AC몬차": "Monza", "우디네세": "Udinese", "코모1907": "Como", "볼로냐": "Bologna", "SS라치오": "Lazio", "AS로마": "Roma", "ACF피오렌티나": "Fiorentina",
+    "인테르": "Inter", "AC몬차": "Monza", "우디네세": "Udinese", "코모1907": "Como", "볼로냐": "Bologna", "라치오": "Lazio", "SS라치오": "Lazio", "AS로마": "Roma", "피오렌티": "Fiorentina", "ACF피오렌티나": "Fiorentina",
     "레알 마드리드": "Real Madrid", "바르셀로나": "Barcelona", "아틀레티코 마드리드": "Atletico Madrid", "비야레알": "Villarreal",
     "레알 베티스": "Real Betis", "레알 소시에다드": "Real Sociedad", "발렌시아": "Valencia", "RC셀타데비고": "Celta Vigo", 
     "RCD에스파뇰": "Espanyol", "헤타페": "Getafe", "라싱 산탄데르": "Racing Santander", "엘체": "Elche", "오사수나": "Osasuna", "레반테": "Levante", "말라가": "Malaga", "데포르티보 아코루냐": "Deportivo La Coruna",
@@ -51,8 +51,11 @@ TEAM_NAME_MAP = {
     "RC스트라스부르": "Strasbourg", "RC랑스": "Lens", "AJ오세르": "Auxerre", "르망FC": "Le Mans", "스타드 브레스투아29": "Brest",
     "OGC니스": "Nice", "로리앙": "Lorient", "툴루즈": "Toulouse", "트루아AC": "Troyes", "파리FC": "Paris FC", "스타드 렌": "Rennes",
     "르아브르AC": "Le Havre", "앙제SCO": "Angers", "릴OSC": "Lille",
-    "도르트문트": "Borussia Dortmund", "바이에른 뮌헨": "Bayern Munich",
+    "도르트문트": "Borussia Dortmund", "함부르크": "Hamburger SV", "바이에른 뮌헨": "Bayern Munich",
+    "RB라이프치히": "RB Leipzig", "묀헨글라트바흐": "Borussia Monchengladbach", "FSV마인츠05": "FSV Mainz 05",
+    "파더보른07": "SC Paderborn 07", "프랑크푸르트": "Eintracht Frankfurt",
     "포르튀나 시타르트": "Fortuna Sittard", "AZ알크마르": "AZ Alkmaar", "스파르타 로테르담": "Sparta Rotterdam", "위트레흐트": "Utrecht",
+    "엑셀시오르 로테르담": "Excelsior", "엑셀시오르": "Excelsior",
     "SC헤이렌베인": "Heerenveen", "PEC즈볼러": "PEC Zwolle", "고어헤드 이글스": "Go Ahead Eagles", "ADO덴하흐": "ADO Den Haag",
     "PSV에인트호번": "PSV Eindhoven", "흐로닝언": "Groningen", "SC캄뷔르": "Cambuur", "페예노르트": "Feyenoord",
     "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
@@ -206,6 +209,25 @@ def init_cache_db():
                 is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT ''
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT NOT NULL,
+                analysis_version TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                confidence REAL DEFAULT 0,
+                prob_pick TEXT,
+                prob_pick_prob REAL,
+                ev_pick TEXT,
+                ev_pick_prob REAL,
+                odd_h REAL,
+                odd_d REAL,
+                odd_a REAL,
+                api_fixture_id INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_match ON prediction_snapshots(match_id, created_at)")
         conn.commit()
         conn.close()
     except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
@@ -248,4 +270,13 @@ DIRECT_TEAM_INFO["FC툰"] = {"id": 1012, "logo": "https://media.api-sports.io/fo
 DIRECT_TEAM_INFO["FC 툰"] = {"id": 1012, "logo": "https://media.api-sports.io/football/teams/1012.png"}
 
 DIRECT_TEAM_INFO["아라라트 아르메니아"] = {"id": 3683, "logo": "https://media.api-sports.io/football/teams/3683.png"}
+
+DIRECT_TEAM_INFO.update({
+    "RB라이프치히": {"id": 173, "logo": "https://media.api-sports.io/football/teams/173.png"},
+    "묀헨글라트바흐": {"id": 163, "logo": "https://media.api-sports.io/football/teams/163.png"},
+    "FSV마인츠05": {"id": 164, "logo": "https://media.api-sports.io/football/teams/164.png"},
+    "파더보른07": {"id": 185, "logo": "https://media.api-sports.io/football/teams/185.png"},
+    "프랑크푸르트": {"id": 169, "logo": "https://media.api-sports.io/football/teams/169.png"},
+    "함부르크": {"id": 175, "logo": "https://media.api-sports.io/football/teams/175.png"},
+})
 

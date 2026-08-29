@@ -5,6 +5,7 @@ import re
 import math
 import requests
 import difflib
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -21,6 +22,213 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
+ANALYSIS_VERSION = "V5.0-calibrated"
+
+# API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
+# 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
+API_DAILY_TOTAL_LIMIT = max(100, int(os.getenv("API_DAILY_TOTAL_LIMIT", "7500")))
+API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "600")))
+API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
+_API_PROVIDER_REMAINING = None
+_API_PROVIDER_DAY = None
+_API_QUOTA_NOTICE_SHOWN = False
+
+
+class ApiQuotaUnavailable(RuntimeError):
+    """일일 API 한도 보호 장치가 요청을 중단했음을 뜻한다."""
+
+
+def _api_usage_today():
+    day_key = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    try:
+        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_daily (
+                usage_day TEXT PRIMARY KEY,
+                calls INTEGER NOT NULL DEFAULT 0,
+                provider_remaining INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "SELECT calls, provider_remaining FROM api_usage_daily WHERE usage_day = ?",
+            (day_key,),
+        )
+        row = cursor.fetchone()
+        conn.commit()
+        conn.close()
+        return day_key, int(row[0] or 0) if row else 0, (row[1] if row else None)
+    except Exception:
+        return day_key, 0, None
+
+
+def _record_api_usage(day_key, provider_remaining=None):
+    try:
+        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_daily (
+                usage_day TEXT PRIMARY KEY,
+                calls INTEGER NOT NULL DEFAULT 0,
+                provider_remaining INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO api_usage_daily (usage_day, calls, provider_remaining, updated_at)
+            VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(usage_day) DO UPDATE SET
+                calls = api_usage_daily.calls + 1,
+                provider_remaining = COALESCE(excluded.provider_remaining, api_usage_daily.provider_remaining),
+                updated_at = CURRENT_TIMESTAMP
+        """, (day_key, provider_remaining))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _mark_api_quota_exhausted(day_key):
+    """재시작 뒤에도 같은 날 소진된 API를 반복 호출하지 않게 기록한다."""
+    try:
+        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_daily (
+                usage_day TEXT PRIMARY KEY,
+                calls INTEGER NOT NULL DEFAULT 0,
+                provider_remaining INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO api_usage_daily (usage_day, calls, provider_remaining, updated_at)
+            VALUES (?, 0, 0, CURRENT_TIMESTAMP)
+            ON CONFLICT(usage_day) DO UPDATE SET
+                provider_remaining = 0,
+                updated_at = CURRENT_TIMESTAMP
+        """, (day_key,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _show_api_quota_notice(message):
+    global _API_QUOTA_NOTICE_SHOWN
+    if not _API_QUOTA_NOTICE_SHOWN:
+        print(f"⚠️ API 한도 보호 모드: {message} (기존 캐시/베트맨 데이터로 계속 동작)")
+        _API_QUOTA_NOTICE_SHOWN = True
+
+
+def api_get(path, params=None, timeout=7, purpose="analysis"):
+    """API-Football 호출을 한곳에서 집계하고 분석/라이브 예산을 분리한다."""
+    global _API_PROVIDER_REMAINING, _API_PROVIDER_DAY, _API_QUOTA_NOTICE_SHOWN
+    current_day = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    if _API_PROVIDER_DAY != current_day:
+        _API_PROVIDER_DAY = current_day
+        _API_PROVIDER_REMAINING = None
+        _API_QUOTA_NOTICE_SHOWN = False
+
+    # 한 프로세스 안에서 이미 소진을 확인했다면 SQLite 조회조차 반복하지 않는다.
+    if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
+        _show_api_quota_notice("공급사 일일 사용량 소진")
+        raise ApiQuotaUnavailable("API daily quota exhausted")
+
+    day_key, local_calls, stored_remaining = _api_usage_today()
+    _API_PROVIDER_DAY = day_key
+    if _API_PROVIDER_REMAINING is None and stored_remaining is not None:
+        _API_PROVIDER_REMAINING = int(stored_remaining)
+
+    allowed_calls = API_DAILY_TOTAL_LIMIT - 50 if purpose in {"live", "scoring"} else API_ANALYSIS_SOFT_LIMIT
+    if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
+        _show_api_quota_notice("공급사 일일 사용량 소진")
+        raise ApiQuotaUnavailable("API daily quota exhausted")
+    if local_calls >= allowed_calls:
+        _show_api_quota_notice(f"{purpose} 예산 도달 {local_calls}/{allowed_calls}")
+        raise ApiQuotaUnavailable("Local API safety budget reached")
+
+    response = requests.get(
+        f"https://{API_HOST}/{str(path).lstrip('/')}",
+        headers=headers,
+        params=params,
+        timeout=timeout,
+    )
+    remaining_header = response.headers.get("x-ratelimit-requests-remaining")
+    try:
+        _API_PROVIDER_REMAINING = int(remaining_header) if remaining_header is not None else _API_PROVIDER_REMAINING
+    except (TypeError, ValueError):
+        pass
+    _record_api_usage(day_key, _API_PROVIDER_REMAINING)
+
+    quota_error = response.status_code == 429
+    if not quota_error:
+        try:
+            errors_text = json.dumps(response.json().get("errors", {}), ensure_ascii=False).lower()
+            quota_error = "request limit" in errors_text or "rate limit" in errors_text
+        except Exception:
+            quota_error = False
+    if quota_error:
+        _API_PROVIDER_REMAINING = 0
+        _mark_api_quota_exhausted(day_key)
+        _show_api_quota_notice("공급사 일일 사용량 소진")
+    return response
+
+
+def get_api_usage_status():
+    """수집기와 관리자 화면에 노출할 안전한 API 사용 현황."""
+    day_key, local_calls, stored_remaining = _api_usage_today()
+    remaining = stored_remaining
+    if _API_PROVIDER_DAY == day_key and _API_PROVIDER_REMAINING is not None:
+        remaining = _API_PROVIDER_REMAINING
+    return {
+        "usage_day": day_key,
+        "local_calls": int(local_calls or 0),
+        "provider_remaining": remaining,
+        "analysis_soft_limit": API_ANALYSIS_SOFT_LIMIT,
+        "daily_limit": API_DAILY_TOTAL_LIMIT,
+        "live_reserve": API_LIVE_RESERVE,
+        "quota_exhausted": remaining is not None and int(remaining) <= 0,
+    }
+
+# 득점/도움 순위만으로는 골키퍼ㆍ수비수ㆍ갑작스러운 로테이션을 놓칠 수 있다.
+# 팀을 고정하지 않고 선수 이름만 관리한 뒤, 실제 부상 명단/소속 스쿼드에
+# 등장할 때만 사용한다. 이 목록은 config.py에서도 쉽게 추가할 수 있다.
+PROTECTED_STAR_PLAYERS = [
+    {"name": "Son Heung-min", "aliases": ["Heung Min Son", "Heung-min Son", "손흥민"], "impact": 1.25},
+    {"name": "Erling Haaland", "aliases": ["E. Haaland"], "impact": 1.25},
+    {"name": "Kylian Mbappe", "aliases": ["Kylian Mbappé", "K. Mbappe"], "impact": 1.25},
+    {"name": "Mohamed Salah", "aliases": ["M. Salah"], "impact": 1.20},
+    {"name": "Harry Kane", "aliases": ["H. Kane"], "impact": 1.20},
+    {"name": "Vinicius Junior", "aliases": ["Vinícius Júnior", "Vini Jr"], "impact": 1.15},
+    {"name": "Jude Bellingham", "aliases": ["J. Bellingham"], "impact": 1.15},
+    {"name": "Kevin De Bruyne", "aliases": ["K. De Bruyne"], "impact": 1.15},
+    {"name": "Rodri", "aliases": ["Rodrigo Hernandez", "Rodrigo Hernández"], "impact": 1.15},
+    {"name": "Bukayo Saka", "aliases": ["B. Saka"], "impact": 1.10},
+    {"name": "Bruno Fernandes", "aliases": ["B. Fernandes"], "impact": 1.10},
+    {"name": "Lautaro Martinez", "aliases": ["Lautaro Martínez", "L. Martinez"], "impact": 1.10},
+    {"name": "Robert Lewandowski", "aliases": ["R. Lewandowski"], "impact": 1.10},
+    {"name": "Victor Osimhen", "aliases": ["V. Osimhen"], "impact": 1.10},
+    {"name": "Cole Palmer", "aliases": ["C. Palmer"], "impact": 1.10},
+]
+
+
+def _normalize_player_name(value):
+    return re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").casefold())
+
+
+def find_protected_star(player_name):
+    target = _normalize_player_name(player_name)
+    if not target:
+        return None
+    for star in PROTECTED_STAR_PLAYERS:
+        names = [star.get("name", "")] + list(star.get("aliases", []))
+        for name in names:
+            candidate = _normalize_player_name(name)
+            if candidate and (target == candidate or (len(target) >= 6 and (target in candidate or candidate in target))):
+                return star
+    return None
 
 # API-Football이 실제 엠블럼 대신 '이미지 없음' 그림을 주는 국내 구단은
 # K리그 공식 엠블럼을 우선 사용한다. 팀 ID는 그대로 유지하므로 전적 조회에는
@@ -78,8 +286,11 @@ TEAM_NAME_MAP = {
     "RC스트라스부르": "Strasbourg", "RC랑스": "Lens", "AJ오세르": "Auxerre", "르망FC": "Le Mans", "스타드 브레스투아29": "Brest",
     "OGC니스": "Nice", "로리앙": "Lorient", "툴루즈": "Toulouse", "트루아AC": "Troyes", "파리FC": "Paris FC", "스타드 렌": "Rennes",
     "르아브르AC": "Le Havre", "앙제SCO": "Angers", "릴OSC": "Lille",
-    "도르트문트": "Borussia Dortmund", "바이에른 뮌헨": "Bayern Munich",
+    "도르트문트": "Borussia Dortmund", "함부르크": "Hamburger SV", "바이에른 뮌헨": "Bayern Munich",
+    "RB라이프치히": "RB Leipzig", "묀헨글라트바흐": "Borussia Monchengladbach", "FSV마인츠05": "FSV Mainz 05",
+    "파더보른07": "SC Paderborn 07", "프랑크푸르트": "Eintracht Frankfurt",
     "포르튀나 시타르트": "Fortuna Sittard", "AZ알크마르": "AZ Alkmaar", "스파르타 로테르담": "Sparta Rotterdam", "위트레흐트": "Utrecht",
+    "엑셀시오르 로테르담": "Excelsior", "엑셀시오르": "Excelsior",
     "SC헤이렌베인": "Heerenveen", "PEC즈볼러": "PEC Zwolle", "고어헤드 이글스": "Go Ahead Eagles", "ADO덴하흐": "ADO Den Haag",
     "PSV에인트호번": "PSV Eindhoven", "흐로닝언": "Groningen", "SC캄뷔르": "Cambuur", "페예노르트": "Feyenoord",
     "가시와 레이솔": "Kashiwa Reysol", "V바렌 나가사키": "V-Varen Nagasaki", "FC도쿄": "FC Tokyo", "제프 유나이티드": "JEF United Chiba",
@@ -239,6 +450,17 @@ DIRECT_TEAM_INFO = {
     "바이어04 레버쿠젠": {"id": 168, "logo": "https://media.api-sports.io/football/teams/168.png"}
 }
 
+# API-Football의 고정 팀 ID가 검증된 구단은 검색 API가 느리거나 한도에
+# 걸려도 엠블럼과 경기 연결이 끊기지 않도록 직접 연결한다.
+DIRECT_TEAM_INFO.update({
+    "RB라이프치히": {"id": 173, "logo": "https://media.api-sports.io/football/teams/173.png"},
+    "묀헨글라트바흐": {"id": 163, "logo": "https://media.api-sports.io/football/teams/163.png"},
+    "FSV마인츠05": {"id": 164, "logo": "https://media.api-sports.io/football/teams/164.png"},
+    "파더보른07": {"id": 185, "logo": "https://media.api-sports.io/football/teams/185.png"},
+    "프랑크푸르트": {"id": 169, "logo": "https://media.api-sports.io/football/teams/169.png"},
+    "함부르크": {"id": 175, "logo": "https://media.api-sports.io/football/teams/175.png"},
+})
+
 def init_cache_db():
     try:
         conn = sqlite3.connect("ai_predictions.db")
@@ -264,6 +486,25 @@ def init_cache_db():
                 is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT ''
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT NOT NULL,
+                analysis_version TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                confidence REAL DEFAULT 0,
+                prob_pick TEXT,
+                prob_pick_prob REAL,
+                ev_pick TEXT,
+                ev_pick_prob REAL,
+                odd_h REAL,
+                odd_d REAL,
+                odd_a REAL,
+                api_fixture_id INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_match ON prediction_snapshots(match_id, created_at)")
         conn.commit()
         conn.close()
     except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
@@ -393,6 +634,62 @@ def _resolve_translated_team_name(team_name):
             return next(iter(best_names))
     return team_name
 
+
+def _latin_team_key(value):
+    """악센트·구두점·FC 표기 차이를 제거한 영문 팀 비교 키."""
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii").casefold()
+    return re.sub(r"[^0-9a-z]+", "", ascii_value)
+
+
+def known_team_id(team_name):
+    """베트맨 이름으로 이미 검증된 API 팀 ID를 반환한다."""
+    direct = DIRECT_TEAM_INFO.get(team_name)
+    if direct:
+        return int(direct.get("id") or 0)
+
+    target = _normalize_team_alias(team_name)
+    for mapped_name, mapped in DIRECT_TEAM_INFO.items():
+        if target and target == _normalize_team_alias(mapped_name):
+            return int(mapped.get("id") or 0)
+    return 0
+
+
+def team_matches_api(local_name, api_name, api_team_id=0):
+    """베트맨 팀과 API 팀이 같은 팀인지 보수적으로 판정한다.
+
+    검증된 팀 ID를 최우선으로 사용하고, ID가 아직 없는 팀에 한해서만
+    영문 변환 이름의 정확 일치·포함·높은 유사도를 허용한다.
+    """
+    expected_id = known_team_id(local_name)
+    try:
+        candidate_id = int(api_team_id or 0)
+    except (TypeError, ValueError):
+        candidate_id = 0
+    if expected_id and candidate_id:
+        return expected_id == candidate_id
+
+    translated = _resolve_translated_team_name(local_name)
+    local_keys = {
+        _latin_team_key(local_name),
+        _latin_team_key(translated),
+    }
+    local_keys.discard("")
+    api_key = _latin_team_key(api_name)
+    if not api_key or not local_keys:
+        return False
+
+    for local_key in local_keys:
+        if local_key == api_key:
+            return True
+        if min(len(local_key), len(api_key)) >= 6 and (
+            local_key in api_key or api_key in local_key
+        ):
+            return True
+        if difflib.SequenceMatcher(None, local_key, api_key).ratio() >= 0.78:
+            return True
+    return False
+
 def load_smart_mapping():
     if os.path.exists(SMART_MAPPING_FILE):
         try:
@@ -450,9 +747,8 @@ def fetch_team_info_api(team_name):
         last_error = None
         had_api_error = False
         for candidate in candidates:
-            res = requests.get(
-                f"https://{API_HOST}/teams",
-                headers=headers,
+            res = api_get(
+                "/teams",
                 params={"search": candidate},
                 timeout=8,
             )
@@ -576,9 +872,8 @@ def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str=
         date_cache_key = f"fixtures_by_date_v1_{date_str}"
         date_fixtures = get_db_cache(date_cache_key, min(max(ttl_h, 0.2), 2))
         if date_fixtures is None:
-            res = requests.get(
-                f"https://{API_HOST}/fixtures",
-                headers=headers,
+            res = api_get(
+                "/fixtures",
                 params={"date": date_str, "timezone": "Asia/Seoul"},
                 timeout=10,
             )
@@ -618,7 +913,7 @@ def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str=
             # 베트맨 실제 배당이 이미 있으므로 해외 배당은 선택 기능으로 둔다.
             # 기본 OFF는 경기당 추가 API 1회를 없애 주말 호출 폭주를 막는다.
             if os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1":
-                odds_res = requests.get(f"https://{API_HOST}/odds", headers=headers, params={"fixture": fix_id}, timeout=5)
+                odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
                 odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
                 odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
                 if odds_data:
@@ -646,7 +941,7 @@ def fetch_fixture_details_api(home_id, away_id, ttl_h):
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        response = requests.get(f"https://{API_HOST}/fixtures/headtohead", headers=headers, params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
+        response = api_get("/fixtures/headtohead", params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
         h_wins, draws, a_wins = 0, 0, 0
         for m in matches[:10]:
@@ -700,9 +995,8 @@ def fetch_team_recent_fixtures_api(team_id, ttl_h):
     # 일시적인 API 장애 때 웹의 전적이 사라지지 않도록 마지막 정상본을 보존한다.
     stale_data = get_db_cache(cache_key, 24 * 365 * 5)
     try:
-        response = requests.get(
-            f"https://{API_HOST}/fixtures",
-            headers=headers,
+        response = api_get(
+            "/fixtures",
             params={"team": team_id, "last": 40, "timezone": "Asia/Seoul"},
             timeout=12,
         )
@@ -792,10 +1086,10 @@ def fetch_team_standing_api(team_id, ttl_h):
     if cached_data: return cached_data
     try:
         year = datetime.now().year
-        res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year}, timeout=5)
+        res = api_get("/standings", params={"team": team_id, "season": year}, timeout=5)
         data = res.json().get("response", [])
         if not data:
-            res = requests.get(f"https://{API_HOST}/standings", headers=headers, params={"team": team_id, "season": year-1}, timeout=5)
+            res = api_get("/standings", params={"team": team_id, "season": year-1}, timeout=5)
             data = res.json().get("response", [])
         if data:
             for league_data in data:
@@ -822,60 +1116,106 @@ def fetch_league_key_players(league_id, season):
     
     key_players = {}
     try:
-        res_s = requests.get(f"https://{API_HOST}/players/topscorers", headers=headers, params={"league": league_id, "season": season}, timeout=5)
+        res_s = api_get("/players/topscorers", params={"league": league_id, "season": season}, timeout=5)
         data_s = res_s.json().get("response", [])
-        for p in data_s: 
-            name = p["player"]["name"]
-            goals = p["statistics"][0].get("goals", {}).get("total", 0)
-            if goals: key_players[name] = {"goals": goals}
+        for p in data_s:
+            name = p.get("player", {}).get("name", "")
+            stats = (p.get("statistics") or [{}])[0]
+            goals = stats.get("goals", {}).get("total", 0) or 0
+            team_id = stats.get("team", {}).get("id")
+            if name and goals:
+                key_players[name] = {"goals": goals, "assists": 0, "team_id": team_id}
             
-        res_a = requests.get(f"https://{API_HOST}/players/topassists", headers=headers, params={"league": league_id, "season": season}, timeout=5)
+        res_a = api_get("/players/topassists", params={"league": league_id, "season": season}, timeout=5)
         data_a = res_a.json().get("response", [])
-        for p in data_a: 
-            name = p["player"]["name"]
-            if name not in key_players: key_players[name] = {"goals": 0}
+        for p in data_a:
+            name = p.get("player", {}).get("name", "")
+            stats = (p.get("statistics") or [{}])[0]
+            assists = stats.get("goals", {}).get("assists", 0) or 0
+            team_id = stats.get("team", {}).get("id")
+            if not name:
+                continue
+            if name not in key_players:
+                key_players[name] = {"goals": 0, "assists": assists, "team_id": team_id}
+            else:
+                key_players[name]["assists"] = assists
+                key_players[name]["team_id"] = key_players[name].get("team_id") or team_id
             
         set_db_cache(cache_key, key_players)
         return key_players
     except: return {}
 
-def fetch_team_injuries_api(team_id, league_id, season, ttl_h):
-    default_res = {"count": 0, "ace_missing": False, "ace_names": [], "missing_goals": 0}
+def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
+    default_res = {"count": 0, "ace_missing": False, "ace_names": [], "missing_goals": 0, "available": False, "source": "none"}
     if not team_id: return default_res
-    cache_key = f"inj_v4_{team_id}_{league_id}_{season}"
+    cache_key = f"inj_v5_{team_id}_{league_id}_{season}_{int(fixture_id or 0)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None: return cached_data
-    try:
-        last_fix = fetch_team_recent_fixtures_api(team_id, ttl_h)[-1:]
-        if last_fix:
-            fix_id = last_fix[0]["fixture"]["id"]
-            inj_res = requests.get(f"https://{API_HOST}/injuries", headers=headers, params={"fixture": fix_id}, timeout=5)
-            inj_data = inj_res.json().get("response", [])
-            injured_names = [x.get("player", {}).get("name", "") for x in inj_data if x.get("team", {}).get("id") == team_id]
-            count = len(injured_names)
-            
-            ace_missing = False
-            ace_names = []
-            missing_goals_total = 0
-            
-            if count > 0 and league_id and season:
-                key_players = fetch_league_key_players(league_id, season) 
-                for name in injured_names:
-                    if not name: continue
-                    n_lower = name.lower()
-                    for kp_name, kp_stats in key_players.items():
-                        kp_lower = kp_name.lower()
-                        if n_lower in kp_lower or kp_lower in n_lower:
-                            ace_missing = True
-                            if name not in ace_names: 
-                                ace_names.append(name)
-                                missing_goals_total += kp_stats.get("goals", 0)
-                                
-            res_val = {"count": count, "ace_missing": ace_missing, "ace_names": list(set(ace_names)), "missing_goals": missing_goals_total}
-            set_db_cache(cache_key, res_val)
-            return res_val
+    # 당일 API가 소진돼도 직전 정상 부상자 자료를 버리지 않는다.
+    stale_data = get_db_cache(cache_key, max(72, ttl_h))
+
+    def stale_or_default():
+        if isinstance(stale_data, dict):
+            preserved = dict(stale_data)
+            preserved["available"] = True
+            preserved["source"] = "stale_cache"
+            return preserved
         return default_res
-    except: return default_res
+
+    try:
+        if fixture_id:
+            params = {"fixture": int(fixture_id)}
+            source = "target_fixture"
+        elif league_id and season:
+            params = {"team": int(team_id), "league": int(league_id), "season": int(season)}
+            source = "team_season"
+        else:
+            return default_res
+
+        inj_res = api_get("/injuries", params=params, timeout=8)
+        payload = inj_res.json() if inj_res.status_code == 200 else {}
+        if inj_res.status_code != 200 or payload.get("errors"):
+            return stale_or_default()
+        inj_data = payload.get("response", [])
+        injured_names = sorted({
+            x.get("player", {}).get("name", "").strip()
+            for x in inj_data
+            if x.get("team", {}).get("id") == team_id and x.get("player", {}).get("name")
+        })
+        count = len(injured_names)
+        ace_names = []
+        missing_goals_total = 0
+        key_players = fetch_league_key_players(league_id, season) if league_id and season else {}
+
+        for name in injured_names:
+            normalized = _normalize_player_name(name)
+            matched = None
+            for kp_name, kp_stats in key_players.items():
+                if kp_stats.get("team_id") not in (None, team_id):
+                    continue
+                candidate = _normalize_player_name(kp_name)
+                if normalized == candidate or (len(normalized) >= 6 and (normalized in candidate or candidate in normalized)):
+                    matched = kp_stats
+                    break
+            protected = find_protected_star(name)
+            if matched or protected:
+                ace_names.append(name)
+                if matched:
+                    missing_goals_total += int(matched.get("goals", 0) or 0)
+
+        res_val = {
+            "count": count,
+            "ace_missing": bool(ace_names),
+            "ace_names": sorted(set(ace_names)),
+            "missing_goals": missing_goals_total,
+            "available": True,
+            "source": source,
+        }
+        set_db_cache(cache_key, res_val)
+        return res_val
+    except Exception as error:
+        print(f"⚠️ 부상자 조회 오류({team_id}): {error}")
+        return stale_or_default()
 
 def fetch_new_manager_status(team_id, ttl_h):
     default_res = {"is_new_manager": False, "days_since_hired": 999}
@@ -884,7 +1224,7 @@ def fetch_new_manager_status(team_id, ttl_h):
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        res = requests.get(f"https://{API_HOST}/coachs", headers=headers, params={"team": team_id}, timeout=5)
+        res = api_get("/coachs", params={"team": team_id}, timeout=5)
         data = res.json().get("response", [])
         if data:
             for coach in data:
@@ -920,21 +1260,24 @@ def check_derby_match(home_name, away_name):
     return False
 
 def fetch_lineups_api(fixture_id, ttl_h):
-    default_res = {"home": [], "away": []}
+    default_res = {"home": [], "away": [], "confirmed": False}
     if not fixture_id: return default_res
     cache_key = f"lineups_v1_{fixture_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        res = requests.get(f"https://{API_HOST}/fixtures/lineups", headers=headers, params={"fixture": fixture_id}, timeout=5)
+        res = api_get("/fixtures/lineups", params={"fixture": fixture_id}, timeout=5)
         data = res.json().get("response", [])
-        res_val = {"home": [], "away": []}
+        res_val = {"home": [], "away": [], "confirmed": False}
         if data and len(data) == 2:
             for t in data:
                 t_id = t["team"]["id"]
                 starters = [x["player"]["name"] for x in t.get("startXI", [])]
                 res_val[str(t_id)] = starters
-        set_db_cache(cache_key, res_val)
+            res_val["confirmed"] = all(len(res_val.get(str(t.get("team", {}).get("id")), [])) >= 11 for t in data)
+        # 발표 전 빈 명단은 저장하지 않아 다음 5분 주기에 다시 확인한다.
+        if res_val["confirmed"]:
+            set_db_cache(cache_key, res_val)
         return res_val
     except: pass
     return default_res
@@ -968,7 +1311,7 @@ def fetch_team_next_fixture_api(team_id, ttl_h):
     if cached_data: return cached_data
     try:
         current_season = datetime.now().year
-        res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"team": team_id, "season": current_season, "next": 3}, timeout=5)
+        res = api_get("/fixtures", params={"team": team_id, "season": current_season, "next": 3}, timeout=5)
         data = res.json().get("response", [])
         for next_fix in data:
             next_date_str = next_fix["fixture"]["date"]
@@ -987,7 +1330,7 @@ def fetch_team_next_fixture_api(team_id, ttl_h):
     return default_res
 
 def fetch_recent_team_stats_api(team_id, ttl_h):
-    default_res = {"possession": 50, "shots_on_goal": 4.0, "corners": 4.5, "yellow_cards": 1.5}
+    default_res = {"possession": 50, "shots_on_goal": 4.0, "corners": 4.5, "yellow_cards": 1.5, "sample_size": 0}
     if not team_id: return default_res
     cache_key = f"recent_stats_v2_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
@@ -998,7 +1341,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
         valid_matches = 0
         for f in fixtures:
             fix_id = f["fixture"]["id"]
-            stat_res = requests.get(f"https://{API_HOST}/fixtures/statistics", headers=headers, params={"fixture": fix_id}, timeout=5)
+            stat_res = api_get("/fixtures/statistics", params={"fixture": fix_id}, timeout=5)
             stats_data = stat_res.json().get("response", [])
             for team_stat in stats_data:
                 if team_stat["team"]["id"] == team_id:
@@ -1015,12 +1358,40 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
                     valid_matches += 1
                     break
         if valid_matches > 0:
-            res_val = {"possession": round(total_possession / valid_matches, 1), "shots_on_goal": round(total_sog / valid_matches, 1), "corners": round(total_corn / valid_matches, 1), "yellow_cards": round(total_yc / valid_matches, 1)}
+            res_val = {"possession": round(total_possession / valid_matches, 1), "shots_on_goal": round(total_sog / valid_matches, 1), "corners": round(total_corn / valid_matches, 1), "yellow_cards": round(total_yc / valid_matches, 1), "sample_size": valid_matches}
         else: res_val = default_res
         set_db_cache(cache_key, res_val)
         return res_val
     except: pass
     return default_res
+
+
+def fetch_team_recent_form_metrics(team_id, ttl_h):
+    """추가 API 호출 없이 최근 5경기의 득실ㆍ승점을 작은 보정값으로 만든다."""
+    default_res = {"matches": 0, "ppg": 1.33, "gf_pg": 1.2, "ga_pg": 1.2, "strength": 0.0}
+    if not team_id:
+        return default_res
+    try:
+        fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-5:]
+        points = goals_for = goals_against = 0
+        for match in fixtures:
+            is_home = match.get("teams", {}).get("home", {}).get("id") == team_id
+            gh = int(match.get("goals", {}).get("home") or 0)
+            ga = int(match.get("goals", {}).get("away") or 0)
+            own, opp = (gh, ga) if is_home else (ga, gh)
+            goals_for += own
+            goals_against += opp
+            points += 3 if own > opp else (1 if own == opp else 0)
+        count = len(fixtures)
+        if not count:
+            return default_res
+        ppg = points / count
+        gf_pg = goals_for / count
+        ga_pg = goals_against / count
+        strength = max(-0.12, min(0.12, ((ppg - 1.33) * 0.05) + ((gf_pg - ga_pg) * 0.035)))
+        return {"matches": count, "ppg": round(ppg, 2), "gf_pg": round(gf_pg, 2), "ga_pg": round(ga_pg, 2), "strength": round(strength, 4)}
+    except Exception:
+        return default_res
 
 def calculate_rest_days(last_date_iso, match_time_str):
     if not last_date_iso or not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]: return 99
@@ -1081,6 +1452,59 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5):
             
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a
 
+
+def normalize_probabilities(values):
+    cleaned = [max(0.0, float(value or 0.0)) for value in values]
+    total = sum(cleaned)
+    if total <= 0:
+        return [1.0 / len(cleaned)] * len(cleaned)
+    return [value / total for value in cleaned]
+
+
+def _temperature_scale(values, temperature):
+    normalized = normalize_probabilities(values)
+    powered = [max(value, 1e-9) ** (1.0 / max(1.0, temperature)) for value in normalized]
+    return normalize_probabilities(powered)
+
+
+def _cap_probabilities(values, cap):
+    values = normalize_probabilities(values)
+    for _ in range(len(values) + 2):
+        highest = max(range(len(values)), key=values.__getitem__)
+        if values[highest] <= cap + 1e-12:
+            break
+        excess = values[highest] - cap
+        values[highest] = cap
+        other_total = sum(values[index] for index in range(len(values)) if index != highest)
+        for index in range(len(values)):
+            if index != highest:
+                values[index] += excess * (values[index] / other_total if other_total else 1.0 / (len(values) - 1))
+    return normalize_probabilities(values)
+
+
+def calibrate_three_way_probabilities(model_probs, odds, confidence):
+    """모델 과신을 낮추고 실제 배당의 마진 제거 확률을 일부 혼합한다."""
+    confidence = max(0.35, min(0.95, float(confidence or 0.35)))
+    temperature = 1.55 - (0.45 * confidence)
+    model = _temperature_scale(model_probs, temperature)
+    valid_odds = len(odds) == 3 and all(float(odd or 0) > 1.0 for odd in odds)
+    if valid_odds:
+        market = normalize_probabilities([1.0 / float(odd) for odd in odds])
+        market_weight = 0.45 - (0.18 * confidence)
+        model = [(1.0 - market_weight) * m + market_weight * q for m, q in zip(model, market)]
+    return _cap_probabilities(model, 0.80)
+
+
+def calibrate_two_way_probabilities(model_probs, odds, confidence):
+    confidence = max(0.35, min(0.95, float(confidence or 0.35)))
+    model = _temperature_scale(model_probs, 1.45 - (0.35 * confidence))
+    valid_odds = len(odds) == 2 and all(float(odd or 0) > 1.0 for odd in odds)
+    if valid_odds:
+        market = normalize_probabilities([1.0 / float(odd) for odd in odds])
+        market_weight = 0.42 - (0.15 * confidence)
+        model = [(1.0 - market_weight) * m + market_weight * q for m, q in zip(model, market)]
+    return _cap_probabilities(model, 0.82)
+
 def generate_match_story(best_prob_pick, best_ev_pick, math_exp_h, math_exp_a, prob_h, prob_d, prob_a, h2h_h, h2h_a, home, away, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest, a_rest, h_next, a_next, h_rank, a_rank, h_market, a_market, h_stats, a_stats, referee, weather, h_extreme, a_extreme, h_lineup_msg, a_lineup_msg):
     story_parts = []
     story_parts.append(f"📈 [딕슨-콜스 모델] 양 팀의 공격/수비 지수를 환산한 결과, 예상 정규시간 득점은 {home} <b style='color:#00F2FE;'>{math_exp_h:.1f}골</b>, {away} <b style='color:#EF4444;'>{math_exp_a:.1f}골</b>로 산출되었습니다.")
@@ -1104,9 +1528,9 @@ def generate_match_story(best_prob_pick, best_ev_pick, math_exp_h, math_exp_a, p
     elif a_inj_data['ace_missing']: story_parts.append(f"🚨 [선제 타격] 원정팀 {away} 핵심 자원({', '.join(a_inj_data['ace_names'])}) 결장 의심으로 공격 전 창의성이 떨어질 전망입니다.")
      
     if best_prob_pick == best_ev_pick:
-        story_parts.append(f"🤖 결론적으로 AI는 안정성과 배당 가치를 모두 충족하는 완벽한 추천 픽으로 **[{best_prob_pick}]**을(를) 강력 추천합니다.")
+        story_parts.append(f"🤖 현재 확보된 데이터에서 확률과 배당 가치가 함께 우세한 후보는 **[{best_prob_pick}]**입니다. 경기 직전 선발 변동에 따라 최종 판단이 달라질 수 있습니다.")
     else:
-        story_parts.append(f"🤖 AI가 계산한 가장 안전한 **최고 확률 픽은 [{best_prob_pick}]**이며, 배당 가치(수익률)를 고려한 **최고의 꿀픽은 [{best_ev_pick}]**입니다. 성향에 맞게 선택하세요!")
+        story_parts.append(f"🤖 현재 모델의 **상대적으로 안정적인 후보는 [{best_prob_pick}]**이며, 배당 대비 확률 차이가 있는 **가치 후보는 [{best_ev_pick}]**입니다. 두 항목 모두 적중을 보장하지 않습니다.")
          
     return " ".join(story_parts)
 
@@ -1142,8 +1566,8 @@ def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
 
 def generate_real_ai_note(fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev):
     try:
-        stat_res = requests.get(f"https://{API_HOST}/fixtures/statistics", headers=headers, params={"fixture": fixture_id}, timeout=5)
-        evt_res = requests.get(f"https://{API_HOST}/fixtures/events", headers=headers, params={"fixture": fixture_id}, timeout=5)
+        stat_res = api_get("/fixtures/statistics", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
+        evt_res = api_get("/fixtures/events", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
          
         stats = stat_res.json().get("response", [])
         events = evt_res.json().get("response", [])

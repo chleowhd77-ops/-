@@ -10,6 +10,11 @@ import re
 import hashlib
 from html import escape
 
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
+
 # -----------------------------------------------------------------------------
 # 0. 기본 설정 및 타이틀
 # -----------------------------------------------------------------------------
@@ -210,6 +215,11 @@ if 'is_vip' not in st.session_state:
 if 'username' not in st.session_state:
     st.session_state['username'] = ""
 
+# 서버의 live_scores.json은 5분마다 갱신된다. 브라우저도 1분마다 조용히
+# 다시 읽어야 사용자가 수동 새로고침을 하지 않아도 점수가 움직인다.
+if st_autorefresh is not None:
+    st_autorefresh(interval=60 * 1000, key="live-score-refresh")
+
 st.sidebar.title("👑 멤버십 라운지")
 
 if not st.session_state['logged_in']:
@@ -283,6 +293,10 @@ else:
             upgrade_to_vip(upgrade_target)
             st.sidebar.success(f"[{upgrade_target}] VIP 승급 완료!")
 
+has_full_access = bool(
+    st.session_state.get('is_vip') or st.session_state.get('username') == "admin"
+)
+
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
@@ -299,6 +313,20 @@ main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
 
 dashboard_data = load_dashboard_data()
 live_scores_data = load_live_scores()
+
+if st.session_state.get('username') == "admin":
+    source_meta = dashboard_data.get("source_meta", {})
+    if source_meta:
+        proto_source = source_meta.get("betman_proto_count", 0)
+        proto_display = source_meta.get("display_proto_count", 0)
+        toto_source = source_meta.get("betman_toto14_count", 0)
+        toto_display = source_meta.get("display_toto14_count", 0)
+        st.caption(f"관리자 수집 확인 · 프로토 {proto_display}/{proto_source} · 승무패 {toto_display}/{toto_source}")
+        if not source_meta.get("proto_parity_ok", True) or not source_meta.get("toto14_parity_ok", True):
+            st.error("베트맨 원본 경기 수와 화면 데이터 수가 다릅니다. 수집 로그를 확인해주세요.")
+        api_usage = source_meta.get("api_usage", {})
+        if api_usage.get("quota_exhausted"):
+            st.warning("오늘 API 사용량이 소진되어 기존 정상 캐시로 분석 중입니다. 일일 한도 초기화 후 자동으로 최신 자료를 보강합니다.")
 
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
@@ -332,7 +360,13 @@ def check_is_live(item):
     m = item.get('match', {})
     match_id_str = str(m.get('id', ''))
     live_info = live_scores_data.get(match_id_str, {})
-    return live_info.get("is_live") is True
+    if live_info.get("is_live") is True:
+        return True
+    time_status, _ = get_match_status(
+        item.get("final_match_time", m.get("match_time", "")),
+        m.get("deadline_time", "23:00"),
+    )
+    return time_status == "LIVE"
 
 def render_logo_html(logo_url):
     safe_logo = escape(str(logo_url or DEFAULT_TEAM_LOGO), quote=True)
@@ -400,9 +434,6 @@ with main_tab1:
             paywall_shown = False
 
             for item in proto_list:
-                if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
-                    continue
-                    
                 m = item['match']
                 logo_h_tag = render_logo_html(item.get("home_logo"))
                 logo_a_tag = render_logo_html(item.get("away_logo"))
@@ -412,12 +443,12 @@ with main_tab1:
                 match_id_str = str(m.get('id', ''))
                 is_live_now = check_is_live(item)
                 
-                if match_status == "FINISHED" and not is_live_now: continue
+                if match_status == "FINISHED" and not is_live_now and not has_full_access: continue
                 
                 displayed_count += 1
 
                 # 🔥 페이월(Paywall) 로직: 4번째 경기부터 잠금
-                if displayed_count > 3 and not st.session_state['is_vip']:
+                if displayed_count > 3 and not has_full_access:
                     if not paywall_shown:
                         st.markdown("""
                         <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
@@ -438,7 +469,7 @@ with main_tab1:
                         event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                     else:
-                        time_display = f"<span class='live-score'>0:0</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
+                        time_display = f"<span class='match-time-text'>스코어 확인 중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
@@ -495,7 +526,7 @@ with main_tab2:
         for idx, item in enumerate(toto14_list, 1):
             toto_displayed += 1
 
-            if toto_displayed > 3 and not st.session_state['is_vip']:
+            if toto_displayed > 3 and not has_full_access:
                 if not toto_paywall_shown:
                     st.markdown("""
                     <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
