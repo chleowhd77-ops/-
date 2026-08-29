@@ -38,16 +38,16 @@ TEAM_NAME_MAP = {
     "노팅엄F": "Nottingham Forest", "노팅엄 포리스트": "Nottingham Forest", "리즈U": "Leeds", "리즈 유나이티드": "Leeds", "에버턴": "Everton",
     "크리스털": "Crystal Palace", "크리스털 팰리스": "Crystal Palace", "입스위치": "Ipswich", "입스위치 타운": "Ipswich", "선덜랜드": "Sunderland",
     "브렌트퍼": "Brentford", "브렌트퍼드": "Brentford", "토트넘": "Tottenham", "토트넘 홋스퍼": "Tottenham", "아스널": "Arsenal",
-    "맨유": "Manchester United", "맨체스터 유나이티드": "Manchester United", "웨스트햄 유나이티드": "West Ham", "웨스트브로미치 앨비언": "West Brom", "번리": "Burnley",
-    "코번트리 시티": "Coventry", "버밍엄 시티": "Birmingham", "브리스틀 시티": "Bristol City", "링컨 시티": "Lincoln", "포츠머스": "Portsmouth",
-    "밀월": "Millwall", "노리치 시티": "Norwich City", "헐 시티": "Hull City", "블랙번 로버스": "Blackburn", "미들즈브러": "Middlesbrough",
+    "맨유": "Manchester United", "맨체스U": "Manchester United", "맨체스터 유나이티드": "Manchester United", "웨스트햄 유나이티드": "West Ham", "웨스트브로미치 앨비언": "West Brom", "번리": "Burnley",
+    "코번트리": "Coventry", "코번트리 시티": "Coventry", "버밍엄 시티": "Birmingham", "브리스틀 시티": "Bristol City", "링컨 시티": "Lincoln", "포츠머스": "Portsmouth",
+    "밀월": "Millwall", "노리치 시티": "Norwich City", "헐시티": "Hull City", "헐 시티": "Hull City", "블랙번 로버스": "Blackburn", "미들즈브러": "Middlesbrough",
     "더비 카운티": "Derby", "카디프 시티": "Cardiff City", "프레스턴 노스엔드": "Preston", "울버햄튼 원더러스": "Wolves", "울버햄튼": "Wolves",
     "퀸즈파크 레인저스": "QPR", "볼턴 원더러스": "Bolton", "사우샘프턴": "Southampton", "스토크 시티": "Stoke City", "스완지 시티": "Swansea",
     "셰필드 유나이티드": "Sheffield Utd", "찰턴 애슬레틱": "Charlton", "렉섬": "Wrexham", "왓포드": "Watford", "풀럼": "Fulham", "첼시": "Chelsea",
     "프로시노": "Frosinone", "프로시노네": "Frosinone", "유벤투스": "Juventus", "베네치아": "Venezia", "US레체": "Lecce",
     "아탈란타": "Atalanta", "아탈란타BC": "Atalanta", "사수올로": "Sassuolo", "US사수올로": "Sassuolo", "토리노": "Torino", "AC밀란": "AC Milan",
     "제노아": "Genoa", "나폴리": "Napoli", "SSC나폴리": "Napoli", "파르마": "Parma", "칼리아리": "Cagliari", "인테르나치오날레 밀라노": "Inter",
-    "인테르": "Inter", "AC몬차": "Monza", "우디네세": "Udinese", "코모1907": "Como", "볼로냐": "Bologna", "SS라치오": "Lazio", "AS로마": "Roma", "ACF피오렌티나": "Fiorentina",
+    "인테르": "Inter", "AC몬차": "Monza", "우디네세": "Udinese", "코모1907": "Como", "볼로냐": "Bologna", "라치오": "Lazio", "SS라치오": "Lazio", "AS로마": "Roma", "피오렌티": "Fiorentina", "ACF피오렌티나": "Fiorentina",
     "레알 마드리드": "Real Madrid", "바르셀로나": "Barcelona", "아틀레티코 마드리드": "Atletico Madrid", "비야레알": "Villarreal",
     "레알 베티스": "Real Betis", "레알 소시에다드": "Real Sociedad", "발렌시아": "Valencia", "RC셀타데비고": "Celta Vigo", 
     "RCD에스파뇰": "Espanyol", "헤타페": "Getafe", "라싱 산탄데르": "Racing Santander", "엘체": "Elche", "오사수나": "Osasuna", "레반테": "Levante", "말라가": "Malaga", "데포르티보 아코루냐": "Deportivo La Coruna",
@@ -278,6 +278,7 @@ def set_db_cache(key, value):
 
 SMART_MAPPING_FILE = "smart_mapping.json"
 TEAM_INFO_MEMORY_CACHE = {}
+TEAM_INFO_FAILURE_RETRY_AT = {}
 
 def _sanitize_team_search(value):
     """API-Football 검색 규칙(영문/숫자/공백만 허용)에 맞춘다."""
@@ -311,6 +312,39 @@ def _team_search_candidates(translated_name, saved_name=None):
     add(re.sub(r'\b(?:Red Diamonds|Antlers)\b$', ' ', without_club_words, flags=re.IGNORECASE))
     return candidates
 
+def _normalize_team_alias(value):
+    return re.sub(r'[^0-9A-Za-z가-힣]+', '', str(value or '')).casefold()
+
+def _resolve_translated_team_name(team_name):
+    """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
+    if team_name in MANUAL_TEAM_MAP:
+        return MANUAL_TEAM_MAP[team_name]
+    if team_name in TEAM_NAME_MAP:
+        return TEAM_NAME_MAP[team_name]
+
+    normalized = _normalize_team_alias(team_name)
+    if len(normalized) < 3:
+        return team_name
+
+    alias_candidates = []
+    combined_mapping = {**TEAM_NAME_MAP, **MANUAL_TEAM_MAP}
+    for korean_name, english_name in combined_mapping.items():
+        normalized_key = _normalize_team_alias(korean_name)
+        if normalized == normalized_key:
+            return english_name
+        # '코번트리' ↔ '코번트리 시티', '라치오' ↔ 'SS라치오'처럼
+        # 한쪽이 다른 쪽에 완전히 포함될 때만 허용해 엉뚱한 팀 연결을 막는다.
+        if normalized in normalized_key or normalized_key in normalized:
+            alias_candidates.append((abs(len(normalized_key) - len(normalized)), english_name))
+
+    if alias_candidates:
+        alias_candidates.sort(key=lambda item: item[0])
+        best_distance = alias_candidates[0][0]
+        best_names = {name for distance, name in alias_candidates if distance == best_distance}
+        if len(best_names) == 1:
+            return next(iter(best_names))
+    return team_name
+
 def load_smart_mapping():
     if os.path.exists(SMART_MAPPING_FILE):
         try:
@@ -334,6 +368,9 @@ def fetch_team_info_api(team_name):
         return result
 
     fallback_res = {"id": 0, "name": team_name, "logo": DEFAULT_LOGO}
+    retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
+    if retry_at and datetime.now(timezone.utc) < retry_at:
+        return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
     cache_key = f"team_info_v3_{team_name}"
@@ -342,7 +379,7 @@ def fetch_team_info_api(team_name):
         TEAM_INFO_MEMORY_CACHE[team_name] = cached_data
         return cached_data
 
-    translated_name = MANUAL_TEAM_MAP.get(team_name, TEAM_NAME_MAP.get(team_name, team_name))
+    translated_name = _resolve_translated_team_name(team_name)
     smart_mapping = load_smart_mapping()
     search_name = smart_mapping.get(translated_name, translated_name)
     candidates = _team_search_candidates(translated_name, search_name)
@@ -355,15 +392,17 @@ def fetch_team_info_api(team_name):
     try:
         comparison_name = _sanitize_team_search(translated_name).casefold()
         last_error = None
+        had_api_error = False
         for candidate in candidates:
             res = requests.get(
                 f"https://{API_HOST}/teams",
                 headers=headers,
                 params={"search": candidate},
-                timeout=5,
+                timeout=8,
             )
             if res.status_code != 200:
                 last_error = f"HTTP {res.status_code}"
+                had_api_error = True
                 # 제한 초과나 인증 오류일 때 후보를 연달아 호출하지 않는다.
                 if res.status_code in (401, 403, 429):
                     break
@@ -372,6 +411,7 @@ def fetch_team_info_api(team_name):
             payload = res.json()
             if payload.get("errors"):
                 last_error = str(payload.get("errors"))
+                had_api_error = True
                 continue
 
             data = payload.get("response", [])
@@ -393,18 +433,23 @@ def fetch_team_info_api(team_name):
             save_smart_mapping(smart_mapping)
             set_db_cache(cache_key, result)
             TEAM_INFO_MEMORY_CACHE[team_name] = result
+            TEAM_INFO_FAILURE_RETRY_AT.pop(team_name, None)
             return result
 
         if last_error:
             print(f"⚠️ 팀 검색 API 오류({team_name}): {last_error}")
         else:
             print(f"⚠️ API에서 팀을 찾지 못함: {team_name} (검색 후보: {', '.join(candidates)})")
-        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
+        # API 시간 초과/서버 오류는 실패로 고정하지 않고 다음 20분 주기에 재시도한다.
+        if had_api_error:
+            TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(minutes=2)
+        else:
+            TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
         return fallback_res
 
     except Exception as e:
         print(f"⚠️ 팀 검색 통신 오류({team_name}): {e}")
-        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
+        TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(minutes=2)
         return fallback_res
 
 def parse_match_time(match_time_str):
