@@ -706,55 +706,74 @@ def auto_score_matches():
     try:
         conn = sqlite3.connect("ai_predictions.db")
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT match_id, home_team, away_team, prob_pick, ev_pick, match_time, api_fixture_id FROM predictions WHERE actual_result = 'PENDING' AND api_fixture_id > 0")
         pending_matches = cursor.fetchall()
         api_call_count = 0
         now = datetime.now(timezone(timedelta(hours=9)))
-        
+
+        # 과거 임시 데이터의 '시간 미정' 항목을 매 주기마다 전부 조회하던 문제를 차단한다.
+        # 새 수집 데이터에는 실제 시간이 있으므로 시작된 경기만 채점 대상으로 삼는다.
+        due_matches = []
         for row in pending_matches:
             match_id, h_team, a_team, prob_pick, ev_pick, match_time_str, fixture_id = row
-            
-            # 🔥 수정 4: '시간 미정'이나 '마감'이라고 적혀있어도 API ID가 있으면 추적해서 채점함! 2시간 락 해제!
-            if match_time_str not in ["시간 미정", "마감/진행중"]:
-                m_dt = parse_match_time(match_time_str)
-                if now < m_dt:  # 2시간 락 해제! 경기 시작 시간이 지났으면 일단 무조건 API 확인해봄!
-                    continue
-            
-            res = requests.get(f"https://{API_HOST}/fixtures", headers=headers, params={"id": fixture_id}, timeout=5)
+            if not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]:
+                continue
+            m_dt = parse_match_time(match_time_str)
+            if now >= m_dt:
+                due_matches.append(row)
+
+        # API-Football의 ids 묶음 조회(최대 20개)를 사용한다. 99경기면
+        # 99회가 아니라 최대 5회만 사용한다.
+        for offset in range(0, len(due_matches), 20):
+            batch = due_matches[offset:offset + 20]
+            fixture_ids = sorted({str(int(row[6])) for row in batch if row[6]})
+            if not fixture_ids:
+                continue
+            res = requests.get(
+                f"https://{API_HOST}/fixtures",
+                headers=headers,
+                params={"ids": "-".join(fixture_ids), "timezone": "Asia/Seoul"},
+                timeout=8,
+            )
             api_call_count += 1
-            data = res.json().get("response", [])
-            
-            if data:
-                match_info = data[0]
-                status = match_info['fixture']['status']['short']
-                
+            payload = res.json() if res.status_code == 200 else {}
+            if payload.get("errors"):
+                print(f"⚠️ 묶음 채점 API 오류: {payload.get('errors')}")
+                continue
+            fixture_map = {
+                int(item.get("fixture", {}).get("id") or 0): item
+                for item in payload.get("response", [])
+            }
+
+            for row in batch:
+                match_id, h_team, a_team, prob_pick, ev_pick, match_time_str, fixture_id = row
+                match_info = fixture_map.get(int(fixture_id))
+                if not match_info:
+                    continue
+                status = match_info.get('fixture', {}).get('status', {}).get('short', '')
+
                 if status in ['FT', 'AET', 'PEN']:
-                    gh = match_info['goals']['home']
-                    ga = match_info['goals']['away']
-                    
+                    gh = match_info.get('goals', {}).get('home')
+                    ga = match_info.get('goals', {}).get('away')
                     gh = int(gh) if gh is not None else 0
                     ga = int(ga) if ga is not None else 0
-                    
                     score_str = f"{gh}:{ga}"
                     is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, gh, ga)
                     is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, gh, ga)
-                    
                     ai_note = generate_real_ai_note(fixture_id, gh, ga, is_corr_prob, is_corr_ev)
-                    
                     cursor.execute("""
                         UPDATE predictions 
                         SET actual_score = ?, actual_result = 'FINISHED', is_correct_prob = ?, is_correct_ev = ?, ai_note = ? 
                         WHERE match_id = ?
                     """, (score_str, is_corr_prob, is_corr_ev, ai_note, match_id))
                     print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
-                    
                 elif status in ['CANC', 'PSTP', 'ABD', 'AWD', 'WO']:
                     cursor.execute("UPDATE predictions SET actual_result = 'CANCELED', ai_note = '💡 경기 취소/연기/몰수로 인한 무효 처리' WHERE match_id = ?", (match_id,))
                     print(f"  ⚠️ [경기 취소/연기 처리] {h_team} vs {a_team}")
 
         conn.commit()
-        print(f"✅ 스마트 채점 사이클 종료 (이번 사이클 실제 API 소모량: {api_call_count}회)")
+        print(f"✅ 스마트 채점 사이클 종료 (묶음 조회 API 소모량: {api_call_count}회)")
     except Exception as e: 
         print(f"❌ [관제 봇 떡밥] 채점 중 오류: {e}")
     finally:

@@ -277,6 +277,39 @@ def set_db_cache(key, value):
 # ==============================================================
 
 SMART_MAPPING_FILE = "smart_mapping.json"
+TEAM_INFO_MEMORY_CACHE = {}
+
+def _sanitize_team_search(value):
+    """API-Football 검색 규칙(영문/숫자/공백만 허용)에 맞춘다."""
+    return re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 ]+', ' ', str(value or ''))).strip()
+
+def _team_search_candidates(translated_name, saved_name=None):
+    """정확한 이름부터 안전한 별칭까지 중복 없이 검색 후보를 만든다."""
+    candidates = []
+
+    def add(value):
+        value = _sanitize_team_search(value)
+        if len(value) >= 3 and value.casefold() not in {item.casefold() for item in candidates}:
+            candidates.append(value)
+
+    add(saved_name)
+    add(translated_name)
+
+    sanitized = _sanitize_team_search(saved_name or translated_name)
+    # API에서 자주 쓰지 않는 창단연도와 구단 접두/접미어를 제거한 후보.
+    without_year = re.sub(r'\b(?:19|20)\d{2}\b', ' ', sanitized)
+    without_club_words = re.sub(
+        r'\b(?:FC|AFC|CF|SC|AC|AS|RC|RSC|SK|FK|SV|GNK|KF|AGF|CSKA|TC|AIF|NK|UD|CD)\b',
+        ' ',
+        without_year,
+        flags=re.IGNORECASE,
+    )
+    add(without_year)
+    add(without_club_words)
+
+    # 공식 API가 별칭을 빼고 도시명으로만 등록한 대표 사례들.
+    add(re.sub(r'\b(?:Red Diamonds|Antlers)\b$', ' ', without_club_words, flags=re.IGNORECASE))
+    return candidates
 
 def load_smart_mapping():
     if os.path.exists(SMART_MAPPING_FILE):
@@ -292,8 +325,13 @@ def save_smart_mapping(mapping):
     except: pass
 
 def fetch_team_info_api(team_name):
+    if team_name in TEAM_INFO_MEMORY_CACHE:
+        return TEAM_INFO_MEMORY_CACHE[team_name]
+
     if team_name in DIRECT_TEAM_INFO:
-        return {"id": DIRECT_TEAM_INFO[team_name]["id"], "name": team_name, "logo": DIRECT_TEAM_INFO[team_name]["logo"]}
+        result = {"id": DIRECT_TEAM_INFO[team_name]["id"], "name": team_name, "logo": DIRECT_TEAM_INFO[team_name]["logo"]}
+        TEAM_INFO_MEMORY_CACHE[team_name] = result
+        return result
 
     fallback_res = {"id": 0, "name": team_name, "logo": DEFAULT_LOGO}
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
@@ -301,59 +339,72 @@ def fetch_team_info_api(team_name):
     cache_key = f"team_info_v3_{team_name}"
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
+        TEAM_INFO_MEMORY_CACHE[team_name] = cached_data
         return cached_data
 
     translated_name = MANUAL_TEAM_MAP.get(team_name, TEAM_NAME_MAP.get(team_name, team_name))
     smart_mapping = load_smart_mapping()
     search_name = smart_mapping.get(translated_name, translated_name)
+    candidates = _team_search_candidates(translated_name, search_name)
+
+    if not candidates:
+        print(f"⚠️ API 팀 검색용 영문 이름이 없음: {team_name}")
+        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
+        return fallback_res
 
     try:
-        res = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": search_name}, timeout=5)
-        if res.status_code != 200:
-            print(f"⚠️ 팀 검색 실패({team_name}): HTTP {res.status_code}")
-            return fallback_res
+        comparison_name = _sanitize_team_search(translated_name).casefold()
+        last_error = None
+        for candidate in candidates:
+            res = requests.get(
+                f"https://{API_HOST}/teams",
+                headers=headers,
+                params={"search": candidate},
+                timeout=5,
+            )
+            if res.status_code != 200:
+                last_error = f"HTTP {res.status_code}"
+                # 제한 초과나 인증 오류일 때 후보를 연달아 호출하지 않는다.
+                if res.status_code in (401, 403, 429):
+                    break
+                continue
 
-        payload = res.json()
-        if payload.get("errors"):
-            print(f"⚠️ 팀 검색 API 오류({team_name}): {payload.get('errors')}")
-            return fallback_res
-        data = payload.get("response", [])
-        if data:
-            # 첫 결과를 무조건 쓰지 않고 검색명과 가장 가까운 팀을 고른다.
+            payload = res.json()
+            if payload.get("errors"):
+                last_error = str(payload.get("errors"))
+                continue
+
+            data = payload.get("response", [])
+            if not data:
+                continue
+
             def similarity(entry):
-                api_name = entry.get("team", {}).get("name", "")
-                return difflib.SequenceMatcher(None, search_name.casefold(), api_name.casefold()).ratio()
-            result = max(data, key=similarity)['team']
-            set_db_cache(cache_key, result)
-            return result
-            
-        if not data:
-            clean_name = re.sub(r'(FC|SK|GNK|VV|RSC|AC|AS|FK|KF|AGF|RC|CSKA|TC|AIF|NK|CF|UD|CD|19\d{2}|20\d{2})', '', translated_name, flags=re.IGNORECASE).strip()
-            if clean_name and clean_name != search_name:
-                res_retry = requests.get(f"https://{API_HOST}/teams", headers=headers, params={"search": clean_name}, timeout=5)
-                if res_retry.status_code != 200:
-                    return fallback_res
-                retry_payload = res_retry.json()
-                data_retry = retry_payload.get("response", []) if not retry_payload.get("errors") else []
-                if data_retry:
-                    smart_mapping[translated_name] = clean_name
-                    save_smart_mapping(smart_mapping)
-                    result = max(
-                        data_retry,
-                        key=lambda entry: difflib.SequenceMatcher(
-                            None,
-                            clean_name.casefold(),
-                            entry.get("team", {}).get("name", "").casefold(),
-                        ).ratio(),
-                    )['team']
-                    set_db_cache(cache_key, result)
-                    return result
+                api_name = _sanitize_team_search(entry.get("team", {}).get("name", "")).casefold()
+                return max(
+                    difflib.SequenceMatcher(None, comparison_name, api_name).ratio(),
+                    difflib.SequenceMatcher(None, candidate.casefold(), api_name).ratio(),
+                )
 
-        print(f"⚠️ API에서 팀을 찾지 못함: {team_name} (검색어: {search_name})")
+            result = max(data, key=similarity).get('team', {})
+            if not result.get("id"):
+                continue
+
+            smart_mapping[translated_name] = candidate
+            save_smart_mapping(smart_mapping)
+            set_db_cache(cache_key, result)
+            TEAM_INFO_MEMORY_CACHE[team_name] = result
+            return result
+
+        if last_error:
+            print(f"⚠️ 팀 검색 API 오류({team_name}): {last_error}")
+        else:
+            print(f"⚠️ API에서 팀을 찾지 못함: {team_name} (검색 후보: {', '.join(candidates)})")
+        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
         return fallback_res
 
     except Exception as e:
         print(f"⚠️ 팀 검색 통신 오류({team_name}): {e}")
+        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
         return fallback_res
 
 def parse_match_time(match_time_str):
