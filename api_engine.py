@@ -310,6 +310,16 @@ def _team_search_candidates(translated_name, saved_name=None):
 
     # 공식 API가 별칭을 빼고 도시명으로만 등록한 대표 사례들.
     add(re.sub(r'\b(?:Red Diamonds|Antlers)\b$', ' ', without_club_words, flags=re.IGNORECASE))
+
+    # 전체 구단명 검색이 비어 있을 때 핵심 단어로 한 번 더 찾는다.
+    # 예: Shimizu S-Pulse -> Pulse/Shimizu,
+    #     V-Varen Nagasaki -> Nagasaki/Varen,
+    #     Yokohama F. Marinos -> Marinos/Yokohama
+    # 너무 짧은 약자는 오검색 위험이 커서 제외하고 호출 수 또한 최대 2회로 제한한다.
+    key_tokens = [token for token in without_club_words.split() if len(token) >= 5]
+    if key_tokens:
+        add(key_tokens[-1])
+        add(key_tokens[0])
     return candidates
 
 def _normalize_team_alias(value):
@@ -425,10 +435,20 @@ def fetch_team_info_api(team_name):
                     difflib.SequenceMatcher(None, candidate.casefold(), api_name).ratio(),
                 )
 
-            result = max(data, key=similarity).get('team', {})
+            best_entry = max(data, key=similarity)
+            # 핵심 단어 검색 결과가 전혀 다른 팀이면 저장하지 않는다.
+            # 잘못 저장된 팀 ID는 로고·최근 전적·채점까지 모두 오염시키기 때문이다.
+            if similarity(best_entry) < 0.45:
+                continue
+            result = best_entry.get('team', {})
             if not result.get("id"):
                 continue
 
+            if candidate.casefold() != candidates[0].casefold():
+                print(
+                    f"✅ 팀 자동 대체 검색 성공: {team_name} -> "
+                    f"{result.get('name', team_name)} (핵심 검색어: {candidate})"
+                )
             smart_mapping[translated_name] = candidate
             save_smart_mapping(smart_mapping)
             set_db_cache(cache_key, result)
