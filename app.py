@@ -1774,18 +1774,19 @@ with main_tab1:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "0:0")
                         if not score_text or score_text == "-": score_text = "0:0"
-        event_lines = []
-                            for raw_event in (live_info.get("events") or [])[-3:]:
-                                if isinstance(raw_event, dict):
-                                    line = str(raw_event.get("text") or "").strip()
-                                    if line:
-                                        event_lines.append(line)
-                            event_text = "<br>".join(escape(line) for line in event_lines)
-                            if not event_text and live_info.get("event"):
-                                event_text = escape(str(live_info.get("event") or ""))
-                            event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
+                        event_lines = []
+                        for raw_event in (live_info.get("events") or [])[-3:]:
+                            if isinstance(raw_event, dict):
+                                line = str(raw_event.get("text") or "").strip()
+                                if line:
+                                    event_lines.append(line)
+
+                        event_text = "<br>".join(escape(line) for line in event_lines)
+                        if not event_text and live_info.get("event"):
+                            event_text = escape(str(live_info.get("event") or ""))
+
+                        event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
-                    else:
                         time_display = f"<span class='match-time-text'>스코어 확인 중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
