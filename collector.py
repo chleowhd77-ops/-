@@ -2045,12 +2045,12 @@ def auto_score_matches():
                         score_str = f"{final_h}:{final_a}"
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
-        ai_note = generate_real_ai_note(
-            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
-        )
-        event_timeline = _load_stored_event_timeline(match_id)
-        if event_timeline:
-            ai_note += "\n\n🎬 실시간 사건 기록\n" + "\n".join(event_timeline)
+                        ai_note = generate_real_ai_note(
+                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
+                        )
+                        event_timeline = _load_stored_event_timeline(match_id)
+                        if event_timeline:
+                            ai_note += "\n\n🎬 실시간 사건 기록\n" + "\n".join(event_timeline)
                         cursor.execute("""
                             UPDATE predictions
                             SET actual_score = ?, actual_result = 'FINISHED',
