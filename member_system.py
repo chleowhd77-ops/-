@@ -13,9 +13,10 @@ import os
 import re
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 ROLE_GUEST = "guest"
@@ -35,10 +36,17 @@ PBKDF2_ROUNDS = 240_000
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9가-힣_]{3,24}$")
 MAX_POST_IMAGE_BYTES = 2 * 1024 * 1024
 ALLOWED_POST_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
+NOTICE_MODES = {"banner", "popup"}
+NOTICE_AUDIENCES = {"all", "guest", "member", "supporter"}
+KST = timezone(timedelta(hours=9))
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def kst_today() -> str:
+    return datetime.now(KST).date().isoformat()
 
 
 def get_db_path() -> Path:
@@ -49,14 +57,22 @@ def get_db_path() -> Path:
     return Path(__file__).resolve().with_name("users.db")
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def hash_password(password: str, salt_hex: str | None = None) -> tuple[str, str]:
@@ -102,6 +118,11 @@ def init_member_db() -> None:
                 body TEXT NOT NULL,
                 image_mime TEXT,
                 image_data BLOB,
+                notice_mode TEXT NOT NULL DEFAULT 'banner',
+                notice_audience TEXT NOT NULL DEFAULT 'all',
+                notice_start_at TEXT,
+                notice_end_at TEXT,
+                notice_link TEXT,
                 status TEXT NOT NULL DEFAULT 'visible'
                     CHECK(status IN ('visible', 'hidden', 'deleted')),
                 created_at TEXT NOT NULL,
@@ -133,7 +154,7 @@ def init_member_db() -> None:
             );
             """
         )
-        # 기존 users.db도 그대로 사용할 수 있도록 사진 열만 안전하게 추가한다.
+        # 기존 users.db도 그대로 사용할 수 있도록 새 열만 안전하게 추가한다.
         post_columns = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(posts)")
         }
@@ -141,6 +162,20 @@ def init_member_db() -> None:
             conn.execute("ALTER TABLE posts ADD COLUMN image_mime TEXT")
         if "image_data" not in post_columns:
             conn.execute("ALTER TABLE posts ADD COLUMN image_data BLOB")
+        if "notice_mode" not in post_columns:
+            conn.execute(
+                "ALTER TABLE posts ADD COLUMN notice_mode TEXT NOT NULL DEFAULT 'banner'"
+            )
+        if "notice_audience" not in post_columns:
+            conn.execute(
+                "ALTER TABLE posts ADD COLUMN notice_audience TEXT NOT NULL DEFAULT 'all'"
+            )
+        if "notice_start_at" not in post_columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN notice_start_at TEXT")
+        if "notice_end_at" not in post_columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN notice_end_at TEXT")
+        if "notice_link" not in post_columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN notice_link TEXT")
         _migrate_legacy_users(conn)
 
 
@@ -405,17 +440,18 @@ def create_post(
     return True, "게시글을 등록했습니다."
 
 
-def list_posts(limit: int = 100) -> list[dict[str, Any]]:
+def list_posts(limit: int = 100, include_hidden: bool = False) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 200))
+    status_clause = "p.status IN ('visible', 'hidden')" if include_hidden else "p.status='visible'"
     with _connect() as conn:
         rows = conn.execute(
-            """
-            SELECT p.id, p.category, p.title, p.body, p.status,
+            f"""
+            SELECT p.id, p.author_id, p.category, p.title, p.body, p.status,
                    p.created_at, p.updated_at,
                    CASE WHEN p.image_data IS NULL THEN 0 ELSE 1 END AS has_image,
                    p.image_mime, u.username, u.display_name, u.role
             FROM posts p JOIN users u ON u.id = p.author_id
-            WHERE p.status = 'visible'
+            WHERE p.category IN ('proof', 'free') AND {status_clause}
             ORDER BY p.created_at DESC LIMIT ?
             """,
             (safe_limit,),
@@ -423,13 +459,14 @@ def list_posts(limit: int = 100) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def get_post_image(post_id: int) -> tuple[str, bytes] | None:
-    """Return one visible attachment without loading every board image into memory."""
+def get_post_image(post_id: int, include_hidden: bool = False) -> tuple[str, bytes] | None:
+    """Return one attachment without loading every board image into memory."""
+    status_clause = "status IN ('visible', 'hidden')" if include_hidden else "status='visible'"
     with _connect() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT image_mime, image_data FROM posts
-            WHERE id=? AND status='visible' AND image_data IS NOT NULL
+            WHERE id=? AND {status_clause} AND image_data IS NOT NULL
             """,
             (post_id,),
         ).fetchone()
@@ -449,6 +486,8 @@ def list_notices(include_hidden: bool = False, limit: int = 20) -> list[dict[str
         rows = conn.execute(
             f"""
             SELECT p.id, p.title, p.body, p.status, p.created_at, p.updated_at,
+                   p.notice_mode, p.notice_audience, p.notice_start_at,
+                   p.notice_end_at, p.notice_link,
                    u.username, u.display_name
             FROM posts p JOIN users u ON u.id=p.author_id
             WHERE p.category='notice' AND {status_clause}
@@ -457,6 +496,184 @@ def list_notices(include_hidden: bool = False, limit: int = 20) -> list[dict[str
             (safe_limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _valid_notice_link(link: str) -> bool:
+    return not link or bool(re.fullmatch(r"https?://[^\s]+", link, flags=re.IGNORECASE))
+
+
+def create_notice(
+    actor_id: int,
+    title: str,
+    body: str,
+    notice_mode: str = "banner",
+    notice_audience: str = "all",
+    notice_start_at: str | None = None,
+    notice_end_at: str | None = None,
+    notice_link: str = "",
+) -> tuple[bool, str]:
+    title = title.strip()
+    body = body.strip()
+    notice_link = notice_link.strip()
+    notice_start_at = (notice_start_at or kst_today()).strip()
+    notice_end_at = (notice_end_at or "").strip() or None
+    if len(title) < 2 or len(title) > 80:
+        return False, "제목은 2~80자로 입력해주세요."
+    if len(body) < 5 or len(body) > 5000:
+        return False, "내용은 5~5000자로 입력해주세요."
+    if notice_mode not in NOTICE_MODES:
+        return False, "공지 표시 방식을 확인해주세요."
+    if notice_audience not in NOTICE_AUDIENCES:
+        return False, "공지 공개 대상을 확인해주세요."
+    try:
+        start_date = datetime.strptime(notice_start_at, "%Y-%m-%d").date()
+        end_date = (
+            datetime.strptime(notice_end_at, "%Y-%m-%d").date()
+            if notice_end_at else None
+        )
+    except ValueError:
+        return False, "공지 날짜를 확인해주세요."
+    if end_date and end_date < start_date:
+        return False, "종료일은 시작일보다 빠를 수 없습니다."
+    if not _valid_notice_link(notice_link):
+        return False, "연결 주소는 http:// 또는 https://로 시작해야 합니다."
+
+    with _connect() as conn:
+        actor = conn.execute(
+            "SELECT role, status FROM users WHERE id=?", (actor_id,)
+        ).fetchone()
+        if not actor or actor["status"] != "active" or actor["role"] != ROLE_ADMIN:
+            return False, "관리자만 공지를 등록할 수 있습니다."
+        now = utc_now()
+        cursor = conn.execute(
+            """
+            INSERT INTO posts(
+                author_id, category, title, body, notice_mode, notice_audience,
+                notice_start_at, notice_end_at, notice_link, created_at, updated_at
+            ) VALUES (?, 'notice', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                actor_id, title, body, notice_mode, notice_audience,
+                notice_start_at, notice_end_at, notice_link or None, now, now,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (actor_id, "create_notice", str(cursor.lastrowid), now),
+        )
+    return True, "공지를 등록했습니다."
+
+
+def list_active_notices(
+    role: str,
+    notice_mode: str | None = None,
+    limit: int = 20,
+    today: str | None = None,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 100))
+    current_day = (today or kst_today()).strip()
+    if notice_mode is not None and notice_mode not in NOTICE_MODES:
+        return []
+    if role not in {ROLE_GUEST, ROLE_MEMBER, ROLE_SUPPORTER, ROLE_ADMIN}:
+        role = ROLE_GUEST
+
+    audience_clause = "1=1"
+    audience_params: list[Any] = []
+    if role != ROLE_ADMIN:
+        allowed_audiences = {
+            ROLE_GUEST: ("all", "guest"),
+            ROLE_MEMBER: ("all", "member"),
+            ROLE_SUPPORTER: ("all", "supporter"),
+        }[role]
+        audience_clause = "p.notice_audience IN (?, ?)"
+        audience_params.extend(allowed_audiences)
+
+    mode_clause = ""
+    mode_params: list[Any] = []
+    if notice_mode:
+        mode_clause = "AND p.notice_mode=?"
+        mode_params.append(notice_mode)
+
+    params = [current_day, current_day, *audience_params, *mode_params, safe_limit]
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.title, p.body, p.status, p.created_at, p.updated_at,
+                   p.notice_mode, p.notice_audience, p.notice_start_at,
+                   p.notice_end_at, p.notice_link,
+                   u.username, u.display_name
+            FROM posts p JOIN users u ON u.id=p.author_id
+            WHERE p.category='notice' AND p.status='visible'
+              AND (p.notice_start_at IS NULL OR p.notice_start_at='' OR p.notice_start_at<=?)
+              AND (p.notice_end_at IS NULL OR p.notice_end_at='' OR p.notice_end_at>=?)
+              AND {audience_clause}
+              {mode_clause}
+            ORDER BY p.created_at DESC LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_post(
+    actor_id: int, post_id: int, title: str, body: str
+) -> tuple[bool, str]:
+    title = title.strip()
+    body = body.strip()
+    if len(title) < 2 or len(title) > 80:
+        return False, "제목은 2~80자로 입력해주세요."
+    if len(body) < 5 or len(body) > 5000:
+        return False, "내용은 5~5000자로 입력해주세요."
+    with _connect() as conn:
+        actor = conn.execute(
+            "SELECT role, status FROM users WHERE id=?", (actor_id,)
+        ).fetchone()
+        post = conn.execute(
+            "SELECT author_id, category, status FROM posts WHERE id=?", (post_id,)
+        ).fetchone()
+        if not actor or actor["status"] != "active" or not post:
+            return False, "게시글을 찾지 못했습니다."
+        if post["category"] == "notice" or post["status"] == "deleted":
+            return False, "수정할 수 없는 게시글입니다."
+        if actor["role"] != ROLE_ADMIN and int(post["author_id"]) != int(actor_id):
+            return False, "수정 권한이 없습니다."
+        now = utc_now()
+        conn.execute(
+            "UPDATE posts SET title=?, body=?, updated_at=? WHERE id=?",
+            (title, body, now, post_id),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (actor_id, "update_post", str(post_id), now),
+        )
+    return True, "게시글을 수정했습니다."
+
+
+def set_post_visibility(
+    actor_id: int, post_id: int, visible: bool
+) -> tuple[bool, str]:
+    with _connect() as conn:
+        actor = conn.execute(
+            "SELECT role, status FROM users WHERE id=?", (actor_id,)
+        ).fetchone()
+        if not actor or actor["status"] != "active" or actor["role"] != ROLE_ADMIN:
+            return False, "관리자만 게시글 공개 상태를 변경할 수 있습니다."
+        post = conn.execute(
+            "SELECT category, status FROM posts WHERE id=?", (post_id,)
+        ).fetchone()
+        if not post or post["category"] == "notice" or post["status"] == "deleted":
+            return False, "게시글을 찾지 못했습니다."
+        next_status = "visible" if visible else "hidden"
+        now = utc_now()
+        conn.execute(
+            "UPDATE posts SET status=?, updated_at=? WHERE id=?",
+            (next_status, now, post_id),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
+            (actor_id, "set_post_visibility", f"{post_id}:{next_status}", now),
+        )
+    return True, "게시글을 공개했습니다." if visible else "게시글을 숨겼습니다."
 
 
 def set_notice_visibility(

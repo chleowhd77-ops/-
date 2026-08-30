@@ -21,10 +21,12 @@ from member_system import (
     authenticate_user,
     bootstrap_admin,
     can_write_board,
+    create_notice,
     create_post,
     delete_post,
     get_post_image,
     init_member_db,
+    list_active_notices,
     list_notices,
     list_posts,
     list_support_requests,
@@ -35,6 +37,8 @@ from member_system import (
     set_user_role,
     set_user_status,
     set_notice_visibility,
+    set_post_visibility,
+    update_post,
 )
 
 try:
@@ -929,6 +933,21 @@ if hasattr(st, "dialog"):
                 st.error(message)
 
 
+    @st.dialog("중요 공지")
+    def open_notice_popup(notice):
+        notice_id = int(notice["id"])
+        st.markdown(f"### {escape(str(notice.get('title', '서비스 공지')))}")
+        st.write(str(notice.get("body", "")))
+        notice_link = str(notice.get("notice_link") or "").strip()
+        if notice_link:
+            st.link_button("자세히 보기", notice_link, use_container_width=True)
+        if st.button("이번 접속 동안 닫기", key=f"dismiss-popup-{notice_id}", use_container_width=True):
+            dismissed = set(st.session_state.get("dismissed_popup_ids", []))
+            dismissed.add(notice_id)
+            st.session_state["dismissed_popup_ids"] = sorted(dismissed)
+            st.rerun()
+
+
 if st.session_state.get('next_auth_menu'):
     st.session_state['auth_menu'] = st.session_state.pop('next_auth_menu')
 
@@ -1029,7 +1048,7 @@ else:
         unsafe_allow_html=True,
     )
     if current_role in {ROLE_SUPPORTER, ROLE_ADMIN}:
-        access_note = "전체 경기 분석과 인증 게시판 작성 권한이 열려 있습니다."
+        access_note = "프로토 LIVE·전체 경기의 전체 분석과 인증 게시판 작성 권한이 열려 있습니다."
     else:
         access_note = "추천 3픽과 공개 리포트를 이용 중입니다. 후원 확인 후 전체 분석이 열립니다."
     st.sidebar.markdown(
@@ -1181,8 +1200,8 @@ else:
                 st.caption("대기 중인 요청이 없습니다.")
 
             st.divider()
-            st.markdown("**첫 화면 공지 관리**")
-            st.caption("공개한 최신 공지 한 건이 모든 방문자의 첫 화면에 표시됩니다.")
+            st.markdown("**공지·팝업 관리**")
+            st.caption("상단 안내문 또는 팝업을 선택하고 공개 대상과 기간을 정할 수 있습니다.")
             with st.form("admin-notice-form", clear_on_submit=True):
                 notice_form_title = st.text_input(
                     "공지 제목", max_chars=80, key="admin-notice-title"
@@ -1191,15 +1210,44 @@ else:
                     "공지 내용", max_chars=5000, height=100,
                     key="admin-notice-body",
                 )
+                notice_mode = st.selectbox(
+                    "표시 방식",
+                    ["banner", "popup"],
+                    format_func=lambda value: {
+                        "banner": "화면 상단 안내문", "popup": "중요 팝업"
+                    }[value],
+                )
+                notice_audience = st.selectbox(
+                    "공개 대상",
+                    ["all", "guest", "member", "supporter"],
+                    format_func=lambda value: {
+                        "all": "모든 방문자", "guest": "비회원",
+                        "member": "일반회원", "supporter": "후원회원",
+                    }[value],
+                )
+                notice_start = st.date_input(
+                    "공개 시작일",
+                    value=datetime.now(timezone(timedelta(hours=9))).date(),
+                )
+                notice_has_end = st.checkbox("종료일 지정")
+                notice_end = st.date_input("공개 종료일", value=notice_start)
+                notice_link = st.text_input(
+                    "연결 주소 (선택)",
+                    placeholder="https:// 로 시작하는 주소",
+                )
                 notice_form_submit = st.form_submit_button(
                     "공지 등록", use_container_width=True
                 )
             if notice_form_submit:
-                ok, message = create_post(
+                ok, message = create_notice(
                     int(st.session_state['user_id']),
                     notice_form_title,
                     notice_form_body,
-                    "notice",
+                    notice_mode=notice_mode,
+                    notice_audience=notice_audience,
+                    notice_start_at=notice_start.strftime("%Y-%m-%d"),
+                    notice_end_at=(notice_end.strftime("%Y-%m-%d") if notice_has_end else None),
+                    notice_link=notice_link,
                 )
                 (st.success if ok else st.error)(message)
                 if ok:
@@ -1207,9 +1255,20 @@ else:
 
             managed_notices = list_notices(include_hidden=True, limit=8)
             if managed_notices:
+                mode_labels = {"banner": "상단 안내", "popup": "팝업"}
+                audience_labels = {
+                    "all": "전체", "guest": "비회원", "member": "일반회원",
+                    "supporter": "후원회원",
+                }
                 for notice in managed_notices:
                     notice_status = "공개 중" if notice["status"] == "visible" else "숨김"
-                    st.caption(f"{notice_status} · {notice['title']}")
+                    start_label = notice.get("notice_start_at") or "즉시"
+                    end_label = notice.get("notice_end_at") or "계속"
+                    st.caption(
+                        f"{notice_status} · {mode_labels.get(notice.get('notice_mode'), '상단 안내')} · "
+                        f"{audience_labels.get(notice.get('notice_audience'), '전체')} · "
+                        f"{start_label}~{end_label} · {notice['title']}"
+                    )
                     should_show = notice["status"] != "visible"
                     action_label = "다시 공개" if should_show else "숨기기"
                     if st.button(
@@ -1362,9 +1421,23 @@ if not st.session_state.get('logged_in'):
             st.session_state['next_auth_menu'] = "로그인"
             st.info("왼쪽 위의 메뉴(>>)를 열어 로그인해주세요.")
 
-# 관리자가 공개한 최신 공지는 첫 화면에도 자동 노출한다.
+# 공개 대상과 기간에 맞는 중요 팝업은 접속 중 한 번만 보여준다.
 try:
-    visible_notices = list_notices(include_hidden=False, limit=1)
+    popup_notices = list_active_notices(active_role, notice_mode="popup", limit=5)
+except Exception:
+    popup_notices = []
+
+dismissed_popup_ids = set(st.session_state.get("dismissed_popup_ids", []))
+next_popup = next(
+    (notice for notice in popup_notices if int(notice["id"]) not in dismissed_popup_ids),
+    None,
+)
+if next_popup and hasattr(st, "dialog") and "open_notice_popup" in globals():
+    open_notice_popup(next_popup)
+
+# 공개 대상과 기간에 맞는 최신 상단 안내문을 자동 노출한다.
+try:
+    visible_notices = list_active_notices(active_role, notice_mode="banner", limit=1)
     latest_notice = visible_notices[0] if visible_notices else None
 except Exception:
     latest_notice = None
@@ -1376,10 +1449,13 @@ if latest_notice:
         f"<div class='notice-strip'><strong>📢 {notice_title}</strong><br>{notice_preview}</div>",
         unsafe_allow_html=True,
     )
+    notice_link = str(latest_notice.get("notice_link") or "").strip()
+    if notice_link:
+        st.link_button("공지 자세히 보기", notice_link)
 
-# 방문자가 가장 먼저 무료 추천을 보도록 탭의 표시 순서만 변경한다.
-main_tab3, main_tab1, main_tab2, main_tab4, main_tab5 = st.tabs([
-    f"오늘의 {top3_total or 3}픽", "전체 경기", "승무패 14", "채점 노트", "인증 게시판"
+# TOP3, 베트맨 전용, 해외·사설용 경기를 서로 섞지 않는다.
+main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
+    "오늘의 TOP3", "프로토 LIVE", "전체 경기", "승무패 14", "채점 노트", "인증 게시판"
 ])
 
 if st.session_state.get('role') == ROLE_ADMIN:
@@ -1423,7 +1499,7 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
-# 🔥 라이브 경기 판별 함수 (정렬을 위해 추가됨!)
+# 🔥 라이브 경기 판별 함수
 def check_is_live(item):
     m = item.get('match', {})
     match_id_str = str(m.get('id', ''))
@@ -1473,38 +1549,30 @@ with main_tab1:
     with sub_soccer:
         st.markdown("""
         <div class='section-intro'>
-            <div><h2>전체 경기 분석</h2><p>LIVE 경기를 먼저 보여주며 리그별로 빠르게 확인할 수 있습니다.</p></div>
+            <div><h2>프로토 LIVE</h2><p>베트맨에 등록된 경기만 베트맨 사이트의 순서 그대로 확인합니다.</p></div>
         </div>
         <div style='background:rgba(25,230,242,.055); border:1px solid rgba(25,230,242,.20); color:#BEEEF2; padding:12px 14px; border-radius:12px; font-size:12px; font-weight:700; margin-bottom:20px;'>
-            무료 이용자는 오늘의 추천 3경기와 채점 노트를 볼 수 있습니다. 전체 경기 상세 분석은 후원회원에게 열립니다.
+            베트맨 이용자가 경기 순서를 그대로 따라가며 픽하기 위한 전용 화면입니다. 무료 이용자는 앞의 3경기까지 볼 수 있습니다.
         </div>
         """, unsafe_allow_html=True)
         
-        proto_list = dashboard_data.get("proto", [])
+        # 수집기가 저장한 베트맨 원본 순서를 절대 다시 정렬하지 않는다.
+        proto_list = list(dashboard_data.get("proto", []))
         if proto_list:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                all_leagues = sorted(list(set([m.get('league', '기타') for m in proto_list])))
-                selected_league = st.selectbox("🏆 리그 필터링", ["전체 리그 보기"] + all_leagues)
-            with col2:
-                st.write("") 
-                sort_urgent = st.toggle("🔥 마감 임박순 보기")
-                
+            all_leagues = list(dict.fromkeys(m.get('league', '기타') for m in proto_list))
+            selected_league = st.selectbox(
+                "🏆 리그 필터링",
+                ["전체 리그 보기"] + all_leagues,
+                key="proto-league-filter",
+            )
+            st.caption("베트맨 경기 순서 그대로 표시 중")
+                 
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
             # 필터링
             if selected_league != "전체 리그 보기": 
                 proto_list = [m for m in proto_list if m.get('league') == selected_league]
-            
-            # 🔥 핵심: 정렬 로직 완벽 적용 (LIVE를 최상단 0순위로 강제 고정!)
-            proto_list = sorted(
-                proto_list, 
-                key=lambda x: (
-                    not check_is_live(x), # LIVE인 애들은 0(위로), 아닌 애들은 1(밑으로)
-                    x.get('timestamp', 9999999999) if sort_urgent else 0 # 그다음 시간순 정렬
-                )
-            )
-                
+                 
             displayed_count = 0
             paywall_shown = False
 
@@ -1582,6 +1650,64 @@ with main_tab1:
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
+
+# -----------------------------------------------------------------------------
+# [TAB 6] 전체 경기 · 해외/사설 이용자용 세계 경기
+# -----------------------------------------------------------------------------
+with main_tab6:
+    st.markdown("""
+    <div class='section-intro'>
+        <div>
+            <h2>전체 경기</h2>
+            <p>해외·사설 사이트 이용자를 위한 전 세계 축구 경기 분석 화면입니다.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.info("프로토 LIVE와 분리된 메뉴입니다. 베트맨에 없는 세계 경기도 이곳에 연결됩니다.")
+
+    world_matches = (
+        dashboard_data.get("all_matches")
+        or dashboard_data.get("global_matches")
+        or dashboard_data.get("world_matches")
+        or []
+    )
+    if not world_matches:
+        st.markdown("""
+        <div class='match-card' style='text-align:center; padding:42px 20px;'>
+            <h3 style='margin-bottom:12px;'>🌍 전 세계 경기 데이터 연결 준비 중</h3>
+            <p style='color:#94A3B8; line-height:1.7;'>현재 베트맨 경기와 섞어 보여주지 않습니다.<br>
+            해외 경기 수집기가 연결되면 오늘 열리는 세계 축구 경기가 이 메뉴에만 표시됩니다.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        world_limit = None if has_full_access else 3
+        for world_index, world_item in enumerate(world_matches):
+            if world_limit is not None and world_index >= world_limit:
+                st.warning("4번째 세계 경기부터는 후원회원에게 제공됩니다.")
+                break
+            world_match = world_item.get("match", world_item)
+            world_league = escape(str(world_match.get("league", "세계 축구")))
+            world_home = escape(str(world_match.get("home", "홈팀")))
+            world_away = escape(str(world_match.get("away", "원정팀")))
+            world_time = escape(str(
+                world_item.get("final_match_time")
+                or world_match.get("match_time")
+                or world_match.get("date")
+                or "시간 확인 중"
+            ))
+            st.markdown(
+                f"""
+                <div class='match-card'>
+                    <div class='league-title'>{world_league}</div>
+                    <div class='vs-row'>
+                        <div class='team-box home'><div class='team-name-text'>{world_home}</div></div>
+                        <div class='center-time-box'><span class='match-time-text'>{world_time}</span></div>
+                        <div class='team-box away'><div class='team-name-text'>{world_away}</div></div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
@@ -1918,28 +2044,36 @@ with main_tab5:
                     help="적중 인증 글에 JPG·PNG·WEBP 사진 1장, 최대 2MB까지 첨부할 수 있습니다.",
                 )
                 st.caption("사진은 개인정보와 계좌번호를 가린 뒤 올려주세요. 적중 인증 분류에서만 저장됩니다.")
+                proof_confirmed = st.checkbox(
+                    "적중 인증 글은 경기 종료 후 작성했으며, 개인정보·계좌번호를 가렸습니다."
+                )
+                st.caption("경기 전 유료·선행 픽 공개, 불법 사이트 홍보, 허위 수익 인증 글은 등록할 수 없습니다.")
                 submitted = st.form_submit_button("등록")
                 if submitted:
-                    uploaded_bytes = post_image.getvalue() if post_image else None
-                    uploaded_mime = post_image.type if post_image else None
-                    ok, message = create_post(
-                        int(st.session_state["user_id"]),
-                        post_title,
-                        post_body,
-                        category,
-                        image_bytes=uploaded_bytes,
-                        image_mime=uploaded_mime,
-                    )
-                    (st.success if ok else st.error)(message)
-                    if ok:
-                        st.rerun()
+                    if category == "proof" and not proof_confirmed:
+                        st.error("적중 인증 작성 확인에 동의해주세요.")
+                    else:
+                        uploaded_bytes = post_image.getvalue() if post_image else None
+                        uploaded_mime = post_image.type if post_image else None
+                        ok, message = create_post(
+                            int(st.session_state["user_id"]),
+                            post_title,
+                            post_body,
+                            category,
+                            image_bytes=uploaded_bytes,
+                            image_mime=uploaded_mime,
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
     elif st.session_state.get("logged_in"):
         st.caption("글 작성은 후원회원 전환 후 이용할 수 있습니다.")
     else:
         st.caption("글 작성은 로그인한 후원회원만 이용할 수 있습니다.")
 
     category_labels = {"proof": "적중 인증", "free": "자유", "notice": "공지"}
-    board_posts = list_posts(limit=100)
+    is_board_admin = current_role == ROLE_ADMIN
+    board_posts = list_posts(limit=100, include_hidden=is_board_admin)
     if not board_posts:
         st.info("아직 등록된 글이 없습니다. 첫 인증 기록을 기다리고 있습니다.")
 
@@ -1950,12 +2084,14 @@ with main_tab5:
                 st.markdown(f"#### {escape(post['title'])}")
             with meta_col:
                 st.caption(category_labels.get(post["category"], "게시글"))
+                if post.get("status") == "hidden":
+                    st.caption("🚫 관리자 숨김")
             st.caption(
                 f"{post['display_name']} · {post['created_at'].replace('T', ' ')[:16]}"
             )
             st.write(post["body"])
             if post.get("has_image"):
-                attachment = get_post_image(int(post["id"]))
+                attachment = get_post_image(int(post["id"]), include_hidden=is_board_admin)
                 if attachment:
                     st.markdown(
                         "<div class='board-photo-caption'>첨부된 인증 사진</div>",
@@ -1963,14 +2099,56 @@ with main_tab5:
                     )
                     st.image(attachment[1], use_container_width=True)
 
-            may_delete = (
-                st.session_state.get("role") == ROLE_ADMIN
-                or st.session_state.get("username") == post["username"]
-            )
-            if may_delete and st.button("삭제", key=f"delete-post-{post['id']}"):
-                ok, message = delete_post(
-                    int(st.session_state["user_id"]), int(post["id"])
+            current_user_id = st.session_state.get("user_id")
+            may_manage_post = bool(
+                current_user_id
+                and (
+                    is_board_admin
+                    or int(current_user_id) == int(post.get("author_id") or 0)
                 )
-                (st.success if ok else st.error)(message)
-                if ok:
-                    st.rerun()
+            )
+            if may_manage_post:
+                with st.expander("글 관리"):
+                    with st.form(f"edit-post-form-{post['id']}"):
+                        edit_title = st.text_input(
+                            "제목 수정", value=str(post["title"]), max_chars=80,
+                            key=f"edit-post-title-{post['id']}",
+                        )
+                        edit_body = st.text_area(
+                            "내용 수정", value=str(post["body"]), max_chars=5000,
+                            height=130, key=f"edit-post-body-{post['id']}",
+                        )
+                        edit_submit = st.form_submit_button("수정 저장")
+                    if edit_submit:
+                        ok, message = update_post(
+                            int(current_user_id), int(post["id"]), edit_title, edit_body
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
+
+                    action_col, delete_col = st.columns(2)
+                    if is_board_admin:
+                        should_show_post = post.get("status") == "hidden"
+                        action_label = "다시 공개" if should_show_post else "관리자 숨김"
+                        if action_col.button(
+                            action_label,
+                            key=f"post-visibility-{post['id']}",
+                            use_container_width=True,
+                        ):
+                            ok, message = set_post_visibility(
+                                int(current_user_id), int(post["id"]), should_show_post
+                            )
+                            (st.success if ok else st.error)(message)
+                            if ok:
+                                st.rerun()
+
+                    if delete_col.button(
+                        "삭제", key=f"delete-post-{post['id']}", use_container_width=True
+                    ):
+                        ok, message = delete_post(
+                            int(current_user_id), int(post["id"])
+                        )
+                        (st.success if ok else st.error)(message)
+                        if ok:
+                            st.rerun()
