@@ -2045,9 +2045,12 @@ def auto_score_matches():
                         score_str = f"{final_h}:{final_a}"
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
-                        ai_note = generate_real_ai_note(
-                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
-                        )
+        ai_note = generate_real_ai_note(
+            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
+        )
+        event_timeline = _load_stored_event_timeline(match_id)
+        if event_timeline:
+            ai_note += "\n\n🎬 실시간 사건 기록\n" + "\n".join(event_timeline)
                         cursor.execute("""
                             UPDATE predictions
                             SET actual_score = ?, actual_result = 'FINISHED',
@@ -2121,17 +2124,33 @@ def _event_record(raw_event):
     event_type = str(raw_event.get("type", "") or "")
     detail = str(raw_event.get("detail", "") or "")
     player = raw_event.get("player", {}) or {}
+    assist = raw_event.get("assist", {}) or {}
     team = raw_event.get("team", {}) or {}
     elapsed = int(event_time.get("elapsed") or 0)
     extra = int(event_time.get("extra") or 0)
     player_name = str(player.get("name", "") or "")
+    assist_name = str(assist.get("name", "") or "")
+    team_name = str(team.get("name", "") or "")
+    minute = f"{elapsed}+{extra}" if extra else str(elapsed)
+    event_key = event_type.casefold()
+    detail_key = detail.casefold()
+    subject = player_name or team_name or detail
 
-    if event_type == "Goal":
-        text = f"⚽ {elapsed}' 득점! ({player_name})"
-    elif event_type == "Card" and "Red" in detail:
-        text = f"🟥 {elapsed}' 퇴장! ({player_name})"
-    elif event_type.casefold() in {"subst", "substitution"}:
-        text = f"🔄 {elapsed}' 교체 - {player_name} OUT"
+    if event_key == "goal":
+        text = f"⚽ {minute}' 득점 · {team_name} · {subject}"
+    elif event_key == "card" and ("red" in detail_key or "second yellow" in detail_key):
+        text = f"🟥 {minute}' 퇴장 · {team_name} · {subject}"
+    elif event_key == "card" and "yellow" in detail_key:
+        text = f"🟨 {minute}' 경고 · {team_name} · {subject}"
+    elif event_key in {"subst", "substitution"}:
+        change = f"{player_name} OUT"
+        if assist_name:
+            change += f" / {assist_name} IN"
+        text = f"🔄 {minute}' 교체 · {team_name} · {change}"
+    elif event_key == "var":
+        text = f"📺 {minute}' VAR · {team_name} · {detail or subject}"
+    elif event_key == "injury" or "injur" in detail_key:
+        text = f"🚑 {minute}' 부상 · {team_name} · {subject}"
     else:
         return None
     key = "|".join(map(str, (
@@ -2148,6 +2167,27 @@ def _event_record(raw_event):
         "team": str(team.get("name", "") or ""),
         "text": text,
     }
+
+
+def _load_stored_event_timeline(match_id, limit=30):
+    try:
+        live_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "live_scores.json"
+        )
+        with open(live_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        record = payload.get(str(match_id), {}) if isinstance(payload, dict) else {}
+        events = record.get("events", []) if isinstance(record, dict) else []
+        texts = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            text = str(event.get("text") or "").strip()
+            if text and text not in texts:
+                texts.append(text)
+        return texts[-max(1, int(limit)):]
+    except Exception:
+        return []
 
 
 def _merge_event_history(previous_entries, api_events):
@@ -2361,7 +2401,7 @@ def update_live_scores():
             event_str = event_str or prior_event
 
             should_fetch_events = (
-                os.getenv("ENABLE_LIVE_EVENTS", "0") == "1"
+        os.getenv("ENABLE_LIVE_EVENTS", "1") == "1"
                 and (status in LIVE_STATUSES or status in TERMINAL_STATUSES)
                 and not (status in TERMINAL_STATUSES and any(entry.get("final") for entry in prior_for_fixture))
             )

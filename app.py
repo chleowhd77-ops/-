@@ -1774,8 +1774,16 @@ with main_tab1:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "0:0")
                         if not score_text or score_text == "-": score_text = "0:0"
-                        event_text = live_info.get("event", "")
-                        event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
+                            event_lines = []
+                            for raw_event in (live_info.get("events") or [])[-3:]:
+                                if isinstance(raw_event, dict):
+                                    line = str(raw_event.get("text") or "").strip()
+                                    if line:
+                                        event_lines.append(line)
+                            event_text = "<br>".join(escape(line) for line in event_lines)
+                            if not event_text and live_info.get("event"):
+                                event_text = escape(str(live_info.get("event") or ""))
+                            event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
                         time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
                     else:
                         time_display = f"<span class='match-time-text'>스코어 확인 중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
@@ -2152,8 +2160,16 @@ with main_tab4:
                     live_info = live_scores_data[m_id_str]
                     if live_info.get("score"):
                         temp_score = str(live_info["score"]).replace(" : ", ":")
-                    if live_info.get("event"):
-                        safe_event = escape(str(live_info['event']))
+                    event_lines = []
+                    for raw_event in (live_info.get("events") or [])[-3:]:
+                        if isinstance(raw_event, dict):
+                            line = str(raw_event.get("text") or "").strip()
+                            if line:
+                                event_lines.append(line)
+                    safe_event = "<br>".join(escape(line) for line in event_lines)
+                    if not safe_event and live_info.get("event"):
+                        safe_event = escape(str(live_info.get("event") or ""))
+                    if safe_event:
                         event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px; overflow-wrap:anywhere;'>{safe_event}</div>"
                     badge_html = "<span class='pending-report-badge live'>🔴 LIVE</span>"
 
