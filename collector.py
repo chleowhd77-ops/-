@@ -1,72 +1,650 @@
-import os
-import json
-import time
-import schedule
-import requests
-import sqlite3
+import argparse
 import base64
+import json
+import os
 import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+import requests
+import schedule
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
-from webdriver_manager.microsoft import EdgeChromiumDriverManager
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+except Exception:
+    ChromeDriverManager = None
+
+try:
+    from webdriver_manager.microsoft import EdgeChromiumDriverManager
+except Exception:
+    EdgeChromiumDriverManager = None
+
 from config import *
 from api_engine import *
+
+
+APP_DIR = Path(__file__).resolve().parent
+STATUS_FILE = APP_DIR / "collector_status.json"
+KST = timezone(timedelta(hours=9))
+LIVE_RETENTION_HOURS = max(6, int(os.getenv("LIVE_RETENTION_HOURS", "24")))
+LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
+PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
+TOTO14_MAX_COMBINATIONS = max(1, int(os.getenv("TOTO14_MAX_COMBINATIONS", "64")))
+TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
+LIVE_STATUSES = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'}
+TERMINAL_STATUSES = {'FT', 'AET', 'PEN'}
+CANCELED_STATUSES = {'CANC', 'ABD', 'AWD', 'WO'}
+POSTPONED_STATUSES = {'PST', 'PSTP'}
+
+
+def _local_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else APP_DIR / path
+
+
+def _read_json(path, default=None):
+    try:
+        with open(_local_path(path), "r", encoding="utf-8") as file:
+            return json.load(file)
+    except Exception:
+        return {} if default is None else default
+
+
+def _atomic_write_bytes(path, payload):
+    """Write in the destination directory and replace only after fsync succeeds."""
+    final_path = _local_path(path)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = final_path.with_name(
+        f".{final_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    try:
+        with open(temp_path, "wb") as file:
+            file.write(payload)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, final_path)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _atomic_write_json(path, value, indent=None):
+    payload = json.dumps(value, ensure_ascii=False, indent=indent).encode("utf-8")
+    _atomic_write_bytes(path, payload)
+
+
+def _pid_is_running(pid):
+    try:
+        pid = int(pid)
+        if pid <= 0:
+            return False
+        if os.name == "nt":
+            # On Windows os.kill(pid, 0) calls TerminateProcess rather than the
+            # POSIX-style existence probe.  Query the handle without mutating it.
+            import ctypes
+            from ctypes import wintypes
+
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.argtypes = (
+                wintypes.DWORD, wintypes.BOOL, wintypes.DWORD
+            )
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.GetExitCodeProcess.argtypes = (
+                wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)
+            )
+            kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            handle = kernel32.OpenProcess(
+                process_query_limited_information, False, pid
+            )
+            if not handle:
+                # Access denied still proves that the process exists.
+                return int(kernel32.GetLastError()) == 5
+            try:
+                exit_code = wintypes.DWORD()
+                queried = kernel32.GetExitCodeProcess(
+                    handle, ctypes.byref(exit_code)
+                )
+                return bool(queried and exit_code.value == still_active)
+            finally:
+                kernel32.CloseHandle(handle)
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError, TypeError, ValueError):
+        return False
+
+
+def _try_acquire_lock(name, stale_after=3600, wait_seconds=0):
+    lock_path = APP_DIR / f".collector-{name}.lock"
+    deadline = time.monotonic() + max(0, wait_seconds)
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            lock_data = json.dumps({"pid": os.getpid(), "created_at": time.time()}).encode()
+            os.write(fd, lock_data)
+            os.fsync(fd)
+            return fd, lock_path
+        except FileExistsError:
+            existing = _read_json(lock_path, {})
+            lock_pid = existing.get("pid") if isinstance(existing, dict) else None
+            try:
+                created_at = float(existing.get("created_at", 0) or 0) if isinstance(existing, dict) else 0
+            except (TypeError, ValueError):
+                created_at = 0
+            # A slow but healthy worker must never lose its lock merely because a
+            # wall-clock timeout elapsed.  The scheduler owns hard timeouts and
+            # terminates the worker first; here we only reap locks whose PID is
+            # demonstrably gone (or whose malformed payload never acquired one).
+            stale = not _pid_is_running(lock_pid)
+            if lock_pid is None and created_at:
+                stale = time.time() - created_at > min(stale_after, 5)
+            if stale:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+                except Exception:
+                    pass
+            if time.monotonic() >= deadline:
+                return None, lock_path
+            time.sleep(0.05)
+
+
+def _release_lock(fd, lock_path):
+    if fd is not None:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+    try:
+        Path(lock_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+@contextmanager
+def _job_lock(name, stale_after):
+    fd, lock_path = _try_acquire_lock(name, stale_after=stale_after)
+    if fd is None:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _release_lock(fd, lock_path)
+
+
+def _utc_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _update_collector_status(job_name, state, **details):
+    fd, lock_path = _try_acquire_lock("status", stale_after=30, wait_seconds=2)
+    if fd is None:
+        return
+    try:
+        status = _read_json(STATUS_FILE, {})
+        if not isinstance(status, dict):
+            status = {}
+        jobs = status.setdefault("jobs", {})
+        previous = jobs.get(job_name, {}) if isinstance(jobs.get(job_name), dict) else {}
+        entry = dict(previous)
+        entry.update(details)
+        entry["state"] = state
+        entry["heartbeat_at"] = _utc_iso()
+        entry["pid"] = os.getpid()
+        if state == "running":
+            if previous.get("state") != "running" or not entry.get("last_started_at"):
+                entry["last_started_at"] = entry["heartbeat_at"]
+        elif state == "success":
+            entry["last_success_at"] = entry["heartbeat_at"]
+            entry.pop("last_error", None)
+        elif state == "failed":
+            entry["last_failure_at"] = entry["heartbeat_at"]
+        jobs[job_name] = entry
+        status["updated_at"] = entry["heartbeat_at"]
+        status["version"] = 1
+        _atomic_write_json(STATUS_FILE, status, indent=2)
+        return True
+    except Exception as error:
+        print(f"⚠️ collector_status.json 갱신 실패: {error}")
+        return False
+    finally:
+        _release_lock(fd, lock_path)
+
+
+def _parse_kst_match_time(value):
+    if not value or value in {"시간 미정", "마감/진행중"}:
+        return None
+    match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', str(value))
+    if not match:
+        return None
+    try:
+        month, day, hour, minute = map(int, match.groups())
+        now = datetime.now(KST)
+        candidates = [
+            datetime(year, month, day, hour, minute, tzinfo=KST)
+            for year in (now.year - 1, now.year, now.year + 1)
+        ]
+        return min(candidates, key=lambda item: abs((item - now).total_seconds()))
+    except (TypeError, ValueError):
+        return None
+
+def _validate_sqlite_file(path):
+    path = _local_path(path)
+    try:
+        if not path.exists() or path.stat().st_size < 100:
+            return False
+        with open(path, "rb") as file:
+            if file.read(16) != b"SQLite format 3\x00":
+                return False
+        uri = path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=10)
+        try:
+            check = conn.execute("PRAGMA quick_check").fetchone()
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            return bool(
+                check and str(check[0]).lower() == "ok" and "predictions" in tables
+            )
+        finally:
+            conn.close()
+    except Exception as error:
+        print(f"⚠️ SQLite 검증 실패({path.name}): {error}")
+        return False
+
 
 def download_latest_db_from_github():
     print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 기존 기록 보호를 위해 GitHub에서 최신 DB를 가져옵니다...")
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
+    final_path = _local_path("ai_predictions.db")
+    temp_path = final_path.with_name(f".{final_path.name}.{os.getpid()}.download")
+    backup_path = final_path.with_name(f"{final_path.name}.last_good")
     try:
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            with open("ai_predictions.db", "wb") as f: f.write(res.content)
-            print("✅ 기존 DB 다운로드 완료! (기록 덮어쓰기 방지 성공)")
-        else: print("⚠️ GitHub에 DB가 없거나 통신 에러 (새로 생성합니다)")
-    except Exception as e: print(f"❌ DB 다운로드 에러: {e}")
+        res = requests.get(url, timeout=30)
+        if res.status_code != 200:
+            print(f"⚠️ GitHub DB 다운로드 실패: HTTP {res.status_code} (로컬 정상본 보존)")
+            return False
+        with open(temp_path, "wb") as file:
+            file.write(res.content)
+            file.flush()
+            os.fsync(file.fileno())
+        if not _validate_sqlite_file(temp_path):
+            print("❌ 원격 DB가 유효한 SQLite가 아니어서 교체하지 않습니다.")
+            return False
+        if _validate_sqlite_file(final_path):
+            _atomic_write_bytes(backup_path, final_path.read_bytes())
+        os.replace(temp_path, final_path)
+        print("✅ 검증된 기존 DB를 원자적으로 동기화했습니다.")
+        return True
+    except Exception as error:
+        print(f"❌ DB 다운로드 에러: {error} (로컬 정상본 보존)")
+        return False
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-def upload_to_github(file_path):
+
+def upload_to_github(file_path, remote_path=None):
+    local_path = _local_path(file_path)
+    remote_path = str(remote_path or Path(file_path).name).replace("\\", "/")
+    if not GITHUB_TOKEN:
+        print(f"⚠️ GitHub 토큰이 없어 업로드를 건너뜁니다: {remote_path}")
+        return False
+    if not local_path.exists():
+        print(f"⚠️ 업로드할 파일이 없습니다: {local_path}")
+        return False
+
+    fd, lock_path = _try_acquire_lock("github-upload", stale_after=180, wait_seconds=30)
+    if fd is None:
+        print(f"⚠️ 다른 업로드가 진행 중이어서 건너뜁니다: {remote_path}")
+        return False
     try:
-        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
-        git_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        sha = None
-        r_get = requests.get(url, headers=git_headers, timeout=10)
-        if r_get.status_code == 200: sha = r_get.json().get("sha")
-        with open(file_path, "rb") as f: content = f.read()
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{remote_path}"
+        git_headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        with open(local_path, "rb") as file:
+            content = file.read()
         b64_content = base64.b64encode(content).decode("utf-8")
-        data = {"message": f"Auto update {file_path}", "content": b64_content}
-        if sha: data["sha"] = sha
-        r_put = requests.put(url, headers=git_headers, json=data, timeout=10)
-        if r_put.status_code in [200, 201]: print(f"✅ GitHub 동기화 완료: {file_path}")
-        else: print(f"❌ GitHub 동기화 실패 ({file_path}): {r_put.json()}")
-    except Exception as e: print(f"❌ [관제 봇 떡밥] GitHub 업로드 에러: {e}")
+
+        for attempt in range(2):
+            sha = None
+            r_get = requests.get(url, headers=git_headers, timeout=15)
+            if r_get.status_code == 200:
+                sha = r_get.json().get("sha")
+            elif r_get.status_code not in (404,):
+                print(f"⚠️ GitHub 현재 버전 조회 실패({remote_path}): HTTP {r_get.status_code}")
+            data = {"message": f"Auto update {remote_path}", "content": b64_content}
+            if sha:
+                data["sha"] = sha
+            r_put = requests.put(url, headers=git_headers, json=data, timeout=45)
+            if r_put.status_code in (200, 201):
+                print(f"✅ GitHub 동기화 완료: {remote_path}")
+                return True
+            if r_put.status_code not in (409, 422) or attempt == 1:
+                try:
+                    detail = r_put.json()
+                except Exception:
+                    detail = r_put.text[:300]
+                print(f"❌ GitHub 동기화 실패 ({remote_path}): {detail}")
+                return False
+            time.sleep(1)
+        return False
+    except Exception as error:
+        print(f"❌ [관제 봇 떡밥] GitHub 업로드 에러: {error}")
+        return False
+    finally:
+        _release_lock(fd, lock_path)
+
+
+def upload_sqlite_to_github(db_path="ai_predictions.db"):
+    """Upload a consistent SQLite snapshot rather than a file mid-transaction."""
+    source_path = _local_path(db_path)
+    if not _validate_sqlite_file(source_path):
+        print("❌ 로컬 DB 검증 실패로 업로드하지 않습니다.")
+        return False
+    publish_fd, publish_lock = _try_acquire_lock(
+        "db-publish", stale_after=300, wait_seconds=90
+    )
+    if publish_fd is None:
+        print("⚠️ 다른 DB 게시 작업이 진행 중이어서 이번 업로드를 건너뜁니다.")
+        return False
+    temp_path = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix="ai_predictions.", suffix=".snapshot.db", dir=APP_DIR
+        )
+        os.close(fd)
+        temp_path = Path(temp_name)
+        source = None
+        target = None
+        try:
+            source = sqlite3.connect(str(source_path), timeout=30)
+            target = sqlite3.connect(str(temp_path), timeout=30)
+            source.backup(target)
+            target.commit()
+        finally:
+            if target is not None:
+                target.close()
+            if source is not None:
+                source.close()
+        if not _validate_sqlite_file(temp_path):
+            print("❌ DB 스냅샷 검증 실패로 업로드하지 않습니다.")
+            return False
+        return upload_to_github(temp_path, remote_path=Path(db_path).name)
+    except Exception as error:
+        print(f"❌ DB 스냅샷 업로드 실패: {error}")
+        return False
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        _release_lock(publish_fd, publish_lock)
+
+
+def _normalize_toto14_picks(picks):
+    normalized = []
+    for pick in picks or []:
+        pick = str(pick).strip()
+        if pick in {"승", "무", "패"} and pick not in normalized:
+            normalized.append(pick)
+    return normalized[:2]
+
+
+def _toto14_picks_from_display(display, home_team, away_team):
+    display = str(display or "")
+    picks = []
+    if f"{home_team} 승" in display:
+        picks.append("승")
+    if "무승부" in display:
+        picks.append("무")
+    if f"{away_team} 승" in display:
+        picks.append("패")
+    return _normalize_toto14_picks(picks)
+
+
+def _render_toto14_picks_html(picks):
+    picks = set(_normalize_toto14_picks(picks))
+    styles = {
+        "승": "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if "승" in picks else "background: transparent; color: #64748B; border: 1px solid #1E293B;",
+        "무": "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if "무" in picks else "background: transparent; color: #64748B; border: 1px solid #1E293B;",
+        "패": "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if "패" in picks else "background: transparent; color: #64748B; border: 1px solid #1E293B;",
+    }
+    return "".join(
+        f"<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {styles[pick]}'>{pick}</div>"
+        for pick in ("승", "무", "패")
+    )
+
+
+def _choose_toto14_picks(probs_dict, current_combinations, max_combinations=None):
+    """Choose unique marks without exceeding the configured ticket budget."""
+    max_combinations = max(1, int(max_combinations or TOTO14_MAX_COMBINATIONS))
+    sorted_probs = sorted(
+        ((pick, float(probs_dict.get(pick, 0) or 0)) for pick in ("승", "무", "패")),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    first_pick, first_pct = sorted_probs[0]
+    second_pick, second_pct = sorted_probs[1]
+    wants_double = first_pct - second_pct <= 7.0
+    can_afford_double = int(current_combinations) * 2 <= max_combinations
+    picks = [first_pick, second_pick] if wants_double and can_afford_double else [first_pick]
+    return _normalize_toto14_picks(picks), first_pct, wants_double and not can_afford_double
+
+
+def _ensure_toto14_freeze_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS toto14_prediction_freezes (
+            match_id TEXT PRIMARY KEY,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            match_time TEXT,
+            payload_json TEXT NOT NULL,
+            frozen_at TEXT NOT NULL
+        )
+    """)
+
+
+def _load_toto14_freezes():
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_toto14_freeze_table(conn)
+        conn.commit()
+        rows = conn.execute(
+            "SELECT match_id, home_team, away_team, payload_json FROM toto14_prediction_freezes"
+        ).fetchall()
+        result = {}
+        for match_id, home_team, away_team, payload_json in rows:
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                result[str(match_id)] = {
+                    "home_team": str(home_team),
+                    "away_team": str(away_team),
+                    "payload": payload,
+                }
+        return result
+    except Exception as error:
+        print(f"⚠️ 승무패 14 동결본 조회 실패: {error}")
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payload):
+    """Persist the first final recommendation; INSERT OR IGNORE makes it immutable."""
+    conn = None
+    try:
+        frozen_payload = dict(payload)
+        frozen_payload["picks"] = _normalize_toto14_picks(
+            frozen_payload.get("picks")
+            or _toto14_picks_from_display(
+                frozen_payload.get("best_pick_display"), home_team, away_team
+            )
+        )
+        frozen_payload["prediction_frozen"] = True
+        frozen_payload.setdefault("frozen_at", _utc_iso())
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_toto14_freeze_table(conn)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO toto14_prediction_freezes
+                (match_id, home_team, away_team, match_time, payload_json, frozen_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(match_id), str(home_team), str(away_team), str(match_time or ""),
+                json.dumps(frozen_payload, ensure_ascii=False),
+                str(frozen_payload["frozen_at"]),
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT home_team, away_team, payload_json FROM toto14_prediction_freezes WHERE match_id = ?",
+            (str(match_id),),
+        ).fetchone()
+        if not row or str(row[0]) != str(home_team) or str(row[1]) != str(away_team):
+            return None
+        stored = json.loads(row[2])
+        return stored if isinstance(stored, dict) else None
+    except Exception as error:
+        print(f"⚠️ 승무패 14 예측 동결 실패({match_id}): {error}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _locked_toto14_fallback(match):
+    """Use the last database prediction after kickoff; never calculate hindsight."""
+    match_id = f"TOTO14_{match.get('id', '')}"
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=15)
+        identity = conn.execute(
+            """
+            SELECT home_team, away_team
+            FROM predictions WHERE match_id = ?
+            """,
+            (match_id,),
+        ).fetchone()
+        if (
+            not identity
+            or str(identity[0]) != str(match.get("home"))
+            or str(identity[1]) != str(match.get("away"))
+        ):
+            return None
+        kickoff = _parse_kst_match_time(match.get("match_time"))
+        if kickoff is None:
+            return None
+        cutoff = kickoff.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        row = conn.execute(
+            """
+            SELECT prob_pick, prob_pick_prob, stage
+            FROM prediction_snapshots
+            WHERE match_id = ? AND created_at <= ?
+            ORDER BY created_at DESC, id DESC LIMIT 1
+            """,
+            (match_id, cutoff),
+        ).fetchone()
+        if not row:
+            return None
+        picks = _toto14_picks_from_display(row[0], identity[0], identity[1])
+        return {
+            "match": dict(match),
+            "home_logo": None,
+            "away_logo": None,
+            "best_pick_display": str(row[0] or "동결 예측 없음"),
+            "p_h": 0.0,
+            "p_d": 0.0,
+            "p_a": 0.0,
+            "probabilities_unavailable": True,
+            "picks": picks,
+            "picks_html": _render_toto14_picks_html(picks),
+            "analysis_version": ANALYSIS_VERSION,
+            "analysis_confidence": 0.0,
+            "analysis_stage": "locked",
+            "frozen_from_stage": str(row[2] or "regular"),
+            "prediction_frozen": True,
+            "home_form": "",
+            "away_form": "",
+            "h_rank_html": "",
+            "a_rank_html": "",
+        }
+    except Exception as error:
+        print(f"⚠️ 승무패 14 잠금 예측 복구 실패({match_id}): {error}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _unavailable_toto14_item(match):
+    return {
+        "match": dict(match),
+        "home_logo": None,
+        "away_logo": None,
+        "best_pick_display": "킥오프 전 동결본 없음",
+        "p_h": 0.0,
+        "p_d": 0.0,
+        "p_a": 0.0,
+        "probabilities_unavailable": True,
+        "picks": [],
+        "picks_html": _render_toto14_picks_html([]),
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_confidence": 0.0,
+        "analysis_stage": "locked_unavailable",
+        "prediction_frozen": True,
+        "home_form": "",
+        "away_form": "",
+        "h_rank_html": "",
+        "a_rank_html": "",
+    }
+
 
 def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id, analysis_stage="regular", confidence=0.0):
-    conn = sqlite3.connect("ai_predictions.db")
+    conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT api_fixture_id FROM predictions WHERE match_id = ?", (m_id,))
-        row = cursor.fetchone()
-        if not row:
-            cursor.execute("""
-                INSERT INTO predictions 
-                (match_id, league, home_team, away_team, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob, odd_h, odd_d, odd_a, match_time, is_toto14, api_fixture_id) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id))
-        else:
-            existing_fix_id = row[0]
-            final_fix_id = existing_fix_id if existing_fix_id and existing_fix_id > 0 else fixture_id
-            cursor.execute("""
-                UPDATE predictions 
-                SET api_fixture_id = ?, match_time = ?, league = ?, prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ? 
-                WHERE match_id = ?
-            """, (final_fix_id, match_time, league, prob_pick, prob_val, ev_pick, ev_val, m_id))
-
         cursor.execute("""
             SELECT stage, confidence, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob
             FROM prediction_snapshots
@@ -74,6 +652,68 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
             ORDER BY id DESC LIMIT 1
         """, (str(m_id),))
         previous = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT api_fixture_id, actual_result, match_time, home_team, away_team
+            FROM predictions WHERE match_id = ?
+            """,
+            (m_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            # A first prediction created after kickoff is hindsight, not a forecast.
+            if analysis_stage == "locked":
+                print(f"⚠️ 킥오프 후 신규 예측 저장 차단: {home_team} vs {away_team}")
+                return False
+            cursor.execute("""
+                INSERT INTO predictions 
+                (match_id, league, home_team, away_team, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob, odd_h, odd_d, odd_a, match_time, is_toto14, api_fixture_id) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id))
+        else:
+            existing_fix_id, actual_result, stored_match_time, stored_home, stored_away = row
+            if str(stored_home) != str(home_team) or str(stored_away) != str(away_team):
+                print(
+                    f"❌ 예측 ID 충돌 차단({m_id}): "
+                    f"{stored_home} vs {stored_away} != {home_team} vs {away_team}"
+                )
+                return False
+            stored_kickoff = _parse_kst_match_time(stored_match_time)
+            kickoff_passed = bool(stored_kickoff and datetime.now(KST) >= stored_kickoff)
+            prediction_locked = (
+                analysis_stage == "locked"
+                or str(actual_result or "PENDING") != "PENDING"
+                or kickoff_passed
+                or (
+                    int(is_toto14 or 0) == 1
+                    and previous
+                    and str(previous[0]) in {"T-30-final", "locked"}
+                )
+            )
+            if prediction_locked:
+                # Fixture identity may be recovered once, but prediction/odds/team
+                # fields are immutable after the Toto final snapshot or kickoff.
+                # Grading is handled elsewhere.
+                if (
+                    str(actual_result or "PENDING") == "PENDING"
+                    and not int(existing_fix_id or 0)
+                    and int(fixture_id or 0)
+                ):
+                    cursor.execute(
+                        "UPDATE predictions SET api_fixture_id = ? WHERE match_id = ?",
+                        (int(fixture_id), m_id),
+                    )
+                conn.commit()
+                return True
+
+            final_fix_id = int(fixture_id or 0) or int(existing_fix_id or 0)
+            cursor.execute("""
+                UPDATE predictions
+                SET api_fixture_id = ?, match_time = ?, league = ?,
+                    prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ?
+                WHERE match_id = ?
+            """, (final_fix_id, match_time, league, prob_pick, prob_val, ev_pick, ev_val, m_id))
+
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
             round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2)
@@ -96,8 +736,10 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, int(fixture_id or 0)
             ))
         conn.commit()
+        return True
     except Exception as e: print(f"⚠️ [DB 에러] 듀얼 예측 저장 실패: {e}")
     finally: conn.close()
+    return False
 
 # === 🧠 [V3/V4 통합 엔진] 주전 선발 & 전력 누수(WAR) 계산기 ===
 POSITION_WEIGHTS = {
@@ -247,16 +889,135 @@ def annotate_pick_metrics(picks, confidence):
         )
     return picks
 
+
+PICK_CATEGORY_LABELS = {
+    "high_probability": "확률 높은 픽",
+    "honey": "AI 꿀픽",
+    "vip_underdog": "VIP 역배 픽",
+}
+
+
+def _tag_pick_category(pick, category_key):
+    """원본 후보를 건드리지 않고 화면용 카테고리 정보를 붙입니다."""
+    if not pick:
+        return None
+    selected = dict(pick)
+    selected["category_key"] = category_key
+    selected["category_label"] = PICK_CATEGORY_LABELS[category_key]
+    return selected
+
+
+def select_pick_categories(picks, confidence):
+    """확률·가치·역배 픽을 서로 다른 기준으로 독립 선정합니다.
+
+    확률 높은 픽은 유효 후보가 있으면 항상 선정합니다. AI 꿀픽과 VIP
+    역배 픽은 각 기준을 통과한 경우에만 선정하며, 같은 선택지를 두
+    카테고리에 중복 배정하지 않습니다.
+    """
+    categories = {
+        "high_probability": None,
+        "honey": None,
+        "vip_underdog": None,
+    }
+    if not picks:
+        return categories, []
+
+    confidence = float(confidence or 0)
+    high_source = max(
+        picks,
+        key=lambda pick: (
+            float(pick.get("prob", 0) or 0),
+            float(pick.get("safe_score", 0) or 0),
+            float(pick.get("recommendation_score", 0) or 0),
+        ),
+    )
+    used_raw_picks = {high_source.get("raw_pick")}
+
+    vip_candidates = [
+        pick for pick in picks
+        if pick.get("raw_pick") not in used_raw_picks
+        and pick.get("is_qualified_underdog")
+        and float(pick.get("edge", 0) or 0) >= 0.055
+        and confidence >= 0.70
+        and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
+        and float(pick.get("prob", 0) or 0) >= 0.24
+    ]
+    vip_source = max(
+        vip_candidates,
+        key=lambda pick: (
+            float(pick.get("value_score", 0) or 0),
+            float(pick.get("recommendation_score", 0) or 0),
+            float(pick.get("ev", 0) or 0),
+        ),
+        default=None,
+    )
+    if vip_source:
+        used_raw_picks.add(vip_source.get("raw_pick"))
+
+    honey_candidates = [
+        pick for pick in picks
+        if pick.get("raw_pick") not in used_raw_picks
+        and 1.40 <= float(pick.get("odd", 0) or 0) <= 5.00
+        and float(pick.get("prob", 0) or 0) >= 0.30
+        and float(pick.get("edge", 0) or 0) >= 0.025
+        and confidence >= 0.60
+        and float(pick.get("value_score", 0) or 0) > 0
+    ]
+    honey_source = max(
+        honey_candidates,
+        key=lambda pick: (
+            float(pick.get("value_score", 0) or 0),
+            float(pick.get("recommendation_score", 0) or 0),
+            float(pick.get("ev", 0) or 0),
+        ),
+        default=None,
+    )
+
+    categories["high_probability"] = _tag_pick_category(high_source, "high_probability")
+    categories["honey"] = _tag_pick_category(honey_source, "honey")
+    categories["vip_underdog"] = _tag_pick_category(vip_source, "vip_underdog")
+    display_picks = [
+        categories["high_probability"],
+        categories["honey"],
+        categories["vip_underdog"],
+    ]
+    return categories, [pick for pick in display_picks if pick]
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
-    try:
-        with open("betman_data.json", "r", encoding="utf-8") as f: betman_data = json.load(f)
-    except: return
+    betman_data = _read_json("betman_data.json", {})
+    if not isinstance(betman_data, dict):
+        print("❌ 베트맨 데이터가 손상되어 대시보드 정상본을 보존합니다.")
+        return False
      
     proto_matches = betman_data.get("proto_matches", [])
     toto_14_matches = betman_data.get("toto_14_matches", [])
+    if toto_14_matches and not _valid_toto14_round(toto_14_matches):
+        toto_14_matches = _select_latest_complete_toto14_round(toto_14_matches)
+        print(
+            f"⚠️ 승무패 혼합/중복 회차를 제거하고 단일 완본 "
+            f"{len(toto_14_matches)}경기만 분석합니다."
+        )
     dashboard_proto = []
     dashboard_toto14 = []
+    frozen_toto14 = _load_toto14_freezes()
+    previous_dashboard = _read_json("dashboard_data.json", {})
+    previous_toto14 = {}
+    previous_generated_at = None
+    if isinstance(previous_dashboard, dict):
+        for item in previous_dashboard.get("toto14", []):
+            if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
+                continue
+            previous_toto14[str(item["match"].get("id", ""))] = item
+        try:
+            previous_generated_at = datetime.fromisoformat(
+                str(previous_dashboard.get("source_meta", {}).get("generated_at", "")).replace("Z", "+00:00")
+            )
+            if previous_generated_at.tzinfo is None:
+                previous_generated_at = previous_generated_at.replace(tzinfo=KST)
+            previous_generated_at = previous_generated_at.astimezone(KST)
+        except (AttributeError, TypeError, ValueError):
+            previous_generated_at = None
       
     for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
@@ -277,9 +1038,14 @@ def build_dashboard_data():
                 "league": m.get("league", "축구"),
                 "home_logo": home_info.get("logo"),
                 "away_logo": away_info.get("logo"),
-                "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
-                "ev_sorted_picks": [],
-                "home_form": "",
+            "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
+            "ev_sorted_picks": [],
+            "pick_categories": {
+                "high_probability": None,
+                "honey": None,
+                "vip_underdog": None,
+            },
+            "home_form": "",
                 "away_form": "",
                 "analysis_version": ANALYSIS_VERSION,
                 "analysis_confidence": 0.0,
@@ -564,48 +1330,59 @@ def build_dashboard_data():
             if not is_contra: valid_all_picks.append(pick)
              
         annotate_pick_metrics(valid_all_picks, analysis_confidence)
-        highest_prob_pick = max(valid_all_picks, key=lambda x: (x["safe_score"], x["prob"]))
-        qualified_value_picks = [pick for pick in valid_all_picks if pick.get("is_qualified_underdog")]
-        highest_ev_pick = max(
-            qualified_value_picks or valid_all_picks,
-            key=lambda x: (x["value_score"], x["recommendation_score"], x["ev"]),
+        pick_categories, ev_sorted_picks = select_pick_categories(
+            valid_all_picks, analysis_confidence
         )
-         
-        for p in valid_all_picks:
-            badges = []
-            is_highest_prob = (p["raw_pick"] == highest_prob_pick["raw_pick"])
-            is_highest_ev = (p["raw_pick"] == highest_ev_pick["raw_pick"])
-            
-            pick_odd = float(p.get("odd", 1.0) or 1.0)
+        highest_prob_pick = pick_categories["high_probability"]
+        honey_pick = pick_categories["honey"]
+        vip_underdog_pick = pick_categories["vip_underdog"]
 
-            is_vip = False
-            if is_highest_prob and is_highest_ev and p.get("is_qualified_underdog"):
-                is_vip = True
-            elif is_highest_ev and p.get("is_qualified_underdog"):
-                is_vip = True
+        # 기존 DB/리포트 필드와 호환되는 대표 가치 픽입니다. 신규 화면에서는
+        # pick_categories를 사용하므로 세 카테고리가 서로 섞이지 않습니다.
+        highest_ev_pick = honey_pick or vip_underdog_pick or highest_prob_pick
 
-            if is_vip:
-                badges.append("<span style='background: linear-gradient(to right, #FFD700, #F59E0B); color:#000; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:900; margin-right:4px; box-shadow: 0 0 5px rgba(255,215,0,0.5);'>💎 VIP 역배 꿀픽</span>")
-            else:
-                if is_highest_prob: badges.append("<span style='background:#10B981; color:#fff; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:bold; margin-right:4px;'>🎯 최고 확률</span>")
-                if is_highest_ev: badges.append("<span style='background:#F59E0B; color:#fff; padding:3px 8px; border-radius:4px; font-size:12px; font-weight:bold; margin-right:4px;'>🍯 AI 꿀픽</span>")
+        badge_templates = {
+            "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>📈 확률 높은 픽</span>",
+            "honey": "<span style='background:#F59E0B;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🍯 AI 꿀픽</span>",
+            "vip_underdog": "<span style='background:linear-gradient(to right,#FFD700,#F59E0B);color:#000;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:900;margin-right:4px;box-shadow:0 0 5px rgba(255,215,0,.5);'>💎 VIP 역배 픽</span>",
+        }
+        for pick in valid_all_picks:
+            matching_categories = [
+                category_key
+                for category_key, selected in pick_categories.items()
+                if selected and selected.get("raw_pick") == pick.get("raw_pick")
+            ]
+            if matching_categories:
+                badges = "".join(badge_templates[key] for key in matching_categories)
+                pick["html_pick"] = (
+                    "<div style='margin-bottom:6px;'>" + badges + "</div>"
+                    + pick.get("html_pick", "")
+                )
 
-            if badges: p["html_pick"] = "<div style='margin-bottom:6px;'>" + "".join(badges) + "</div>" + p["html_pick"]
+        # select_pick_categories는 안전하게 복사본을 반환하므로, 배지를 적용한
+        # 원본의 표시 문자열만 다시 동기화합니다.
+        for selected in pick_categories.values():
+            if not selected:
+                continue
+            source_pick = next(
+                (
+                    pick
+                    for pick in valid_all_picks
+                    if pick.get("raw_pick") == selected.get("raw_pick")
+                ),
+                None,
+            )
+            if source_pick:
+                selected["html_pick"] = source_pick.get(
+                    "html_pick", selected.get("html_pick", "")
+                )
 
-        top3_picks = [highest_prob_pick]
-        if highest_ev_pick["raw_pick"] != highest_prob_pick["raw_pick"]: top3_picks.append(highest_ev_pick)
-             
-        sorted_by_prob = sorted(valid_all_picks, key=lambda x: x["prob"], reverse=True)
-        for p in sorted_by_prob:
-            if p not in top3_picks and len(top3_picks) < 3: top3_picks.append(p)
-                 
-        ev_sorted_picks = top3_picks
         analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
         reliability_score = round(
             (highest_prob_pick.get("safe_score", 0) * 0.75)
             + (highest_prob_pick.get("recommendation_score", 0) * 0.25), 4
         )
-        underdog_signal = highest_ev_pick.get("raw_pick") if highest_ev_pick.get("is_qualified_underdog") else ""
+        underdog_signal = vip_underdog_pick.get("raw_pick") if vip_underdog_pick else ""
          
         save_dual_predictions_to_local_db(
             m['id'], league_n, home_team, away_team, 
@@ -653,7 +1430,9 @@ def build_dashboard_data():
         dashboard_proto.append({
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
-            "story": story, "ev_sorted_picks": ev_sorted_picks, "home_form": h_form, "away_form": a_form,
+            "story": story, "ev_sorted_picks": ev_sorted_picks,
+            "pick_categories": pick_categories,
+            "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "analysis_stage": analysis_stage, "reliability_score": reliability_score,
             "underdog_signal": underdog_signal,
@@ -663,17 +1442,116 @@ def build_dashboard_data():
         })
 
     double_pick_count = 0
+    single_pick_count = 0
+    unavailable_pick_count = 0
+    suppressed_double_count = 0
+    frozen_prediction_count = 0
     total_combinations = 1
-     
+    cost_cap_exceeded_by_frozen = False
+      
     for idx, m in enumerate(toto_14_matches, 1):
         home_team, away_team = m["home"], m["away"]
+        match_id = f"TOTO14_{m['id']}"
+        match_time = m.get("match_time") or "시간 미정"
+        now = datetime.now(KST)
+        scheduled_dt = _parse_kst_match_time(match_time)
+        m_dt = parse_match_time(match_time)
+        diff_hours = (m_dt - now).total_seconds() / 3600.0
+
+        frozen_item = None
+        frozen_record = frozen_toto14.get(match_id)
+        if (
+            isinstance(frozen_record, dict)
+            and str(frozen_record.get("home_team")) == str(home_team)
+            and str(frozen_record.get("away_team")) == str(away_team)
+            and isinstance(frozen_record.get("payload"), dict)
+        ):
+            frozen_item = dict(frozen_record["payload"])
+
+        kickoff_passed = bool(scheduled_dt and now >= scheduled_dt)
+        freeze_needs_persist = False
+        previous_item = previous_toto14.get(str(m.get("id", "")))
+        previous_match = previous_item.get("match", {}) if isinstance(previous_item, dict) else {}
+        previous_is_pre_kickoff = bool(
+            isinstance(previous_item, dict)
+            and str(previous_match.get("home")) == str(home_team)
+            and str(previous_match.get("away")) == str(away_team)
+            and previous_generated_at
+            and scheduled_dt
+            and previous_generated_at <= scheduled_dt
+        )
+        previous_stage = str(previous_item.get("analysis_stage", "")) if isinstance(previous_item, dict) else ""
+        if (
+            frozen_item is None
+            and previous_is_pre_kickoff
+            and (
+                kickoff_passed
+                or previous_stage in {"T-30-final", "locked"}
+                or previous_item.get("prediction_frozen") is True
+            )
+        ):
+            frozen_item = dict(previous_item)
+            frozen_item["frozen_from_stage"] = previous_stage or "regular"
+            if kickoff_passed:
+                frozen_item["analysis_stage"] = "locked"
+            freeze_needs_persist = True
+
+        if frozen_item is None:
+            snapshot_item = _locked_toto14_fallback(m)
+            snapshot_is_final = bool(
+                snapshot_item
+                and str(snapshot_item.get("frozen_from_stage", ""))
+                in {"T-30-final", "locked"}
+            )
+            if snapshot_item and (kickoff_passed or snapshot_is_final):
+                frozen_item = snapshot_item
+                if not kickoff_passed and snapshot_is_final:
+                    frozen_item["analysis_stage"] = snapshot_item["frozen_from_stage"]
+                freeze_needs_persist = True
+
+        if frozen_item is None and kickoff_passed:
+            frozen_item = _unavailable_toto14_item(m)
+            freeze_needs_persist = True
+
+        if frozen_item is not None and freeze_needs_persist:
+            stored_item = _freeze_toto14_prediction(
+                match_id, home_team, away_team, match_time, frozen_item
+            )
+            frozen_item = stored_item or frozen_item
+            frozen_toto14[match_id] = {
+                "home_team": home_team,
+                "away_team": away_team,
+                "payload": frozen_item,
+            }
+
+        if frozen_item is not None:
+            frozen_item = dict(frozen_item)
+            frozen_item["match"] = dict(m)
+            frozen_item["prediction_frozen"] = True
+            picks = _normalize_toto14_picks(
+                frozen_item.get("picks")
+                or _toto14_picks_from_display(
+                    frozen_item.get("best_pick_display"), home_team, away_team
+                )
+            )
+            frozen_item["picks"] = picks
+            frozen_item["picks_html"] = _render_toto14_picks_html(picks)
+            if len(picks) == 2:
+                total_combinations *= 2
+                double_pick_count += 1
+                if total_combinations > TOTO14_MAX_COMBINATIONS:
+                    cost_cap_exceeded_by_frozen = True
+            elif len(picks) == 1:
+                single_pick_count += 1
+            else:
+                unavailable_pick_count += 1
+            dashboard_toto14.append(frozen_item)
+            frozen_prediction_count += 1
+            continue
+
         home_info = fetch_team_info_api(home_team)
         away_info = fetch_team_info_api(away_team)
          
-        now = datetime.now(timezone(timedelta(hours=9)))
-        m_dt = parse_match_time(m.get("match_time") or "시간 미정") 
-        diff_hours = (m_dt - now).total_seconds() / 3600.0
-        
         heavy_ttl = 24
         # 경기 직전에는 결장 정보가 자주 바뀌므로 짧게 갱신한다.
         inj_ttl = 0.5 if diff_hours <= 1.5 else 12
@@ -867,47 +1745,80 @@ def build_dashboard_data():
         pct_a = round(100.0 - pct_h - pct_d, 1)
 
         probs_dict = {"승": pct_h, "무": pct_d, "패": pct_a}
-        sorted_probs = sorted(probs_dict.items(), key=lambda x: x[1], reverse=True)
-        first_pick, first_pct = sorted_probs[0]
-        second_pick, second_pct = sorted_probs[1]
-         
-        picks = []
-        if first_pct - second_pct <= 7.0:
-            if set([first_pick, second_pick]) == set(["승", "패"]): second_pick = "무"
-            picks = [first_pick, second_pick]
-            total_combinations *= 2
-            double_pick_count += 1
-        else: picks = [first_pick]
-             
+        picks, first_pct, double_suppressed = _choose_toto14_picks(
+            probs_dict, total_combinations
+        )
         disp_texts = []
         for p in picks:
             if p == "승": disp_texts.append(f"{m['home']} 승")
             elif p == "패": disp_texts.append(f"{m['away']} 승")
             else: disp_texts.append("무승부")
         best_pick_display = ", ".join(disp_texts)
-         
-        is_h, is_d, is_a = "승" in picks, "무" in picks, "패" in picks
-        style_h = "background: #00F2FE; color: #0B0F19; font-weight: 900; border: 1px solid #00F2FE;" if is_h else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-        style_d = "background: #10B981; color: #0B0F19; font-weight: 900; border: 1px solid #10B981;" if is_d else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-        style_a = "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if is_a else "background: transparent; color: #64748B; border: 1px solid #1E293B;"
-        picks_html = f"<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_h}'>승</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_d}'>무</div><div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {style_a}'>패</div>"
+        picks_html = _render_toto14_picks_html(picks)
          
         analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
-        save_dual_predictions_to_local_db(
-            f"TOTO14_{m['id']}", '승무패 14경기', home_team, away_team, 
-            best_pick_display, first_pct, best_pick_display, first_pct, 
-            0, 0, 0, m.get("match_time") or '시간 미정', 1, api_fixture_id,
-            analysis_stage, analysis_confidence,
+        crossed_kickoff_during_analysis = bool(
+            scheduled_dt and datetime.now(KST) >= scheduled_dt
         )
-
-        dashboard_toto14.append({
-            "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
-            "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
-            "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
-            "analysis_stage": analysis_stage,
-            "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
-            "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
-        })
+        if crossed_kickoff_during_analysis:
+            # Discard every value calculated after the analysis began. Only a
+            # snapshot whose timestamp predates kickoff may become the result.
+            toto_item = _locked_toto14_fallback(m) or _unavailable_toto14_item(m)
+            stored_item = _freeze_toto14_prediction(
+                match_id, home_team, away_team, match_time, toto_item
+            )
+            toto_item = stored_item or toto_item
+            toto_item["match"] = dict(m)
+            double_suppressed = False
+            frozen_prediction_count += 1
+        else:
+            prediction_saved = save_dual_predictions_to_local_db(
+                match_id, '승무패 14경기', home_team, away_team,
+                best_pick_display, first_pct, best_pick_display, first_pct,
+                0, 0, 0, match_time, 1, api_fixture_id,
+                analysis_stage, analysis_confidence,
+            )
+            toto_item = {
+                "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
+                "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
+                "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
+                "analysis_stage": analysis_stage,
+                "picks": picks,
+                "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
+                "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
+            }
+        if (
+            not crossed_kickoff_during_analysis
+            and analysis_stage == "T-30-final"
+            and prediction_saved
+        ):
+            stored_item = _freeze_toto14_prediction(
+                match_id, home_team, away_team, match_time, toto_item
+            )
+            if stored_item:
+                toto_item = stored_item
+                toto_item["match"] = dict(m)
+                frozen_prediction_count += 1
+        final_picks = _normalize_toto14_picks(
+            toto_item.get("picks")
+            or _toto14_picks_from_display(
+                toto_item.get("best_pick_display"), home_team, away_team
+            )
+        )
+        toto_item["picks"] = final_picks
+        toto_item["picks_html"] = _render_toto14_picks_html(final_picks)
+        if len(final_picks) == 2:
+            total_combinations *= 2
+            double_pick_count += 1
+            if total_combinations > TOTO14_MAX_COMBINATIONS:
+                cost_cap_exceeded_by_frozen = True
+        elif len(final_picks) == 1:
+            single_pick_count += 1
+        else:
+            unavailable_pick_count += 1
+        if double_suppressed:
+            suppressed_double_count += 1
+        dashboard_toto14.append(toto_item)
 
     # 종료된 예전 경기가 TOP 3에 다시 등장하지 않도록 아직 시작하지 않은 경기만 선정한다.
     now_ts = datetime.now(timezone(timedelta(hours=9))).timestamp()
@@ -921,9 +1832,28 @@ def build_dashboard_data():
         reverse=True,
     )[:3]
 
+    toto_ticket_complete = len(dashboard_toto14) == 14 and unavailable_pick_count == 0
+    published_combinations = total_combinations if toto_ticket_complete else 0
+    cost_cap_exceeded_by_frozen = bool(
+        cost_cap_exceeded_by_frozen
+        or published_combinations > TOTO14_MAX_COMBINATIONS
+    )
     final_output = {
         "proto": dashboard_proto, "toto14": dashboard_toto14,
-        "toto14_meta": {"total_combinations": total_combinations, "single_pick_count": len(toto_14_matches) - double_pick_count, "double_pick_count": double_pick_count, "budget": total_combinations * 1000},
+        "toto14_meta": {
+            "total_combinations": published_combinations,
+            "single_pick_count": single_pick_count,
+            "double_pick_count": double_pick_count,
+            "unavailable_pick_count": unavailable_pick_count,
+            "suppressed_double_count": suppressed_double_count,
+            "frozen_prediction_count": frozen_prediction_count,
+            "ticket_complete": toto_ticket_complete,
+            "max_combinations": TOTO14_MAX_COMBINATIONS,
+            "unit_price": TOTO14_UNIT_PRICE,
+            "budget": published_combinations * TOTO14_UNIT_PRICE,
+            "max_budget": TOTO14_MAX_COMBINATIONS * TOTO14_UNIT_PRICE,
+            "cost_cap_exceeded_by_frozen": cost_cap_exceeded_by_frozen,
+        },
         "top3": top_3_picks,
         "source_meta": {
             "analysis_version": ANALYSIS_VERSION,
@@ -937,90 +1867,217 @@ def build_dashboard_data():
             "generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
         },
     }
-    with open("dashboard_data.json", "w", encoding="utf-8") as f: json.dump(final_output, f, ensure_ascii=False)
+    _atomic_write_json("dashboard_data.json", final_output)
     if len(proto_matches) != len(dashboard_proto):
         print(f"❌ 경기 수 불일치: 베트맨 {len(proto_matches)}경기 / 화면 데이터 {len(dashboard_proto)}경기")
     else:
         print(f"✅ 경기 수 일치 확인: 베트맨 = 화면 데이터 {len(dashboard_proto)}경기")
     print(f"✅ 대시보드 데이터 패키징 완료! ({ANALYSIS_VERSION} 과신 방지·핵심선수·신뢰도 적용)")
+    return True
+
+def _recover_due_fixture_ids(rows, conn):
+    """Recover unresolved fixtures from their scheduled date, including terminal games."""
+    unresolved = [row for row in rows if not int(row[6] or 0)]
+    if not unresolved:
+        return rows, 0
+
+    boards = {}
+    now = datetime.now(KST)
+    for row in unresolved:
+        match_dt = _parse_kst_match_time(row[5])
+        if match_dt is None:
+            continue
+        age_hours = (now - match_dt).total_seconds() / 3600
+        if age_hours < -LIVE_LOOKAROUND_HOURS:
+            continue
+        date_key = match_dt.strftime("%Y-%m-%d")
+        if date_key in boards:
+            continue
+        try:
+            boards[date_key] = _request_fixture_board(
+                {"date": date_key, "timezone": "Asia/Seoul"},
+                purpose="scoring",
+            )
+        except Exception as error:
+            print(f"⚠️ 미연결 경기판 조회 실패({date_key}): {error}")
+            boards[date_key] = []
+
+    recovered = {}
+    for row in unresolved:
+        # The scoring row layout is id, home, away, prob, ev, time, fixture.
+        match_id, home_team, away_team, match_time = row[0], row[1], row[2], row[5]
+        match_dt = _parse_kst_match_time(match_time)
+        if match_dt is None:
+            continue
+        candidates = []
+        for item in boards.get(match_dt.strftime("%Y-%m-%d"), []):
+            api_dt = _api_fixture_datetime(item)
+            if api_dt is None or abs((api_dt - match_dt).total_seconds()) > 3 * 3600:
+                continue
+            teams = item.get("teams", {})
+            api_home = teams.get("home", {})
+            api_away = teams.get("away", {})
+            if not team_matches_api(home_team, api_home.get("name"), api_home.get("id")):
+                continue
+            if not team_matches_api(away_team, api_away.get("name"), api_away.get("id")):
+                continue
+            candidates.append((abs((api_dt - match_dt).total_seconds()), item))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda value: value[0])
+        fixture_id = int(candidates[0][1].get("fixture", {}).get("id") or 0)
+        if fixture_id:
+            recovered[str(match_id)] = fixture_id
+
+    if recovered:
+        conn.executemany(
+            "UPDATE predictions SET api_fixture_id = ? WHERE match_id = ? AND COALESCE(api_fixture_id, 0) = 0",
+            [(fixture_id, match_id) for match_id, fixture_id in recovered.items()],
+        )
+        conn.commit()
+
+    updated = []
+    for row in rows:
+        fixture_id = int(row[6] or 0) or recovered.get(str(row[0]), 0)
+        updated.append(tuple(row[:6]) + (fixture_id,))
+    return updated, len(recovered)
+
+
+def _scoring_row_matches_fixture(row, match_info):
+    """Require ordered teams and a tight kickoff window before grading."""
+    api_dt = _api_fixture_datetime(match_info)
+    local_dt = _parse_kst_match_time(row[5])
+    if api_dt is None or local_dt is None:
+        return False
+    if abs((local_dt - api_dt).total_seconds()) > 3 * 3600:
+        return False
+    teams = match_info.get("teams", {}) or {}
+    api_home = teams.get("home", {}) or {}
+    api_away = teams.get("away", {}) or {}
+    return (
+        team_matches_api(row[1], api_home.get("name"), api_home.get("id"))
+        and team_matches_api(row[2], api_away.get("name"), api_away.get("id"))
+    )
+
 
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
+    conn = None
     try:
-        conn = sqlite3.connect("ai_predictions.db")
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
         cursor = conn.cursor()
-
-        cursor.execute("SELECT match_id, home_team, away_team, prob_pick, ev_pick, match_time, api_fixture_id FROM predictions WHERE actual_result = 'PENDING' AND api_fixture_id > 0")
+        cursor.execute("""
+            SELECT match_id, home_team, away_team, prob_pick, ev_pick,
+                   match_time, api_fixture_id
+            FROM predictions
+            WHERE actual_result = 'PENDING'
+        """)
         pending_matches = cursor.fetchall()
         api_call_count = 0
-        now = datetime.now(timezone(timedelta(hours=9)))
-
-        # 과거 임시 데이터의 '시간 미정' 항목을 매 주기마다 전부 조회하던 문제를 차단한다.
-        # 새 수집 데이터에는 실제 시간이 있으므로 시작된 경기만 채점 대상으로 삼는다.
+        now = datetime.now(KST)
         due_matches = []
+        max_age = timedelta(days=max(2, int(os.getenv("SCORE_LOOKBACK_DAYS", "7"))))
         for row in pending_matches:
-            match_id, h_team, a_team, prob_pick, ev_pick, match_time_str, fixture_id = row
-            if not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]:
+            match_dt = _parse_kst_match_time(row[5])
+            if match_dt is None or now < match_dt or now - match_dt > max_age:
                 continue
-            m_dt = parse_match_time(match_time_str)
-            if now >= m_dt:
-                due_matches.append(row)
+            due_matches.append(row)
 
-        # API-Football의 ids 묶음 조회(최대 20개)를 사용한다. 99경기면
-        # 99회가 아니라 최대 5회만 사용한다.
-        for offset in range(0, len(due_matches), 20):
-            batch = due_matches[offset:offset + 20]
+        due_matches, recovered_count = _recover_due_fixture_ids(due_matches, conn)
+        if recovered_count:
+            print(f"✅ 종료 경기 fixture ID 복구: {recovered_count}건")
+
+        # One failed batch must not roll back completed batches or stop later runs.
+        linked_matches = [row for row in due_matches if int(row[6] or 0)]
+        for offset in range(0, len(linked_matches), 20):
+            batch = linked_matches[offset:offset + 20]
             fixture_ids = sorted({str(int(row[6])) for row in batch if row[6]})
             if not fixture_ids:
                 continue
-            res = api_get(
-                "/fixtures",
-                params={"ids": "-".join(fixture_ids), "timezone": "Asia/Seoul"},
-                timeout=8,
-                purpose="scoring",
-            )
-            api_call_count += 1
-            payload = res.json() if res.status_code == 200 else {}
-            if payload.get("errors"):
-                print(f"⚠️ 묶음 채점 API 오류: {payload.get('errors')}")
-                continue
-            fixture_map = {
-                int(item.get("fixture", {}).get("id") or 0): item
-                for item in payload.get("response", [])
-            }
-
-            for row in batch:
-                match_id, h_team, a_team, prob_pick, ev_pick, match_time_str, fixture_id = row
-                match_info = fixture_map.get(int(fixture_id))
-                if not match_info:
+            try:
+                res = api_get(
+                    "/fixtures",
+                    params={"ids": "-".join(fixture_ids), "timezone": "Asia/Seoul"},
+                    timeout=12,
+                    purpose="scoring",
+                )
+                api_call_count += 1
+                payload = res.json() if res.status_code == 200 else {}
+                if res.status_code != 200 or payload.get("errors"):
+                    print(f"⚠️ 묶음 채점 API 오류: HTTP {res.status_code} {payload.get('errors', '')}")
                     continue
-                status = match_info.get('fixture', {}).get('status', {}).get('short', '')
+                fixture_map = {
+                    int(item.get("fixture", {}).get("id") or 0): item
+                    for item in payload.get("response", [])
+                }
 
-                if status in ['FT', 'AET', 'PEN']:
-                    gh = match_info.get('goals', {}).get('home')
-                    ga = match_info.get('goals', {}).get('away')
-                    gh = int(gh) if gh is not None else 0
-                    ga = int(ga) if ga is not None else 0
-                    score_str = f"{gh}:{ga}"
-                    is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, gh, ga)
-                    is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, gh, ga)
-                    ai_note = generate_real_ai_note(fixture_id, gh, ga, is_corr_prob, is_corr_ev)
-                    cursor.execute("""
-                        UPDATE predictions 
-                        SET actual_score = ?, actual_result = 'FINISHED', is_correct_prob = ?, is_correct_ev = ?, ai_note = ? 
-                        WHERE match_id = ?
-                    """, (score_str, is_corr_prob, is_corr_ev, ai_note, match_id))
-                    print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
-                elif status in ['CANC', 'PSTP', 'ABD', 'AWD', 'WO']:
-                    cursor.execute("UPDATE predictions SET actual_result = 'CANCELED', ai_note = '💡 경기 취소/연기/몰수로 인한 무효 처리' WHERE match_id = ?", (match_id,))
-                    print(f"  ⚠️ [경기 취소/연기 처리] {h_team} vs {a_team}")
+                for row in batch:
+                    match_id, h_team, a_team, prob_pick, ev_pick, _, fixture_id = row
+                    match_info = fixture_map.get(int(fixture_id))
+                    if not match_info:
+                        continue
+                    if not _scoring_row_matches_fixture(row, match_info):
+                        # Never grade a fixture ID that points to another match.
+                        # Clearing it lets the date/team recovery path repair it on
+                        # the next independent scoring cycle.
+                        cursor.execute(
+                            "UPDATE predictions SET api_fixture_id = 0 "
+                            "WHERE match_id = ? AND actual_result = 'PENDING'",
+                            (match_id,),
+                        )
+                        print(f"⚠️ 잘못 연결된 fixture ID 해제: {h_team} vs {a_team}")
+                        continue
+                    status = match_info.get('fixture', {}).get('status', {}).get('short', '')
 
-        conn.commit()
+                    if status in TERMINAL_STATUSES:
+                        final_h = match_info.get('goals', {}).get('home')
+                        final_a = match_info.get('goals', {}).get('away')
+                        if final_h is None or final_a is None:
+                            print(f"⚠️ 종료 상태지만 점수가 비어 있어 채점 보류: {h_team} vs {a_team}")
+                            continue
+                        final_h, final_a = int(final_h), int(final_a)
+                        regulation = match_info.get("score", {}).get("fulltime", {}) or {}
+                        eval_h = regulation.get("home")
+                        eval_a = regulation.get("away")
+                        eval_h = final_h if eval_h is None else int(eval_h)
+                        eval_a = final_a if eval_a is None else int(eval_a)
+                        score_str = f"{final_h}:{final_a}"
+                        is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
+                        is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
+                        ai_note = generate_real_ai_note(
+                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
+                        )
+                        cursor.execute("""
+                            UPDATE predictions
+                            SET actual_score = ?, actual_result = 'FINISHED',
+                                is_correct_prob = ?, is_correct_ev = ?, ai_note = ?
+                            WHERE match_id = ? AND actual_result = 'PENDING'
+                        """, (score_str, is_corr_prob, is_corr_ev, ai_note, match_id))
+                        print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
+                    elif status in CANCELED_STATUSES:
+                        cursor.execute("""
+                            UPDATE predictions
+                            SET actual_result = 'CANCELED',
+                                ai_note = '💡 경기 취소/중단/몰수로 인한 무효 처리'
+                            WHERE match_id = ? AND actual_result = 'PENDING'
+                        """, (match_id,))
+                        print(f"  ⚠️ [경기 무효 처리] {h_team} vs {a_team}")
+                    elif status in POSTPONED_STATUSES:
+                        print(f"  ⏸️ [경기 연기 - 추후 재확인] {h_team} vs {a_team}")
+                conn.commit()
+            except Exception as batch_error:
+                conn.rollback()
+                print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
+
         print(f"✅ 스마트 채점 사이클 종료 (묶음 조회 API 소모량: {api_call_count}회)")
-    except Exception as e: 
-        print(f"❌ [관제 봇 떡밥] 채점 중 오류: {e}")
+        return True
+    except Exception as error:
+        print(f"❌ [관제 봇 떡밥] 채점 중 오류: {error}")
+        return False
     finally:
-        if 'conn' in locals(): conn.close()
+        if conn is not None:
+            conn.close()
 
 def _api_fixture_datetime(match_info):
     raw_date = match_info.get("fixture", {}).get("date")
@@ -1035,7 +2092,7 @@ def _api_fixture_datetime(match_info):
         return None
 
 
-def _request_fixture_board(params):
+def _request_fixture_board(params, purpose="live"):
     """일시적인 API 지연에는 한 번 재시도하고 오류 응답은 데이터로 쓰지 않는다."""
     last_error = None
     for attempt in range(2):
@@ -1044,7 +2101,7 @@ def _request_fixture_board(params):
                 "/fixtures",
                 params=params,
                 timeout=12,
-                purpose="live",
+                purpose=purpose,
             )
             if response.status_code != 200:
                 raise RuntimeError(f"API HTTP {response.status_code}")
@@ -1059,154 +2116,351 @@ def _request_fixture_board(params):
     raise RuntimeError(str(last_error or "라이브 API 응답 없음"))
 
 
+def _event_record(raw_event):
+    event_time = raw_event.get("time", {}) or {}
+    event_type = str(raw_event.get("type", "") or "")
+    detail = str(raw_event.get("detail", "") or "")
+    player = raw_event.get("player", {}) or {}
+    team = raw_event.get("team", {}) or {}
+    elapsed = int(event_time.get("elapsed") or 0)
+    extra = int(event_time.get("extra") or 0)
+    player_name = str(player.get("name", "") or "")
+
+    if event_type == "Goal":
+        text = f"⚽ {elapsed}' 득점! ({player_name})"
+    elif event_type == "Card" and "Red" in detail:
+        text = f"🟥 {elapsed}' 퇴장! ({player_name})"
+    elif event_type.casefold() in {"subst", "substitution"}:
+        text = f"🔄 {elapsed}' 교체 - {player_name} OUT"
+    else:
+        return None
+    key = "|".join(map(str, (
+        elapsed, extra, team.get("id") or team.get("name") or "",
+        event_type, detail, player.get("id") or player_name,
+    )))
+    return {
+        "key": key,
+        "elapsed": elapsed,
+        "extra": extra,
+        "type": event_type,
+        "detail": detail,
+        "player": player_name,
+        "team": str(team.get("name", "") or ""),
+        "text": text,
+    }
+
+
+def _merge_event_history(previous_entries, api_events):
+    merged = {}
+    for entry in previous_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("key", "") or "")
+        if key:
+            merged[key] = dict(entry)
+    for raw_event in api_events or []:
+        normalized = _event_record(raw_event)
+        if normalized:
+            merged[normalized["key"]] = normalized
+    history = sorted(
+        merged.values(),
+        key=lambda item: (int(item.get("elapsed", 0)), int(item.get("extra", 0)), item.get("key", "")),
+    )[-80:]
+    latest = history[-1].get("text", "") if history else ""
+    return history, latest
+
+
+def _entry_not_expired(entry, now):
+    raw_expiry = entry.get("retain_until") if isinstance(entry, dict) else None
+    if not raw_expiry:
+        return True
+    try:
+        expiry = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return now.astimezone(timezone.utc) <= expiry.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return True
+
+
+def _retention_deadline(anchor=None):
+    base = datetime.now(timezone.utc)
+    if anchor:
+        try:
+            parsed = datetime.fromisoformat(str(anchor).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            base = parsed.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    return (base + timedelta(hours=LIVE_RETENTION_HOURS)).isoformat(timespec="seconds")
+
+
+def _row_matches_fixture(row, match_info):
+    api_dt = _api_fixture_datetime(match_info)
+    local_dt = _parse_kst_match_time(row[4])
+    if api_dt is None or local_dt is None:
+        return False
+    if abs((local_dt - api_dt).total_seconds()) > 3 * 3600:
+        return False
+    teams = match_info.get("teams", {}) or {}
+    api_home = teams.get("home", {}) or {}
+    api_away = teams.get("away", {}) or {}
+    return (
+        team_matches_api(row[2], api_home.get("name"), api_home.get("id"))
+        and team_matches_api(row[3], api_away.get("name"), api_away.get("id"))
+    )
+
+
 def update_live_scores():
     print(f"\n[📡 {time.strftime('%Y-%m-%d %H:%M:%S')}] 실시간 라이브 데이터 업데이트 (5분 주기)...")
+    previous = _read_json("live_scores.json", {})
+    if not isinstance(previous, dict):
+        previous = {}
+    conn = None
     try:
-        conn = sqlite3.connect("ai_predictions.db")
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT match_id, api_fixture_id, home_team, away_team, match_time
+            SELECT match_id, api_fixture_id, home_team, away_team, match_time,
+                   actual_result, actual_score
             FROM predictions
-            WHERE actual_result = 'PENDING'
+            WHERE actual_result IN ('PENDING', 'FINISHED')
         """)
-        pending_matches = cursor.fetchall()
-        conn.close()
+        all_rows = cursor.fetchall()
 
-        # 한 API 경기가 프로토와 승무패14에 동시에 들어오더라도 둘 다 보존한다.
-        pending_by_fixture = {}
-        for row in pending_matches:
+        now_kst = datetime.now(KST)
+        relevant_rows = []
+        for row in all_rows:
+            match_dt = _parse_kst_match_time(row[4])
+            if match_dt is None:
+                if str(row[0]) in previous:
+                    relevant_rows.append(row)
+                continue
+            delta_hours = (match_dt - now_kst).total_seconds() / 3600
+            if -LIVE_RETENTION_HOURS * 2 <= delta_hours <= LIVE_LOOKAROUND_HOURS:
+                relevant_rows.append(row)
+
+        rows_by_fixture = {}
+        for row in relevant_rows:
             fixture_id = int(row[1] or 0)
             if fixture_id:
-                pending_by_fixture.setdefault(fixture_id, []).append(row)
+                rows_by_fixture.setdefault(fixture_id, []).append(row)
 
-        live_statuses = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'PEN', 'SUSP', 'INT', 'LIVE'}
+        # live=all is authoritative for current games. Previously tracked IDs are
+        # queried too, so the same record can transition to FT instead of vanishing.
+        fixture_candidates = {}
         board = _request_fixture_board({"live": "all", "timezone": "Asia/Seoul"})
-        live_fixtures = [
-            item for item in board
-            if item.get("fixture", {}).get("status", {}).get("short", "") in live_statuses
-        ]
+        for item in board:
+            fixture_id = int(item.get("fixture", {}).get("id") or 0)
+            if fixture_id:
+                fixture_candidates[fixture_id] = item
 
-        # 일부 요금제/대회에서 live=all 응답이 비는 경우만 오늘 경기판을 한 번 확인한다.
-        now_kst = datetime.now(timezone(timedelta(hours=9)))
-        has_near_kickoff = any(
-            abs((parse_match_time(row[4]) - now_kst).total_seconds()) <= 4 * 3600
-            for row in pending_matches if row[4]
-        )
-        if not live_fixtures and has_near_kickoff:
-            date_board = _request_fixture_board({
-                "date": now_kst.strftime("%Y-%m-%d"),
-                "timezone": "Asia/Seoul",
-            })
-            live_fixtures = [
-                item for item in date_board
-                if item.get("fixture", {}).get("status", {}).get("short", "") in live_statuses
-            ]
+        tracked_ids = set(rows_by_fixture)
+        for value in previous.values():
+            if isinstance(value, dict) and int(value.get("fixture_id") or 0):
+                tracked_ids.add(int(value.get("fixture_id")))
+        missing_ids = sorted(tracked_ids - set(fixture_candidates))
+        for offset in range(0, len(missing_ids), 20):
+            ids = missing_ids[offset:offset + 20]
+            try:
+                tracked_board = _request_fixture_board({
+                    "ids": "-".join(map(str, ids)),
+                    "timezone": "Asia/Seoul",
+                })
+                for item in tracked_board:
+                    fixture_id = int(item.get("fixture", {}).get("id") or 0)
+                    if fixture_id:
+                        fixture_candidates[fixture_id] = item
+            except Exception as tracked_error:
+                print(f"⚠️ 추적 경기 상태 조회 실패(마지막 정상 점수 유지): {tracked_error}")
 
-        live_data_dict = {}
+        # Recover unresolved matches from the scheduled date. Invalid/unknown times
+        # never trigger repeated date-board calls.
+        recovery_dates = []
+        for row in relevant_rows:
+            if int(row[1] or 0) or str(row[5]) != "PENDING":
+                continue
+            match_dt = _parse_kst_match_time(row[4])
+            if match_dt is None:
+                continue
+            date_key = match_dt.strftime("%Y-%m-%d")
+            if date_key not in recovery_dates:
+                recovery_dates.append(date_key)
+        for date_key in recovery_dates[:3]:
+            try:
+                date_board = _request_fixture_board({
+                    "date": date_key,
+                    "timezone": "Asia/Seoul",
+                })
+                for item in date_board:
+                    fixture_id = int(item.get("fixture", {}).get("id") or 0)
+                    if fixture_id:
+                        fixture_candidates.setdefault(fixture_id, item)
+            except Exception as date_error:
+                print(f"⚠️ 미연결 경기 복구판 조회 실패({date_key}): {date_error}")
+
+        current_entries = {}
         score_updates = []
         fixture_updates = []
         recovered_links = 0
         used_match_ids = set()
+        now_iso = _utc_iso()
+        retain_until = _retention_deadline()
 
-        for match_info in live_fixtures:
-            fixture = match_info.get("fixture", {})
-            fixture_id = int(fixture.get("id") or 0)
-            status_info = fixture.get("status", {})
-            status = status_info.get("short", "")
-            api_teams = match_info.get("teams", {})
-            api_home = api_teams.get("home", {})
-            api_away = api_teams.get("away", {})
-            api_dt = _api_fixture_datetime(match_info)
+        for fixture_id, match_info in fixture_candidates.items():
+            fixture = match_info.get("fixture", {}) or {}
+            status_info = fixture.get("status", {}) or {}
+            status = str(status_info.get("short", "") or "")
+            if status not in LIVE_STATUSES | TERMINAL_STATUSES | CANCELED_STATUSES | POSTPONED_STATUSES:
+                continue
 
-            matched_rows = list(pending_by_fixture.get(fixture_id, []))
+            matched_rows = []
+            for row in rows_by_fixture.get(fixture_id, []):
+                if str(row[0]) not in used_match_ids and _row_matches_fixture(row, match_info):
+                    matched_rows.append(row)
             matched_ids = {str(row[0]) for row in matched_rows}
 
-            # fixture_id가 0이었던 경기는 팀 ID/영문명과 시작 시간을 함께 비교해 복구한다.
-            for row in pending_matches:
-                match_id, old_fixture_id, home_team, away_team, match_time = row
-                match_id = str(match_id)
+            for row in relevant_rows:
+                match_id = str(row[0])
                 if match_id in matched_ids or match_id in used_match_ids:
                     continue
-                if api_dt is None or not match_time:
-                    continue
-                local_dt = parse_match_time(match_time)
-                if abs((local_dt - api_dt).total_seconds()) > 8 * 3600:
-                    continue
-                if not team_matches_api(home_team, api_home.get("name"), api_home.get("id")):
-                    continue
-                if not team_matches_api(away_team, api_away.get("name"), api_away.get("id")):
-                    continue
-                matched_rows.append(row)
-                matched_ids.add(match_id)
-                if int(old_fixture_id or 0) != fixture_id:
-                    fixture_updates.append((fixture_id, match_id))
-                    recovered_links += 1
+                if _row_matches_fixture(row, match_info):
+                    matched_rows.append(row)
+                    matched_ids.add(match_id)
+                    if int(row[1] or 0) != fixture_id and str(row[5]) == "PENDING":
+                        fixture_updates.append((fixture_id, match_id))
+                        recovered_links += 1
 
             if not matched_rows:
                 continue
 
             goals_h = match_info.get('goals', {}).get('home')
             goals_a = match_info.get('goals', {}).get('away')
-            goals_h = 0 if goals_h is None else goals_h
-            goals_a = 0 if goals_a is None else goals_a
-            score_str = f"{goals_h}:{goals_a}"
-            event_str = ""
+            prior_for_fixture = [previous.get(str(row[0]), {}) for row in matched_rows]
+            prior_score = next(
+                (str(entry.get("score")) for entry in prior_for_fixture if entry.get("score")),
+                "- : -",
+            )
+            if goals_h is None or goals_a is None:
+                score_display = prior_score
+                score_db = prior_score.replace(" : ", ":")
+            else:
+                score_db = f"{int(goals_h)}:{int(goals_a)}"
+                score_display = score_db.replace(":", " : ")
 
-            # 점수판 1회 호출만으로 모든 경기 스코어를 갱신한다. 득점자/카드
-            # 이벤트는 경기당 추가 호출이 필요해 기본 OFF로 둔다.
-            if os.getenv("ENABLE_LIVE_EVENTS", "0") == "1":
+            prior_history = []
+            prior_event = ""
+            for entry in prior_for_fixture:
+                if isinstance(entry.get("events"), list):
+                    prior_history.extend(entry.get("events", []))
+                if not prior_event and entry.get("event"):
+                    prior_event = str(entry.get("event"))
+            event_history, event_str = _merge_event_history(prior_history, [])
+            event_str = event_str or prior_event
+
+            should_fetch_events = (
+                os.getenv("ENABLE_LIVE_EVENTS", "0") == "1"
+                and (status in LIVE_STATUSES or status in TERMINAL_STATUSES)
+                and not (status in TERMINAL_STATUSES and any(entry.get("final") for entry in prior_for_fixture))
+            )
+            if should_fetch_events:
                 try:
                     evt_res = api_get(
                         "/fixtures/events",
                         params={"fixture": fixture_id},
-                        timeout=7,
+                        timeout=8,
                         purpose="live",
                     )
-                    events = evt_res.json().get("response", []) if evt_res.status_code == 200 else []
-                    if events:
-                        events.sort(key=lambda x: int(x.get('time', {}).get('elapsed') or 0), reverse=True)
-                        latest_evt = events[0]
-                        e_time = latest_evt.get('time', {}).get('elapsed', 0)
-                        e_type = latest_evt.get('type', '')
-                        e_detail = latest_evt.get('detail', '')
-                        e_player = latest_evt.get('player', {}).get('name', '')
-                        if e_type == "Goal": event_str = f"⚽ {e_time}' 득점! ({e_player})"
-                        elif e_type == "Card" and "Red" in e_detail: event_str = f"🟥 {e_time}' 퇴장! ({e_player})"
-                        elif e_type == "subst": event_str = f"🔄 {e_time}' 교체 - {e_player} OUT"
+                    evt_payload = evt_res.json() if evt_res.status_code == 200 else {}
+                    if evt_res.status_code == 200 and not evt_payload.get("errors"):
+                        event_history, latest_event = _merge_event_history(
+                            event_history, evt_payload.get("response", [])
+                        )
+                        event_str = latest_event or event_str
                 except Exception as event_error:
-                    print(f"⚠️ 라이브 이벤트 조회 실패({fixture_id}): {event_error}")
+                    print(f"⚠️ 라이브 이벤트 조회 실패({fixture_id}): {event_error} (이전 이벤트 유지)")
 
+            is_live = status in LIVE_STATUSES
+            is_final = status in TERMINAL_STATUSES or status in CANCELED_STATUSES
             for row in matched_rows:
                 match_id = str(row[0])
                 used_match_ids.add(match_id)
-                live_data_dict[match_id] = {
-                    "score": score_str.replace(":", " : "),
+                prior_entry = previous.get(match_id, {}) if isinstance(previous.get(match_id), dict) else {}
+                terminal_at = prior_entry.get("terminal_at")
+                if is_final and not terminal_at:
+                    terminal_at = now_iso
+                entry_retain_until = (
+                    _retention_deadline(terminal_at) if is_final else retain_until
+                )
+                next_entry = {
+                    "score": score_display,
                     "event": event_str,
-                    "is_live": True,
+                    "events": event_history,
+                    "is_live": is_live,
+                    "final": is_final,
+                    "stale": False,
                     "status": status,
                     "elapsed": int(status_info.get("elapsed") or 0),
                     "fixture_id": fixture_id,
+                    "updated_at": now_iso,
+                    "last_seen_at": now_iso,
+                    "terminal_at": terminal_at,
+                    "retain_until": entry_retain_until,
                 }
-                score_updates.append((score_str, match_id))
+                if is_final and not _entry_not_expired(next_entry, now_kst):
+                    continue
+                current_entries[match_id] = next_entry
+                if goals_h is not None and goals_a is not None:
+                    score_updates.append((score_db, match_id))
 
+        if score_updates:
+            cursor.executemany(
+                "UPDATE predictions SET actual_score = ? WHERE match_id = ?",
+                score_updates,
+            )
+        if fixture_updates:
+            cursor.executemany(
+                "UPDATE predictions SET api_fixture_id = ? WHERE match_id = ? AND actual_result = 'PENDING'",
+                fixture_updates,
+            )
         if score_updates or fixture_updates:
-            conn_tmp = sqlite3.connect("ai_predictions.db")
-            cur_tmp = conn_tmp.cursor()
-            if score_updates:
-                cur_tmp.executemany("UPDATE predictions SET actual_score = ? WHERE match_id = ?", score_updates)
-            if fixture_updates:
-                cur_tmp.executemany("UPDATE predictions SET api_fixture_id = ? WHERE match_id = ?", fixture_updates)
-            conn_tmp.commit()
-            conn_tmp.close()
+            conn.commit()
 
-        with open("live_scores.json", "w", encoding="utf-8") as f:
-            json.dump(live_data_dict, f, ensure_ascii=False)
+        # Last-known-good merge: a successful but empty/partial board is not proof
+        # that a score should disappear. Expiry is the only implicit removal path.
+        merged = {}
+        for match_id, entry in previous.items():
+            if not isinstance(entry, dict) or match_id in current_entries:
+                continue
+            preserved = dict(entry)
+            if not preserved.get("retain_until"):
+                preserved["retain_until"] = retain_until
+            if not _entry_not_expired(preserved, now_kst):
+                continue
+            preserved["stale"] = True
+            merged[str(match_id)] = preserved
+        merged.update(current_entries)
+
+        _atomic_write_json("live_scores.json", merged)
         if recovered_links:
             print(f"✅ 라이브 팀명/시간 자동 연결 복구: {recovered_links}건")
-        print(f"✅ 라이브 업데이트 완료! (현재 실제 진행 기록: {len(live_data_dict)}개)")
-    except Exception as e:
-        # 실패한 빈 응답으로 정상 스코어 파일을 덮어쓰지 않는다.
-        print(f"❌ [관제 봇 떡밥] 라이브 스코어 에러: {e} (마지막 정상 파일 보존)")
+        live_count = sum(1 for value in merged.values() if value.get("is_live") is True)
+        final_count = sum(1 for value in merged.values() if value.get("final") is True)
+        print(f"✅ 라이브 업데이트 완료! (LIVE {live_count} / 종료 보존 {final_count} / 전체 {len(merged)})")
+        return True
+    except Exception as error:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        print(f"❌ [관제 봇 떡밥] 라이브 스코어 에러: {error} (마지막 정상 파일 보존)")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 def _parse_odd_buttons(market):
     values = []
@@ -1278,8 +2532,10 @@ def parse_betman_proto_html(html):
         if main_market is None:
             continue
         odds_1x2 = _parse_odd_buttons(main_market)
+        # Keep the fixture even while Betman is publishing or withdrawing odds.
+        # build_dashboard_data already has a waiting-odds representation for zeros.
         if len(odds_1x2) < 3 or min(odds_1x2[:3]) <= 1.0:
-            continue
+            odds_1x2 = [0.0, 0.0, 0.0]
 
         odds_handi = _parse_odd_buttons(handicap_market) if handicap_market else []
         odds_uo = _parse_odd_buttons(under_over_market) if under_over_market else []
@@ -1357,6 +2613,63 @@ def parse_betman_toto14_html(html, round_id="current"):
     return sorted(parsed, key=lambda item: item["num"])
 
 
+def _valid_toto14_round(records):
+    if not isinstance(records, list) or len(records) != 14:
+        return False
+    round_ids = set()
+    numbers = []
+    record_ids = set()
+    for record in records:
+        if not isinstance(record, dict):
+            return False
+        if not record.get("id") or not record.get("home") or not record.get("away"):
+            return False
+        try:
+            numbers.append(int(record.get("num")))
+        except (TypeError, ValueError):
+            return False
+        round_ids.add(str(record.get("round_id", "")))
+        record_ids.add(str(record["id"]))
+    return (
+        len(round_ids) == 1
+        and len(record_ids) == 14
+        and sorted(numbers) == list(range(1, 15))
+    )
+
+
+def _select_latest_complete_toto14_round(records):
+    groups = {}
+    order = {}
+    for index, record in enumerate(records or []):
+        if not isinstance(record, dict):
+            continue
+        round_id = str(record.get("round_id", "") or "")
+        if not round_id:
+            match = re.match(r"(.+)_\d+$", str(record.get("id", "")))
+            round_id = match.group(1) if match else ""
+        if not round_id:
+            continue
+        record_id = str(record.get("id", "") or "")
+        if not record_id:
+            continue
+        groups.setdefault(round_id, {})[record_id] = record
+        order[round_id] = index
+    valid = {
+        round_id: sorted(group.values(), key=lambda item: int(item.get("num", 0)))
+        for round_id, group in groups.items()
+        if _valid_toto14_round(list(group.values()))
+    }
+    if not valid:
+        return []
+
+    def sort_key(round_id):
+        digits = re.findall(r"\d+", round_id)
+        numeric = int(digits[-1]) if digits else -1
+        return numeric, order.get(round_id, -1)
+
+    return list(valid[max(valid, key=sort_key)])
+
+
 def _accept_alert(driver):
     try:
         driver.switch_to.alert.accept()
@@ -1364,156 +2677,659 @@ def _accept_alert(driver):
         pass
 
 
+def _browser_arguments():
+    return [
+        '--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
+        '--disable-gpu', '--disable-software-rasterizer', '--disable-extensions',
+        '--disable-background-networking', '--disable-component-update',
+        '--disable-default-apps', '--disable-sync', '--metrics-recording-only',
+        '--no-first-run', '--renderer-process-limit=2', '--disk-cache-size=1',
+        '--media-cache-size=1', '--js-flags=--max-old-space-size=256',
+        '--window-size=1365,900', '--blink-settings=imagesEnabled=false',
+        '--disable-features=Translate,BackForwardCache,OptimizationHints,MediaRouter',
+    ]
+
+
+def _chrome_options(binary=None):
+    options = ChromeOptions()
+    for argument in _browser_arguments():
+        options.add_argument(argument)
+    if binary:
+        options.binary_location = binary
+    options.page_load_strategy = 'eager'
+    return options
+
+
+def _edge_options(binary=None):
+    options = EdgeOptions()
+    for argument in _browser_arguments():
+        options.add_argument(argument)
+    if binary:
+        options.binary_location = binary
+    options.page_load_strategy = 'eager'
+    return options
+
+
+def _create_webdriver():
+    """Prefer provisioned Chromium; keep Edge only as a compatibility fallback."""
+    errors = []
+    browser_binary = os.getenv("CHROME_BINARY", "").strip() or next(
+        (path for path in (
+            shutil.which("chromium"), shutil.which("chromium-browser"),
+            shutil.which("google-chrome"), shutil.which("google-chrome-stable"),
+            shutil.which("chrome"),
+        ) if path),
+        None,
+    )
+    driver_binary = os.getenv("CHROMEDRIVER_PATH", "").strip() or shutil.which("chromedriver")
+
+    attempts = []
+    if driver_binary:
+        attempts.append((
+            f"Chromium ({driver_binary})",
+            lambda: webdriver.Chrome(
+                service=ChromeService(executable_path=driver_binary),
+                options=_chrome_options(browser_binary),
+            ),
+        ))
+    attempts.append((
+        "Chromium/Selenium Manager",
+        lambda: webdriver.Chrome(options=_chrome_options(browser_binary)),
+    ))
+    if ChromeDriverManager is not None and os.getenv("DISABLE_DRIVER_DOWNLOAD", "0") != "1":
+        attempts.append((
+            "Chromium/webdriver-manager",
+            lambda: webdriver.Chrome(
+                service=ChromeService(ChromeDriverManager().install()),
+                options=_chrome_options(browser_binary),
+            ),
+        ))
+
+    edge_binary = os.getenv("EDGE_BINARY", "").strip() or shutil.which("microsoft-edge") or shutil.which("msedge")
+    allow_edge = edge_binary or os.name == "nt" or os.getenv("ALLOW_EDGE_FALLBACK", "0") == "1"
+    if allow_edge:
+        attempts.append((
+            "Microsoft Edge/Selenium Manager fallback",
+            lambda: webdriver.Edge(options=_edge_options(edge_binary)),
+        ))
+    if EdgeChromiumDriverManager is not None and allow_edge:
+        attempts.append((
+            "Microsoft Edge/webdriver-manager fallback",
+            lambda: webdriver.Edge(
+                service=EdgeService(EdgeChromiumDriverManager().install()),
+                options=_edge_options(edge_binary),
+            ),
+        ))
+
+    for label, factory in attempts:
+        try:
+            driver = factory()
+            driver.set_page_load_timeout(60)
+            driver.set_script_timeout(30)
+            print(f"✅ 브라우저 시작: {label}")
+            return driver
+        except Exception as error:
+            errors.append(f"{label}: {type(error).__name__}: {error}")
+    raise RuntimeError(" / ".join(errors) or "사용 가능한 Chromium/Edge 드라이버 없음")
+
+
+def _wait_for_stable_rows(driver, selector, timeout=18, stable_samples=3):
+    deadline = time.monotonic() + timeout
+    previous_count = -1
+    stable_count = 0
+    latest_count = 0
+    while time.monotonic() < deadline:
+        latest_count = len(driver.find_elements(By.CSS_SELECTOR, selector))
+        if latest_count > 0 and latest_count == previous_count:
+            stable_count += 1
+            if stable_count >= stable_samples:
+                return True, latest_count
+        else:
+            stable_count = 0
+            previous_count = latest_count
+        time.sleep(1)
+    return False, latest_count
+
+
+def _scrape_with_fresh_browser(label, operation):
+    last_error = None
+    for attempt in range(2):
+        driver = None
+        try:
+            driver = _create_webdriver()
+            return operation(driver)
+        except Exception as error:
+            last_error = error
+            print(f"❌ {label} 수집 실패({attempt + 1}/2): {type(error).__name__}: {error}")
+            if attempt == 0:
+                time.sleep(2)
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                    print("🧹 브라우저 프로세스 정상 종료 완료.")
+                except Exception:
+                    pass
+    raise RuntimeError(str(last_error or f"{label} 수집 실패"))
+
+
+def _load_pending_match_ids():
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=15)
+        try:
+            return {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT match_id FROM predictions WHERE actual_result = 'PENDING'"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+    except Exception:
+        return set()
+
+
+def _record_is_still_active(record, pending_ids, prefix=""):
+    match_id = f"{prefix}{record.get('id', '')}"
+    match_dt = _parse_kst_match_time(record.get("match_time") or record.get("time"))
+    if match_dt is not None:
+        return datetime.now(KST) <= match_dt + timedelta(hours=LIVE_RETENTION_HOURS)
+    # Unknown kickoff records get the DB state as a conservative fallback, but
+    # dated stale rounds cannot grow the retained pool forever merely because a
+    # fixture has not been graded yet.
+    return match_id in pending_ids
+
+
+def _merge_active_records(fresh, previous, pending_ids, prefix=""):
+    merged = []
+    seen = set()
+    for record in fresh:
+        match_id = str(record.get("id", ""))
+        if not match_id or match_id in seen:
+            continue
+        seen.add(match_id)
+        merged.append(record)
+    for record in previous:
+        match_id = str(record.get("id", ""))
+        if not match_id or match_id in seen:
+            continue
+        if _record_is_still_active(record, pending_ids, prefix=prefix):
+            retained = dict(record)
+            retained["retained_from_last_good"] = True
+            merged.append(retained)
+            seen.add(match_id)
+    return merged
+
+
+def _valid_scrape_records(records):
+    if not isinstance(records, list):
+        return False
+    ids = []
+    for record in records:
+        if not isinstance(record, dict):
+            return False
+        if not record.get("id") or not record.get("home") or not record.get("away"):
+            return False
+        ids.append(str(record["id"]))
+    return len(ids) == len(set(ids))
+
+
 def scrape_betman():
     print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 베트맨 실제 경기/배당 수집 가동...")
-    options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--disable-software-rasterizer')
-    options.add_argument('--disable-extensions')
-    options.add_argument('--disable-background-networking')
-    options.add_argument('--disable-component-update')
-    options.add_argument('--disable-default-apps')
-    options.add_argument('--disable-sync')
-    options.add_argument('--metrics-recording-only')
-    options.add_argument('--no-first-run')
-    options.add_argument('--renderer-process-limit=2')
-    options.add_argument('--disk-cache-size=1')
-    options.add_argument('--media-cache-size=1')
-    options.add_argument('--js-flags=--max-old-space-size=256')
-    options.add_argument('--window-size=1365,900')
-    options.add_argument('--blink-settings=imagesEnabled=false')
-    options.add_argument('--disable-features=Translate,BackForwardCache,OptimizationHints,MediaRouter')
-    options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0')
-    options.page_load_strategy = 'eager'
-
-    driver = None
-    matches, matches_14 = [], []
     hub_url = "https://www.betman.co.kr/main/mainPage/gamebuy/buyableGameList.do"
+    old_data = _read_json("betman_data.json", {})
+    if not isinstance(old_data, dict):
+        old_data = {}
+    old_proto = old_data.get("proto_matches", []) if isinstance(old_data.get("proto_matches"), list) else []
+    old_toto14_primary = old_data.get("toto_14_matches", []) if isinstance(old_data.get("toto_14_matches"), list) else []
+    old_toto14_retained = old_data.get("toto_14_retained_matches", []) if isinstance(old_data.get("toto_14_retained_matches"), list) else []
+    old_toto14_by_id = {}
+    for record in old_toto14_primary + old_toto14_retained:
+        if isinstance(record, dict) and record.get("id"):
+            old_toto14_by_id[str(record["id"])] = record
+    old_toto14 = list(old_toto14_by_id.values())
+
+    proto_stable = False
+    toto_stable = False
+    matches = []
+    matches_14 = []
+
+    def scrape_proto_page(driver):
+        driver.get(hub_url)
+        _accept_alert(driver)
+        proto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
+            By.XPATH,
+            "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
+        )))
+        driver.execute_script("arguments[0].click();", proto_btn)
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".box-data-group [data-rowname]"))
+        )
+        for _ in range(20):
+            visible_more = [button for button in driver.find_elements(
+                By.XPATH,
+                "//*[self::button or self::a][contains(normalize-space(.), '더보기')]",
+            ) if button.is_displayed()]
+            if not visible_more:
+                break
+            driver.execute_script("arguments[0].click();", visible_more[0])
+            time.sleep(0.8)
+        stable, _ = _wait_for_stable_rows(driver, ".box-data-group [data-rowname]")
+        if not stable:
+            raise RuntimeError("프로토 행 개수가 제한시간 안에 안정되지 않음")
+        return parse_betman_proto_html(driver.page_source), stable
+
+    def scrape_toto_page(driver):
+        driver.get(hub_url)
+        _accept_alert(driver)
+        toto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
+            By.XPATH,
+            "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
+        )))
+        round_hints = [
+            toto_btn.get_attribute("href") or "",
+            toto_btn.get_attribute("onclick") or "",
+            toto_btn.text or "",
+        ]
+        driver.execute_script("arguments[0].click();", toto_btn)
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "#grid_victory_tbody > tr"))
+        )
+        stable, _ = _wait_for_stable_rows(driver, "#grid_victory_tbody > tr")
+        round_hints.append(driver.current_url or "")
+        round_id = None
+        for hint in round_hints:
+            round_match = re.search(r'gmTs\s*[=:]\s*["\']?(\d+)', str(hint), re.IGNORECASE)
+            if not round_match:
+                round_match = re.search(r'(\d+)\s*회차', str(hint))
+            if round_match:
+                round_id = round_match.group(1)
+                break
+        if not round_id:
+            raise RuntimeError("승무패 회차 ID를 확인할 수 없어 기존 동결본을 보호합니다.")
+        parsed = parse_betman_toto14_html(driver.page_source, round_id)
+        if not stable or not _valid_toto14_round(parsed):
+            raise RuntimeError(f"승무패 완본 미확인: 안정={stable}, 행={len(parsed)}")
+        return parsed, stable, round_id
 
     try:
-        service = Service(EdgeChromiumDriverManager().install())
-        driver = webdriver.Edge(service=service, options=options)
-        driver.set_page_load_timeout(60)
-
-        try:
-            driver.get(hub_url)
-            _accept_alert(driver)
-            proto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
-                By.XPATH,
-                "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
-            )))
-            driver.execute_script("arguments[0].click();", proto_btn)
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".box-data-group [data-rowname]"))
-            )
-            time.sleep(3)
-            for _ in range(12):
-                visible_more = [button for button in driver.find_elements(
-                    By.XPATH,
-                    "//*[self::button or self::a][contains(normalize-space(.), '더보기')]",
-                ) if button.is_displayed()]
-                if not visible_more:
-                    break
-                driver.execute_script("arguments[0].click();", visible_more[0])
-                time.sleep(1)
-            all_proto_matches = parse_betman_proto_html(driver.page_source)
-            # 운영 환경에서는 베트맨에 표시된 축구 경기 전부를 사용한다.
-            # 개발자가 명시적으로 허용한 경우에만 테스트용 개수 제한을 켤 수 있다.
-            proto_limit = 0
-            if os.getenv("ALLOW_PROTO_LIMIT", "0") == "1":
-                try:
-                    proto_limit = max(0, int(os.getenv("MAX_PROTO_MATCHES", "0")))
-                except ValueError:
-                    proto_limit = 0
-            matches = all_proto_matches[:proto_limit] if proto_limit else all_proto_matches
-            print(f"✅ 프로토 실제 축구 경기 발견: {len(all_proto_matches)}경기 / 분석 대상: {len(matches)}경기")
-        except Exception as error:
-            print(f"❌ 프로토 승부식 수집 실패: {type(error).__name__}: {error}")
-
-        try:
-            driver.get(hub_url)
-            _accept_alert(driver)
-            toto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
-                By.XPATH,
-                "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
-            )))
-            driver.execute_script("arguments[0].click();", toto_btn)
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#grid_victory_tbody > tr"))
-            )
-            time.sleep(3)
-            round_match = re.search(r'gmTs=(\d+)', driver.current_url)
-            round_id = round_match.group(1) if round_match else "current"
-            matches_14 = parse_betman_toto14_html(driver.page_source, round_id)
-            print(f"✅ 축구 승무패 {round_id}회차 추출: {len(matches_14)}경기")
-        except Exception as error:
-            print(f"❌ 축구 승무패 수집 실패: {type(error).__name__}: {error}")
-
-    except Exception as error:
-        print(f"❌ 크롤링 브라우저 시작 실패: {type(error).__name__}: {error}")
-    finally:
-        if driver:
+        matches, proto_stable = _scrape_with_fresh_browser("프로토 승부식", scrape_proto_page)
+        proto_limit = 0
+        if os.getenv("ALLOW_PROTO_LIMIT", "0") == "1":
             try:
-                driver.quit()
-                print("🧹 엣지 브라우저 정상 종료 완료.")
-            except Exception:
-                pass
+                proto_limit = max(0, int(os.getenv("MAX_PROTO_MATCHES", "0")))
+            except ValueError:
+                proto_limit = 0
+        if proto_limit:
+            matches = matches[:proto_limit]
+        print(f"✅ 프로토 실제 축구 경기 발견: {len(matches)}경기")
+    except Exception as error:
+        print(f"❌ 프로토 최종 수집 실패: {error}")
 
-    old_data = {}
     try:
-        with open("betman_data.json", "r", encoding="utf-8") as file:
-            old_data = json.load(file)
-    except Exception:
-        pass
+        matches_14, toto_stable, round_id = _scrape_with_fresh_browser("축구 승무패", scrape_toto_page)
+        print(f"✅ 축구 승무패 {round_id}회차 추출: {len(matches_14)}경기")
+    except Exception as error:
+        print(f"❌ 축구 승무패 최종 수집 실패: {error}")
 
-    # 한쪽 페이지만 일시 실패하면 마지막 정상본을 보존하되, 과거 경기를 새 목록에
-    # 합쳐 넣지는 않는다. 이것이 114개 가짜/중복 경기가 다시 살아나는 것을 막는다.
-    final_proto = matches if matches else old_data.get("proto_matches", [])
-    final_toto14 = matches_14 if matches_14 else old_data.get("toto_14_matches", [])
-    if not matches:
-        print("⚠️ 이번 프로토 수집이 비어 있어 마지막 파일을 보존합니다.")
-    if not matches_14:
-        print("⚠️ 이번 승무패 14경기 수집이 비어 있어 마지막 파일을 보존합니다.")
-    if not matches and not matches_14:
-        print("❌ 새 데이터가 전혀 없어 대시보드 갱신을 중단합니다.")
+    pending_ids = _load_pending_match_ids()
+    old_active_proto = [
+        item for item in old_proto if _record_is_still_active(item, pending_ids)
+    ]
+    proto_accepted = bool(matches and proto_stable and _valid_scrape_records(matches))
+    if (
+        proto_accepted
+        and os.getenv("ALLOW_PROTO_LIMIT", "0") != "1"
+        and len(matches) < PROTO_MIN_SCRAPE_ROWS
+        and len(old_active_proto) >= PROTO_MIN_SCRAPE_ROWS
+    ):
+        proto_accepted = False
+        print(f"⚠️ 프로토 급감({len(matches)}건)을 부분 수집으로 판정해 정상본을 유지합니다.")
+
+    # A football pools round is complete only with fourteen unique rows.
+    toto_accepted = bool(
+        matches_14 and toto_stable and _valid_toto14_round(matches_14)
+    )
+    if matches_14 and not toto_accepted:
+        print(f"⚠️ 승무패가 14경기 완본이 아니어서({len(matches_14)}건) 정상본을 유지합니다.")
+
+    fresh_proto = matches if proto_accepted else []
+    fresh_toto14 = matches_14 if toto_accepted else []
+    final_proto = _merge_active_records(fresh_proto, old_proto, pending_ids)
+    # A complete new pools round supersedes older rounds. Mixing retained rows
+    # from another round produced 28+ cards and exponential phantom cost.
+    final_toto14 = (
+        sorted(fresh_toto14, key=lambda item: int(item.get("num", 0)))
+        if toto_accepted
+        else _select_latest_complete_toto14_round(old_toto14)
+    )
+    final_toto14_ids = {str(item.get("id")) for item in final_toto14}
+    retained_toto14 = [
+        dict(item, retained_from_last_good=True)
+        for item in old_toto14
+        if str(item.get("id")) not in final_toto14_ids
+        and _record_is_still_active(item, pending_ids, prefix="TOTO14_")
+    ]
+
+    if not proto_accepted:
+        print("⚠️ 이번 프로토 수집을 채택하지 않고 마지막 정상/진행 기록을 보존합니다.")
+    if not toto_accepted:
+        print("⚠️ 이번 승무패 수집을 채택하지 않고 마지막 정상/진행 기록을 보존합니다.")
+    if not proto_accepted and not toto_accepted:
+        print("❌ 새 완전 데이터가 없어 대시보드 재분석을 중단합니다.")
         return False
 
+    now_iso = datetime.now(KST).isoformat(timespec="seconds")
+    old_source_status = old_data.get("source_status", {})
+    if not isinstance(old_source_status, dict):
+        old_source_status = {}
+    old_proto_status = old_source_status.get("proto", {})
+    old_toto_status = old_source_status.get("toto14", {})
+    if not isinstance(old_proto_status, dict):
+        old_proto_status = {}
+    if not isinstance(old_toto_status, dict):
+        old_toto_status = {}
     result = {
         "proto_matches": final_proto,
         "toto_14_matches": final_toto14,
-        "collected_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        "toto_14_retained_matches": retained_toto14,
+        "collected_at": now_iso,
+        "source_status": {
+            "proto": {
+                "fresh": proto_accepted,
+                "fresh_count": len(matches),
+                "published_count": len(final_proto),
+                "last_success_at": now_iso if proto_accepted else old_proto_status.get("last_success_at"),
+            },
+            "toto14": {
+                "fresh": toto_accepted,
+                "fresh_count": len(matches_14),
+                "published_count": len(final_toto14),
+                "retained_lifecycle_count": len(retained_toto14),
+                "last_success_at": now_iso if toto_accepted else old_toto_status.get("last_success_at"),
+            },
+        },
     }
-    with open("betman_data.json", "w", encoding="utf-8") as file:
-        json.dump(result, file, ensure_ascii=False, indent=4)
+    _atomic_write_json("betman_data.json", result, indent=2)
     print(f"✅ 수집 완료: 프로토 {len(final_proto)}경기 / 승무패 {len(final_toto14)}경기")
     return True
 
 def run_live_score_job():
-    update_live_scores()
-    upload_to_github("live_scores.json")
+    success = update_live_scores()
+    if not success:
+        return False
+    return upload_to_github("live_scores.json")
+
 
 def run_master_job():
-    init_cache_db() 
     if not scrape_betman():
+        return False
+    if not build_dashboard_data():
+        return False
+    # Publish the DB snapshot first. If it cannot be published, keep the remote
+    # dashboard at its last-known-good version instead of exposing unmatched JSON.
+    if not upload_sqlite_to_github("ai_predictions.db"):
+        return False
+    return upload_to_github("dashboard_data.json")
+
+
+def run_score_job():
+    success = auto_score_matches()
+    if success:
+        success = upload_sqlite_to_github("ai_predictions.db") and success
+    return success
+
+
+def _initialize_db_safely():
+    fd, lock_path = _try_acquire_lock("db-init", stale_after=180, wait_seconds=45)
+    if fd is None:
+        return _validate_sqlite_file("ai_predictions.db")
+    try:
+        init_cache_db()
+        return _validate_sqlite_file("ai_predictions.db")
+    finally:
+        _release_lock(fd, lock_path)
+
+
+JOB_FUNCTIONS = {
+    "master": run_master_job,
+    "live": run_live_score_job,
+    "score": run_score_job,
+}
+JOB_TIMEOUTS = {
+    "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
+    "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
+    "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
+}
+
+
+def _publish_status():
+    try:
+        return upload_to_github(STATUS_FILE, remote_path=STATUS_FILE.name)
+    except Exception as error:
+        print(f"⚠️ 수집기 상태 게시 실패: {error}")
+        return False
+
+
+def _execute_job(job_name):
+    timeout = JOB_TIMEOUTS[job_name]
+    with _job_lock(job_name, stale_after=timeout + 120) as acquired:
+        if not acquired:
+            print(f"⏭️ {job_name} 작업이 이미 실행 중이어서 중복 실행을 건너뜁니다.")
+            return 0
+        started = time.monotonic()
+        _update_collector_status(job_name, "running")
+        _publish_status()
+        try:
+            if not _initialize_db_safely():
+                raise RuntimeError("ai_predictions.db 초기화/검증 실패")
+            success = JOB_FUNCTIONS[job_name]()
+            duration = round(time.monotonic() - started, 2)
+            if success is False:
+                raise RuntimeError(f"{job_name} 작업이 정상 결과를 게시하지 못함")
+            _update_collector_status(job_name, "success", duration_seconds=duration)
+            _publish_status()
+            return 0
+        except Exception as error:
+            duration = round(time.monotonic() - started, 2)
+            error_text = f"{type(error).__name__}: {error}"
+            print(f"❌ {job_name} 작업 실패: {error_text}")
+            traceback.print_exc()
+            _update_collector_status(
+                job_name,
+                "failed",
+                duration_seconds=duration,
+                last_error=error_text[:1000],
+            )
+            _publish_status()
+            return 1
+
+
+_JOB_PROCESSES = {}
+
+
+def _launch_isolated_job(job_name):
+    existing = _JOB_PROCESSES.get(job_name)
+    if existing and existing["process"].poll() is None:
+        _update_collector_status(
+            job_name,
+            "running",
+            child_pid=existing["process"].pid,
+            elapsed_seconds=round(time.monotonic() - existing["started"], 1),
+            overlap_skips=int(existing.get("overlap_skips", 0)) + 1,
+        )
+        existing["overlap_skips"] = int(existing.get("overlap_skips", 0)) + 1
+        print(f"⏭️ {job_name} 이전 실행이 남아 있어 이번 주기를 겹치지 않습니다.")
+        return False
+
+    command = [sys.executable, "-u", str(Path(__file__).resolve()), "--mode", job_name]
+    popen_kwargs = {
+        "cwd": str(APP_DIR),
+        "env": {**os.environ, "PYTHONUNBUFFERED": "1"},
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    try:
+        process = subprocess.Popen(command, **popen_kwargs)
+    except Exception as error:
+        error_text = f"{type(error).__name__}: {error}"
+        print(f"❌ {job_name} 분리 작업 시작 실패: {error_text}")
+        _update_collector_status(job_name, "failed", last_error=error_text[:1000])
+        return False
+    _JOB_PROCESSES[job_name] = {
+        "process": process,
+        "started": time.monotonic(),
+        "timeout": JOB_TIMEOUTS[job_name],
+        "overlap_skips": 0,
+    }
+    _update_collector_status(job_name, "running", child_pid=process.pid)
+    print(f"🚀 분리 작업 시작: {job_name} (PID {process.pid})")
+    return True
+
+
+def _terminate_process_tree(process):
+    if process.poll() is not None:
         return
-    build_dashboard_data()
-    upload_to_github("dashboard_data.json")
-    
-    auto_score_matches()
-    upload_to_github("ai_predictions.db")
+    try:
+        if os.name != "nt":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+        process.wait(timeout=8)
+    except Exception:
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except Exception:
+            pass
+
+
+def _reap_job_processes():
+    now = time.monotonic()
+    for job_name, info in list(_JOB_PROCESSES.items()):
+        process = info["process"]
+        elapsed = now - info["started"]
+        return_code = process.poll()
+        if return_code is None and elapsed > info["timeout"]:
+            print(f"❌ {job_name} 작업 제한시간 초과({int(elapsed)}초) - 프로세스 트리 종료")
+            _terminate_process_tree(process)
+            _update_collector_status(
+                job_name,
+                "failed",
+                child_pid=process.pid,
+                duration_seconds=round(elapsed, 1),
+                last_error=f"hard timeout after {int(elapsed)} seconds",
+            )
+            _publish_status()
+            _JOB_PROCESSES.pop(job_name, None)
+        elif return_code is not None:
+            if return_code != 0:
+                _update_collector_status(
+                    job_name,
+                    "failed",
+                    child_pid=process.pid,
+                    duration_seconds=round(elapsed, 1),
+                    last_error=f"worker exited with code {return_code}",
+                )
+            _JOB_PROCESSES.pop(job_name, None)
+
+
+def _heartbeat_active_jobs():
+    now = time.monotonic()
+    for job_name, info in list(_JOB_PROCESSES.items()):
+        process = info["process"]
+        if process.poll() is None:
+            _update_collector_status(
+                job_name,
+                "running",
+                child_pid=process.pid,
+                elapsed_seconds=round(now - info["started"], 1),
+                overlap_skips=int(info.get("overlap_skips", 0)),
+            )
+
+
+def run_scheduler():
+    os.chdir(APP_DIR)
+    _update_collector_status("scheduler", "running", supervisor_pid=os.getpid())
+    download_latest_db_from_github()
+    if not _initialize_db_safely():
+        raise RuntimeError("수집기 DB 초기화 실패")
+
+    schedule.clear()
+    # Live and scoring start immediately and independently; master may take 20+ min.
+    _launch_isolated_job("live")
+    _launch_isolated_job("score")
+    _launch_isolated_job("master")
+    schedule.every(5).minutes.do(_launch_isolated_job, "live")
+    schedule.every(5).minutes.do(_launch_isolated_job, "score")
+    schedule.every(20).minutes.do(_launch_isolated_job, "master")
+
+    print("\n🚀 [감시 스케줄러] master/live/score 분리 · 중복 방지 · 하드 타임아웃 적용")
+    last_heartbeat = 0.0
+    while True:
+        try:
+            schedule.run_pending()
+            _reap_job_processes()
+            if time.monotonic() - last_heartbeat >= 30:
+                _heartbeat_active_jobs()
+                _update_collector_status(
+                    "scheduler",
+                    "running",
+                    supervisor_pid=os.getpid(),
+                    active_jobs={
+                        name: info["process"].pid
+                        for name, info in _JOB_PROCESSES.items()
+                        if info["process"].poll() is None
+                    },
+                )
+                last_heartbeat = time.monotonic()
+            time.sleep(2)
+        except KeyboardInterrupt:
+            print("수집기 종료 신호를 받았습니다.")
+            for info in list(_JOB_PROCESSES.values()):
+                _terminate_process_tree(info["process"])
+            _update_collector_status("scheduler", "stopped")
+            return 0
+        except Exception as error:
+            print(f"⚠️ 스케줄러 루프 오류(계속 실행): {type(error).__name__}: {error}")
+            _update_collector_status("scheduler", "running", last_error=str(error)[:1000])
+            time.sleep(5)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="D.J SPORTS collector")
+    parser.add_argument(
+        "--mode",
+        choices=("scheduler", "master", "live", "score"),
+        default="scheduler",
+        help="scheduler supervises isolated workers; other modes run one job once",
+    )
+    args = parser.parse_args(argv)
+    os.chdir(APP_DIR)
+    if args.mode == "scheduler":
+        try:
+            with _job_lock("scheduler", stale_after=86400) as acquired:
+                if not acquired:
+                    print("⏭️ 수집기 스케줄러가 이미 실행 중입니다.")
+                    return 0
+                return run_scheduler()
+        except Exception as error:
+            _update_collector_status(
+                "scheduler", "failed", last_error=f"{type(error).__name__}: {error}"[:1000]
+            )
+            traceback.print_exc()
+            return 1
+    return _execute_job(args.mode)
+
 
 if __name__ == "__main__":
-    download_latest_db_from_github()
-    
-    run_master_job() 
-    run_live_score_job()
-    
-    schedule.every(20).minutes.do(run_master_job) 
-    schedule.every(5).minutes.do(run_live_score_job) 
-    
-    print("\n🚀 [마스터 스케줄러] 무거운 수집 20분 / 실시간 라이브 스코어 5분 주기 분리 적용 완료!")
-    while True:
-        schedule.run_pending()
-        time.sleep(10)
+    raise SystemExit(main())

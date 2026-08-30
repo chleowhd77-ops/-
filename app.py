@@ -1637,25 +1637,70 @@ def render_logo_html(logo_url):
         f'onerror="this.onerror=null;this.src=\'{safe_fallback}\';">'
     )
 
-def generate_pred_boxes(picks, is_top3_tab=False):
-    if not picks: return ""
-    best_pick_raw = picks[0]['raw_pick']
-    display_picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
+def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None):
+    """확률 높은 픽·꿀픽·VIP 역배를 고정된 세 칸으로 분리해 표시합니다."""
+    picks = picks or []
+    categories = {
+        "high_probability": None,
+        "honey": None,
+        "vip_underdog": None,
+    }
+    if isinstance(pick_categories, dict):
+        for key in categories:
+            value = pick_categories.get(key)
+            categories[key] = value if isinstance(value, dict) else None
+
+    for pick in picks:
+        key = pick.get("category_key")
+        if key in categories and categories[key] is None:
+            categories[key] = pick
+
+    # 이전 버전 데이터는 확률 높은 픽만 복원합니다. 꿀픽과 VIP 역배는
+    # 엄격한 신규 기준을 거치지 않았으므로 임의로 만들어 표시하지 않습니다.
+    if categories["high_probability"] is None and picks:
+        categories["high_probability"] = max(
+            picks, key=lambda item: float(item.get("prob", 0) or 0)
+        )
+
+    slot_specs = [
+        ("high_probability", "📈 확률 높은 픽", "분석 가능한 선택지가 없습니다.", "#00F2FE"),
+        ("honey", "🍯 AI 꿀픽", "오늘은 기준 충족 꿀픽 없음", "#F59E0B"),
+        ("vip_underdog", "💎 VIP 역배 픽", "오늘은 기준 충족 VIP 역배 없음", "#FFD54A"),
+    ]
     html = ""
-    for i, pick in enumerate(display_picks):
-        is_best = (pick['raw_pick'] == best_pick_raw)
-        prob_pct = round(pick.get('prob', 0) * 100, 1)
-        if is_best:
-            bg_style = "background:rgba(0, 242, 254, 0.05); border-color:#00F2FE;"
-            title_color = "color:#00F2FE;"
-            stars = "⭐⭐⭐" if prob_pct >= 65 else ("⭐⭐" if prob_pct >= 50 else "⭐")
-            label = f"🥇 강력 추천 ({pick.get('label', '')}) {stars}" if is_top3_tab else f"🥇 {pick.get('label', '')} {stars}"
-        else:
-            bg_style = ""
-            title_color = "color:#64748B;"
-            label = f"서브 추천 ({pick.get('label', '')})" if is_top3_tab else pick.get('label', '')
-            
-        html += f"<div class='pred-box' style='{bg_style}'><div class='pred-label' style='{title_color}'>{label}</div><span class='pred-value'>{pick.get('html_pick', '')}</span><span class='pred-prob'>{prob_pct}%</span></div>"
+    for key, label, empty_text, color in slot_specs:
+        pick = categories[key]
+        if not pick:
+            html += (
+                "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
+                f"<div class='pred-label' style='color:{color};'>{label}</div>"
+                f"<span class='pred-value' style='color:#94A3B8;'>{empty_text}</span>"
+                "<span class='pred-prob' style='background:#1E293B;color:#94A3B8;'>기준 미달</span>"
+                "</div>"
+            )
+            continue
+
+        prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
+        raw_pick = escape(str(pick.get("raw_pick", "")))
+        pick_label = escape(str(pick.get("label", "")))
+        detail = {
+            "high_probability": "항상 표시",
+            "honey": "가치 기준 통과",
+            "vip_underdog": "엄격 역배 기준 통과",
+        }[key]
+        bg_style = (
+            "background:rgba(0,242,254,.05);border-color:#00F2FE;"
+            if key == "high_probability"
+            else ""
+        )
+        html += (
+            f"<div class='pred-box' style='{bg_style}'>"
+            f"<div class='pred-label' style='color:{color};'>{label}</div>"
+            f"<span class='pred-value'>{raw_pick}</span>"
+            f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{pick_label} · {detail}</span>"
+            f"<span class='pred-prob'>{prob_pct}%</span>"
+            "</div>"
+        )
     return html
 
 # -----------------------------------------------------------------------------
@@ -1738,7 +1783,11 @@ with main_tab1:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
                 
-                dynamic_pred_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=False)
+                dynamic_pred_boxes = generate_pred_boxes(
+                    item.get('ev_sorted_picks', []),
+                    is_top3_tab=False,
+                    pick_categories=item.get('pick_categories'),
+                )
 
                 upset_html = ""
                 if item.get('upset_warning'):
@@ -1911,7 +1960,11 @@ with main_tab3:
             m = item['match']
             logo_h_tag = render_logo_html(item.get("home_logo"))
             logo_a_tag = render_logo_html(item.get("away_logo"))
-            dynamic_top3_boxes = generate_pred_boxes(item.get('ev_sorted_picks', []), is_top3_tab=True)
+            dynamic_top3_boxes = generate_pred_boxes(
+                item.get('ev_sorted_picks', []),
+                is_top3_tab=True,
+                pick_categories=item.get('pick_categories'),
+            )
             html_code = (
                 f"<div class='match-card top3-glow'>"
                 f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} 최고 가치 추천 픽 • {m.get('league','')}</div>"

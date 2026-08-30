@@ -1,61 +1,35 @@
-# D.J SPORTS ANALYTICS v1.6 설치 안내
+# D.J SPORTS ANALYTICS V1.8 설치 안내
 
-이번 버전은 세 가지를 함께 고쳤습니다.
+## 이번 버전에서 바뀐 점
 
-- 휴대폰과 PC 모두 새로고침해도 로그인이 유지됩니다.
-- 관리자가 사진과 글을 넣은 이벤트 팝업을 만들 수 있습니다.
-- API 사용량 초기화 시간을 실제 제공업체 기준인 UTC로 맞췄습니다.
+- 세 가지 추천을 서로 다른 기준으로 완전히 분리했습니다.
+  - `확률 높은 픽`: 선택 가능한 분석 픽이 있으면 항상 표시됩니다.
+  - `AI 꿀픽`: 배당 가치와 신뢰도 기준을 통과한 경우에만 표시됩니다.
+  - `VIP 역배 픽`: 엄격한 역배 기준을 통과한 경우에만 표시됩니다.
+- 같은 픽이 세 칸에 중복으로 나타나지 않습니다.
+- 꿀픽이나 VIP 역배가 기준에 미달하면 억지로 만들지 않고 `오늘은 기준 충족 픽 없음`으로 표시합니다.
+- 이 기능 때문에 API를 추가로 호출하지 않습니다. 이미 수집한 분석 결과만 사용합니다.
+- 기존 회원가입, 로그인 유지, 관리자 기능, 공지 팝업, 인증 게시판과 사진 업로드 기능은 그대로 유지했습니다.
 
-기존 회원·게시글·사진 자료가 들어 있는 `users.db`는 그대로 사용합니다.
+## 1. GitHub에 올릴 파일
 
-## 1. GitHub에 올리기
+압축을 푼 뒤 아래 파일과 폴더를 GitHub 저장소의 기존 파일 위에 덮어씁니다.
 
-압축을 푼 뒤 아래 항목만 GitHub 저장소 첫 화면에 올립니다.
+- `app.py`
+- `collector.py`
+- `member_system.py`
+- `api_engine.py`
+- `assets` 폴더
+- `requirements.txt`
+- `packages.txt`
 
-1. `app.py`
-2. `member_system.py`
-3. `api_engine.py`
-4. `assets` 폴더
-5. `DEPLOY_README_KO.md`
-6. `STREAMLIT_SECRETS_EXAMPLE.toml`
+중요: 기존 회원 정보가 들어 있는 `users.db`는 올리거나 덮어쓰면 안 됩니다.
 
-GitHub에서 `Add file`을 누른 다음 `Upload files`를 누릅니다.
-같은 이름이 나오면 덮어쓰고, 화면 아래의 초록색 `Commit changes` 버튼을 누릅니다.
+`app.py`는 웹 화면을 바꾸고, `collector.py`는 실제 세 가지 픽을 계산합니다. 따라서 GitHub만 바꾸고 끝내면 안 되고 AWS의 `collector.py`도 아래 순서대로 교체해야 합니다.
 
-### 절대로 올리지 말아야 하는 파일
+## 2. AWS에서 실행할 명령
 
-- `users.db`를 GitHub에 올리지 마세요.
-- 운영 중인 `users.db`를 지우지 마세요.
-- 이번 압축파일에는 `users.db`가 들어 있지 않습니다.
-
-## 2. 로그인 유지 확인하기
-
-GitHub 업로드가 끝나고 Streamlit 화면이 다시 열리면 확인합니다.
-
-1. 휴대폰에서 한 번 로그인합니다.
-2. 화면을 새로고침합니다.
-3. 로그인이 그대로인지 확인합니다.
-4. PC에서도 한 번 로그인한 뒤 새로고침합니다.
-
-각 기기에서 처음 한 번은 로그인해야 합니다. 그 뒤에는 최대 30일 동안 새로고침해도
-유지되며, 사용자가 `로그아웃`을 눌렀을 때 해당 기기의 로그인이 풀립니다.
-
-로그인한 상태에서는 브라우저의 전체 주소를 다른 사람에게 보내지 마세요.
-
-## 3. 사진 이벤트 팝업 만들기
-
-1. 관리자 계정으로 로그인합니다.
-2. 왼쪽의 `관리자 도구`를 엽니다.
-3. `공지·팝업 관리`를 엽니다.
-4. 표시 방식에서 `팝업`을 선택합니다.
-5. 제목과 내용을 적고 JPG·PNG·WEBP 사진을 1장 올립니다.
-6. 공개 대상과 기간을 정한 뒤 등록합니다.
-
-방문자가 사이트에 들어오면 사진·제목·내용이 들어간 팝업이 나타납니다.
-
-## 4. AWS 수집 로봇 고치기
-
-GitHub 업로드가 끝난 뒤 AWS 검은 화면에 아래 내용을 한 줄씩 붙여 넣습니다.
+AWS 검은 화면에 아래 명령을 한 줄씩 붙여 넣고 엔터를 누르세요.
 
 ```bash
 cd /home/ubuntu
@@ -66,25 +40,25 @@ pkill -u ubuntu -f '[p]ython3.*collector.py' || true
 ```
 
 ```bash
-cp api_engine.py api_engine.py.before_v1_6_20260830
+cp collector.py collector.py.before_v1_8_20260830
 ```
 
 ```bash
-curl -fL 'https://raw.githubusercontent.com/chleowhd77-ops/-/main/api_engine.py?v=20260830v16' -o /tmp/api_engine.py.v16
+curl -fL 'https://raw.githubusercontent.com/chleowhd77-ops/-/main/collector.py?v=20260830v18' -o /tmp/collector.py.v18
 ```
 
 ```bash
-python3 -m py_compile /tmp/api_engine.py.v16
+python3 -m py_compile /tmp/collector.py.v18
 ```
 
-위 명령 뒤에 빨간 오류가 없으면 계속합니다.
+위 명령 뒤에 아무 오류 없이 입력 줄이 다시 나오면 정상입니다. 이어서 실행하세요.
 
 ```bash
-cp /tmp/api_engine.py.v16 /home/ubuntu/api_engine.py
+cp /tmp/collector.py.v18 /home/ubuntu/collector.py
 ```
 
 ```bash
-nohup python3 -u collector.py > collector_v1_6.log 2>&1 &
+nohup python3 -u collector.py > collector_v1_8.log 2>&1 &
 ```
 
 ```bash
@@ -95,30 +69,37 @@ sleep 8
 pgrep -af '[p]ython3.*collector.py'
 ```
 
+숫자와 함께 `python3 -u collector.py`가 나오면 로봇이 실행 중입니다. 감시 화면은 아래 명령으로 켭니다.
+
 ```bash
-tail -n 80 /home/ubuntu/collector_v1_6.log
+tail -f /home/ubuntu/collector_v1_8.log
 ```
 
-정상이라면 `python3 -u collector.py`가 한 줄 보이고 수집 로그가 이어집니다.
-API 대시보드의 `Requests used` 숫자는 수집이 시작된 뒤 1~3분 안에 올라갈 수 있습니다.
-계속 0이면 마지막 AWS 화면을 캡처해서 보내주세요.
+첫 수집은 20분 이상 걸릴 수 있습니다. 화면에 `GitHub 동기화 완료: dashboard_data.json`이 나오면 웹 새로고침을 해보세요. 감시 화면에서 나오려면 `Ctrl+C`를 한 번 누르면 됩니다. 로봇 자체는 계속 실행됩니다.
 
-## API가 0으로 보였던 이유
+## 3. 처음에는 빈 칸이 보일 수 있는 이유
 
-이전 코드는 API 하루 한도를 한국시간 자정에 새로 생기는 것으로 판단했습니다.
-실제 API-Sports 한도는 UTC 자정, 한국시간 오전 9시에 초기화됩니다. 그래서 한도가
-초기화된 뒤에도 로봇이 예전의 `한도 소진` 기록을 보고 호출을 막을 수 있었습니다.
-이번 버전은 실제 초기화 시간과 같은 기준으로 계산합니다.
+기존 `dashboard_data.json`에는 새 세 가지 분류 정보가 없습니다. 그래서 새 수집이 끝나기 전에는 `확률 높은 픽`만 기존 데이터로 복구하고, 꿀픽과 VIP 역배는 억지로 만들지 않습니다.
 
-## 이번 수정에서 유지되는 기능
+AWS 로봇이 새 수집을 한 번 완료하면 세 가지 분류가 정상 적용됩니다.
 
-- `오늘의 TOP3`, `프로토 LIVE`, `전체 경기` 메뉴 분리
-- `승무패 14`, `채점 노트`, `인증 게시판`
-- 회원가입·로그인·후원회원·관리자 등급
-- 게시글 사진 첨부와 관리자 공지
-- 기존 분석·확률 계산과 마지막 정상 경기 자료 보존
+## 4. 문제가 생겼을 때 원래 버전으로 복구
 
-## 상용화 전에 꼭 옮겨야 하는 자료
+아래 명령을 한 줄씩 실행하세요.
 
-현재 Streamlit의 회원 데이터는 재배포나 서버 교체 때 사라질 수 있습니다. 실제 회원을
-모집하기 전에는 `users.db`와 게시판 사진을 AWS 영구 저장소나 PostgreSQL로 옮겨야 합니다.
+```bash
+cd /home/ubuntu
+```
+
+```bash
+pkill -u ubuntu -f '[p]ython3.*collector.py' || true
+```
+
+```bash
+cp collector.py.before_v1_8_20260830 collector.py
+```
+
+```bash
+nohup python3 -u collector.py > collector_rollback.log 2>&1 &
+```
+
