@@ -102,6 +102,26 @@ def download_db():
 
 download_db()
 
+
+def load_prediction_results():
+    """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
+    try:
+        conn = sqlite3.connect("ai_predictions.db", timeout=5)
+        rows = conn.execute(
+            "SELECT match_id, actual_score, actual_result, ai_note FROM predictions"
+        ).fetchall()
+        conn.close()
+        return {
+            str(match_id): {
+                "actual_score": actual_score,
+                "actual_result": actual_result,
+                "ai_note": ai_note,
+            }
+            for match_id, actual_score, actual_result, ai_note in rows
+        }
+    except Exception:
+        return {}
+
 # -----------------------------------------------------------------------------
 # 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
@@ -1436,6 +1456,7 @@ visible_match_limit = access_profile["match_limit"]
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
 live_scores_data = load_live_scores()
+prediction_results_data = load_prediction_results()
 
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
@@ -1616,11 +1637,169 @@ def get_match_status(match_time_str, deadline_str):
     except: pass
     return "UPCOMING", False
 
+def _status_value(source):
+    if not isinstance(source, dict):
+        return ""
+    fixture = source.get("fixture")
+    if isinstance(fixture, dict):
+        fixture_status = fixture.get("status")
+        if isinstance(fixture_status, dict):
+            value = fixture_status.get("short") or fixture_status.get("long")
+            if value:
+                return str(value).strip()
+        elif fixture_status:
+            return str(fixture_status).strip()
+    status = source.get("status")
+    if isinstance(status, dict):
+        value = status.get("short") or status.get("long") or status.get("name")
+        if value:
+            return str(value).strip()
+    elif status:
+        return str(status).strip()
+    for key in ("actual_result", "match_status", "state", "status_short"):
+        value = source.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _is_final_status(status):
+    normalized = str(status or "").strip().upper()
+    return normalized in {
+        "FT", "AET", "PEN", "FINISHED", "FINAL", "MATCH FINISHED",
+        "AFTER EXTRA TIME", "AFTER PENALTIES",
+    }
+
+
+def _score_pair(value):
+    if not isinstance(value, dict):
+        return ""
+    home = value.get("home")
+    away = value.get("away")
+    if home is not None and away is not None:
+        return f"{home}:{away}"
+    return ""
+
+
+def _score_value(source):
+    if not isinstance(source, dict):
+        return ""
+    for key in ("score", "final_score", "actual_score", "result", "score_text"):
+        value = source.get(key)
+        if isinstance(value, dict):
+            for nested_key in ("fulltime", "full_time", "final"):
+                nested = _score_pair(value.get(nested_key))
+                if nested:
+                    return nested
+            pair = _score_pair(value)
+            if pair:
+                return pair
+        elif value is not None:
+            text = str(value).strip()
+            if text and text not in {"-", "-:-"}:
+                return text
+    goals = _score_pair(source.get("goals"))
+    if goals:
+        return goals
+    home = source.get("home_score")
+    away = source.get("away_score")
+    if home is not None and away is not None:
+        return f"{home}:{away}"
+    return ""
+
+
+def _event_html(*sources):
+    event_rows = []
+    event_keys = ("events", "recent_events", "timeline", "incidents", "event_history", "match_events")
+    wanted = ("goal", "득점", "red", "퇴장", "yellow", "경고", "injury", "부상", "substitution", "substitute", "교체", "var")
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in event_keys:
+            raw_events = source.get(key)
+            if not isinstance(raw_events, list):
+                continue
+            for raw_event in raw_events:
+                if isinstance(raw_event, dict):
+                    direct_text = raw_event.get("text") or raw_event.get("description")
+                    if direct_text:
+                        line = str(direct_text).strip()
+                    else:
+                        parts = [
+                            raw_event.get("time") or raw_event.get("minute"),
+                            raw_event.get("type"), raw_event.get("detail"),
+                            raw_event.get("player"), raw_event.get("team"),
+                        ]
+                        line = " ".join(str(part).strip() for part in parts if part not in (None, ""))
+                else:
+                    line = str(raw_event or "").strip()
+                if line and any(word in line.lower() for word in wanted):
+                    event_rows.append(line)
+    if not event_rows:
+        return ""
+    unique_rows = list(dict.fromkeys(event_rows))[-4:]
+    content = "<br>".join(escape(row) for row in unique_rows)
+    return (
+        "<div class='live-event-feed' style='margin:8px 0 2px;padding:8px 10px;"
+        "border:1px solid rgba(16,185,129,.28);border-radius:10px;color:#10B981;"
+        "font-size:12px;font-weight:800;line-height:1.55;max-width:100%;"
+        f"overflow-wrap:anywhere;word-break:keep-all;white-space:normal'>{content}</div>"
+    )
+
+
+def _pick_categories(item):
+    if not isinstance(item, dict):
+        return {}
+    for key in ("pick_categories", "category_picks", "stored_pick_categories", "pick_category"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            return value
+    categories = {}
+    for category, keys in {
+        "high_probability": ("high_probability_pick", "probability_pick"),
+        "honey": ("honey_pick", "ai_honey_pick"),
+        "vip_underdog": ("vip_underdog_pick", "vip_pick"),
+    }.items():
+        for key in keys:
+            value = item.get(key)
+            if isinstance(value, dict):
+                categories[category] = value
+                break
+    return categories
+
+
+def _detail_html(item):
+    if not isinstance(item, dict):
+        return ""
+    detail = None
+    for key in ("detailed_report", "detail_report", "analysis_detail", "analysis_rationale", "rationale", "long_reason", "report_detail"):
+        if item.get(key):
+            detail = item.get(key)
+            break
+    if detail is None:
+        return ""
+    if isinstance(detail, (dict, list)):
+        detail = json.dumps(detail, ensure_ascii=False, indent=2)
+    safe_detail = escape(str(detail)).replace("\n", "<br>")
+    return (
+        "<details class='analysis-details' style='margin-top:10px;max-width:100%;"
+        "overflow:hidden'><summary style='cursor:pointer;color:#94A3B8;font-weight:800'>"
+        "상세 분석 근거 보기</summary><div style='margin-top:8px;padding:10px 12px;"
+        "border-radius:10px;background:rgba(15,23,42,.55);line-height:1.65;"
+        f"overflow-wrap:anywhere;word-break:keep-all;white-space:normal'>{safe_detail}</div></details>"
+    )
+
+
 # 🔥 라이브 경기 판별 함수
 def check_is_live(item):
     m = item.get('match', {})
     match_id_str = str(m.get('id', ''))
     live_info = live_scores_data.get(match_id_str, {})
+    explicit_status = _status_value(live_info) or _status_value(item) or _status_value(m)
+    if _is_final_status(explicit_status):
+        return False
+    if explicit_status.upper() in {"LIVE", "1H", "HT", "2H", "ET", "BT", "P", "INT", "BREAK"}:
+        return True
     if live_info.get("is_live") is True:
         return True
     time_status, _ = get_match_status(
@@ -1688,6 +1867,14 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None):
             "honey": "가치 기준 통과",
             "vip_underdog": "엄격 역배 기준 통과",
         }[key]
+        meta_parts = [detail]
+        if pick.get("fair_prob") is not None:
+            meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
+        if key == "honey":
+            meta_parts.append(f"가치차 {float(pick.get('edge', 0) or 0) * 100:+.1f}%p")
+        if key == "vip_underdog" and pick.get("support_signals"):
+            meta_parts.append(f"독립근거 {len(pick['support_signals'])}개")
+        detail = " · ".join(meta_parts)
         bg_style = (
             "background:rgba(0,242,254,.05);border-color:#00F2FE;"
             if key == "high_probability"
@@ -1769,25 +1956,27 @@ with main_tab1:
                         paywall_shown = True
                     continue 
 
+                live_info = live_scores_data.get(match_id_str, {})
+                db_result = prediction_results_data.get(match_id_str, {})
+                explicit_status = _status_value(live_info) or _status_value(db_result) or _status_value(item) or _status_value(m)
+                score_text = _score_value(live_info) or _score_value(db_result) or _score_value(item) or _score_value(m)
+                event_html = _event_html(live_info, item, m)
+                is_final_now = match_status == "FINISHED" or _is_final_status(explicit_status)
                 if is_live_now:
-                    if match_id_str in live_scores_data:
-                        live_info = live_scores_data[match_id_str]
-                        score_text = live_info.get("score", "0:0")
-                        if not score_text or score_text == "-": score_text = "0:0"
-                        event_lines = []
-                        for raw_event in (live_info.get("events") or [])[-3:]:
-                            if isinstance(raw_event, dict):
-                                line = str(raw_event.get("text") or "").strip()
-                                if line:
-                                    event_lines.append(line)
-
-                        event_text = "<br>".join(escape(line) for line in event_lines)
-                        if not event_text and live_info.get("event"):
-                            event_text = escape(str(live_info.get("event") or ""))
-
-                        event_html = f"<div style='margin-bottom:6px; font-size:11px; color:#10B981; font-weight:900;'>{event_text}</div>" if event_text else ""
-                        time_display = f"{event_html}<span class='live-score'>{score_text}</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
-                        time_display = f"<span class='match-time-text'>스코어 확인 중</span><span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1); border-color:#EF4444; color:#EF4444;'>🔴 LIVE</span>"
+                    visible_score = escape(score_text) if score_text else "수집 대기"
+                    time_display = (
+                        f"<span class='live-score'>{visible_score}</span>"
+                        "<span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1);"
+                        "border-color:#EF4444;color:#EF4444;'>🔴 LIVE</span>"
+                    )
+                elif is_final_now:
+                    if score_text:
+                        time_display = (
+                            f"<span class='live-score'>{escape(score_text)}</span>"
+                            "<span class='deadline-closed'>종료</span>"
+                        )
+                    else:
+                        time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span><span class='deadline-closed'>결과 확인 중</span>"
                 else:
                     badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
                     time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
@@ -1795,7 +1984,7 @@ with main_tab1:
                 dynamic_pred_boxes = generate_pred_boxes(
                     item.get('ev_sorted_picks', []),
                     is_top3_tab=False,
-                    pick_categories=item.get('pick_categories'),
+                    pick_categories=_pick_categories(item),
                 )
 
                 upset_html = ""
@@ -1810,7 +1999,9 @@ with main_tab1:
                     f"<div class='center-time-box'>{time_display}</div>"
                     f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
                     f"</div>"
+                    f"{event_html}"
                     f"<div class='ai-story'>{item.get('story','')}</div>"
+                    f"{_detail_html(item)}"
                     f"{upset_html}"
                     f"<div class='odd-bar'>"
                     f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
@@ -1972,7 +2163,7 @@ with main_tab3:
             dynamic_top3_boxes = generate_pred_boxes(
                 item.get('ev_sorted_picks', []),
                 is_top3_tab=True,
-                pick_categories=item.get('pick_categories'),
+                pick_categories=_pick_categories(item),
             )
             html_code = (
                 f"<div class='match-card top3-glow'>"
@@ -1981,6 +2172,7 @@ with main_tab3:
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
                 f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
+                f"{_detail_html(item)}"
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)

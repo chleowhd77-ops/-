@@ -22,7 +22,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V5.0-calibrated"
+ANALYSIS_VERSION = "V6.0-integrated-markets"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -754,6 +754,17 @@ def known_team_id(team_name):
     for mapped_name, mapped in DIRECT_TEAM_INFO.items():
         if target and target == _normalize_team_alias(mapped_name):
             return int(mapped.get("id") or 0)
+
+    # 같은 프로세스에서 이미 찾은 팀과 DB에 저장된 정상 팀을 모두 같은
+    # 대표 ID로 사용한다. 로고ㆍ최근 전적ㆍ라이브ㆍ채점이 서로 다른 팀을
+    # 가리키지 않도록 하는 단일 팀 신원 기준이다.
+    remembered = TEAM_INFO_MEMORY_CACHE.get(team_name) or TEAM_INFO_MEMORY_CACHE.get(target)
+    if isinstance(remembered, dict) and int(remembered.get("id") or 0):
+        return int(remembered["id"])
+    for cache_version in ("v6", "v5"):
+        cached = get_db_cache(f"team_info_{cache_version}_{team_name}", 24 * 365)
+        if isinstance(cached, dict) and int(cached.get("id") or 0):
+            return int(cached["id"])
     return 0
 
 
@@ -806,8 +817,16 @@ def save_smart_mapping(mapping):
     except: pass
 
 def fetch_team_info_api(team_name):
-    if team_name in TEAM_INFO_MEMORY_CACHE:
-        return TEAM_INFO_MEMORY_CACHE[team_name]
+    identity_key = _normalize_team_alias(team_name)
+    remembered = TEAM_INFO_MEMORY_CACHE.get(team_name) or TEAM_INFO_MEMORY_CACHE.get(identity_key)
+    if remembered:
+        return remembered
+
+    def remember(result):
+        TEAM_INFO_MEMORY_CACHE[team_name] = result
+        if identity_key:
+            TEAM_INFO_MEMORY_CACHE[identity_key] = result
+        return result
 
     if team_name in DIRECT_TEAM_INFO:
         direct = DIRECT_TEAM_INFO[team_name]
@@ -816,8 +835,21 @@ def fetch_team_info_api(team_name):
             "name": team_name,
             "logo": _resolve_team_logo(team_name, direct["id"], direct.get("logo")),
         }
-        TEAM_INFO_MEMORY_CACHE[team_name] = result
-        return result
+        return remember(result)
+
+    canonical_id = known_team_id(team_name)
+    if canonical_id:
+        result = {
+            "id": canonical_id,
+            "name": _resolve_translated_team_name(team_name) or team_name,
+            "logo": _resolve_team_logo(
+                team_name,
+                canonical_id,
+                f"https://media.api-sports.io/football/teams/{canonical_id}.png",
+            ),
+        }
+        set_db_cache(f"team_info_v6_{team_name}", result)
+        return remember(result)
 
     # 수동/공식 로고가 이미 확인된 팀은 그 로고의 API 팀 ID를 그대로 사용합니다.
     # 이 ID가 최근 전적, 경기 매칭, 라이브 스코어 조회에 공통으로 전달됩니다.
@@ -829,9 +861,8 @@ def fetch_team_info_api(team_name):
             "name": _resolve_translated_team_name(team_name) or team_name,
             "logo": resolved_logo,
         }
-        TEAM_INFO_MEMORY_CACHE[team_name] = result
-        set_db_cache(f"team_info_v5_{team_name}", result)
-        return result
+        set_db_cache(f"team_info_v6_{team_name}", result)
+        return remember(result)
 
     fallback_res = {"id": 0, "name": team_name, "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO)}
     retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
@@ -839,14 +870,14 @@ def fetch_team_info_api(team_name):
         return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
-    cache_key = f"team_info_v5_{team_name}"
-    cached_data = get_db_cache(cache_key, 8760)
+    cache_key = f"team_info_v6_{team_name}"
+    cached_data = get_db_cache(cache_key, 8760) or get_db_cache(f"team_info_v5_{team_name}", 8760)
     if cached_data and cached_data.get("id"):
         cached_data["logo"] = _resolve_team_logo(
             team_name, cached_data.get("id"), cached_data.get("logo")
         )
-        TEAM_INFO_MEMORY_CACHE[team_name] = cached_data
-        return cached_data
+        set_db_cache(cache_key, cached_data)
+        return remember(cached_data)
 
     translated_name = _resolve_translated_team_name(team_name)
     smart_mapping = load_smart_mapping()
@@ -855,7 +886,7 @@ def fetch_team_info_api(team_name):
 
     if not candidates:
         print(f"⚠️ API 팀 검색용 영문 이름이 없음: {team_name}")
-        TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
+        remember(fallback_res)
         return fallback_res
 
     try:
@@ -914,7 +945,7 @@ def fetch_team_info_api(team_name):
             smart_mapping[translated_name] = candidate
             save_smart_mapping(smart_mapping)
             set_db_cache(cache_key, result)
-            TEAM_INFO_MEMORY_CACHE[team_name] = result
+            remember(result)
             TEAM_INFO_FAILURE_RETRY_AT.pop(team_name, None)
             return result
 
@@ -926,7 +957,7 @@ def fetch_team_info_api(team_name):
         if had_api_error:
             TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(minutes=2)
         else:
-            TEAM_INFO_MEMORY_CACHE[team_name] = fallback_res
+            remember(fallback_res)
         return fallback_res
 
     except Exception as e:
@@ -1446,7 +1477,11 @@ def fetch_team_next_fixture_api(team_id, ttl_h):
     return default_res
 
 def fetch_recent_team_stats_api(team_id, ttl_h):
-    default_res = {"possession": 50, "shots_on_goal": 4.0, "corners": 4.5, "yellow_cards": 1.5, "sample_size": 0}
+    default_res = {
+        "possession": 50, "shots_on_goal": 4.0, "corners": 4.5,
+        "yellow_cards": 1.5, "sample_size": 0, "xg": None,
+        "xg_sample_size": 0,
+    }
     if not team_id: return default_res
     cache_key = f"recent_stats_v2_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
@@ -1454,6 +1489,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
     try:
         fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-2:]
         total_possession, total_sog, total_corn, total_yc = 0, 0, 0, 0
+        total_xg, xg_matches = 0.0, 0
         valid_matches = 0
         for f in fixtures:
             fix_id = f["fixture"]["id"]
@@ -1462,19 +1498,36 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
             for team_stat in stats_data:
                 if team_stat["team"]["id"] == team_id:
                     pos_val, sog_val, corn_val, yc_val = 50, 4.0, 4.5, 1.5
+                    xg_val = None
                     for s in team_stat["statistics"]:
                         if s["type"] == "Ball Possession" and s["value"]: pos_val = int(str(s["value"]).replace('%', ''))
                         if s["type"] == "Shots on Goal" and s["value"]: sog_val = float(s["value"])
                         if s["type"] == "Corner Kicks" and s["value"]: corn_val = float(s["value"])
                         if s["type"] == "Yellow Cards" and s["value"]: yc_val = float(s["value"])
+                        if str(s.get("type", "")).casefold() in {"expected goals", "expected_goals", "xg"} and s.get("value") not in (None, ""):
+                            try:
+                                xg_val = float(s["value"])
+                            except (TypeError, ValueError):
+                                xg_val = None
                     total_possession += pos_val
                     total_sog += sog_val
                     total_corn += corn_val
                     total_yc += yc_val
+                    if xg_val is not None:
+                        total_xg += xg_val
+                        xg_matches += 1
                     valid_matches += 1
                     break
         if valid_matches > 0:
-            res_val = {"possession": round(total_possession / valid_matches, 1), "shots_on_goal": round(total_sog / valid_matches, 1), "corners": round(total_corn / valid_matches, 1), "yellow_cards": round(total_yc / valid_matches, 1), "sample_size": valid_matches}
+            res_val = {
+                "possession": round(total_possession / valid_matches, 1),
+                "shots_on_goal": round(total_sog / valid_matches, 1),
+                "corners": round(total_corn / valid_matches, 1),
+                "yellow_cards": round(total_yc / valid_matches, 1),
+                "sample_size": valid_matches,
+                "xg": round(total_xg / xg_matches, 2) if xg_matches else None,
+                "xg_sample_size": xg_matches,
+            }
         else: res_val = default_res
         set_db_cache(cache_key, res_val)
         return res_val
@@ -1707,13 +1760,25 @@ def generate_real_ai_note(fixture_id, goals_h, goals_a, is_correct_prob, is_corr
             e_detail = e.get('detail', '')
             player_name = e.get('player', {}).get('name', '선수')
 
+            team_name = str(e.get('team', {}).get('name', '') or '')
+            assist_name = str(e.get('assist', {}).get('name', '') or '')
+            minute = f"{elapsed}'"
             if e_type == 'Goal':
                 if elapsed >= 85: late_goals.append(f"{elapsed}' 극장골({player_name})")
-                else: event_logs.append(f"{elapsed}' ⚽득점({player_name})")
-            elif e_type == 'Card' and 'Red' in e_detail:
-                event_logs.append(f"{elapsed}' 🟥퇴장({player_name})")
-            elif e_type == 'subst':
-                event_logs.append(f"{elapsed}' 🔄교체OUT({player_name})")
+                else: event_logs.append(f"{minute} ⚽ 득점 · {team_name} · {player_name}")
+            elif e_type == 'Card' and ('Red' in e_detail or 'Second Yellow' in e_detail):
+                event_logs.append(f"{minute} 🟥 퇴장 · {team_name} · {player_name}")
+            elif e_type == 'Card' and 'Yellow' in e_detail:
+                event_logs.append(f"{minute} 🟨 경고 · {team_name} · {player_name}")
+            elif str(e_type).casefold() in {'subst', 'substitution'}:
+                change = f"{player_name} OUT"
+                if assist_name:
+                    change += f" / {assist_name} IN"
+                event_logs.append(f"{minute} 🔄 교체 · {team_name} · {change}")
+            elif str(e_type).casefold() == 'var':
+                event_logs.append(f"{minute} 📺 VAR · {team_name} · {e_detail}")
+            elif str(e_type).casefold() == 'injury' or 'injur' in str(e_detail).casefold():
+                event_logs.append(f"{minute} 🚑 부상 · {team_name} · {player_name}")
                  
         note = f"📊 실제 데이터: 점유율({pos_h} vs {pos_a}), 유효슈팅({sot_h}개 vs {sot_a}개). "
         

@@ -872,6 +872,341 @@ def prediction_stage(diff_hours, lineup_confirmed=False):
     return "regular"
 
 
+MARKET_LABELS = {
+    "1x2": "승무패",
+    "handicap": "핸디캡",
+    "totals": "언더오버",
+}
+
+
+def infer_pick_market(pick_or_text):
+    if isinstance(pick_or_text, dict):
+        explicit = str(pick_or_text.get("market_key") or "").strip().lower()
+        if explicit in MARKET_LABELS:
+            return explicit
+        sort_id = int(pick_or_text.get("sort_id") or 0)
+        if sort_id == 1:
+            return "totals"
+        if sort_id == 2:
+            return "handicap"
+        text = str(pick_or_text.get("raw_pick") or "")
+    else:
+        text = str(pick_or_text or "")
+    lowered = text.lower().replace(" ", "")
+    if "언더" in lowered or "오버" in lowered or "u/o" in lowered:
+        return "totals"
+    if "핸디" in lowered or "마핸" in lowered or "플핸" in lowered:
+        return "handicap"
+    return "1x2"
+
+
+def load_market_performance():
+    """종료 경기의 시장별 적중 기록과 최근 선택 비중을 한 번만 읽는다."""
+    summary = {
+        key: {"samples": 0, "hits": 0, "hit_rate": 0.5, "selection_share": 0.0}
+        for key in MARKET_LABELS
+    }
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=15)
+        rows = conn.execute(
+            """
+            SELECT prob_pick, is_correct_prob, ev_pick, is_correct_ev
+            FROM predictions
+            WHERE actual_result = 'FINISHED'
+            ORDER BY match_time DESC LIMIT 300
+            """
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return summary
+
+    high_market_counts = {key: 0 for key in MARKET_LABELS}
+    for prob_pick, prob_hit, ev_pick, ev_hit in rows:
+        prob_market = infer_pick_market(prob_pick)
+        high_market_counts[prob_market] += 1
+        for pick_text, hit in ((prob_pick, prob_hit), (ev_pick, ev_hit)):
+            if not pick_text:
+                continue
+            market = infer_pick_market(pick_text)
+            summary[market]["samples"] += 1
+            summary[market]["hits"] += 1 if int(hit or 0) == 1 else 0
+
+    total_high = sum(high_market_counts.values())
+    for market, values in summary.items():
+        # 작은 표본이 한 시장을 과도하게 올리거나 내리지 않도록 베타 사전분포로 보정한다.
+        values["hit_rate"] = round(
+            (values["hits"] + 4.0) / (values["samples"] + 8.0), 4
+        )
+        values["selection_share"] = round(
+            high_market_counts[market] / total_high, 4
+        ) if total_high else 0.0
+    return summary
+
+
+def calibrate_market_candidates(picks, market_performance, confidence):
+    """세 시장을 같은 척도로 보정하고 확률ㆍ공정확률ㆍ오차범위를 저장한다."""
+    confidence = max(0.35, min(0.95, float(confidence or 0.35)))
+    grouped = {key: [] for key in MARKET_LABELS}
+    for pick in picks:
+        market = infer_pick_market(pick)
+        pick["market_key"] = market
+        grouped[market].append(pick)
+
+    for market, market_picks in grouped.items():
+        if not market_picks:
+            continue
+        history = market_performance.get(market, {})
+        samples = int(history.get("samples") or 0)
+        hit_rate = float(history.get("hit_rate") or 0.5)
+        history_weight = min(0.18, (samples / (samples + 30.0)) * 0.18)
+        adjusted_values = []
+        for pick in market_picks:
+            raw_probability = max(0.001, min(0.999, float(pick.get("prob") or 0)))
+            fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
+            pick["raw_model_prob"] = round(raw_probability, 6)
+            if fair_probability > 0:
+                history_skill = 0.75 + (0.50 * hit_rate)
+                history_target = fair_probability + (
+                    (raw_probability - fair_probability) * history_skill
+                )
+                adjusted = (
+                    raw_probability * (1.0 - history_weight)
+                    + history_target * history_weight
+                )
+            else:
+                adjusted = raw_probability
+            adjusted_values.append(max(0.001, adjusted))
+
+        normalized = normalize_probabilities(adjusted_values)
+        neutral = 1.0 / len(market_picks)
+        dominant_penalty = max(
+            0.0, float(history.get("selection_share") or 0.0) - 0.45
+        ) * 0.12
+        for pick, probability in zip(market_picks, normalized):
+            fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
+            edge = probability - fair_probability if fair_probability > 0 else 0.0
+            conviction = (probability - neutral) / max(0.01, 1.0 - neutral)
+            error_margin = min(
+                0.18,
+                0.04 + ((1.0 - confidence) * 0.14) + (0.03 if samples < 20 else 0.0),
+            )
+            pick["prob"] = round(probability, 6)
+            pick["ev"] = round(probability * float(pick.get("odd") or 0), 6)
+            pick["fair_prob"] = round(fair_probability, 6) if fair_probability > 0 else None
+            pick["edge"] = round(edge, 6)
+            pick["market_hit_rate"] = round(hit_rate, 4)
+            pick["market_history_samples"] = samples
+            pick["data_confidence"] = round(confidence, 4)
+            pick["error_margin"] = round(error_margin, 4)
+            pick["probability_interval"] = {
+                "low": round(max(0.0, probability - error_margin), 6),
+                "high": round(min(1.0, probability + error_margin), 6),
+            }
+            # 확률 자체와 시장 내 우위ㆍ가치를 함께 사용하고, 최근 한 시장이
+            # 45%를 넘게 독점했다면 작은 감점을 줘 언더오버 쏠림을 막는다.
+            pick["balanced_score"] = round(
+                (probability * 0.55)
+                + (conviction * 0.35)
+                + (max(edge, 0.0) * 0.10)
+                - dominant_penalty,
+                6,
+            )
+    return picks
+
+
+def build_analysis_evidence(context):
+    """실제 값이 있는 항목만 근거에 포함하고 누락 항목은 신뢰도에서 제외한다."""
+    evidence = []
+    available_weight = 0.0
+
+    def add(name, weight, available, value):
+        nonlocal available_weight
+        if not available:
+            return
+        available_weight += weight
+        evidence.append({"name": name, "weight": weight, "value": str(value)})
+
+    h_recent = context["h_recent"]
+    a_recent = context["a_recent"]
+    h_stats = context["h_stats"]
+    a_stats = context["a_stats"]
+    h_long = context["h_long"]
+    a_long = context["a_long"]
+    h_inj = context["h_inj"]
+    a_inj = context["a_inj"]
+    add(
+        "최근 성적", 0.13,
+        min(h_recent.get("matches", 0), a_recent.get("matches", 0)) >= 3,
+        f"최근 {h_recent.get('matches', 0)}/{a_recent.get('matches', 0)}경기, "
+        f"PPG {h_recent.get('ppg', 0):.2f}/{a_recent.get('ppg', 0):.2f}",
+    )
+    add(
+        "xG", 0.12,
+        h_stats.get("xg") is not None and a_stats.get("xg") is not None,
+        f"{h_stats.get('xg')}/{a_stats.get('xg')}",
+    )
+    add(
+        "슈팅 품질", 0.10,
+        min(h_stats.get("sample_size", 0), a_stats.get("sample_size", 0)) >= 1,
+        f"유효슈팅 {h_stats.get('shots_on_goal', 0):.1f}/{a_stats.get('shots_on_goal', 0):.1f}",
+    )
+    add(
+        "홈·원정", 0.10,
+        h_long.get("home_total", 0) >= 3 and a_long.get("away_total", 0) >= 3,
+        f"홈 {h_long.get('home_wins', 0)}승/{h_long.get('home_total', 0)}경기, "
+        f"원정 {a_long.get('away_wins', 0)}승/{a_long.get('away_total', 0)}경기",
+    )
+    add(
+        "상대 전적", 0.08, context["h2h_total"] > 0,
+        f"{context['h_wins']}승-{context['draws']}무-{context['a_wins']}승",
+    )
+    add(
+        "선수 결장", 0.11,
+        bool(h_inj.get("available") and a_inj.get("available")),
+        f"결장 {h_inj.get('count', 0)}명/{a_inj.get('count', 0)}명",
+    )
+    add(
+        "휴식일", 0.06,
+        max(context["h_rest_days"], context["a_rest_days"]) < 90,
+        f"{context['h_rest_days']}일/{context['a_rest_days']}일",
+    )
+    add("날씨", 0.05, bool(context.get("weather")), context.get("weather"))
+    add("심판", 0.05, bool(context.get("referee")), context.get("referee"))
+    tactical_text = context.get("tactical_text")
+    add("전술 상성", 0.05, bool(tactical_text), tactical_text)
+    movement_text = context.get("movement_text")
+    add("배당 변동", 0.05, bool(movement_text), movement_text)
+    add(
+        "팀 신원·경기 연결", 0.10,
+        bool(context.get("home_id") and context.get("away_id") and context.get("fixture_id")),
+        f"팀ID {context.get('home_id')}/{context.get('away_id')}, 경기ID {context.get('fixture_id')}",
+    )
+    return evidence, round(max(0.0, min(1.0, available_weight)), 4)
+
+
+def attach_underdog_signals(picks, home_team, away_team, metrics):
+    """역배 후보에 서로 독립적인 실제 지지 근거를 붙인다."""
+    for pick in picks:
+        pick["support_signals"] = []
+        market = infer_pick_market(pick)
+        if market == "totals" or float(pick.get("odd") or 0) < 2.0:
+            continue
+        text = str(pick.get("raw_pick") or "")
+        if market == "handicap":
+            side = "away" if "핸디패" in text else ("home" if "핸디승" in text else "")
+        else:
+            side = "home" if home_team in text else ("away" if away_team in text else "")
+        if not side:
+            continue
+        opponent = "away" if side == "home" else "home"
+        signals = []
+        if metrics[f"{opponent}_absence"] - metrics[f"{side}_absence"] >= 0.05:
+            signals.append("상대 핵심 결장·선발 누수")
+        if metrics[f"{side}_market_bonus"] > 0:
+            signals.append("해외 배당 하락·시장 지지")
+        if metrics[f"{side}_tactical"] > 0:
+            signals.append("상대 전적·전술 상성 우위")
+        if metrics[f"{side}_recent"] - metrics[f"{opponent}_recent"] >= 0.035:
+            signals.append("최근 경기력 지표 우위")
+        if metrics[f"{side}_rest"] - metrics[f"{opponent}_rest"] >= 2:
+            signals.append("휴식일 우위")
+        if metrics[f"{opponent}_lineup"] - metrics[f"{side}_lineup"] >= 0.08:
+            signals.append("상대 선발 핵심 이탈")
+        pick["support_signals"] = list(dict.fromkeys(signals))
+        pick["independent_support_count"] = len(pick["support_signals"])
+    return picks
+
+
+def build_detailed_report(selected_pick, evidence, confidence):
+    if not selected_pick:
+        return "실제 배당과 모델 확률을 함께 비교할 수 있는 선택지가 없어 기존 분석을 유지했습니다."
+    probability = float(selected_pick.get("prob") or 0)
+    fair_probability = selected_pick.get("fair_prob")
+    edge = selected_pick.get("edge")
+    interval = selected_pick.get("probability_interval") or {}
+    evidence_text = ", ".join(
+        f"{item['name']}({item['value']})" for item in evidence
+    ) or "확인 가능한 기본 경기 정보"
+    fair_text = (
+        f"베팅업체 마진 제거 공정확률 {float(fair_probability) * 100:.1f}%, "
+        f"모델 우위 {float(edge or 0) * 100:+.1f}%p"
+        if fair_probability is not None else "공정확률 비교 자료 없음"
+    )
+    return (
+        f"[실사용 수치 기반 통합 분석] 픽을 먼저 결정한 뒤 실제 계산에 사용된 값만 표시합니다. "
+        f"선택: {selected_pick.get('raw_pick', '')} ({MARKET_LABELS.get(infer_pick_market(selected_pick), '')}). "
+        f"보정 확률 {probability * 100:.1f}%, {fair_text}, "
+        f"오차범위 {float(interval.get('low', 0)) * 100:.1f}%~"
+        f"{float(interval.get('high', 1)) * 100:.1f}%, 데이터 신뢰도 {confidence * 100:.1f}%. "
+        f"사용 근거: {evidence_text}. 누락된 항목은 추측하지 않고 신뢰도에서 감점했습니다."
+    )
+
+
+def save_prediction_analysis(match_id, pick, confidence, evidence, candidates, report):
+    """화면 표시용 JSON과 별도로 선택 당시 계산값을 DB에 보존한다."""
+    if not pick:
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prediction_analysis (
+                match_id TEXT PRIMARY KEY,
+                selected_market TEXT,
+                selected_pick TEXT,
+                model_probability REAL,
+                fair_probability REAL,
+                edge REAL,
+                confidence REAL,
+                error_margin REAL,
+                probability_low REAL,
+                probability_high REAL,
+                evidence_json TEXT,
+                markets_json TEXT,
+                report_text TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        interval = pick.get("probability_interval") or {}
+        market_rows = [
+            {
+                "market": infer_pick_market(item),
+                "pick": item.get("raw_pick"),
+                "model_probability": item.get("prob"),
+                "fair_probability": item.get("fair_prob"),
+                "edge": item.get("edge"),
+                "market_hit_rate": item.get("market_hit_rate"),
+            }
+            for item in candidates
+        ]
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO prediction_analysis (
+                match_id, selected_market, selected_pick, model_probability,
+                fair_probability, edge, confidence, error_margin,
+                probability_low, probability_high, evidence_json, markets_json,
+                report_text, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                str(match_id), infer_pick_market(pick), pick.get("raw_pick"),
+                pick.get("prob"), pick.get("fair_prob"), pick.get("edge"), confidence,
+                pick.get("error_margin"), interval.get("low"), interval.get("high"),
+                json.dumps(evidence, ensure_ascii=False),
+                json.dumps(market_rows, ensure_ascii=False), report,
+            ),
+        )
+        conn.commit()
+    except Exception as error:
+        print(f"⚠️ 통합 분석값 DB 저장 실패({match_id}): {error}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def annotate_pick_metrics(picks, confidence):
     for pick in picks:
         probability = float(pick.get("prob", 0) or 0)
@@ -882,7 +1217,7 @@ def annotate_pick_metrics(picks, confidence):
         pick["safe_score"] = round(probability * confidence, 4)
         pick["value_score"] = round(max(0.0, edge) * confidence, 4)
         pick["is_qualified_underdog"] = bool(
-            2.20 <= odd <= 6.00 and probability >= 0.24 and edge >= 0.04 and confidence >= 0.65
+            2.20 <= odd <= 6.00 and probability >= 0.22 and edge >= 0.03 and confidence >= 0.50
         )
         pick["recommendation_score"] = round(
             (probability * 0.72) + (confidence * 0.20) + (min(max(edge, 0.0), 0.15) * 0.55), 4
@@ -926,21 +1261,21 @@ def select_pick_categories(picks, confidence):
     high_source = max(
         picks,
         key=lambda pick: (
+            float(pick.get("balanced_score", 0) or 0),
             float(pick.get("prob", 0) or 0),
             float(pick.get("safe_score", 0) or 0),
             float(pick.get("recommendation_score", 0) or 0),
         ),
     )
-    used_raw_picks = {high_source.get("raw_pick")}
 
     vip_candidates = [
         pick for pick in picks
-        if pick.get("raw_pick") not in used_raw_picks
-        and pick.get("is_qualified_underdog")
-        and float(pick.get("edge", 0) or 0) >= 0.055
-        and confidence >= 0.70
+        if pick.get("is_qualified_underdog")
+        and float(pick.get("edge", 0) or 0) >= 0.035
+        and confidence >= 0.52
         and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
-        and float(pick.get("prob", 0) or 0) >= 0.24
+        and float(pick.get("prob", 0) or 0) >= 0.22
+        and int(pick.get("independent_support_count", 0) or 0) >= 2
     ]
     vip_source = max(
         vip_candidates,
@@ -951,16 +1286,14 @@ def select_pick_categories(picks, confidence):
         ),
         default=None,
     )
-    if vip_source:
-        used_raw_picks.add(vip_source.get("raw_pick"))
-
+    honey_edge_floor = 0.025 + max(0.0, 0.65 - confidence) * 0.05
     honey_candidates = [
         pick for pick in picks
-        if pick.get("raw_pick") not in used_raw_picks
-        and 1.40 <= float(pick.get("odd", 0) or 0) <= 5.00
-        and float(pick.get("prob", 0) or 0) >= 0.30
-        and float(pick.get("edge", 0) or 0) >= 0.025
-        and confidence >= 0.60
+        if 1.35 <= float(pick.get("odd", 0) or 0) <= 5.00
+        and float(pick.get("prob", 0) or 0) >= 0.28
+        and float(pick.get("edge", 0) or 0) >= honey_edge_floor
+        and float(pick.get("ev", 0) or 0) >= 1.02
+        and confidence >= 0.48
         and float(pick.get("value_score", 0) or 0) > 0
     ]
     honey_source = max(
@@ -1002,9 +1335,14 @@ def build_dashboard_data():
     dashboard_toto14 = []
     frozen_toto14 = _load_toto14_freezes()
     previous_dashboard = _read_json("dashboard_data.json", {})
+    previous_proto = {}
     previous_toto14 = {}
     previous_generated_at = None
     if isinstance(previous_dashboard, dict):
+        for item in previous_dashboard.get("proto", []):
+            if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
+                continue
+            previous_proto[str(item["match"].get("id", ""))] = item
         for item in previous_dashboard.get("toto14", []):
             if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
                 continue
@@ -1018,6 +1356,9 @@ def build_dashboard_data():
             previous_generated_at = previous_generated_at.astimezone(KST)
         except (AttributeError, TypeError, ValueError):
             previous_generated_at = None
+
+    # 한 번 읽은 실제 시장별 적중 기록을 이번 전체 경기 분석에 공통 적용한다.
+    market_performance = load_market_performance()
       
     for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
@@ -1030,7 +1371,26 @@ def build_dashboard_data():
         odd_d = float(m.get("odd_d") or 0)
         odd_a = float(m.get("odd_a") or 0)
         if min(odd_h, odd_d, odd_a) <= 1.0:
-            # 배당이 잠시 비어도 베트맨 원본 경기 자체는 화면에서 누락시키지 않는다.
+            # 배당이 잠시 비었을 때 같은 경기의 마지막 정상 분석이 있으면
+            # 그대로 유지한다. 새 경기라서 계산 근거 자체가 없을 때만 대기한다.
+            previous_item = previous_proto.get(str(m.get("id", "")))
+            previous_match = previous_item.get("match", {}) if isinstance(previous_item, dict) else {}
+            if (
+                isinstance(previous_item, dict)
+                and previous_match.get("home") == home_team
+                and previous_match.get("away") == away_team
+                and isinstance(previous_item.get("pick_categories"), dict)
+                and previous_item["pick_categories"].get("high_probability")
+            ):
+                preserved = dict(previous_item)
+                preserved["match"] = dict(m)
+                preserved["final_match_time"] = final_match_time
+                preserved["timestamp"] = m_dt.timestamp()
+                preserved["odds_temporarily_missing"] = True
+                dashboard_proto.append(preserved)
+                print(f"⚠️ 배당 일시 누락 - 마지막 정상 분석 유지: {home_team} vs {away_team}")
+                continue
+            # 마지막 정상 분석도 없으면 값을 임의로 만들지 않고 대기 상태로 둔다.
             dashboard_proto.append({
                 "match": m,
                 "final_match_time": final_match_time,
@@ -1205,8 +1565,12 @@ def build_dashboard_data():
         a_corners = a_stats.get('corners', 4.5)
         a_cards = a_stats.get('yellow_cards', 1.5)
 
-        h_xg_multi = max(0.82, min(1.22, 1.0 + ((h_stats.get('possession',50) - 50) * 0.008) + ((h_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((h_corners - 4.5) * 0.012) - ((h_cards - 1.5) * 0.015)))
-        a_xg_multi = max(0.82, min(1.22, 1.0 + ((a_stats.get('possession',50) - 50) * 0.008) + ((a_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((a_corners - 4.5) * 0.012) - ((a_cards - 1.5) * 0.015)))
+        h_actual_xg = h_stats.get("xg")
+        a_actual_xg = a_stats.get("xg")
+        h_xg_component = ((float(h_actual_xg) - 1.35) * 0.06) if h_actual_xg is not None else 0.0
+        a_xg_component = ((float(a_actual_xg) - 1.35) * 0.06) if a_actual_xg is not None else 0.0
+        h_xg_multi = max(0.82, min(1.22, 1.0 + h_xg_component + ((h_stats.get('possession',50) - 50) * 0.008) + ((h_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((h_corners - 4.5) * 0.012) - ((h_cards - 1.5) * 0.015)))
+        a_xg_multi = max(0.82, min(1.22, 1.0 + a_xg_component + ((a_stats.get('possession',50) - 50) * 0.008) + ((a_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((a_corners - 4.5) * 0.012) - ((a_cards - 1.5) * 0.015)))
          
         base_exp_h = (math_exp_h * h_xg_multi * 0.85) + (((1/odd_h) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
         base_exp_a = (math_exp_a * a_xg_multi * 0.85) + (((1/odd_a) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
@@ -1235,6 +1599,7 @@ def build_dashboard_data():
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"], heavy_ttl)
         h2h_total = fixture_details.get("total", 0)
         h_wins = fixture_details.get("h_wins", 0)
+        h2h_draws = fixture_details.get("draws", 0)
         a_wins = fixture_details.get("a_wins", 0)
         h_h2h_bonus = max(-0.10, min(0.10, ((h_wins - a_wins) / h2h_total) * 0.12)) if h2h_total > 0 else 0
         a_h2h_bonus = -h_h2h_bonus
@@ -1252,10 +1617,46 @@ def build_dashboard_data():
         exp_h = round(max(0.3, min(3.2, (base_exp_h * (1 - h_total_penalty) + cross_boost_h) + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_market_bonus + h_manager_buff)), 2)
         exp_a = round(max(0.3, min(3.2, (base_exp_a * (1 - a_total_penalty) + cross_boost_a) + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_market_bonus + a_manager_buff)), 2)
 
-        analysis_confidence = calculate_data_confidence(
+        base_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
             h_recent, a_recent, h_stats, a_stats, h_inj_data, a_inj_data,
             diff_hours, lineup_confirmed,
+        )
+        movement_parts = []
+        if h_market_bonus > 0:
+            movement_parts.append(f"{home_team} 해외 승 배당 하락")
+        if a_market_bonus > 0:
+            movement_parts.append(f"{away_team} 해외 승 배당 하락")
+        tactical_parts = [text for text in (h_matchup_msg, a_matchup_msg) if text]
+        if is_derby:
+            tactical_parts.append("로컬 더비 변동성")
+        evidence, data_coverage = build_analysis_evidence({
+            "h_recent": h_recent,
+            "a_recent": a_recent,
+            "h_stats": h_stats,
+            "a_stats": a_stats,
+            "h_long": h_long,
+            "a_long": a_long,
+            "h_inj": h_inj_data,
+            "a_inj": a_inj_data,
+            "h2h_total": h2h_total,
+            "h_wins": h_wins,
+            "draws": h2h_draws,
+            "a_wins": a_wins,
+            "h_rest_days": h_rest_days,
+            "a_rest_days": a_rest_days,
+            "weather": weather_condition if weather_condition not in (None, "", "Unknown") else None,
+            "referee": referee,
+            "tactical_text": ", ".join(tactical_parts),
+            "movement_text": ", ".join(movement_parts),
+            "home_id": home_info.get("id"),
+            "away_id": away_info.get("id"),
+            "fixture_id": api_fixture_id,
+        })
+        coverage_confidence = 0.35 + (0.60 * data_coverage)
+        analysis_confidence = round(
+            max(0.35, min(0.95, (base_confidence * 0.45) + (coverage_confidence * 0.55))),
+            3,
         )
          
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_base, uo_base)
@@ -1328,7 +1729,29 @@ def build_dashboard_data():
             elif home_team in base_wdl_pick and (handi_base < 0 and "패" in p_name): is_contra = True 
             elif away_team in base_wdl_pick and (handi_base > 0 and home_team in p_name and "핸디승" in p_name): is_contra = True 
             if not is_contra: valid_all_picks.append(pick)
-             
+
+        calibrate_market_candidates(
+            valid_all_picks, market_performance, analysis_confidence
+        )
+        attach_underdog_signals(
+            valid_all_picks,
+            home_team,
+            away_team,
+            {
+                "home_absence": h_total_penalty,
+                "away_absence": a_total_penalty,
+                "home_market_bonus": h_market_bonus,
+                "away_market_bonus": a_market_bonus,
+                "home_tactical": h_kryptonite,
+                "away_tactical": a_kryptonite,
+                "home_recent": h_recent.get("strength", 0.0),
+                "away_recent": a_recent.get("strength", 0.0),
+                "home_rest": h_rest_days if h_rest_days < 90 else 0,
+                "away_rest": a_rest_days if a_rest_days < 90 else 0,
+                "home_lineup": h_lineup_penalty,
+                "away_lineup": a_lineup_penalty,
+            },
+        )
         annotate_pick_metrics(valid_all_picks, analysis_confidence)
         pick_categories, ev_sorted_picks = select_pick_categories(
             valid_all_picks, analysis_confidence
@@ -1340,6 +1763,9 @@ def build_dashboard_data():
         # 기존 DB/리포트 필드와 호환되는 대표 가치 픽입니다. 신규 화면에서는
         # pick_categories를 사용하므로 세 카테고리가 서로 섞이지 않습니다.
         highest_ev_pick = honey_pick or vip_underdog_pick or highest_prob_pick
+        detailed_report = build_detailed_report(
+            highest_prob_pick, evidence, analysis_confidence
+        )
 
         badge_templates = {
             "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>📈 확률 높은 픽</span>",
@@ -1391,6 +1817,10 @@ def build_dashboard_data():
             odd_h, odd_d, odd_a, final_match_time, 0, api_fixture_id,
             analysis_stage, analysis_confidence,
         )
+        save_prediction_analysis(
+            m["id"], highest_prob_pick, analysis_confidence,
+            evidence, valid_all_picks, detailed_report,
+        )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
         a_form = fetch_team_form_api(away_info.get("id"), heavy_ttl)
@@ -1435,6 +1865,26 @@ def build_dashboard_data():
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "analysis_stage": analysis_stage, "reliability_score": reliability_score,
+            "data_coverage": data_coverage,
+            "probability_error_margin": highest_prob_pick.get("error_margin"),
+            "probability_interval": highest_prob_pick.get("probability_interval"),
+            "model_probability": highest_prob_pick.get("prob"),
+            "fair_market_probability": highest_prob_pick.get("fair_prob"),
+            "model_market_edge": highest_prob_pick.get("edge"),
+            "used_feature_evidence": evidence,
+            "market_probability_analysis": [
+                {
+                    "market": infer_pick_market(pick),
+                    "pick": pick.get("raw_pick"),
+                    "model_probability": pick.get("prob"),
+                    "fair_probability": pick.get("fair_prob"),
+                    "edge": pick.get("edge"),
+                    "market_hit_rate": pick.get("market_hit_rate"),
+                    "history_samples": pick.get("market_history_samples"),
+                }
+                for pick in valid_all_picks
+            ],
+            "detailed_report": detailed_report,
             "underdog_signal": underdog_signal,
             "h_inj_html": h_inj_html, "a_inj_html": a_inj_html, 
             "h_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if h_rest_days <= 3 else "", "a_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if a_rest_days <= 3 else "",
