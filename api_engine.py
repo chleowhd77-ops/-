@@ -555,6 +555,73 @@ SMART_MAPPING_FILE = "smart_mapping.json"
 TEAM_INFO_MEMORY_CACHE = {}
 TEAM_INFO_FAILURE_RETRY_AT = {}
 
+# 베트맨/국내 표기와 API-FOOTBALL 영문 팀명을 연결한다.
+# 여기서 찾은 동일 팀 ID를 팀 마크와 최근 전적 조회에 함께 사용한다.
+BUILTIN_TEAM_ALIASES = {
+    "시미즈 에스펄스": "Shimizu S-Pulse",
+    "시미즈S펄스": "Shimizu S-Pulse",
+    "V바렌 나가사키": "V-Varen Nagasaki",
+    "V-바렌 나가사키": "V-Varen Nagasaki",
+    "V바렌나가사키": "V-Varen Nagasaki",
+    "요코하마 F 마리노스": "Yokohama F. Marinos",
+    "요코하마F마리노스": "Yokohama F. Marinos",
+    "빌럼II": "Willem II",
+    "빌럼2": "Willem II",
+    "SC헤이렌베인": "Heerenveen",
+    "헤이렌베인": "Heerenveen",
+    "SC프라이부르크": "SC Freiburg",
+    "프라이부르크": "SC Freiburg",
+    "베르더브레멘": "Werder Bremen",
+    "베르더 브레멘": "Werder Bremen",
+    "텔스타": "Telstar",
+    "AFC아약스": "Ajax",
+    "아약스": "Ajax",
+    "아우크스부르크": "FC Augsburg",
+    "샬케04": "FC Schalke 04",
+    "샬케 04": "FC Schalke 04",
+    "SC캄뷔르": "Cambuur",
+    "캄뷔르": "Cambuur",
+    "트벤테": "Twente",
+    "PSV에인트호번": "PSV Eindhoven",
+    "PSV 에인트호번": "PSV Eindhoven",
+    "위트레흐트": "Utrecht",
+    "페예노르트": "Feyenoord",
+    "묀헨글라트바흐": "Borussia Monchengladbach",
+    "RB라이프치히": "RB Leipzig",
+    "레버쿠젠": "Bayer Leverkusen",
+    "도르트문트": "Borussia Dortmund",
+    "브라이턴": "Brighton",
+    "브라이튼": "Brighton",
+    "헐시티": "Hull City",
+    "헐 시티": "Hull City",
+    "코벤트리": "Coventry City",
+    "코번트리": "Coventry City",
+    "맨체스터U": "Manchester United",
+    "맨유": "Manchester United",
+    "리버풀": "Liverpool",
+    "칼리아리": "Cagliari",
+    "인터밀란": "Inter",
+    "SSC나폴리": "Napoli",
+    "나폴리": "Napoli",
+    "코모1907": "Como",
+    "광주FC": "Gwangju FC",
+    "FC서울": "FC Seoul",
+}
+
+
+def _builtin_team_alias_key(value):
+    return re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").lower())
+
+
+BUILTIN_TEAM_ALIAS_INDEX = {
+    _builtin_team_alias_key(local_name): api_name
+    for local_name, api_name in BUILTIN_TEAM_ALIASES.items()
+}
+
+
+def _lookup_builtin_team_alias(team_name):
+    return BUILTIN_TEAM_ALIAS_INDEX.get(_builtin_team_alias_key(team_name))
+
 def _sanitize_team_search(value):
     """API-Football 검색 규칙(영문/숫자/공백만 허용)에 맞춘다."""
     return re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 ]+', ' ', str(value or ''))).strip()
@@ -617,6 +684,9 @@ def _resolve_team_logo(team_name, team_id=0, api_logo=None):
 
 def _resolve_translated_team_name(team_name):
     """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
+    builtin_alias = _lookup_builtin_team_alias(team_name)
+    if builtin_alias:
+        return builtin_alias
     if team_name in MANUAL_TEAM_MAP:
         return MANUAL_TEAM_MAP[team_name]
     if team_name in TEAM_NAME_MAP:
@@ -734,7 +804,7 @@ def fetch_team_info_api(team_name):
         return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
-    cache_key = f"team_info_v3_{team_name}"
+    cache_key = f"team_info_v4_{team_name}"
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
         cached_data["logo"] = _resolve_team_logo(
