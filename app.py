@@ -18,9 +18,11 @@ from member_system import (
     ROLE_LABELS,
     ROLE_MEMBER,
     ROLE_SUPPORTER,
+    authenticate_session,
     authenticate_user,
     bootstrap_admin,
     can_write_board,
+    create_login_session,
     create_notice,
     create_post,
     delete_post,
@@ -33,6 +35,7 @@ from member_system import (
     list_users,
     register_user,
     request_supporter,
+    revoke_login_session,
     review_support_request,
     set_user_role,
     set_user_status,
@@ -361,6 +364,44 @@ st.markdown("""
         height: 6px;
         border-radius: 50%;
         background: var(--dj-red);
+    }
+    div[data-testid="stDialog"] div[role="dialog"] {
+        overflow: hidden;
+        border: 1px solid rgba(25, 230, 242, .26);
+        border-radius: 24px;
+        background:
+            radial-gradient(circle at 92% 8%, rgba(25, 230, 242, .15), transparent 31%),
+            linear-gradient(145deg, #0D1B31 0%, #080E19 72%);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, .58);
+    }
+    div[data-testid="stDialog"] img {
+        width: 100%;
+        max-height: 340px;
+        object-fit: cover;
+        border: 1px solid rgba(148, 163, 184, .15);
+        border-radius: 17px;
+    }
+    .event-popup-copy { padding: 5px 2px 3px; }
+    .event-popup-kicker {
+        margin-bottom: 9px;
+        color: var(--dj-cyan);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: .16em;
+    }
+    .event-popup-title {
+        margin-bottom: 11px;
+        color: #F7FAFF;
+        font-size: clamp(23px, 4vw, 31px);
+        font-weight: 950;
+        line-height: 1.25;
+        word-break: keep-all;
+    }
+    .event-popup-body {
+        color: #B5C1D2;
+        font-size: 14px;
+        line-height: 1.75;
+        overflow-wrap: anywhere;
     }
 
     .block-container {
@@ -819,6 +860,8 @@ if 'username' not in st.session_state:
     st.session_state['username'] = ""
 if 'role' not in st.session_state:
     st.session_state['role'] = ROLE_GUEST
+if 'auth_token' not in st.session_state:
+    st.session_state['auth_token'] = ""
 
 # 서버의 live_scores.json은 5분마다 갱신된다. 브라우저도 1분마다 조용히
 # 다시 읽어야 사용자가 수동 새로고침을 하지 않아도 점수가 움직인다.
@@ -836,11 +879,59 @@ st.sidebar.markdown(
 )
 
 
-def begin_user_session(user):
+AUTH_QUERY_KEY = "dj_session"
+
+
+def read_auth_query_token():
+    try:
+        value = st.query_params.get(AUTH_QUERY_KEY, "")
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def write_auth_query_token(token):
+    if not token:
+        return
+    try:
+        st.query_params[AUTH_QUERY_KEY] = token
+    except Exception:
+        pass
+
+
+def clear_auth_query_token():
+    try:
+        if AUTH_QUERY_KEY in st.query_params:
+            del st.query_params[AUTH_QUERY_KEY]
+    except Exception:
+        pass
+
+
+def apply_user_session(user, auth_token=""):
     st.session_state['logged_in'] = True
     st.session_state['user_id'] = user['id']
     st.session_state['username'] = user['username']
     st.session_state['role'] = user['role']
+    st.session_state['auth_token'] = auth_token
+
+
+def begin_user_session(user):
+    auth_token = create_login_session(int(user['id'])) or ""
+    apply_user_session(user, auth_token)
+    write_auth_query_token(auth_token)
+
+
+# Streamlit 화면 상태가 초기화되어도 주소에 저장된 기기별 로그인 표식으로 복구한다.
+if not st.session_state['logged_in']:
+    saved_auth_token = read_auth_query_token()
+    if saved_auth_token:
+        restored_user = authenticate_session(saved_auth_token)
+        if restored_user:
+            apply_user_session(restored_user, saved_auth_token)
+        else:
+            clear_auth_query_token()
 
 
 def submit_registration(username, display_name, password, password_check,
@@ -933,15 +1024,28 @@ if hasattr(st, "dialog"):
                 st.error(message)
 
 
-    @st.dialog("중요 공지")
+    @st.dialog("D.J SPORTS EVENT")
     def open_notice_popup(notice):
         notice_id = int(notice["id"])
-        st.markdown(f"### {escape(str(notice.get('title', '서비스 공지')))}")
-        st.write(str(notice.get("body", "")))
+        popup_image = get_post_image(notice_id)
+        if popup_image:
+            st.image(popup_image[1], use_container_width=True)
+        safe_title = escape(str(notice.get('title', '서비스 공지')))
+        safe_body = escape(str(notice.get("body", ""))).replace("\n", "<br>")
+        st.markdown(
+            f"""
+            <div class="event-popup-copy">
+                <div class="event-popup-kicker">D.J SPORTS · NOTICE</div>
+                <div class="event-popup-title">{safe_title}</div>
+                <div class="event-popup-body">{safe_body}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         notice_link = str(notice.get("notice_link") or "").strip()
         if notice_link:
-            st.link_button("자세히 보기", notice_link, use_container_width=True)
-        if st.button("이번 접속 동안 닫기", key=f"dismiss-popup-{notice_id}", use_container_width=True):
+            st.link_button("이벤트 자세히 보기 →", notice_link, use_container_width=True)
+        if st.button("닫기", key=f"dismiss-popup-{notice_id}", use_container_width=True):
             dismissed = set(st.session_state.get("dismissed_popup_ids", []))
             dismissed.add(notice_id)
             st.session_state["dismissed_popup_ids"] = sorted(dismissed)
@@ -1101,10 +1205,14 @@ else:
                     st.error(message)
 
     if st.sidebar.button("로그아웃 →", key="sidebar-logout"):
+        logout_token = st.session_state.get('auth_token') or read_auth_query_token()
+        revoke_login_session(str(logout_token or ""))
+        clear_auth_query_token()
         st.session_state['logged_in'] = False
         st.session_state['user_id'] = None
         st.session_state['username'] = ""
         st.session_state['role'] = ROLE_GUEST
+        st.session_state['auth_token'] = ""
         st.rerun()
 
     # 관리자 전용 회원·권한 관리
@@ -1235,6 +1343,12 @@ else:
                     "연결 주소 (선택)",
                     placeholder="https:// 로 시작하는 주소",
                 )
+                notice_image = st.file_uploader(
+                    "팝업 대표 이미지 (선택)",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    help="가로형 이미지를 권장합니다. 최대 2MB입니다.",
+                    key="admin-notice-image",
+                )
                 notice_form_submit = st.form_submit_button(
                     "공지 등록", use_container_width=True
                 )
@@ -1248,6 +1362,8 @@ else:
                     notice_start_at=notice_start.strftime("%Y-%m-%d"),
                     notice_end_at=(notice_end.strftime("%Y-%m-%d") if notice_has_end else None),
                     notice_link=notice_link,
+                    image_bytes=(notice_image.getvalue() if notice_image else None),
+                    image_mime=(str(notice_image.type) if notice_image else None),
                 )
                 (st.success if ok else st.error)(message)
                 if ok:
@@ -1264,10 +1380,11 @@ else:
                     notice_status = "공개 중" if notice["status"] == "visible" else "숨김"
                     start_label = notice.get("notice_start_at") or "즉시"
                     end_label = notice.get("notice_end_at") or "계속"
+                    image_label = " · 사진 포함" if notice.get("has_image") else ""
                     st.caption(
                         f"{notice_status} · {mode_labels.get(notice.get('notice_mode'), '상단 안내')} · "
                         f"{audience_labels.get(notice.get('notice_audience'), '전체')} · "
-                        f"{start_label}~{end_label} · {notice['title']}"
+                        f"{start_label}~{end_label}{image_label} · {notice['title']}"
                     )
                     should_show = notice["status"] != "visible"
                     action_label = "다시 공개" if should_show else "숨기기"

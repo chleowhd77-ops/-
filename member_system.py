@@ -38,6 +38,8 @@ MAX_POST_IMAGE_BYTES = 2 * 1024 * 1024
 ALLOWED_POST_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 NOTICE_MODES = {"banner", "popup"}
 NOTICE_AUDIENCES = {"all", "guest", "member", "supporter"}
+AUTH_SESSION_DAYS = max(1, min(int(os.getenv("DJ_AUTH_SESSION_DAYS", "30")), 90))
+AUTH_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 KST = timezone(timedelta(hours=9))
 
 
@@ -152,6 +154,19 @@ def init_member_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(actor_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
+                ON auth_sessions(user_id);
             """
         )
         # 기존 users.db도 그대로 사용할 수 있도록 새 열만 안전하게 추가한다.
@@ -255,6 +270,76 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
             "role": row["role"],
             "status": row["status"],
         }
+
+
+def _session_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_login_session(user_id: int, days: int | None = None) -> str | None:
+    """Create a revocable browser login token and store only its hash."""
+    lifetime_days = AUTH_SESSION_DAYS if days is None else max(1, min(int(days), 90))
+    token = secrets.token_urlsafe(32)
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat(timespec="seconds")
+    expires_at = (now_dt + timedelta(days=lifetime_days)).isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM auth_sessions WHERE expires_at<=? OR revoked_at IS NOT NULL",
+            (now,),
+        )
+        user = conn.execute(
+            "SELECT id FROM users WHERE id=? AND status='active'", (int(user_id),)
+        ).fetchone()
+        if not user:
+            return None
+        conn.execute(
+            """
+            INSERT INTO auth_sessions(
+                token_hash, user_id, created_at, expires_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (_session_token_hash(token), int(user_id), now, expires_at, now),
+        )
+    return token
+
+
+def authenticate_session(token: str) -> dict[str, Any] | None:
+    """Restore one active user from a valid persistent browser token."""
+    token = (token or "").strip()
+    if not AUTH_TOKEN_PATTERN.fullmatch(token):
+        return None
+    now = utc_now()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username, u.display_name, u.role, u.status
+            FROM auth_sessions s
+            JOIN users u ON u.id=s.user_id
+            WHERE s.token_hash=? AND s.revoked_at IS NULL
+              AND s.expires_at>? AND u.status='active'
+            """,
+            (_session_token_hash(token), now),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE auth_sessions SET last_seen_at=? WHERE token_hash=?",
+            (now, _session_token_hash(token)),
+        )
+    return dict(row)
+
+
+def revoke_login_session(token: str) -> None:
+    """Invalidate the current browser token on an explicit logout."""
+    token = (token or "").strip()
+    if not AUTH_TOKEN_PATTERN.fullmatch(token):
+        return
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE auth_sessions SET revoked_at=? WHERE token_hash=?",
+            (utc_now(), _session_token_hash(token)),
+        )
 
 
 def list_users() -> list[dict[str, Any]]:
@@ -487,7 +572,8 @@ def list_notices(include_hidden: bool = False, limit: int = 20) -> list[dict[str
             f"""
             SELECT p.id, p.title, p.body, p.status, p.created_at, p.updated_at,
                    p.notice_mode, p.notice_audience, p.notice_start_at,
-                   p.notice_end_at, p.notice_link,
+                   p.notice_end_at, p.notice_link, p.image_mime,
+                   CASE WHEN p.image_data IS NULL THEN 0 ELSE 1 END AS has_image,
                    u.username, u.display_name
             FROM posts p JOIN users u ON u.id=p.author_id
             WHERE p.category='notice' AND {status_clause}
@@ -511,6 +597,8 @@ def create_notice(
     notice_start_at: str | None = None,
     notice_end_at: str | None = None,
     notice_link: str = "",
+    image_bytes: bytes | None = None,
+    image_mime: str | None = None,
 ) -> tuple[bool, str]:
     title = title.strip()
     body = body.strip()
@@ -538,6 +626,17 @@ def create_notice(
     if not _valid_notice_link(notice_link):
         return False, "연결 주소는 http:// 또는 https://로 시작해야 합니다."
 
+    stored_image = bytes(image_bytes) if image_bytes else None
+    stored_mime = None
+    if stored_image:
+        if len(stored_image) > MAX_POST_IMAGE_BYTES:
+            return False, "팝업 이미지는 2MB 이하로 올려주세요."
+        stored_mime = _detect_post_image_mime(stored_image)
+        if stored_mime not in ALLOWED_POST_IMAGE_MIMES:
+            return False, "팝업 이미지는 JPG, PNG, WEBP만 사용할 수 있습니다."
+        if image_mime and image_mime not in ALLOWED_POST_IMAGE_MIMES:
+            return False, "팝업 이미지 형식을 확인해주세요."
+
     with _connect() as conn:
         actor = conn.execute(
             "SELECT role, status FROM users WHERE id=?", (actor_id,)
@@ -549,12 +648,14 @@ def create_notice(
             """
             INSERT INTO posts(
                 author_id, category, title, body, notice_mode, notice_audience,
-                notice_start_at, notice_end_at, notice_link, created_at, updated_at
-            ) VALUES (?, 'notice', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                notice_start_at, notice_end_at, notice_link, image_mime, image_data,
+                created_at, updated_at
+            ) VALUES (?, 'notice', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 actor_id, title, body, notice_mode, notice_audience,
-                notice_start_at, notice_end_at, notice_link or None, now, now,
+                notice_start_at, notice_end_at, notice_link or None,
+                stored_mime, stored_image, now, now,
             ),
         )
         conn.execute(
@@ -600,7 +701,8 @@ def list_active_notices(
             f"""
             SELECT p.id, p.title, p.body, p.status, p.created_at, p.updated_at,
                    p.notice_mode, p.notice_audience, p.notice_start_at,
-                   p.notice_end_at, p.notice_link,
+                   p.notice_end_at, p.notice_link, p.image_mime,
+                   CASE WHEN p.image_data IS NULL THEN 0 ELSE 1 END AS has_image,
                    u.username, u.display_name
             FROM posts p JOIN users u ON u.id=p.author_id
             WHERE p.category='notice' AND p.status='visible'

@@ -38,8 +38,18 @@ class ApiQuotaUnavailable(RuntimeError):
     """일일 API 한도 보호 장치가 요청을 중단했음을 뜻한다."""
 
 
+def _api_provider_day_key():
+    """API-Sports의 일일 사용량 초기화 기준(매일 00:00 UTC)을 따른다.
+
+    기존 버전은 한국 날짜를 사용해 공급사 초기화 시각과 최대 9시간 어긋났다.
+    ``utc:`` 접두사는 과거 KST 기준으로 저장된 소진 기록과 새 기록을 분리해,
+    업데이트 직후에도 오래된 0회 잔여 기록이 로봇을 막지 않게 한다.
+    """
+    return f"utc:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+
+
 def _api_usage_today():
-    day_key = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    day_key = _api_provider_day_key()
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=10)
         cursor = conn.cursor()
@@ -125,7 +135,7 @@ def _show_api_quota_notice(message):
 def api_get(path, params=None, timeout=7, purpose="analysis"):
     """API-Football 호출을 한곳에서 집계하고 분석/라이브 예산을 분리한다."""
     global _API_PROVIDER_REMAINING, _API_PROVIDER_DAY, _API_QUOTA_NOTICE_SHOWN
-    current_day = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    current_day = _api_provider_day_key()
     if _API_PROVIDER_DAY != current_day:
         _API_PROVIDER_DAY = current_day
         _API_PROVIDER_REMAINING = None
@@ -183,7 +193,8 @@ def get_api_usage_status():
     if _API_PROVIDER_DAY == day_key and _API_PROVIDER_REMAINING is not None:
         remaining = _API_PROVIDER_REMAINING
     return {
-        "usage_day": day_key,
+        "usage_day": day_key.removeprefix("utc:"),
+        "reset_timezone": "UTC",
         "local_calls": int(local_calls or 0),
         "provider_remaining": remaining,
         "analysis_soft_limit": API_ANALYSIS_SOFT_LIMIT,
