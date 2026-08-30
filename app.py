@@ -1774,7 +1774,7 @@ with main_tab1:
                         live_info = live_scores_data[match_id_str]
                         score_text = live_info.get("score", "0:0")
                         if not score_text or score_text == "-": score_text = "0:0"
-                            event_lines = []
+        event_lines = []
                             for raw_event in (live_info.get("events") or [])[-3:]:
                                 if isinstance(raw_event, dict):
                                     line = str(raw_event.get("text") or "").strip()
