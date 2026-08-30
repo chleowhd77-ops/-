@@ -682,6 +682,27 @@ def _resolve_team_logo(team_name, team_id=0, api_logo=None):
             return official_logo
     return api_logo or DEFAULT_LOGO
 
+def _team_id_from_resolved_logo(team_name):
+    """이미 확인된 팀 로고와 같은 API 팀 ID를 돌려줍니다."""
+    resolved_logo = _resolve_team_logo(team_name, 0, DEFAULT_LOGO)
+    if not resolved_logo or resolved_logo == DEFAULT_LOGO:
+        return 0
+
+    clean_logo = str(resolved_logo).split("?", 1)[0]
+
+    for known_id, known_logo in OFFICIAL_TEAM_LOGOS_BY_ID.items():
+        if str(known_logo).split("?", 1)[0] == clean_logo:
+            try:
+                return int(known_id)
+            except (TypeError, ValueError):
+                pass
+
+    match = re.search(r"/teams/(\d+)\.(?:png|webp|svg)$", clean_logo, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
 def _resolve_translated_team_name(team_name):
     """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
     builtin_alias = _lookup_builtin_team_alias(team_name)
@@ -798,13 +819,27 @@ def fetch_team_info_api(team_name):
         TEAM_INFO_MEMORY_CACHE[team_name] = result
         return result
 
+    # 수동/공식 로고가 이미 확인된 팀은 그 로고의 API 팀 ID를 그대로 사용합니다.
+    # 이 ID가 최근 전적, 경기 매칭, 라이브 스코어 조회에 공통으로 전달됩니다.
+    resolved_logo = _resolve_team_logo(team_name, 0, DEFAULT_LOGO)
+    logo_team_id = _team_id_from_resolved_logo(team_name)
+    if logo_team_id:
+        result = {
+            "id": logo_team_id,
+            "name": _resolve_translated_team_name(team_name) or team_name,
+            "logo": resolved_logo,
+        }
+        TEAM_INFO_MEMORY_CACHE[team_name] = result
+        set_db_cache(f"team_info_v5_{team_name}", result)
+        return result
+
     fallback_res = {"id": 0, "name": team_name, "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO)}
     retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
     if retry_at and datetime.now(timezone.utc) < retry_at:
         return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
-    cache_key = f"team_info_v4_{team_name}"
+    cache_key = f"team_info_v5_{team_name}"
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
         cached_data["logo"] = _resolve_team_logo(
