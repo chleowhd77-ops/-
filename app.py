@@ -42,6 +42,7 @@ from member_system import (
     set_user_status,
     set_notice_visibility,
     set_post_visibility,
+    sync_member_storage_now,
     update_post,
 )
 
@@ -1468,8 +1469,25 @@ active_role = st.session_state.get('role', ROLE_GUEST)
 access_profile = ACCESS_RULES.get(active_role, ACCESS_RULES[ROLE_GUEST])
 has_full_access = bool(access_profile["full_analysis"])
 visible_match_limit = access_profile["match_limit"]
-if active_role == ROLE_ADMIN and not MEMBER_STORAGE_STATUS.get("persistent"):
-    st.sidebar.warning("회원 DB 영구 저장 설정 전입니다. 재부트 전에 S3 보안 저장소를 연결해주세요.")
+if active_role == ROLE_ADMIN:
+    storage_ok = bool(MEMBER_STORAGE_STATUS.get("persistent"))
+    storage_configured = bool(MEMBER_STORAGE_STATUS.get("configured"))
+    if not storage_ok:
+        st.sidebar.warning(MEMBER_STORAGE_STATUS.get("message"))
+    with st.sidebar.expander("회원 DB 저장 상태", expanded=not storage_ok):
+        if storage_ok:
+            st.success("S3 영구 저장 정상")
+        else:
+            st.caption(MEMBER_STORAGE_STATUS.get("message"))
+        if storage_configured and st.button(
+            "S3 연결 확인 · 지금 백업",
+            key="admin-member-storage-sync",
+            use_container_width=True,
+        ):
+            sync_ok, sync_message = sync_member_storage_now()
+            (st.success if sync_ok else st.error)(sync_message)
+            if sync_ok:
+                st.rerun()
 
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
