@@ -39,6 +39,7 @@ except Exception:
 
 from config import *
 from api_engine import *
+from api_engine import _normalize_player_name
 
 
 APP_DIR = Path(__file__).resolve().parent
