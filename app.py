@@ -1257,6 +1257,25 @@ else:
     # 관리자 전용 회원·권한 관리
     if current_role == ROLE_ADMIN:
         st.sidebar.markdown("---")
+        storage_status = get_member_storage_status()
+        storage_ok = bool(storage_status.get("persistent"))
+        if not storage_ok:
+            st.sidebar.warning(storage_status.get("message"))
+        with st.sidebar.expander("회원 DB 저장 상태", expanded=not storage_ok):
+            if storage_ok:
+                st.success("S3 영구 저장 정상")
+            else:
+                st.caption(storage_status.get("message"))
+            if st.button(
+                "S3 연결 확인 · 지금 백업",
+                key="admin-member-storage-sync",
+                use_container_width=True,
+            ):
+                sync_ok, sync_message = sync_member_storage_now()
+                (st.success if sync_ok else st.error)(sync_message)
+                if sync_ok:
+                    st.rerun()
+
         pending_requests = [
             request for request in list_support_requests() if request["status"] == "pending"
         ]
@@ -1469,25 +1488,6 @@ active_role = st.session_state.get('role', ROLE_GUEST)
 access_profile = ACCESS_RULES.get(active_role, ACCESS_RULES[ROLE_GUEST])
 has_full_access = bool(access_profile["full_analysis"])
 visible_match_limit = access_profile["match_limit"]
-if active_role == ROLE_ADMIN:
-    storage_ok = bool(MEMBER_STORAGE_STATUS.get("persistent"))
-    storage_configured = bool(MEMBER_STORAGE_STATUS.get("configured"))
-    if not storage_ok:
-        st.sidebar.warning(MEMBER_STORAGE_STATUS.get("message"))
-    with st.sidebar.expander("회원 DB 저장 상태", expanded=not storage_ok):
-        if storage_ok:
-            st.success("S3 영구 저장 정상")
-        else:
-            st.caption(MEMBER_STORAGE_STATUS.get("message"))
-        if storage_configured and st.button(
-            "S3 연결 확인 · 지금 백업",
-            key="admin-member-storage-sync",
-            use_container_width=True,
-        ):
-            sync_ok, sync_message = sync_member_storage_now()
-            (st.success if sync_ok else st.error)(sync_message)
-            if sync_ok:
-                st.rerun()
 
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
