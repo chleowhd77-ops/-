@@ -22,7 +22,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.1-distinct-picks-report"
+ANALYSIS_VERSION = "V6.3-honey-vip-hierarchy-livefix"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -464,6 +464,16 @@ DIRECT_TEAM_INFO = {
 # API-Football의 고정 팀 ID가 검증된 구단은 검색 API가 느리거나 한도에
 # 걸려도 엠블럼과 경기 연결이 끊기지 않도록 직접 연결한다.
 DIRECT_TEAM_INFO.update({
+    # 세리에A 팀은 검색 결과의 동명이인/유소년 팀 오연결을 막기 위해
+    # API-Football의 검증된 1군 팀 ID를 직접 사용합니다.
+    "AS로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
+    "AS 로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
+    "로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
+    "AS Roma": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
+    "US레체": {"id": 867, "logo": "https://media.api-sports.io/football/teams/867.png"},
+    "US 레체": {"id": 867, "logo": "https://media.api-sports.io/football/teams/867.png"},
+    "레체": {"id": 867, "logo": "https://media.api-sports.io/football/teams/867.png"},
+    "Lecce": {"id": 867, "logo": "https://media.api-sports.io/football/teams/867.png"},
     "RB라이프치히": {"id": 173, "logo": "https://media.api-sports.io/football/teams/173.png"},
     "묀헨글라트바흐": {"id": 163, "logo": "https://media.api-sports.io/football/teams/163.png"},
     "FSV마인츠05": {"id": 164, "logo": "https://media.api-sports.io/football/teams/164.png"},
@@ -620,6 +630,12 @@ BUILTIN_TEAM_ALIASES = {
     "리버풀": "Liverpool",
     "칼리아리": "Cagliari",
     "인터밀란": "Inter",
+    "AS로마": "Roma",
+    "AS 로마": "Roma",
+    "로마": "Roma",
+    "US레체": "Lecce",
+    "US 레체": "Lecce",
+    "레체": "Lecce",
     "SSC나폴리": "Napoli",
     "나폴리": "Napoli",
     "코모1907": "Como",
@@ -1752,63 +1768,58 @@ def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
                 
     return 0
 
-def generate_real_ai_note(fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev):
+def generate_real_ai_note(
+    fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev, has_ev_pick=True
+):
+    """채점에 실제로 확보한 최종 점수와 공식 통계만 기록합니다."""
     try:
         stat_res = api_get("/fixtures/statistics", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
-        evt_res = api_get("/fixtures/events", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
-         
-        stats = stat_res.json().get("response", [])
-        events = evt_res.json().get("response", [])
-         
-        pos_h, pos_a = "50%", "50%"
-        sot_h, sot_a = 0, 0
-        if len(stats) == 2:
-            for s in stats[0]["statistics"]:
-                if s["type"] == "Ball Possession" and s["value"]: pos_h = str(s["value"])
-                if s["type"] == "Shots on Goal" and s["value"]: sot_h = int(s["value"])
-            for s in stats[1]["statistics"]:
-                if s["type"] == "Ball Possession" and s["value"]: pos_a = str(s["value"])
-                if s["type"] == "Shots on Goal" and s["value"]: sot_a = int(s["value"])
+        stats = stat_res.json().get("response", []) if stat_res.status_code == 200 else []
 
-        event_logs = []
-        late_goals = []
-        
-        for e in events:
-            elapsed = e.get('time', {}).get('elapsed', 0)
-            e_type = e.get('type')
-            e_detail = e.get('detail', '')
-            player_name = e.get('player', {}).get('name', '선수')
+        result_parts = [
+            f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
+            (
+                f"꿀픽 {'적중' if is_correct_ev == 1 else '미적중'}"
+                if has_ev_pick else "꿀픽 미선정"
+            ),
+        ]
+        note_parts = [
+            f"[채점 결과] {' · '.join(result_parts)}.",
+            f"[최종 점수] {int(goals_h)}:{int(goals_a)}.",
+        ]
 
-            team_name = str(e.get('team', {}).get('name', '') or '')
-            assist_name = str(e.get('assist', {}).get('name', '') or '')
-            minute = f"{elapsed}'"
-            if e_type == 'Goal':
-                if elapsed >= 85: late_goals.append(f"{elapsed}' 극장골({player_name})")
-                else: event_logs.append(f"{minute} ⚽ 득점 · {team_name} · {player_name}")
-            elif e_type == 'Card' and ('Red' in e_detail or 'Second Yellow' in e_detail):
-                event_logs.append(f"{minute} 🟥 퇴장 · {team_name} · {player_name}")
-            elif e_type == 'Card' and 'Yellow' in e_detail:
-                event_logs.append(f"{minute} 🟨 경고 · {team_name} · {player_name}")
-            elif str(e_type).casefold() in {'subst', 'substitution'}:
-                change = f"{player_name} OUT"
-                if assist_name:
-                    change += f" / {assist_name} IN"
-                event_logs.append(f"{minute} 🔄 교체 · {team_name} · {change}")
-            elif str(e_type).casefold() == 'var':
-                event_logs.append(f"{minute} 📺 VAR · {team_name} · {e_detail}")
-            elif str(e_type).casefold() == 'injury' or 'injur' in str(e_detail).casefold():
-                event_logs.append(f"{minute} 🚑 부상 · {team_name} · {player_name}")
-                 
-        note = f"📊 실제 데이터: 점유율({pos_h} vs {pos_a}), 유효슈팅({sot_h}개 vs {sot_a}개). "
-        
-        all_events = event_logs + late_goals
-        if all_events: note += f" | ⏱️ 매치 타임라인: {', '.join(all_events)}. "
-         
-        if is_correct_prob == 1 and is_correct_ev == 1: note = "💡 [퍼펙트 적중] AI의 분석이 경기 흐름과 정확히 일치했습니다! " + note
-        elif is_correct_prob == 1: note = "💡 [확률픽 적중 / 꿀픽 실패] 안정적인 예측은 통했으나, 역배당의 기적은 일어나지 않았습니다. " + note
-        elif is_correct_ev == 1: note = "💡 [꿀픽 적중 / 확률픽 실패] AI가 포착한 가치(역배/핸디)가 완벽히 들어맞아 큰 수익을 냈습니다! " + note
-        else: note = "💡 [전면 실패 오답노트] AI의 예상과 실제 경기 양상이 크게 엇갈렸습니다. 딥러닝 보정 데이터로 활용됩니다. " + note
-         
-        return note
-    except:
-        return "💡 API 스탯 조회 지연으로 상세 분석을 가져오지 못했습니다."
+        stat_parts = []
+        for index, team_stats in enumerate(stats[:2]):
+            team_name = str(team_stats.get("team", {}).get("name") or f"{'홈' if index == 0 else '원정'}팀")
+            possession = None
+            shots_on_goal = None
+            for stat in team_stats.get("statistics", []):
+                if stat.get("type") == "Ball Possession" and stat.get("value") is not None:
+                    possession = str(stat.get("value"))
+                elif stat.get("type") == "Shots on Goal" and stat.get("value") is not None:
+                    shots_on_goal = int(stat.get("value"))
+            values = []
+            if possession is not None:
+                values.append(f"점유율 {possession}")
+            if shots_on_goal is not None:
+                values.append(f"유효슈팅 {shots_on_goal}개")
+            if values:
+                stat_parts.append(f"{team_name} {' · '.join(values)}")
+        if stat_parts:
+            note_parts.append(f"[공식 경기 통계] {' / '.join(stat_parts)}.")
+        else:
+            note_parts.append("[공식 경기 통계] 제공된 상세 통계가 없어 임의 수치를 넣지 않았습니다.")
+        return "\n".join(note_parts)
+    except Exception:
+        result_parts = [
+            f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
+            (
+                f"꿀픽 {'적중' if is_correct_ev == 1 else '미적중'}"
+                if has_ev_pick else "꿀픽 미선정"
+            ),
+        ]
+        return "\n".join([
+            f"[채점 결과] {' · '.join(result_parts)}.",
+            f"[최종 점수] {int(goals_h)}:{int(goals_a)}.",
+            "[공식 경기 통계] 조회되지 않아 임의 수치를 넣지 않았습니다.",
+        ])

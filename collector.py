@@ -45,7 +45,8 @@ from api_engine import _normalize_player_name
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 KST = timezone(timedelta(hours=9))
-LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "6")))
+# 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
+LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
 PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
 TOTO14_MAX_COMBINATIONS = max(1, int(os.getenv("TOTO14_MAX_COMBINATIONS", "64")))
@@ -1192,14 +1193,17 @@ def build_detailed_report(
     honey = categories.get("honey")
     vip = categories.get("vip_underdog")
     final_parts = [f"확률 높은 픽은 {_report_pick_line(selected_pick)}입니다."]
-    final_parts.append(
-        f"AI 꿀픽은 {_report_pick_line(honey)}입니다."
-        if honey else "AI 꿀픽은 시장 대비 가치 기준을 통과한 별도 선택지가 없어 표시하지 않습니다."
-    )
-    if vip:
+    if honey and vip and honey.get("raw_pick") == vip.get("raw_pick"):
         signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
-        final_parts.append(f"VIP 역배픽은 {_report_pick_line(vip)}이며 근거는 {signals}입니다.")
+        final_parts.append(
+            f"AI 꿀픽 {_report_pick_line(honey)}은 엄격 기준까지 통과해 VIP 역배픽으로 승격됐으며, "
+            f"독립 근거는 {signals}입니다."
+        )
+    elif honey:
+        final_parts.append(f"AI 꿀픽은 {_report_pick_line(honey)}입니다.")
     else:
+        final_parts.append("AI 꿀픽은 실제 팀 역배 후보 중 가치 기준을 통과한 선택지가 없어 표시하지 않습니다.")
+    if honey and not vip:
         final_parts.append("VIP 역배픽은 실제 역배 방향과 독립 근거 2개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
     missing_text = (
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
@@ -1328,12 +1332,7 @@ def _tag_pick_category(pick, category_key):
 
 
 def select_pick_categories(picks, confidence):
-    """확률·가치·역배 픽을 서로 다른 기준으로 독립 선정합니다.
-
-    확률 높은 픽은 유효 후보가 있으면 항상 선정합니다. AI 꿀픽과 VIP
-    역배 픽은 각 기준을 통과한 경우에만 선정하며, 같은 선택지를 두
-    카테고리에 중복 배정하지 않습니다.
-    """
+    """확률픽을 독립 선정하고, 팀 역배 꿀픽 중 엄격 통과분만 VIP로 승격합니다."""
     categories = {
         "high_probability": None,
         "honey": None,
@@ -1353,36 +1352,17 @@ def select_pick_categories(picks, confidence):
         ),
     )
 
-    high_key = str(high_source.get("raw_pick") or "")
-    vip_candidates = [
-        pick for pick in picks
-        if pick.get("is_qualified_underdog")
-        and str(pick.get("raw_pick") or "") != high_key
-        and float(pick.get("edge", 0) or 0) >= 0.035
-        and confidence >= 0.52
-        and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
-        and float(pick.get("prob", 0) or 0) >= 0.22
-        and int(pick.get("independent_support_count", 0) or 0) >= 2
-    ]
-    vip_source = max(
-        vip_candidates,
-        key=lambda pick: (
-            float(pick.get("value_score", 0) or 0),
-            float(pick.get("recommendation_score", 0) or 0),
-            float(pick.get("ev", 0) or 0),
-        ),
-        default=None,
-    )
-    vip_key = str(vip_source.get("raw_pick") or "") if vip_source else ""
-    honey_edge_floor = 0.025 + max(0.0, 0.65 - confidence) * 0.05
+    # 꿀픽은 언더/오버가 아니라 실제 팀 방향(승무패·핸디캡)의 역배 후보만 허용합니다.
+    honey_edge_floor = 0.03 + max(0.0, 0.60 - confidence) * 0.05
     honey_candidates = [
         pick for pick in picks
-        if str(pick.get("raw_pick") or "") not in {high_key, vip_key}
-        and 1.35 <= float(pick.get("odd", 0) or 0) <= 5.00
-        and float(pick.get("prob", 0) or 0) >= 0.28
+        if pick.get("is_true_underdog")
+        and infer_pick_market(pick) in {"1x2", "handicap"}
+        and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
+        and float(pick.get("prob", 0) or 0) >= 0.22
         and float(pick.get("edge", 0) or 0) >= honey_edge_floor
-        and float(pick.get("ev", 0) or 0) >= 1.02
-        and confidence >= 0.48
+        and float(pick.get("ev", 0) or 0) >= 1.04
+        and confidence >= 0.50
         and float(pick.get("value_score", 0) or 0) > 0
     ]
     honey_source = max(
@@ -1395,15 +1375,32 @@ def select_pick_categories(picks, confidence):
         default=None,
     )
 
+    # VIP는 별도 세 번째 예측이 아니라, 선택된 꿀픽 하나가 더 엄격한
+    # 가치·신뢰도·복수 독립근거 기준을 모두 통과했을 때의 승격 등급입니다.
+    vip_source = None
+    if honey_source:
+        fair_probability = honey_source.get("fair_prob")
+        vip_passed = bool(
+            float(honey_source.get("edge", 0) or 0) >= 0.05
+            and float(honey_source.get("ev", 0) or 0) >= 1.08
+            and confidence >= 0.58
+            and int(honey_source.get("independent_support_count", 0) or 0) >= 2
+            and fair_probability is not None
+        )
+        if vip_passed:
+            vip_source = honey_source
+
     categories["high_probability"] = _tag_pick_category(high_source, "high_probability")
     categories["honey"] = _tag_pick_category(honey_source, "honey")
     categories["vip_underdog"] = _tag_pick_category(vip_source, "vip_underdog")
-    display_picks = [
-        categories["high_probability"],
-        categories["honey"],
-        categories["vip_underdog"],
-    ]
-    return categories, [pick for pick in display_picks if pick]
+    display_picks = []
+    seen = set()
+    for pick in (categories["high_probability"], categories["honey"], categories["vip_underdog"]):
+        pick_key = str((pick or {}).get("raw_pick") or "")
+        if pick and pick_key not in seen:
+            seen.add(pick_key)
+            display_picks.append(pick)
+    return categories, display_picks
 
 def _build_grading_snapshot():
     """Publish lightweight grading rows so the web never downloads the full DB."""
@@ -1894,9 +1891,9 @@ def build_dashboard_data():
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
 
-        # 기존 DB/리포트 필드와 호환되는 대표 가치 픽입니다. 신규 화면에서는
-        # pick_categories를 사용하므로 세 카테고리가 서로 섞이지 않습니다.
-        highest_ev_pick = honey_pick or vip_underdog_pick or highest_prob_pick
+        # 채점 대상은 확률픽과 꿀픽 두 개뿐입니다. VIP는 꿀픽의 승격 표시이므로
+        # 별도의 세 번째 예측으로 저장하거나 채점하지 않습니다.
+        highest_ev_pick = honey_pick
         detailed_report = build_detailed_report(
             highest_prob_pick,
             evidence,
@@ -1958,7 +1955,8 @@ def build_dashboard_data():
         save_dual_predictions_to_local_db(
             m['id'], league_n, home_team, away_team, 
             highest_prob_pick["raw_pick"], round(highest_prob_pick["prob"] * 100, 1), 
-            highest_ev_pick["raw_pick"], round(highest_ev_pick["prob"] * 100, 1),
+            highest_ev_pick["raw_pick"] if highest_ev_pick else "",
+            round(highest_ev_pick["prob"] * 100, 1) if highest_ev_pick else 0.0,
             odd_h, odd_d, odd_a, final_match_time, 0, api_fixture_id,
             analysis_stage, analysis_confidence,
         )
@@ -2645,11 +2643,12 @@ def auto_score_matches():
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
                         ai_note = generate_real_ai_note(
-                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev
+                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev,
+                            has_ev_pick=bool(str(ev_pick or "").strip()),
                         )
-                        event_timeline = _load_stored_event_timeline(match_id)
+                        event_timeline = _load_stored_event_timeline(match_id, limit=8)
                         if event_timeline:
-                            ai_note += "\n\n🎬 실시간 사건 기록\n" + "\n".join(event_timeline)
+                            ai_note += "\n\n🎬 주요 사건 기록(최대 8건)\n" + "\n".join(event_timeline)
                         cursor.execute("""
                             UPDATE predictions
                             SET actual_score = ?, actual_result = 'FINISHED',
@@ -2768,7 +2767,7 @@ def _event_record(raw_event):
     }
 
 
-def _load_stored_event_timeline(match_id, limit=30):
+def _load_stored_event_timeline(match_id, limit=8):
     try:
         live_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "live_scores.json"
@@ -2778,11 +2777,14 @@ def _load_stored_event_timeline(match_id, limit=30):
         record = payload.get(str(match_id), {}) if isinstance(payload, dict) else {}
         events = record.get("events", []) if isinstance(record, dict) else []
         texts = []
+        signatures = set()
         for event in events:
             if not isinstance(event, dict):
                 continue
             text = str(event.get("text") or "").strip()
-            if text and text not in texts:
+            signature = re.sub(r"[^0-9a-z가-힣]+", "", text.casefold())
+            if text and signature and signature not in signatures:
+                signatures.add(signature)
                 texts.append(text)
         return texts[-max(1, int(limit)):]
     except Exception:
