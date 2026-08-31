@@ -45,7 +45,7 @@ from api_engine import _normalize_player_name
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 KST = timezone(timedelta(hours=9))
-LIVE_RETENTION_HOURS = max(6, int(os.getenv("LIVE_RETENTION_HOURS", "24")))
+LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "6")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
 PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
 TOTO14_MAX_COMBINATIONS = max(1, int(os.getenv("TOTO14_MAX_COMBINATIONS", "64")))
@@ -1405,6 +1405,45 @@ def select_pick_categories(picks, confidence):
     ]
     return categories, [pick for pick in display_picks if pick]
 
+def _build_grading_snapshot():
+    """Publish lightweight grading rows so the web never downloads the full DB."""
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.row_factory = sqlite3.Row
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)")]
+        if "ev_pick" not in columns:
+            return {"finished": [], "pending": [], "generated_at": _utc_iso()}
+        finished = [
+            dict(row) for row in conn.execute(
+                "SELECT * FROM predictions WHERE actual_result = 'FINISHED'"
+            ).fetchall()
+        ]
+        pending = [
+            dict(row) for row in conn.execute(
+                "SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0"
+            ).fetchall()
+        ]
+
+        def sort_timestamp(row):
+            parsed = _parse_kst_match_time(row.get("match_time"))
+            return parsed.timestamp() if parsed else 0
+
+        finished.sort(key=sort_timestamp, reverse=True)
+        pending.sort(key=sort_timestamp, reverse=True)
+        return {
+            "finished": finished,
+            "pending": pending,
+            "generated_at": _utc_iso(),
+        }
+    except Exception as error:
+        print(f"⚠️ 채점 스냅샷 생성 실패: {error}")
+        return {"finished": [], "pending": [], "generated_at": _utc_iso()}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -2399,6 +2438,7 @@ def build_dashboard_data():
     )
     final_output = {
         "proto": dashboard_proto, "toto14": dashboard_toto14,
+        "grading": _build_grading_snapshot(),
         "toto14_meta": {
             "total_combinations": published_combinations,
             "single_pick_count": single_pick_count,
@@ -3432,7 +3472,7 @@ def _record_is_still_active(record, pending_ids, prefix=""):
     match_id = f"{prefix}{record.get('id', '')}"
     match_dt = _parse_kst_match_time(record.get("match_time") or record.get("time"))
     if match_dt is not None:
-        return datetime.now(KST) <= match_dt + timedelta(hours=LIVE_RETENTION_HOURS)
+        return datetime.now(KST) <= match_dt + timedelta(hours=2 + LIVE_RETENTION_HOURS)
     # Unknown kickoff records get the DB state as a conservative fallback, but
     # dated stale rounds cannot grow the retained pool forever merely because a
     # fixture has not been graded yet.

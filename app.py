@@ -26,6 +26,7 @@ from member_system import (
     create_notice,
     create_post,
     delete_post,
+    get_member_storage_status,
     get_post_image,
     init_member_db,
     list_active_notices,
@@ -91,20 +92,25 @@ def load_live_scores():
     except: pass
     return {}
 
-def download_db():
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
-    try:
-        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if res.status_code == 200:
-            with open("ai_predictions.db", "wb") as f:
-                f.write(res.content)
-    except: pass
-
-download_db()
-
-
-def load_prediction_results():
+def load_prediction_results(grading_snapshot=None):
     """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
+    embedded_rows = []
+    if isinstance(grading_snapshot, dict):
+        embedded_rows = grading_snapshot.get("finished", []) or []
+    if embedded_rows:
+        return {
+            str(row.get("match_id")): {
+                "actual_score": row.get("actual_score"),
+                "actual_result": row.get("actual_result"),
+                "ai_note": row.get("ai_note"),
+                "prob_pick": row.get("prob_pick"),
+                "ev_pick": row.get("ev_pick"),
+                "is_correct_prob": int(row.get("is_correct_prob") or 0),
+                "is_correct_ev": int(row.get("is_correct_ev") or 0),
+            }
+            for row in embedded_rows
+            if row.get("match_id") is not None
+        }
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=5)
         rows = conn.execute(
@@ -137,6 +143,7 @@ def load_prediction_results():
 # 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
 init_member_db()
+MEMBER_STORAGE_STATUS = get_member_storage_status()
 
 
 def get_private_setting(name: str) -> str:
@@ -1461,13 +1468,16 @@ active_role = st.session_state.get('role', ROLE_GUEST)
 access_profile = ACCESS_RULES.get(active_role, ACCESS_RULES[ROLE_GUEST])
 has_full_access = bool(access_profile["full_analysis"])
 visible_match_limit = access_profile["match_limit"]
+if active_role == ROLE_ADMIN and not MEMBER_STORAGE_STATUS.get("persistent"):
+    st.sidebar.warning("회원 DB 영구 저장 설정 전입니다. 재부트 전에 S3 보안 저장소를 연결해주세요.")
 
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
 live_scores_data = load_live_scores()
-prediction_results_data = load_prediction_results()
+grading_snapshot = dashboard_data.get("grading", {})
+prediction_results_data = load_prediction_results(grading_snapshot)
 
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
@@ -1647,6 +1657,27 @@ def get_match_status(match_time_str, deadline_str):
             else: return "UPCOMING", is_closed
     except: pass
     return "UPCOMING", False
+
+
+FINISHED_VISIBLE_HOURS = 6
+
+
+def _ui_match_datetime(match_time_str):
+    if not match_time_str or match_time_str == "시간 미정":
+        return None
+    match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', str(match_time_str))
+    if not match:
+        return None
+    try:
+        now = datetime.now(timezone(timedelta(hours=9)))
+        month, day, hour, minute = map(int, match.groups())
+        candidates = [
+            datetime(year, month, day, hour, minute, tzinfo=timezone(timedelta(hours=9)))
+            for year in (now.year - 1, now.year, now.year + 1)
+        ]
+        return min(candidates, key=lambda value: abs((value - now).total_seconds()))
+    except (TypeError, ValueError):
+        return None
 
 def _status_value(source):
     if not isinstance(source, dict):
@@ -1838,6 +1869,67 @@ def check_is_live(item):
     )
     return time_status == "LIVE"
 
+
+def _proto_terminal_datetime(item):
+    match = item.get("match", {}) if isinstance(item, dict) else {}
+    live_info = live_scores_data.get(str(match.get("id", "")), {})
+    terminal_at = live_info.get("terminal_at") if isinstance(live_info, dict) else None
+    if terminal_at:
+        try:
+            parsed = datetime.fromisoformat(str(terminal_at).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone(timedelta(hours=9)))
+        except (TypeError, ValueError):
+            pass
+    kickoff = _ui_match_datetime(
+        item.get("final_match_time") or match.get("match_time")
+    )
+    return kickoff + timedelta(hours=2) if kickoff else None
+
+
+def _proto_is_recent_or_active(item):
+    if check_is_live(item):
+        return True
+    match = item.get("match", {}) if isinstance(item, dict) else {}
+    match_id = str(match.get("id", ""))
+    live_info = live_scores_data.get(match_id, {})
+    explicit_status = _status_value(live_info) or _status_value(item) or _status_value(match)
+    time_status, _ = get_match_status(
+        item.get("final_match_time", match.get("match_time", "")),
+        match.get("deadline_time", "23:00"),
+    )
+    is_final = _is_final_status(explicit_status) or time_status == "FINISHED"
+    if not is_final:
+        return True
+    terminal_at = _proto_terminal_datetime(item)
+    if terminal_at is None:
+        return False
+    now = datetime.now(timezone(timedelta(hours=9)))
+    return now <= terminal_at + timedelta(hours=FINISHED_VISIBLE_HOURS)
+
+
+def _proto_live_sort_key(item):
+    match = item.get("match", {}) if isinstance(item, dict) else {}
+    kickoff = _ui_match_datetime(
+        item.get("final_match_time") or match.get("match_time")
+    )
+    kickoff_ts = kickoff.timestamp() if kickoff else float("inf")
+    if check_is_live(item):
+        return (0, kickoff_ts)
+    explicit_status = _status_value(
+        live_scores_data.get(str(match.get("id", "")), {})
+    ) or _status_value(item) or _status_value(match)
+    time_status, _ = get_match_status(
+        item.get("final_match_time", match.get("match_time", "")),
+        match.get("deadline_time", "23:00"),
+    )
+    if not (_is_final_status(explicit_status) or time_status == "FINISHED"):
+        return (1, kickoff_ts)
+    terminal_at = _proto_terminal_datetime(item)
+    terminal_ts = terminal_at.timestamp() if terminal_at else 0
+    return (2, -terminal_ts)
+
 def render_logo_html(logo_url):
     safe_logo = escape(str(logo_url or DEFAULT_TEAM_LOGO), quote=True)
     safe_fallback = escape(DEFAULT_TEAM_LOGO, quote=True)
@@ -1951,8 +2043,12 @@ with main_tab1:
         </div>
         """, unsafe_allow_html=True)
         
-        # 수집기가 저장한 베트맨 원본 순서를 절대 다시 정렬하지 않는다.
-        proto_list = list(dashboard_data.get("proto", []))
+        # 진행 중 경기 → 예정 경기 → 최근 종료 경기 순으로 표시한다.
+        proto_list = [
+            item for item in dashboard_data.get("proto", [])
+            if _proto_is_recent_or_active(item)
+        ]
+        proto_list.sort(key=_proto_live_sort_key)
         if proto_list:
             all_leagues = list(dict.fromkeys(m.get('league', '기타') for m in proto_list))
             selected_league = st.selectbox(
@@ -1960,7 +2056,7 @@ with main_tab1:
                 ["전체 리그 보기"] + all_leagues,
                 key="proto-league-filter",
             )
-            st.caption("베트맨 경기 순서 그대로 표시 중")
+            st.caption("LIVE 우선 · 예정 경기순 · 종료 후 6시간 자동 숨김")
                  
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
@@ -1980,8 +2076,6 @@ with main_tab1:
                 
                 match_id_str = str(m.get('id', ''))
                 is_live_now = check_is_live(item)
-                
-                if match_status == "FINISHED" and not is_live_now and not has_full_access: continue
                 
                 displayed_count += 1
 
@@ -2232,30 +2326,57 @@ with main_tab3:
 with main_tab4:
     def get_v3_accuracy_stats():
         try:
-            conn = sqlite3.connect("ai_predictions.db")
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(predictions)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if 'ev_pick' not in columns:
+            finished_rows = list(grading_snapshot.get("finished", []) or [])
+            pending_rows = list(grading_snapshot.get("pending", []) or [])
+            if not finished_rows and not pending_rows:
+                conn = sqlite3.connect("ai_predictions.db")
+                conn.row_factory = sqlite3.Row
+                columns = [col[1] for col in conn.execute("PRAGMA table_info(predictions)")]
+                if 'ev_pick' not in columns:
+                    conn.close()
+                    return None
+                finished_rows = [
+                    dict(row) for row in conn.execute(
+                        "SELECT * FROM predictions WHERE actual_result = 'FINISHED'"
+                    ).fetchall()
+                ]
+                pending_rows = [
+                    dict(row) for row in conn.execute(
+                        "SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0"
+                    ).fetchall()
+                ]
                 conn.close()
-                return None
-                
-            df_finished = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'FINISHED' ORDER BY match_time DESC", conn)
-            df_proto = df_finished[df_finished['is_toto14'] == 0]
-            df_toto = df_finished[df_finished['is_toto14'] == 1]
-            
-            df_pending = pd.read_sql_query("SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0 ORDER BY match_time DESC", conn)
-            conn.close()
+
+            def newest_first(row):
+                parsed = _ui_match_datetime(row.get("match_time", ""))
+                return parsed.timestamp() if parsed else 0
+
+            finished_rows.sort(key=newest_first, reverse=True)
+            pending_rows.sort(key=newest_first, reverse=True)
+            required_columns = [
+                "is_toto14", "is_correct_prob", "is_correct_ev", "actual_result",
+                "match_time", "home_team", "away_team", "league", "actual_score",
+                "prob_pick", "ev_pick", "ai_note", "match_id",
+            ]
+            df_finished = pd.DataFrame(finished_rows)
+            df_pending = pd.DataFrame(pending_rows)
+            for column in required_columns:
+                if column not in df_finished.columns:
+                    df_finished[column] = 0 if column.startswith("is_") else ""
+                if column not in df_pending.columns:
+                    df_pending[column] = 0 if column.startswith("is_") else ""
+            df_proto = df_finished[df_finished['is_toto14'].fillna(0).astype(int) == 0]
+            df_toto = df_finished[df_finished['is_toto14'].fillna(0).astype(int) == 1]
             
             proto_total = len(df_proto)
-            proto_prob_hit = int(df_proto['is_correct_prob'].sum()) if proto_total > 0 else 0
-            proto_ev_hit = int(df_proto['is_correct_ev'].sum()) if proto_total > 0 else 0
+            proto_prob_hit = int(pd.to_numeric(df_proto['is_correct_prob'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
+            proto_ev_hit = int(pd.to_numeric(df_proto['is_correct_ev'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
             
             proto_prob_acc = round((proto_prob_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
             proto_ev_acc = round((proto_ev_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
 
             toto_total = len(df_toto)
-            toto_hit = int(df_toto['is_correct_prob'].sum()) if toto_total > 0 else 0
+            toto_hit = int(pd.to_numeric(df_toto['is_correct_prob'], errors='coerce').fillna(0).sum()) if toto_total > 0 else 0
             toto_acc = round((toto_hit / toto_total) * 100, 1) if toto_total > 0 else 0.0
             
             return {

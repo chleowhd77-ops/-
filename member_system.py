@@ -13,6 +13,8 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +43,143 @@ NOTICE_AUDIENCES = {"all", "guest", "member", "supporter"}
 AUTH_SESSION_DAYS = max(1, min(int(os.getenv("DJ_AUTH_SESSION_DAYS", "30")), 90))
 AUTH_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 KST = timezone(timedelta(hours=9))
+_REMOTE_STORAGE_LOCK = threading.RLock()
+_REMOTE_STORAGE_RESTORED = False
+
+
+def _private_setting(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get(name, "")).strip()
+    except Exception:
+        return ""
+
+
+def _member_s3_config() -> dict[str, str] | None:
+    config = {
+        "bucket": _private_setting("DJ_MEMBER_S3_BUCKET"),
+        "key": _private_setting("DJ_MEMBER_S3_KEY") or "dj-sports/users.db",
+        "region": _private_setting("DJ_MEMBER_S3_REGION") or "ap-northeast-2",
+        "access_key": _private_setting("DJ_MEMBER_S3_ACCESS_KEY_ID"),
+        "secret_key": _private_setting("DJ_MEMBER_S3_SECRET_ACCESS_KEY"),
+    }
+    required = (config["bucket"], config["access_key"], config["secret_key"])
+    return config if all(required) else None
+
+
+def _member_s3_client(config: dict[str, str]):
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        region_name=config["region"],
+        aws_access_key_id=config["access_key"],
+        aws_secret_access_key=config["secret_key"],
+        config=Config(
+            connect_timeout=3,
+            read_timeout=5,
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
+    )
+
+
+def _sqlite_file_is_valid(path: Path) -> bool:
+    try:
+        conn = sqlite3.connect(path, timeout=10)
+        result = conn.execute("PRAGMA quick_check").fetchone()
+        conn.close()
+        return bool(result and str(result[0]).lower() == "ok")
+    except Exception:
+        return False
+
+
+def _restore_remote_member_db() -> bool:
+    """Restore the private S3 snapshot once when a new app process starts."""
+    global _REMOTE_STORAGE_RESTORED
+    with _REMOTE_STORAGE_LOCK:
+        if _REMOTE_STORAGE_RESTORED:
+            return True
+        _REMOTE_STORAGE_RESTORED = True
+        config = _member_s3_config()
+        if not config:
+            return False
+        db_path = get_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = db_path.with_name(f".{db_path.name}.restore.tmp")
+        try:
+            _member_s3_client(config).download_file(
+                config["bucket"], config["key"], str(temp_path)
+            )
+            if not _sqlite_file_is_valid(temp_path):
+                raise RuntimeError("원격 회원 DB 무결성 검사 실패")
+            os.replace(temp_path, db_path)
+            return True
+        except Exception as error:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass
+            # 첫 실행에는 원격 객체가 없을 수 있으므로 로컬 DB 생성을 계속한다.
+            print(f"회원 DB 원격 복원 보류: {type(error).__name__}")
+            return False
+
+
+def _sync_remote_member_db() -> bool:
+    """Upload a consistent SQLite backup to a private, encrypted S3 object."""
+    config = _member_s3_config()
+    if not config:
+        return False
+    db_path = get_db_path()
+    if not db_path.exists():
+        return False
+    with _REMOTE_STORAGE_LOCK:
+        backup_path = None
+        try:
+            fd, raw_path = tempfile.mkstemp(prefix="dj-members-", suffix=".db")
+            os.close(fd)
+            backup_path = Path(raw_path)
+            source = sqlite3.connect(db_path, timeout=15)
+            target = sqlite3.connect(backup_path, timeout=15)
+            source.backup(target)
+            target.close()
+            source.close()
+            if not _sqlite_file_is_valid(backup_path):
+                raise RuntimeError("회원 DB 백업 무결성 검사 실패")
+            _member_s3_client(config).upload_file(
+                str(backup_path),
+                config["bucket"],
+                config["key"],
+                ExtraArgs={"ServerSideEncryption": "AES256"},
+            )
+            return True
+        except Exception as error:
+            print(f"회원 DB 원격 저장 실패: {type(error).__name__}")
+            return False
+        finally:
+            if backup_path is not None:
+                try:
+                    backup_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def get_member_storage_status() -> dict[str, Any]:
+    config = _member_s3_config()
+    return {
+        "persistent": bool(config),
+        "backend": "private_s3" if config else "local_sqlite",
+        "message": (
+            "회원정보 영구 저장 사용 중"
+            if config
+            else "회원 DB 영구 저장 설정이 필요합니다"
+        ),
+    }
 
 
 def utc_now() -> str:
@@ -67,14 +206,18 @@ def _connect() -> Iterator[sqlite3.Connection]:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    committed_changes = False
     try:
         yield conn
+        committed_changes = conn.total_changes > 0
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+    if committed_changes:
+        _sync_remote_member_db()
 
 
 def hash_password(password: str, salt_hex: str | None = None) -> tuple[str, str]:
@@ -94,6 +237,7 @@ def _verify_password(password: str, stored_hash: str, salt_hex: str) -> bool:
 
 
 def init_member_db() -> None:
+    _restore_remote_member_db()
     with _connect() as conn:
         conn.executescript(
             """
