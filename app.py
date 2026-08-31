@@ -108,7 +108,11 @@ def load_prediction_results():
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=5)
         rows = conn.execute(
-            "SELECT match_id, actual_score, actual_result, ai_note FROM predictions"
+            """
+            SELECT match_id, actual_score, actual_result, ai_note,
+                   prob_pick, ev_pick, is_correct_prob, is_correct_ev
+            FROM predictions
+            """
         ).fetchall()
         conn.close()
         return {
@@ -116,8 +120,15 @@ def load_prediction_results():
                 "actual_score": actual_score,
                 "actual_result": actual_result,
                 "ai_note": ai_note,
+                "prob_pick": prob_pick,
+                "ev_pick": ev_pick,
+                "is_correct_prob": int(is_correct_prob or 0),
+                "is_correct_ev": int(is_correct_ev or 0),
             }
-            for match_id, actual_score, actual_result, ai_note in rows
+            for (
+                match_id, actual_score, actual_result, ai_note,
+                prob_pick, ev_pick, is_correct_prob, is_correct_ev,
+            ) in rows
         }
     except Exception:
         return {}
@@ -1708,6 +1719,24 @@ def _score_value(source):
     return ""
 
 
+def _localize_event_line(value):
+    """신규·기존 사건 기록의 API 영문 표기를 고객용 한글로 통일합니다."""
+    line = str(value or "").strip()
+    replacements = (
+        (r"\bSubstitution\b", "교체"),
+        (r"\bSubstitute\b", "교체"),
+        (r"\bYellow Card\b", "경고"),
+        (r"\bRed Card\b", "퇴장"),
+        (r"\bGoal\b", "득점"),
+        (r"\bInjury\b", "부상"),
+        (r"\s+OUT\b", " 아웃"),
+        (r"\s+IN\b", " 투입"),
+    )
+    for pattern, replacement in replacements:
+        line = re.sub(pattern, replacement, line, flags=re.IGNORECASE)
+    return line
+
+
 def _event_html(*sources):
     event_rows = []
     event_keys = ("events", "recent_events", "timeline", "incidents", "event_history", "match_events")
@@ -1733,11 +1762,12 @@ def _event_html(*sources):
                         line = " ".join(str(part).strip() for part in parts if part not in (None, ""))
                 else:
                     line = str(raw_event or "").strip()
+                line = _localize_event_line(line)
                 if line and any(word in line.lower() for word in wanted):
                     event_rows.append(line)
     if not event_rows:
         return ""
-    unique_rows = list(dict.fromkeys(event_rows))[-4:]
+    unique_rows = list(dict.fromkeys(event_rows))[-5:]
     content = "<br>".join(escape(row) for row in unique_rows)
     return (
         "<div class='live-event-feed' style='margin:8px 0 2px;padding:8px 10px;"
@@ -1816,7 +1846,7 @@ def render_logo_html(logo_url):
         f'onerror="this.onerror=null;this.src=\'{safe_fallback}\';">'
     )
 
-def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None):
+def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None):
     """확률 높은 픽·꿀픽·VIP 역배를 고정된 세 칸으로 분리해 표시합니다."""
     picks = picks or []
     categories = {
@@ -1875,6 +1905,21 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None):
         if key == "vip_underdog" and pick.get("support_signals"):
             meta_parts.append(f"독립근거 {len(pick['support_signals'])}개")
         detail = " · ".join(meta_parts)
+        grade_html = ""
+        if isinstance(grading, dict) and grading.get("actual_result") == "FINISHED":
+            grade_value = None
+            if str(pick.get("raw_pick") or "") == str(grading.get("prob_pick") or ""):
+                grade_value = int(grading.get("is_correct_prob") or 0)
+            elif str(pick.get("raw_pick") or "") == str(grading.get("ev_pick") or ""):
+                grade_value = int(grading.get("is_correct_ev") or 0)
+            if grade_value is not None:
+                grade_label = "적중" if grade_value == 1 else "미적중"
+                grade_color = "#10B981" if grade_value == 1 else "#EF4444"
+                grade_html = (
+                    f"<span style='display:inline-block;margin-top:7px;padding:3px 8px;"
+                    f"border:1px solid {grade_color};border-radius:999px;color:{grade_color};"
+                    f"font-size:11px;font-weight:900;'>채점 {grade_label}</span>"
+                )
         bg_style = (
             "background:rgba(0,242,254,.05);border-color:#00F2FE;"
             if key == "high_probability"
@@ -1885,6 +1930,7 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None):
             f"<div class='pred-label' style='color:{color};'>{label}</div>"
             f"<span class='pred-value'>{raw_pick}</span>"
             f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{pick_label} · {detail}</span>"
+            f"{grade_html}"
             f"<span class='pred-prob'>{prob_pct}%</span>"
             "</div>"
         )
@@ -1985,6 +2031,7 @@ with main_tab1:
                     item.get('ev_sorted_picks', []),
                     is_top3_tab=False,
                     pick_categories=_pick_categories(item),
+                    grading=db_result if is_final_now else None,
                 )
 
                 upset_html = ""

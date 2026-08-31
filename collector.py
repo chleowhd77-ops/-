@@ -1090,14 +1090,13 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
     for pick in picks:
         pick["support_signals"] = []
         market = infer_pick_market(pick)
-        if market == "totals" or float(pick.get("odd") or 0) < 2.0:
-            continue
-        text = str(pick.get("raw_pick") or "")
-        if market == "handicap":
-            side = "away" if "핸디패" in text else ("home" if "핸디승" in text else "")
-        else:
-            side = "home" if home_team in text else ("away" if away_team in text else "")
-        if not side:
+        side = str(pick.get("selection_side") or "")
+        pick["is_true_underdog"] = bool(
+            market in {"1x2", "handicap"}
+            and side in {"home", "away"}
+            and side == metrics.get("underdog_side")
+        )
+        if not pick["is_true_underdog"] or float(pick.get("odd") or 0) < 2.0:
             continue
         opponent = "away" if side == "home" else "home"
         signals = []
@@ -1118,29 +1117,110 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
     return picks
 
 
-def build_detailed_report(selected_pick, evidence, confidence):
+def _report_pick_line(pick):
+    if not pick:
+        return "계산 가능한 선택지 없음"
+    probability = float(pick.get("prob") or 0)
+    fair_probability = pick.get("fair_prob")
+    comparison = "시장 공정확률 자료 없음"
+    if fair_probability is not None:
+        comparison = (
+            f"시장 공정확률 {float(fair_probability) * 100:.1f}%, "
+            f"차이 {float(pick.get('edge') or 0) * 100:+.1f}%p"
+        )
+    return f"{pick.get('raw_pick', '')} · 모델 {probability * 100:.1f}% · {comparison}"
+
+
+def build_detailed_report(
+    selected_pick, evidence, confidence, candidates=None, categories=None, context=None
+):
+    """픽 확정 뒤 실제 사용값만 풀어 쓰는 고객용 상세 분석문을 만든다."""
     if not selected_pick:
         return "실제 배당과 모델 확률을 함께 비교할 수 있는 선택지가 없어 기존 분석을 유지했습니다."
+    candidates = list(candidates or [])
+    categories = categories or {}
+    context = context or {}
     probability = float(selected_pick.get("prob") or 0)
     fair_probability = selected_pick.get("fair_prob")
     edge = selected_pick.get("edge")
     interval = selected_pick.get("probability_interval") or {}
+    evidence_by_name = {
+        str(item.get("name")): str(item.get("value"))
+        for item in evidence if item.get("name") and item.get("value")
+    }
+    expected_names = (
+        "최근 성적", "xG", "슈팅 품질", "홈·원정", "상대 전적", "선수 결장",
+        "휴식일", "날씨", "심판", "전술 상성", "배당 변동", "팀 신원·경기 연결",
+    )
+    missing_names = [name for name in expected_names if name not in evidence_by_name]
     evidence_text = ", ".join(
-        f"{item['name']}({item['value']})" for item in evidence
-    ) or "확인 가능한 기본 경기 정보"
+        f"{name}: {value}" for name, value in evidence_by_name.items()
+    ) or "확인 가능한 기본 경기 정보만 사용"
     fair_text = (
-        f"베팅업체 마진 제거 공정확률 {float(fair_probability) * 100:.1f}%, "
-        f"모델 우위 {float(edge or 0) * 100:+.1f}%p"
-        if fair_probability is not None else "공정확률 비교 자료 없음"
+        f"베팅업체 마진 제거 공정확률은 {float(fair_probability) * 100:.1f}%이고 "
+        f"모델과의 차이는 {float(edge or 0) * 100:+.1f}%p입니다."
+        if fair_probability is not None else "비교 가능한 시장 공정확률 자료는 없습니다."
     )
-    return (
-        f"[실사용 수치 기반 통합 분석] 픽을 먼저 결정한 뒤 실제 계산에 사용된 값만 표시합니다. "
-        f"선택: {selected_pick.get('raw_pick', '')} ({MARKET_LABELS.get(infer_pick_market(selected_pick), '')}). "
-        f"보정 확률 {probability * 100:.1f}%, {fair_text}, "
-        f"오차범위 {float(interval.get('low', 0)) * 100:.1f}%~"
-        f"{float(interval.get('high', 1)) * 100:.1f}%, 데이터 신뢰도 {confidence * 100:.1f}%. "
-        f"사용 근거: {evidence_text}. 누락된 항목은 추측하지 않고 신뢰도에서 감점했습니다."
+    market_best = {}
+    for market in MARKET_LABELS:
+        market_candidates = [item for item in candidates if infer_pick_market(item) == market]
+        market_best[market] = max(
+            market_candidates,
+            key=lambda item: float(item.get("prob") or 0),
+            default=None,
+        )
+
+    home = str(context.get("home") or "홈팀")
+    away = str(context.get("away") or "원정팀")
+    exp_h = float(context.get("exp_h") or 0)
+    exp_a = float(context.get("exp_a") or 0)
+    if exp_h - exp_a >= 0.30:
+        flow = f"{home}이 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다."
+    elif exp_a - exp_h >= 0.30:
+        flow = f"{away}이 역습과 전환 과정에서 더 위협적인 장면을 만들 가능성을 높게 봅니다."
+    else:
+        flow = "기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다."
+    weather = str(context.get("weather") or "")
+    weather_note = ""
+    if weather in {"Rain", "Snow"}:
+        weather_ko = "비" if weather == "Rain" else "눈"
+        weather_note = (
+            f" 현지 {weather_ko} 예보는 기대 득점을 낮추는 방향으로 반영했지만, "
+            "기상 정보만으로 언더를 확정하지는 않았습니다."
+        )
+
+    honey = categories.get("honey")
+    vip = categories.get("vip_underdog")
+    final_parts = [f"확률 높은 픽은 {_report_pick_line(selected_pick)}입니다."]
+    final_parts.append(
+        f"AI 꿀픽은 {_report_pick_line(honey)}입니다."
+        if honey else "AI 꿀픽은 시장 대비 가치 기준을 통과한 별도 선택지가 없어 표시하지 않습니다."
     )
+    if vip:
+        signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
+        final_parts.append(f"VIP 역배픽은 {_report_pick_line(vip)}이며 근거는 {signals}입니다.")
+    else:
+        final_parts.append("VIP 역배픽은 실제 역배 방향과 독립 근거 2개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
+    missing_text = (
+        f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
+        if missing_names else "요구된 핵심 데이터 항목이 모두 연결되어 있습니다."
+    )
+    return "\n\n".join([
+        (
+            f"[종합 경기 흐름] 예상 정규시간 득점은 {home} {exp_h:.2f}골, "
+            f"{away} {exp_a:.2f}골입니다. {flow}{weather_note}"
+        ),
+        f"[일반 승무패 분석] {_report_pick_line(market_best.get('1x2'))}.",
+        f"[핸디캡 분석] {_report_pick_line(market_best.get('handicap'))}.",
+        f"[언더오버 분석] {_report_pick_line(market_best.get('totals'))}.",
+        f"[실제 사용 근거] {evidence_text}. {missing_text}",
+        (
+            f"[최종 선택과 신뢰도] {' '.join(final_parts)} 선택된 확률픽의 보정 확률은 "
+            f"{probability * 100:.1f}%이며, {fair_text} 예상 오차범위는 "
+            f"{float(interval.get('low', 0)) * 100:.1f}%~{float(interval.get('high', 1)) * 100:.1f}%, "
+            f"데이터 신뢰도는 {confidence * 100:.1f}%입니다. 이 수치는 적중을 보장하지 않습니다."
+        ),
+    ])
 
 
 def save_prediction_analysis(match_id, pick, confidence, evidence, candidates, report):
@@ -1218,7 +1298,11 @@ def annotate_pick_metrics(picks, confidence):
         pick["safe_score"] = round(probability * confidence, 4)
         pick["value_score"] = round(max(0.0, edge) * confidence, 4)
         pick["is_qualified_underdog"] = bool(
-            2.20 <= odd <= 6.00 and probability >= 0.22 and edge >= 0.03 and confidence >= 0.50
+            pick.get("is_true_underdog")
+            and 2.20 <= odd <= 6.00
+            and probability >= 0.22
+            and edge >= 0.03
+            and confidence >= 0.50
         )
         pick["recommendation_score"] = round(
             (probability * 0.72) + (confidence * 0.20) + (min(max(edge, 0.0), 0.15) * 0.55), 4
@@ -1269,9 +1353,11 @@ def select_pick_categories(picks, confidence):
         ),
     )
 
+    high_key = str(high_source.get("raw_pick") or "")
     vip_candidates = [
         pick for pick in picks
         if pick.get("is_qualified_underdog")
+        and str(pick.get("raw_pick") or "") != high_key
         and float(pick.get("edge", 0) or 0) >= 0.035
         and confidence >= 0.52
         and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
@@ -1287,10 +1373,12 @@ def select_pick_categories(picks, confidence):
         ),
         default=None,
     )
+    vip_key = str(vip_source.get("raw_pick") or "") if vip_source else ""
     honey_edge_floor = 0.025 + max(0.0, 0.65 - confidence) * 0.05
     honey_candidates = [
         pick for pick in picks
-        if 1.35 <= float(pick.get("odd", 0) or 0) <= 5.00
+        if str(pick.get("raw_pick") or "") not in {high_key, vip_key}
+        and 1.35 <= float(pick.get("odd", 0) or 0) <= 5.00
         and float(pick.get("prob", 0) or 0) >= 0.28
         and float(pick.get("edge", 0) or 0) >= honey_edge_floor
         and float(pick.get("ev", 0) or 0) >= 1.02
@@ -1687,10 +1775,11 @@ def build_dashboard_data():
             )
 
         wdl_market = normalize_probabilities([1 / odd_h, 1 / odd_d, 1 / odd_a])
+        underdog_side = "home" if odd_h > odd_a else ("away" if odd_a > odd_h else "")
         wdl_cands = [
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home_team} 승", "html_pick": f"{home_team} 승", "prob": h_win, "ev": h_win * odd_h, "odd": odd_h, "market_prob": wdl_market[0]},
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "html_pick": "무승부", "prob": draw, "ev": draw * odd_d, "odd": odd_d, "market_prob": wdl_market[1]},
-            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{away_team} 승", "html_pick": f"{away_team} 승", "prob": a_win, "ev": a_win * odd_a, "odd": odd_a, "market_prob": wdl_market[2]}
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home_team} 승", "html_pick": f"{home_team} 승", "prob": h_win, "ev": h_win * odd_h, "odd": odd_h, "market_prob": wdl_market[0], "selection_side": "home"},
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "html_pick": "무승부", "prob": draw, "ev": draw * odd_d, "odd": odd_d, "market_prob": wdl_market[1], "selection_side": "draw"},
+            {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{away_team} 승", "html_pick": f"{away_team} 승", "prob": a_win, "ev": a_win * odd_a, "odd": odd_a, "market_prob": wdl_market[2], "selection_side": "away"}
         ]
          
         handi_str_raw = f"[{handi_base:+1.1f}] "
@@ -1707,9 +1796,9 @@ def build_dashboard_data():
 
         handi_cands = []
         handi_market = normalize_probabilities([1 / handi_h, 1 / handi_d, 1 / handi_a]) if min(handi_h, handi_d, handi_a) > 1.0 else [0, 0, 0]
-        if handi_h > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h, "odd": handi_h, "market_prob": handi_market[0]})
-        if handi_d > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d, "odd": handi_d, "market_prob": handi_market[1]})
-        if handi_a > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a, "odd": handi_a, "market_prob": handi_market[2]}) 
+        if handi_h > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h, "odd": handi_h, "market_prob": handi_market[0], "selection_side": "home"})
+        if handi_d > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d, "odd": handi_d, "market_prob": handi_market[1], "selection_side": "draw"})
+        if handi_a > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a, "odd": handi_a, "market_prob": handi_market[2], "selection_side": "away"}) 
          
         uo_str_raw = f"(U/O {uo_base})"
         uo_str_html = f"<span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 {uo_base}]</span><br>"
@@ -1717,8 +1806,8 @@ def build_dashboard_data():
         if uo_under > 1.0 and uo_over > 1.0:
             uo_market = normalize_probabilities([1 / uo_under, 1 / uo_over])
             uo_cands = [
-                {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under, "odd": uo_under, "market_prob": uo_market[0]},
-                {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over, "market_prob": uo_market[1]}
+                {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under, "odd": uo_under, "market_prob": uo_market[0], "selection_side": "under"},
+                {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over, "market_prob": uo_market[1], "selection_side": "over"}
             ]
          
         base_wdl_pick = max(wdl_cands, key=lambda x: x["prob"])["raw_pick"]
@@ -1731,11 +1820,15 @@ def build_dashboard_data():
             elif away_team in base_wdl_pick and (handi_base > 0 and home_team in p_name and "핸디승" in p_name): is_contra = True 
             if not is_contra: valid_all_picks.append(pick)
 
+        # 시장별 확률은 승무패 3개·핸디캡 3개·언더오버 2개 전체를
+        # 보정한 뒤 화면 후보를 거른다. 일부 후보만 다시 정규화해 확률이
+        # 비정상적으로 커지는 현상을 막는다.
+        all_market_picks = wdl_cands + handi_cands + uo_cands
         calibrate_market_candidates(
-            valid_all_picks, market_performance, analysis_confidence
+            all_market_picks, market_performance, analysis_confidence
         )
         attach_underdog_signals(
-            valid_all_picks,
+            all_market_picks,
             home_team,
             away_team,
             {
@@ -1751,9 +1844,10 @@ def build_dashboard_data():
                 "away_rest": a_rest_days if a_rest_days < 90 else 0,
                 "home_lineup": h_lineup_penalty,
                 "away_lineup": a_lineup_penalty,
+                "underdog_side": underdog_side,
             },
         )
-        annotate_pick_metrics(valid_all_picks, analysis_confidence)
+        annotate_pick_metrics(all_market_picks, analysis_confidence)
         pick_categories, ev_sorted_picks = select_pick_categories(
             valid_all_picks, analysis_confidence
         )
@@ -1765,7 +1859,18 @@ def build_dashboard_data():
         # pick_categories를 사용하므로 세 카테고리가 서로 섞이지 않습니다.
         highest_ev_pick = honey_pick or vip_underdog_pick or highest_prob_pick
         detailed_report = build_detailed_report(
-            highest_prob_pick, evidence, analysis_confidence
+            highest_prob_pick,
+            evidence,
+            analysis_confidence,
+            valid_all_picks,
+            pick_categories,
+            {
+                "home": home_team,
+                "away": away_team,
+                "exp_h": exp_h,
+                "exp_a": exp_a,
+                "weather": weather_condition,
+            },
         )
 
         badge_templates = {
@@ -1825,7 +1930,10 @@ def build_dashboard_data():
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
         a_form = fetch_team_form_api(away_info.get("id"), heavy_ttl)
-        story = generate_match_story(highest_prob_pick["raw_pick"], highest_ev_pick["raw_pick"], math_exp_h, math_exp_a, h_win*100, draw*100, a_win*100, h2h_total, 0, home_team, away_team, odd_h, odd_a, h_form, a_form, h_long, a_long, h_inj_data, a_inj_data, h_rest_days, a_rest_days, h_next, a_next, h_rank, a_rank, h_market_bonus, a_market_bonus, h_stats, a_stats, referee, weather_condition, h_extreme_fatigue, a_extreme_fatigue, h_lineup_msg, a_lineup_msg)
+        story = "<br><br>".join(
+            paragraph.replace("\n", "<br>")
+            for paragraph in detailed_report.split("\n\n")
+        )
         
         if is_derby: story += " ⚔️ [로컬 더비 매치] 양 팀의 자존심이 걸린 치열한 라이벌전으로, 통계를 뛰어넘는 혈투와 변수(카드/극장골)가 예상됩니다."
         if h_manager_buff > 0: story += f" 👔 [경질 버프] {home_team}은(는) 새 감독 부임 이후 선수들의 주전 경쟁과 동기부여가 극에 달해 있습니다."
@@ -2588,20 +2696,20 @@ def _event_record(raw_event):
     subject = player_name or team_name or detail
 
     if event_key == "goal":
-        text = f"⚽ {minute}' 득점 · {team_name} · {subject}"
+        text = f"{minute}분 | ⚽ 득점 | {team_name} | {subject}"
     elif event_key == "card" and ("red" in detail_key or "second yellow" in detail_key):
-        text = f"🟥 {minute}' 퇴장 · {team_name} · {subject}"
+        text = f"{minute}분 | 🟥 퇴장 | {team_name} | {subject}"
     elif event_key == "card" and "yellow" in detail_key:
-        text = f"🟨 {minute}' 경고 · {team_name} · {subject}"
+        text = f"{minute}분 | 🟨 경고 | {team_name} | {subject}"
     elif event_key in {"subst", "substitution"}:
-        change = f"{player_name} OUT"
+        change = f"나간 선수: {player_name}"
         if assist_name:
-            change += f" / {assist_name} IN"
-        text = f"🔄 {minute}' 교체 · {team_name} · {change}"
+            change += f" / 들어온 선수: {assist_name}"
+        text = f"{minute}분 | 🔄 교체 | {team_name} | {change}"
     elif event_key == "var":
-        text = f"📺 {minute}' VAR · {team_name} · {detail or subject}"
+        text = f"{minute}분 | 📺 VAR | {team_name} | {detail or subject}"
     elif event_key == "injury" or "injur" in detail_key:
-        text = f"🚑 {minute}' 부상 · {team_name} · {subject}"
+        text = f"{minute}분 | 🚑 부상 | {team_name} | {subject}"
     else:
         return None
     key = "|".join(map(str, (

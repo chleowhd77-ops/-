@@ -22,7 +22,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.0-integrated-markets"
+ANALYSIS_VERSION = "V6.1-distinct-picks-report"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -558,6 +558,25 @@ TEAM_INFO_FAILURE_RETRY_AT = {}
 # 베트맨/국내 표기와 API-FOOTBALL 영문 팀명을 연결한다.
 # 여기서 찾은 동일 팀 ID를 팀 마크와 최근 전적 조회에 함께 사용한다.
 BUILTIN_TEAM_ALIASES = {
+    # 베트맨 화면의 짧은 팀명도 같은 공식 API 팀으로 연결합니다.
+    "브리스C": "Bristol City",
+    "셰필드U": "Sheffield Utd",
+    "볼턴W": "Bolton",
+    "스완지C": "Swansea",
+    "버밍엄C": "Birmingham",
+    "스토크C": "Stoke City",
+    "노리치C": "Norwich City",
+    "마치다Z": "Machida Zelvia",
+    "시미즈S": "Shimizu S-Pulse",
+    "C오사카": "Cerezo Osaka",
+    "오사카C": "Cerezo Osaka",
+    "가시와R": "Kashiwa Reysol",
+    "삿포로": "Consadole Sapporo",
+    "나고야G": "Nagoya Grampus",
+    "우라와R": "Urawa Red Diamonds",
+    "G오사카": "Gamba Osaka",
+    "오사카G": "Gamba Osaka",
+    "데포르티보 라코루냐": "Deportivo La Coruna",
     "시미즈 에스펄스": "Shimizu S-Pulse",
     "시미즈S펄스": "Shimizu S-Pulse",
     "V바렌 나가사키": "V-Varen Nagasaki",
