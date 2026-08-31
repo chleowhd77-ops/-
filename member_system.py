@@ -45,6 +45,9 @@ AUTH_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 KST = timezone(timedelta(hours=9))
 _REMOTE_STORAGE_LOCK = threading.RLock()
 _REMOTE_STORAGE_RESTORED = False
+_REMOTE_STORAGE_NEEDS_INITIAL_SYNC = False
+_REMOTE_STORAGE_VERIFIED = False
+_REMOTE_STORAGE_LAST_ERROR = ""
 
 
 def _private_setting(name: str) -> str:
@@ -98,16 +101,49 @@ def _sqlite_file_is_valid(path: Path) -> bool:
         return False
 
 
+def _remote_storage_error_code(error: Exception) -> str:
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        error_info = response.get("Error", {})
+        if isinstance(error_info, dict):
+            code = str(error_info.get("Code") or "").strip()
+            if code:
+                return code
+    return type(error).__name__
+
+
+def _remote_storage_error_message(error: Exception) -> str:
+    code = _remote_storage_error_code(error)
+    messages = {
+        "InvalidAccessKeyId": "S3 액세스 키를 확인해주세요.",
+        "SignatureDoesNotMatch": "S3 시크릿 키를 확인해주세요.",
+        "AccessDenied": "S3 저장 권한을 확인해주세요.",
+        "403": "S3 저장 권한을 확인해주세요.",
+        "NoSuchBucket": "S3 버킷 이름을 확인해주세요.",
+        "EndpointConnectionError": "S3 리전 또는 네트워크 연결을 확인해주세요.",
+        "ModuleNotFoundError": "boto3 설치 반영을 위해 앱을 다시 배포해주세요.",
+    }
+    return messages.get(code, f"S3 연결 오류가 발생했습니다. ({code})")
+
+
+def _remote_object_is_missing(error: Exception) -> bool:
+    return _remote_storage_error_code(error) in {"404", "NoSuchKey", "NotFound"}
+
+
 def _restore_remote_member_db() -> bool:
     """Restore the private S3 snapshot once when a new app process starts."""
+    global _REMOTE_STORAGE_LAST_ERROR
+    global _REMOTE_STORAGE_NEEDS_INITIAL_SYNC
     global _REMOTE_STORAGE_RESTORED
+    global _REMOTE_STORAGE_VERIFIED
     with _REMOTE_STORAGE_LOCK:
         if _REMOTE_STORAGE_RESTORED:
-            return True
-        _REMOTE_STORAGE_RESTORED = True
+            return _REMOTE_STORAGE_VERIFIED
         config = _member_s3_config()
         if not config:
             return False
+        # Secrets가 나중에 추가된 경우에도 이 시점에 최초 복원을 시도한다.
+        _REMOTE_STORAGE_RESTORED = True
         db_path = get_db_path()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = db_path.with_name(f".{db_path.name}.restore.tmp")
@@ -118,6 +154,9 @@ def _restore_remote_member_db() -> bool:
             if not _sqlite_file_is_valid(temp_path):
                 raise RuntimeError("원격 회원 DB 무결성 검사 실패")
             os.replace(temp_path, db_path)
+            _REMOTE_STORAGE_NEEDS_INITIAL_SYNC = False
+            _REMOTE_STORAGE_VERIFIED = True
+            _REMOTE_STORAGE_LAST_ERROR = ""
             return True
         except Exception as error:
             try:
@@ -125,18 +164,32 @@ def _restore_remote_member_db() -> bool:
                     temp_path.unlink()
             except OSError:
                 pass
-            # 첫 실행에는 원격 객체가 없을 수 있으므로 로컬 DB 생성을 계속한다.
-            print(f"회원 DB 원격 복원 보류: {type(error).__name__}")
+            if _remote_object_is_missing(error):
+                # 비어 있는 새 버킷이면 로컬 회원 DB를 만든 직후 최초 백업한다.
+                _REMOTE_STORAGE_NEEDS_INITIAL_SYNC = True
+                _REMOTE_STORAGE_LAST_ERROR = ""
+                print("회원 DB 원격 복원 보류: 최초 백업 준비", flush=True)
+            else:
+                _REMOTE_STORAGE_LAST_ERROR = _remote_storage_error_message(error)
+                print(
+                    f"회원 DB 원격 복원 보류: {_remote_storage_error_code(error)}",
+                    flush=True,
+                )
             return False
 
 
 def _sync_remote_member_db() -> bool:
     """Upload a consistent SQLite backup to a private, encrypted S3 object."""
+    global _REMOTE_STORAGE_LAST_ERROR
+    global _REMOTE_STORAGE_NEEDS_INITIAL_SYNC
+    global _REMOTE_STORAGE_VERIFIED
     config = _member_s3_config()
     if not config:
+        _REMOTE_STORAGE_LAST_ERROR = "S3 비밀 설정을 확인해주세요."
         return False
     db_path = get_db_path()
     if not db_path.exists():
+        _REMOTE_STORAGE_LAST_ERROR = "저장할 회원 DB 파일이 없습니다."
         return False
     with _REMOTE_STORAGE_LOCK:
         backup_path = None
@@ -157,9 +210,17 @@ def _sync_remote_member_db() -> bool:
                 config["key"],
                 ExtraArgs={"ServerSideEncryption": "AES256"},
             )
+            _REMOTE_STORAGE_NEEDS_INITIAL_SYNC = False
+            _REMOTE_STORAGE_VERIFIED = True
+            _REMOTE_STORAGE_LAST_ERROR = ""
             return True
         except Exception as error:
-            print(f"회원 DB 원격 저장 실패: {type(error).__name__}")
+            _REMOTE_STORAGE_VERIFIED = False
+            _REMOTE_STORAGE_LAST_ERROR = _remote_storage_error_message(error)
+            print(
+                f"회원 DB 원격 저장 실패: {_remote_storage_error_code(error)}",
+                flush=True,
+            )
             return False
         finally:
             if backup_path is not None:
@@ -171,15 +232,33 @@ def _sync_remote_member_db() -> bool:
 
 def get_member_storage_status() -> dict[str, Any]:
     config = _member_s3_config()
+    configured = bool(config)
+    persistent = configured and _REMOTE_STORAGE_VERIFIED
     return {
-        "persistent": bool(config),
-        "backend": "private_s3" if config else "local_sqlite",
+        "configured": configured,
+        "persistent": persistent,
+        "backend": "private_s3" if persistent else "local_sqlite",
+        "error": _REMOTE_STORAGE_LAST_ERROR,
         "message": (
-            "회원정보 영구 저장 사용 중"
-            if config
-            else "회원 DB 영구 저장 설정이 필요합니다"
+            "회원 DB S3 영구 저장 정상"
+            if persistent
+            else _REMOTE_STORAGE_LAST_ERROR
+            or (
+                "S3 설정 확인 및 최초 백업이 필요합니다."
+                if configured
+                else "회원 DB 영구 저장 설정이 필요합니다."
+            )
         ),
     }
+
+
+def sync_member_storage_now() -> tuple[bool, str]:
+    """Run one explicit, admin-facing backup without exposing private settings."""
+    if not _member_s3_config():
+        return False, "S3 비밀 설정을 먼저 입력해주세요."
+    if _sync_remote_member_db():
+        return True, "회원 DB가 S3에 안전하게 저장됐습니다."
+    return False, _REMOTE_STORAGE_LAST_ERROR or "회원 DB S3 저장에 실패했습니다."
 
 
 def utc_now() -> str:
@@ -336,6 +415,8 @@ def init_member_db() -> None:
         if "notice_link" not in post_columns:
             conn.execute("ALTER TABLE posts ADD COLUMN notice_link TEXT")
         _migrate_legacy_users(conn)
+    if _REMOTE_STORAGE_NEEDS_INITIAL_SYNC:
+        _sync_remote_member_db()
 
 
 def _migrate_legacy_users(conn: sqlite3.Connection) -> None:
