@@ -3302,6 +3302,107 @@ def _valid_toto14_round(records):
     )
 
 
+BETMAN_BASE_URL = os.getenv("BETMAN_BASE_URL", "https://www.betman.co.kr").rstrip("/")
+BETMAN_HUB_URL = urljoin(
+    BETMAN_BASE_URL + "/",
+    "main/mainPage/gamebuy/buyableGameList.do",
+)
+
+
+def _betman_round_target(row, base_url=BETMAN_BASE_URL):
+    """Validate a Betman round-list row and build its direct game-slip URL."""
+    if not isinstance(row, dict):
+        return None
+    gm_id = str(row.get("gmId", "")).strip()
+    gm_ts = str(row.get("gmTs", "")).strip()
+    if not re.fullmatch(r"G\d{3}", gm_id) or not gm_ts.isdigit():
+        return None
+    return {
+        "gm_id": gm_id,
+        "gm_ts": gm_ts,
+        "display_round": str(row.get("gmOsidTs", "") or gm_ts),
+        "sale_end": int(row.get("saleEndDate") or 0),
+        "url": urljoin(
+            base_url.rstrip("/") + "/",
+            f"main/mainPage/gamebuy/gameSlip.do?gmId={gm_id}&gmTs={gm_ts}",
+        ),
+    }
+
+
+def _fetch_betman_round_targets(session=None):
+    """Read current Proto/Toto round IDs without rendering Betman's heavy hub.
+
+    Betman's hub fills its tables through this JSON endpoint. Reading that
+    endpoint first is much lighter and avoids the EC2 Edge timeout that occurs
+    while the hub is still loading third-party scripts and assets.
+    """
+    owned_session = session is None
+    session = session or requests.Session()
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Safari/537.36"
+    )
+    common_headers = {
+        "User-Agent": user_agent,
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+    }
+    try:
+        # The first GET establishes the anonymous session cookie expected by
+        # the JSON endpoint. It does not wait for any browser-side assets.
+        hub_response = session.get(
+            BETMAN_HUB_URL,
+            headers=common_headers,
+            timeout=(10, 30),
+        )
+        hub_response.raise_for_status()
+        # requests follows official redirects. Build every later address from
+        # the final host, rather than assuming Betman's domain never changes.
+        resolved_base_url = urljoin(hub_response.url, "/").rstrip("/")
+        round_list_url = urljoin(
+            resolved_base_url + "/",
+            "buyPsblGame/inqBuyAbleGameInfoList.do",
+        )
+        payload = {"_sbmInfo": {"_sbmInfo": {"debugMode": "false"}}}
+        response = session.post(
+            round_list_url,
+            json=payload,
+            headers={
+                **common_headers,
+                "Referer": BETMAN_HUB_URL,
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            },
+            timeout=(10, 30),
+        )
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise RuntimeError("베트맨 회차 조회 응답이 JSON 객체가 아님")
+        status = result.get("rsMsg") or {}
+        if status and status.get("statusCode") not in (None, "S"):
+            raise RuntimeError(f"베트맨 회차 조회 상태 오류: {status.get('statusCode')}")
+
+        def latest(rows, gm_id):
+            targets = [
+                target
+                for target in (
+                    _betman_round_target(row, resolved_base_url) for row in (rows or [])
+                )
+                if target and target["gm_id"] == gm_id
+            ]
+            if not targets:
+                return None
+            return max(targets, key=lambda item: (item["sale_end"], int(item["gm_ts"])))
+
+        return {
+            "proto": latest(result.get("protoGames"), "G101"),
+            "toto14": latest(result.get("totoGames"), "G011"),
+        }
+    finally:
+        if owned_session:
+            session.close()
+
+
 def _select_latest_complete_toto14_round(records):
     groups = {}
     order = {}
@@ -3591,7 +3692,7 @@ def _valid_scrape_records(records):
 
 def scrape_betman():
     print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 베트맨 실제 경기/배당 수집 가동...")
-    hub_url = "https://www.betman.co.kr/main/mainPage/gamebuy/buyableGameList.do"
+    hub_url = BETMAN_HUB_URL
     old_data = _read_json("betman_data.json", {})
     if not isinstance(old_data, dict):
         old_data = {}
@@ -3609,16 +3710,34 @@ def scrape_betman():
     matches = []
     matches_14 = []
 
+    round_targets = {}
+    try:
+        round_targets = _fetch_betman_round_targets()
+        proto_round = (round_targets.get("proto") or {}).get("display_round", "-")
+        toto_round = (round_targets.get("toto14") or {}).get("display_round", "-")
+        print(f"✅ 베트맨 현재 회차 직접 확인: 프로토 {proto_round} / 승무패 {toto_round}")
+    except Exception as error:
+        # Keep the old hub navigation as a safety fallback if Betman changes
+        # the lightweight endpoint in the future.
+        print(f"⚠️ 베트맨 회차 직접 조회 실패, 기존 화면 탐색으로 전환: {error}")
+
     def scrape_proto_page(driver):
-        driver.get(hub_url)
-        _accept_alert(driver)
-        # We navigate with the href itself, so visibility/clickability is not
-        # required and can be blocked temporarily by Betman's loading overlay.
-        proto_btn = WebDriverWait(driver, 35).until(EC.presence_of_element_located((
-            By.XPATH,
-            "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
-        )))
-        proto_target_url = _open_link_target(driver, proto_btn, hub_url)
+        proto_target = round_targets.get("proto") or {}
+        proto_target_url = proto_target.get("url")
+        if proto_target_url:
+            print(f"➡️ 프로토 {proto_target.get('display_round', '-')}회차 직접 접속")
+            driver.get(proto_target_url)
+            _accept_alert(driver)
+        else:
+            driver.get(hub_url)
+            _accept_alert(driver)
+            # We navigate with the href itself, so visibility/clickability is
+            # not required and can be blocked by Betman's loading overlay.
+            proto_btn = WebDriverWait(driver, 35).until(EC.presence_of_element_located((
+                By.XPATH,
+                "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
+            )))
+            proto_target_url = _open_link_target(driver, proto_btn, hub_url)
         proto_row_selector = ".box-data-group [data-rowname]"
         try:
             WebDriverWait(driver, 45).until(
@@ -3646,18 +3765,30 @@ def scrape_betman():
         return parse_betman_proto_html(driver.page_source), stable
 
     def scrape_toto_page(driver):
-        driver.get(hub_url)
-        _accept_alert(driver)
-        toto_btn = WebDriverWait(driver, 45).until(EC.presence_of_element_located((
-            By.XPATH,
-            "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
-        )))
+        toto_target = round_targets.get("toto14") or {}
+        target_url = toto_target.get("url")
         round_hints = [
-            toto_btn.get_attribute("href") or "",
-            toto_btn.get_attribute("onclick") or "",
-            toto_btn.text or "",
+            toto_target.get("gm_ts", ""),
+            toto_target.get("display_round", ""),
+            target_url or "",
         ]
-        target_url = _open_link_target(driver, toto_btn, hub_url)
+        if target_url:
+            print(f"➡️ 승무패 {toto_target.get('display_round', '-')}회차 직접 접속")
+            driver.get(target_url)
+            _accept_alert(driver)
+        else:
+            driver.get(hub_url)
+            _accept_alert(driver)
+            toto_btn = WebDriverWait(driver, 45).until(EC.presence_of_element_located((
+                By.XPATH,
+                "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
+            )))
+            round_hints.extend([
+                toto_btn.get_attribute("href") or "",
+                toto_btn.get_attribute("onclick") or "",
+                toto_btn.text or "",
+            ])
+            target_url = _open_link_target(driver, toto_btn, hub_url)
         row_selector = "table#grid_victory tbody tr, #grid_victory_tbody > tr"
         try:
             WebDriverWait(driver, 60).until(
