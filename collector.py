@@ -1490,8 +1490,9 @@ def build_dashboard_data():
         home_team, away_team = m["home"], m["away"]
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         m_dt = parse_match_time(final_match_time)
-        home_info = fetch_team_info_api(home_team)
-        away_info = fetch_team_info_api(away_team)
+        home_info, away_info, _ = resolve_match_team_pair(
+            home_team, away_team, final_match_time, ttl_h=2
+        )
 
         odd_h = float(m.get("odd_h") or 0)
         odd_d = float(m.get("odd_d") or 0)
@@ -2054,6 +2055,9 @@ def build_dashboard_data():
         scheduled_dt = _parse_kst_match_time(match_time)
         m_dt = parse_match_time(match_time)
         diff_hours = (m_dt - now).total_seconds() / 3600.0
+        home_info, away_info, identity_fixture = resolve_match_team_pair(
+            home_team, away_team, match_time, ttl_h=2
+        )
 
         frozen_item = None
         frozen_record = frozen_toto14.get(match_id)
@@ -2110,6 +2114,19 @@ def build_dashboard_data():
             frozen_item = _unavailable_toto14_item(m)
             freeze_needs_persist = True
 
+        # 예측 선택은 동결해도 잘못된 팀 ID와 로고는 동결하지 않는다.
+        # 실제 경기표에서 다시 확인한 표시·신원 정보만 매 수집 때 갱신한다.
+        if frozen_item is not None:
+            frozen_item = dict(frozen_item)
+            frozen_item["home_logo"] = home_info.get("logo")
+            frozen_item["away_logo"] = away_info.get("logo")
+            frozen_item["home_id"] = int(home_info.get("id") or 0)
+            frozen_item["away_id"] = int(away_info.get("id") or 0)
+            if identity_fixture:
+                frozen_item["api_fixture_id"] = int(
+                    identity_fixture.get("fixture", {}).get("id") or 0
+                )
+
         if frozen_item is not None and freeze_needs_persist:
             stored_item = _freeze_toto14_prediction(
                 match_id, home_team, away_team, match_time, frozen_item
@@ -2146,9 +2163,6 @@ def build_dashboard_data():
             frozen_prediction_count += 1
             continue
 
-        home_info = fetch_team_info_api(home_team)
-        away_info = fetch_team_info_api(away_team)
-         
         heavy_ttl = 24
         # 경기 직전에는 결장 정보가 자주 바뀌므로 짧게 갱신한다.
         inj_ttl = 0.5 if diff_hours <= 1.5 else 12

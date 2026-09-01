@@ -23,7 +23,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.6-betman-direct-links"
+ANALYSIS_VERSION = "V6.7-verified-team-pairs"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -520,7 +520,6 @@ DIRECT_TEAM_INFO = {
     "FC 툰": {"id": 1012, "logo": "https://media.api-sports.io/football/teams/1012.png"},
     "미들즈브러": {"id": 61, "logo": "https://media.api-sports.io/football/teams/61.png"},
     "웨스트브로미치 앨비언": {"id": 60, "logo": "https://media.api-sports.io/football/teams/60.png"},
-    "브리스틀 시티": {"id": 59, "logo": "https://media.api-sports.io/football/teams/59.png"},
     "포츠머스": {"id": 67, "logo": "https://media.api-sports.io/football/teams/67.png"},
     "카디프 시티": {"id": 64, "logo": "https://media.api-sports.io/football/teams/64.png"},
     "우니온 베를린": {"id": 182, "logo": "https://media.api-sports.io/football/teams/182.png"},
@@ -639,15 +638,27 @@ TEAM_INFO_FAILURE_RETRY_AT = {}
 # 여기서 찾은 동일 팀 ID를 팀 마크와 최근 전적 조회에 함께 사용한다.
 BUILTIN_TEAM_ALIASES = {
     # 베트맨 화면의 짧은 팀명도 같은 공식 API 팀으로 연결합니다.
+    "포츠머스": "Portsmouth",
+    "더비카운": "Derby",
+    "더비카운티": "Derby",
+    "프레스턴": "Preston",
+    "프레스턴 노스엔드": "Preston",
     "브리스C": "Bristol City",
     "셰필드U": "Sheffield Utd",
     "볼턴W": "Bolton",
     "스완지C": "Swansea",
+    "웨스트햄": "West Ham",
+    "사우샘프": "Southampton",
     "버밍엄C": "Birmingham",
     "스토크C": "Stoke City",
     "노리치C": "Norwich City",
+    "도쿄베르": "Tokyo Verdy",
+    "비셀고베": "Vissel Kobe",
     "마치다Z": "Machida Zelvia",
+    "가와사키": "Kawasaki Frontale",
     "시미즈S": "Shimizu S-Pulse",
+    "산프히로": "Sanfrecce Hiroshima",
+    "후쿠오카": "Avispa Fukuoka",
     "C오사카": "Cerezo Osaka",
     "오사카C": "Cerezo Osaka",
     "가시와R": "Kashiwa Reysol",
@@ -662,6 +673,7 @@ BUILTIN_TEAM_ALIASES = {
     "V바렌 나가사키": "V-Varen Nagasaki",
     "V-바렌 나가사키": "V-Varen Nagasaki",
     "V바렌나가사키": "V-Varen Nagasaki",
+    "V바렌나": "V-Varen Nagasaki",
     "요코하마 F 마리노스": "Yokohama F. Marinos",
     "요코하마F마리노스": "Yokohama F. Marinos",
     "빌럼II": "Willem II",
@@ -842,6 +854,42 @@ def _resolve_translated_team_name(team_name):
     return team_name
 
 
+def _verified_team_cache_key(team_name):
+    return f"team_info_v7_verified_{_normalize_team_alias(team_name)}"
+
+
+def _load_verified_team_info(team_name):
+    """경기표의 홈·원정 한 쌍으로 검증된 팀 정보만 불러온다."""
+    cached = get_db_cache(_verified_team_cache_key(team_name), 24 * 365)
+    if not isinstance(cached, dict) or not int(cached.get("id") or 0):
+        return None
+    cached = dict(cached)
+    cached["logo"] = _resolve_team_logo(
+        team_name, cached.get("id"), cached.get("logo")
+    )
+    return cached
+
+
+def _remember_verified_team(team_name, api_team):
+    """실제 경기표에서 확인한 ID·로고를 모든 수집 단계의 기준으로 저장한다."""
+    result = dict(api_team or {})
+    team_id = int(result.get("id") or 0)
+    if not team_id:
+        return None
+    result["logo"] = _resolve_team_logo(
+        team_name,
+        team_id,
+        result.get("logo") or f"https://media.api-sports.io/football/teams/{team_id}.png",
+    )
+    result["verified_pair"] = True
+    identity_key = _normalize_team_alias(team_name)
+    TEAM_INFO_MEMORY_CACHE[team_name] = result
+    if identity_key:
+        TEAM_INFO_MEMORY_CACHE[identity_key] = result
+    set_db_cache(_verified_team_cache_key(team_name), result)
+    return result
+
+
 def _latin_team_key(value):
     """악센트·구두점·FC 표기 차이를 제거한 영문 팀 비교 키."""
     normalized = unicodedata.normalize("NFKD", str(value or ""))
@@ -851,25 +899,24 @@ def _latin_team_key(value):
 
 def known_team_id(team_name):
     """베트맨 이름으로 이미 검증된 API 팀 ID를 반환한다."""
-    direct = DIRECT_TEAM_INFO.get(team_name)
-    if direct:
-        return int(direct.get("id") or 0)
-
-    target = _normalize_team_alias(team_name)
-    for mapped_name, mapped in DIRECT_TEAM_INFO.items():
-        if target and target == _normalize_team_alias(mapped_name):
-            return int(mapped.get("id") or 0)
-
     # 같은 프로세스에서 이미 찾은 팀과 DB에 저장된 정상 팀을 모두 같은
     # 대표 ID로 사용한다. 로고ㆍ최근 전적ㆍ라이브ㆍ채점이 서로 다른 팀을
     # 가리키지 않도록 하는 단일 팀 신원 기준이다.
+    target = _normalize_team_alias(team_name)
     remembered = TEAM_INFO_MEMORY_CACHE.get(team_name) or TEAM_INFO_MEMORY_CACHE.get(target)
     if isinstance(remembered, dict) and int(remembered.get("id") or 0):
         return int(remembered["id"])
-    for cache_version in ("v6", "v5"):
-        cached = get_db_cache(f"team_info_{cache_version}_{team_name}", 24 * 365)
-        if isinstance(cached, dict) and int(cached.get("id") or 0):
-            return int(cached["id"])
+
+    verified = _load_verified_team_info(team_name)
+    if verified:
+        return int(verified["id"])
+
+    direct = DIRECT_TEAM_INFO.get(team_name)
+    if direct:
+        return int(direct.get("id") or 0)
+    for mapped_name, mapped in DIRECT_TEAM_INFO.items():
+        if target and target == _normalize_team_alias(mapped_name):
+            return int(mapped.get("id") or 0)
     return 0
 
 
@@ -933,6 +980,10 @@ def fetch_team_info_api(team_name):
             TEAM_INFO_MEMORY_CACHE[identity_key] = result
         return result
 
+    verified = _load_verified_team_info(team_name)
+    if verified:
+        return remember(verified)
+
     if team_name in DIRECT_TEAM_INFO:
         direct = DIRECT_TEAM_INFO[team_name]
         result = {
@@ -953,7 +1004,7 @@ def fetch_team_info_api(team_name):
                 f"https://media.api-sports.io/football/teams/{canonical_id}.png",
             ),
         }
-        set_db_cache(f"team_info_v6_{team_name}", result)
+        set_db_cache(f"team_info_v7_search_{team_name}", result)
         return remember(result)
 
     # 수동/공식 로고가 이미 확인된 팀은 그 로고의 API 팀 ID를 그대로 사용합니다.
@@ -966,7 +1017,7 @@ def fetch_team_info_api(team_name):
             "name": _resolve_translated_team_name(team_name) or team_name,
             "logo": resolved_logo,
         }
-        set_db_cache(f"team_info_v6_{team_name}", result)
+        set_db_cache(f"team_info_v7_search_{team_name}", result)
         return remember(result)
 
     fallback_res = {"id": 0, "name": team_name, "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO)}
@@ -975,8 +1026,8 @@ def fetch_team_info_api(team_name):
         return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
-    cache_key = f"team_info_v6_{team_name}"
-    cached_data = get_db_cache(cache_key, 8760) or get_db_cache(f"team_info_v5_{team_name}", 8760)
+    cache_key = f"team_info_v7_search_{team_name}"
+    cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
         cached_data["logo"] = _resolve_team_logo(
             team_name, cached_data.get("id"), cached_data.get("logo")
@@ -1087,6 +1138,165 @@ def parse_match_time(match_time_str):
         print(f"⚠️ [관제 봇 떡밥] 경기 시간 파싱 실패: {e}")
     return now - timedelta(hours=3)
 
+
+def _team_name_match_score(local_name, api_name):
+    """고정 ID를 배제하고 이름만으로 동일 팀 신뢰도를 계산한다."""
+    translated = _resolve_translated_team_name(local_name)
+    api_key = _latin_team_key(api_name)
+    if not api_key:
+        return 0.0
+
+    scores = []
+    for candidate in (translated, local_name):
+        local_key = _latin_team_key(candidate)
+        if not local_key:
+            continue
+        if local_key == api_key:
+            scores.append(1.0)
+            continue
+        if min(len(local_key), len(api_key)) >= 5 and (
+            local_key in api_key or api_key in local_key
+        ):
+            scores.append(0.96)
+            continue
+        scores.append(difflib.SequenceMatcher(None, local_key, api_key).ratio())
+    return max(scores, default=0.0)
+
+
+def _fetch_date_fixtures_api(date_str, ttl_h=2):
+    """한 날짜 경기표를 한 번만 받아 팀 신원·경기 ID가 함께 사용한다."""
+    cache_key = f"fixtures_by_date_v2_{date_str}"
+    cached = get_db_cache(cache_key, min(max(float(ttl_h or 0), 0.2), 2))
+    if cached is not None:
+        return cached
+    try:
+        response = api_get(
+            "/fixtures",
+            params={"date": date_str, "timezone": "Asia/Seoul"},
+            timeout=12,
+        )
+        if response.status_code != 200:
+            print(f"⚠️ 실제 경기표 조회 실패({date_str}): HTTP {response.status_code}")
+            return None
+        payload = response.json()
+        if payload.get("errors"):
+            print(f"⚠️ 실제 경기표 API 오류({date_str}): {payload.get('errors')}")
+            return None
+        fixtures = payload.get("response", [])
+        set_db_cache(cache_key, fixtures)
+        return fixtures
+    except Exception as error:
+        print(f"⚠️ 실제 경기표 조회 오류({date_str}): {error}")
+        return None
+
+
+def _fixture_team_payload(fixture_data, side):
+    team = dict(fixture_data.get("teams", {}).get(side, {}) or {})
+    team.pop("winner", None)
+    team_id = int(team.get("id") or 0)
+    if team_id and not team.get("logo"):
+        team["logo"] = f"https://media.api-sports.io/football/teams/{team_id}.png"
+    return team
+
+
+def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
+    """실제 날짜별 경기표에서 홈·원정 두 팀을 동시에 확정한다.
+
+    한 팀씩 검색하면 동명이인이나 오래된 잘못된 캐시가 상대 팀까지 오염시킬
+    수 있다. 이 함수는 같은 경기의 양쪽 이름과 킥오프 시간을 함께 대조하고,
+    서로 다른 두 팀에 같은 ID가 배정되는 결과를 절대 반환하지 않는다.
+    """
+    home_name = str(home_name or "").strip()
+    away_name = str(away_name or "").strip()
+    different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
+
+    if match_time_str not in (None, "", "시간 미정", "마감/진행중"):
+        match_dt = parse_match_time(match_time_str)
+        date_str = match_dt.strftime("%Y-%m-%d")
+        fixtures = _fetch_date_fixtures_api(date_str, ttl_h)
+        if fixtures is not None:
+            candidates = []
+            for fixture_data in fixtures:
+                home_api = _fixture_team_payload(fixture_data, "home")
+                away_api = _fixture_team_payload(fixture_data, "away")
+                home_id = int(home_api.get("id") or 0)
+                away_id = int(away_api.get("id") or 0)
+                if not home_id or not away_id or (different_teams and home_id == away_id):
+                    continue
+                home_score = _team_name_match_score(home_name, home_api.get("name"))
+                away_score = _team_name_match_score(away_name, away_api.get("name"))
+                timestamp = int(fixture_data.get("fixture", {}).get("timestamp") or 0)
+                time_delta = (
+                    abs(timestamp - int(match_dt.timestamp())) / 3600.0
+                    if timestamp
+                    else 99.0
+                )
+                time_bonus = max(0.0, 0.18 - min(time_delta, 12.0) * 0.015)
+                candidates.append(
+                    (home_score + away_score + time_bonus, home_score, away_score,
+                     time_delta, fixture_data, home_api, away_api)
+                )
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            selected = None
+            if candidates:
+                best = candidates[0]
+                if min(best[1], best[2]) >= 0.72 and best[1] + best[2] >= 1.52:
+                    selected = best
+
+            # 베트맨의 새 축약명이 사전에 아직 없더라도, 한쪽 팀이 정확하고
+            # 같은 시각 후보가 하나뿐이면 실제 상대 팀을 경기표에서 역확정한다.
+            if selected is None:
+                partner_candidates = [
+                    item for item in candidates
+                    if max(item[1], item[2]) >= 0.90 and item[3] <= 2.5
+                ]
+                unique_pairs = {
+                    (int(item[5].get("id") or 0), int(item[6].get("id") or 0))
+                    for item in partner_candidates
+                }
+                if len(unique_pairs) == 1 and partner_candidates:
+                    selected = max(partner_candidates, key=lambda item: item[0])
+
+            if selected is not None:
+                _, home_score, away_score, _, fixture_data, home_api, away_api = selected
+                verified_home = _remember_verified_team(home_name, home_api)
+                verified_away = _remember_verified_team(away_name, away_api)
+                if (
+                    verified_home
+                    and verified_away
+                    and int(verified_home["id"]) != int(verified_away["id"])
+                ):
+                    print(
+                        f"[팀검증 성공] 실제 경기표 팀 확정: {home_name}({verified_home['id']}) vs "
+                        f"{away_name}({verified_away['id']}) "
+                        f"[이름 점수 {home_score:.2f}/{away_score:.2f}]"
+                    )
+                    return verified_home, verified_away, fixture_data
+
+            print(
+                f"[팀검증 재시도] 실제 경기표에서 팀 쌍을 확정하지 못함: "
+                f"{home_name} vs {away_name} ({date_str})"
+            )
+
+    # 날짜 정보가 없거나 공급사 경기표가 잠시 실패하면 기존 개별 검색을
+    # 사용하되, 서로 다른 팀이 같은 ID가 되는 순간 결과를 폐기한다.
+    home_info = fetch_team_info_api(home_name)
+    away_info = fetch_team_info_api(away_name)
+    home_id = int(home_info.get("id") or 0)
+    away_id = int(away_info.get("id") or 0)
+    if different_teams and home_id and home_id == away_id:
+        print(
+            f"[팀검증 차단] 중복 팀 ID: {home_name}와 {away_name}가 모두 {home_id}번으로 "
+            "연결되어 해당 결과를 사용하지 않습니다."
+        )
+        return (
+            {"id": 0, "name": home_name, "logo": None, "identity_error": "duplicate_id"},
+            {"id": 0, "name": away_name, "logo": None, "identity_error": "duplicate_id"},
+            None,
+        )
+    return home_info, away_info, None
+
 def fetch_weather_api(city_name, ttl_h):
     if not city_name: return "Clear"
     clean_city = city_name.split(',')[0].strip()
@@ -1119,25 +1329,10 @@ def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str=
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        # 같은 날짜의 경기 목록은 프로토 전체가 공동 사용한다. 주말 100여 경기를
-        # 경기마다 조회하던 호출을 날짜당 1회로 줄인다.
-        date_cache_key = f"fixtures_by_date_v1_{date_str}"
-        date_fixtures = get_db_cache(date_cache_key, min(max(ttl_h, 0.2), 2))
+        # 팀 신원을 확정할 때 받은 같은 날짜 경기표를 그대로 재사용한다.
+        date_fixtures = _fetch_date_fixtures_api(date_str, ttl_h)
         if date_fixtures is None:
-            res = api_get(
-                "/fixtures",
-                params={"date": date_str, "timezone": "Asia/Seoul"},
-                timeout=10,
-            )
-            if res.status_code != 200:
-                print(f"⚠️ 경기 ID 검색 실패({date_str}): HTTP {res.status_code}")
-                return None
-            payload = res.json()
-            if payload.get("errors"):
-                print(f"⚠️ 경기 ID API 오류({date_str}): {payload.get('errors')}")
-                return None
-            date_fixtures = payload.get("response", [])
-            set_db_cache(date_cache_key, date_fixtures)
+            return None
 
         target_ids = {int(home_id), int(away_id)}
         exact_matches = []
