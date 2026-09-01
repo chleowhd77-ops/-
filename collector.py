@@ -3343,13 +3343,15 @@ def _accept_alert(driver):
 
 
 def _browser_arguments():
+    # Betman renders a large JavaScript game table.  Artificially capping the
+    # renderer at 256 MB and two processes made Edge 151 disconnect its
+    # renderer (InvalidSessionId / tab crashed) on the EC2 collector.
     return [
         '--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
-        '--disable-gpu', '--disable-software-rasterizer', '--disable-extensions',
+        '--disable-gpu', '--disable-extensions',
         '--disable-background-networking', '--disable-component-update',
         '--disable-default-apps', '--disable-sync', '--metrics-recording-only',
-        '--no-first-run', '--renderer-process-limit=2', '--disk-cache-size=1',
-        '--media-cache-size=1', '--js-flags=--max-old-space-size=256',
+        '--no-first-run',
         '--window-size=1365,900', '--blink-settings=imagesEnabled=false',
         '--disable-features=Translate,BackForwardCache,OptimizationHints,MediaRouter',
     ]
@@ -3429,8 +3431,8 @@ def _create_webdriver():
     for label, factory in attempts:
         try:
             driver = factory()
-            driver.set_page_load_timeout(60)
-            driver.set_script_timeout(30)
+            driver.set_page_load_timeout(90)
+            driver.set_script_timeout(45)
             print(f"✅ 브라우저 시작: {label}")
             return driver
         except Exception as error:
@@ -3511,8 +3513,6 @@ def _scrape_with_fresh_browser(label, operation):
         except Exception as error:
             last_error = error
             print(f"❌ {label} 수집 실패({attempt + 1}/2): {type(error).__name__}: {error}")
-            if attempt == 0:
-                time.sleep(2)
         finally:
             if driver is not None:
                 try:
@@ -3520,6 +3520,11 @@ def _scrape_with_fresh_browser(label, operation):
                     print("🧹 브라우저 프로세스 정상 종료 완료.")
                 except Exception:
                     pass
+        # Cleanup must finish before the next WebDriver starts.  Starting the
+        # retry while Edge renderer children are still exiting can make the
+        # next session inherit the same renderer-disconnect failure.
+        if attempt == 0:
+            time.sleep(5)
     raise RuntimeError(str(last_error or f"{label} 수집 실패"))
 
 
@@ -3607,7 +3612,9 @@ def scrape_betman():
     def scrape_proto_page(driver):
         driver.get(hub_url)
         _accept_alert(driver)
-        proto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
+        # We navigate with the href itself, so visibility/clickability is not
+        # required and can be blocked temporarily by Betman's loading overlay.
+        proto_btn = WebDriverWait(driver, 35).until(EC.presence_of_element_located((
             By.XPATH,
             "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
         )))
@@ -3641,7 +3648,7 @@ def scrape_betman():
     def scrape_toto_page(driver):
         driver.get(hub_url)
         _accept_alert(driver)
-        toto_btn = WebDriverWait(driver, 35).until(EC.element_to_be_clickable((
+        toto_btn = WebDriverWait(driver, 45).until(EC.presence_of_element_located((
             By.XPATH,
             "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
         )))

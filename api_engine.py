@@ -23,7 +23,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.7-verified-team-pairs"
+ANALYSIS_VERSION = "V6.8-betman-browser-stability"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -549,6 +549,10 @@ DIRECT_TEAM_INFO.update({
     "파더보른07": {"id": 185, "logo": "https://media.api-sports.io/football/teams/185.png"},
     "프랑크푸르트": {"id": 169, "logo": "https://media.api-sports.io/football/teams/169.png"},
     "함부르크": {"id": 175, "logo": "https://media.api-sports.io/football/teams/175.png"},
+    # 베트맨의 짧은 표기와 프로토의 전체 표기를 같은 1군 팀으로 고정한다.
+    "산프히로": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
+    "산프레체 히로시마": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
+    "Sanfrecce Hiroshima": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
 })
 
 def init_cache_db():
