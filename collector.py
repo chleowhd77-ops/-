@@ -46,6 +46,7 @@ from api_engine import _normalize_player_name
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 KST = timezone(timedelta(hours=9))
+UNDERDOG_GATE_VERSION = "U2-conservative-edge-20260902"
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
@@ -1121,20 +1122,31 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
             continue
         opponent = "away" if side == "home" else "home"
         signals = []
+        signal_groups = []
+
+        def add_signal(group, label):
+            # 결장과 선발 이탈처럼 같은 원인을 두 개의
+            # 독립 근거로 중복 계산하지 않는다.
+            if group in signal_groups:
+                return
+            signal_groups.append(group)
+            signals.append(label)
+
         if metrics[f"{opponent}_absence"] - metrics[f"{side}_absence"] >= 0.05:
-            signals.append("상대 핵심 결장·선발 누수")
+            add_signal("squad", "상대 핵심 결장·선발 누수")
         if metrics[f"{side}_market_bonus"] > 0:
-            signals.append("해외 배당 하락·시장 지지")
+            add_signal("market", "해외 배당 하락·시장 지지")
         if metrics[f"{side}_tactical"] > 0:
-            signals.append("상대 전적·전술 상성 우위")
+            add_signal("matchup", "상대 전적·전술 상성 우위")
         if metrics[f"{side}_recent"] - metrics[f"{opponent}_recent"] >= 0.035:
-            signals.append("최근 경기력 지표 우위")
+            add_signal("form", "최근 경기력 지표 우위")
         if metrics[f"{side}_rest"] - metrics[f"{opponent}_rest"] >= 2:
-            signals.append("휴식일 우위")
+            add_signal("schedule", "휴식일 우위")
         if metrics[f"{opponent}_lineup"] - metrics[f"{side}_lineup"] >= 0.08:
-            signals.append("상대 선발 핵심 이탈")
-        pick["support_signals"] = list(dict.fromkeys(signals))
-        pick["independent_support_count"] = len(pick["support_signals"])
+            add_signal("squad", "상대 선발 핵심 이탈")
+        pick["support_signals"] = signals
+        pick["support_signal_groups"] = signal_groups
+        pick["independent_support_count"] = len(signal_groups)
     return picks
 
 
@@ -1259,7 +1271,7 @@ def build_detailed_report(
     else:
         final_parts.append("AI 꿀픽은 실제 팀 역배 후보 중 가치 기준을 통과한 선택지가 없어 표시하지 않습니다.")
     if honey and not vip:
-        final_parts.append("VIP 역배픽은 실제 역배 방향과 독립 근거 2개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
+        final_parts.append("VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
     missing_text = (
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
         if missing_names else "요구된 핵심 데이터 항목이 모두 연결되어 있습니다."
@@ -1356,12 +1368,26 @@ def annotate_pick_metrics(picks, confidence):
         pick["edge"] = round(edge, 4)
         pick["safe_score"] = round(probability * confidence, 4)
         pick["value_score"] = round(max(0.0, edge) * confidence, 4)
+        error_margin = max(0.0, float(pick.get("error_margin", 0) or 0))
+        # 역배는 한 번의 추정치가 튀기 쉬워 오차범위의 30%를
+        # 먼저 뺀 보수적 확률과 가치로 다시 검증한다.
+        robust_probability = max(0.0, probability - (error_margin * 0.30))
+        robust_edge = (
+            robust_probability - market_probability
+            if market_probability > 0 else 0.0
+        )
+        pick["robust_probability"] = round(robust_probability, 6)
+        pick["robust_edge"] = round(robust_edge, 6)
+        pick["robust_ev"] = round(robust_probability * odd, 6)
+        pick["underdog_gate_version"] = UNDERDOG_GATE_VERSION
         pick["is_qualified_underdog"] = bool(
             pick.get("is_true_underdog")
-            and 2.20 <= odd <= 6.00
+            and 2.20 <= odd <= 5.00
             and probability >= 0.22
-            and edge >= 0.03
-            and confidence >= 0.50
+            and robust_edge >= 0.015
+            and float(pick.get("robust_ev", 0) or 0) >= 1.02
+            and confidence >= 0.55
+            and int(pick.get("independent_support_count", 0) or 0) >= 1
         )
         pick["recommendation_score"] = round(
             (probability * 0.72) + (confidence * 0.20) + (min(max(edge, 0.0), 0.15) * 0.55), 4
@@ -1408,21 +1434,25 @@ def select_pick_categories(picks, confidence):
     )
 
     # 꿀픽은 언더/오버가 아니라 실제 팀 방향(승무패·핸디캡)의 역배 후보만 허용합니다.
-    honey_edge_floor = 0.03 + max(0.0, 0.60 - confidence) * 0.05
+    honey_edge_floor = 0.015 + max(0.0, 0.65 - confidence) * 0.05
     honey_candidates = [
         pick for pick in picks
         if pick.get("is_true_underdog")
         and infer_pick_market(pick) in {"1x2", "handicap"}
-        and 2.20 <= float(pick.get("odd", 0) or 0) <= 6.00
+        and 2.20 <= float(pick.get("odd", 0) or 0) <= 5.00
         and float(pick.get("prob", 0) or 0) >= 0.22
-        and float(pick.get("edge", 0) or 0) >= honey_edge_floor
-        and float(pick.get("ev", 0) or 0) >= 1.04
-        and confidence >= 0.50
+        and float(pick.get("robust_edge", 0) or 0) >= honey_edge_floor
+        and float(pick.get("robust_ev", 0) or 0) >= 1.02
+        and confidence >= 0.55
+        and int(pick.get("independent_support_count", 0) or 0) >= 1
+        and pick.get("fair_prob") is not None
         and float(pick.get("value_score", 0) or 0) > 0
     ]
     honey_source = max(
         honey_candidates,
         key=lambda pick: (
+            float(pick.get("robust_edge", 0) or 0),
+            int(pick.get("independent_support_count", 0) or 0),
             float(pick.get("value_score", 0) or 0),
             float(pick.get("recommendation_score", 0) or 0),
             float(pick.get("ev", 0) or 0),
@@ -1436,10 +1466,11 @@ def select_pick_categories(picks, confidence):
     if honey_source:
         fair_probability = honey_source.get("fair_prob")
         vip_passed = bool(
-            float(honey_source.get("edge", 0) or 0) >= 0.05
-            and float(honey_source.get("ev", 0) or 0) >= 1.08
-            and confidence >= 0.58
-            and int(honey_source.get("independent_support_count", 0) or 0) >= 2
+            float(honey_source.get("robust_edge", 0) or 0) >= 0.03
+            and float(honey_source.get("robust_ev", 0) or 0) >= 1.08
+            and confidence >= 0.68
+            and int(honey_source.get("independent_support_count", 0) or 0) >= 3
+            and 2.20 <= float(honey_source.get("odd", 0) or 0) <= 4.50
             and fair_probability is not None
         )
         if vip_passed:
@@ -2210,6 +2241,7 @@ def build_dashboard_data():
             "pick_categories": pick_categories,
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
+            "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "analysis_stage": analysis_stage, "reliability_score": reliability_score,
             "odds_source": analysis_odds_source,
             "betman_odds_pending": bool(m.get("betman_odds_pending")),
@@ -2669,6 +2701,7 @@ def build_dashboard_data():
         "top3": top_3_picks,
         "source_meta": {
             "analysis_version": ANALYSIS_VERSION,
+            "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "raw_betman_proto_count": len(raw_proto_matches),
             "rejected_placeholder_count": rejected_proto_count,
             "betman_proto_count": len(proto_matches),

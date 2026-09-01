@@ -2208,17 +2208,10 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             picks, key=lambda item: float(item.get("prob", 0) or 0)
         )
 
-    honey_pick = categories["honey"]
-    vip_pick = categories["vip_underdog"]
-    vip_promoted = bool(
-        honey_pick and vip_pick
-        and str(honey_pick.get("raw_pick") or "") == str(vip_pick.get("raw_pick") or "")
-    )
-
     slot_specs = [
         ("high_probability", "📈 확률 높은 픽", "분석 가능한 선택지가 없습니다.", "#00F2FE"),
-        ("honey", "🍯 AI 꿀픽", "오늘은 기준 충족 꿀픽 없음", "#F59E0B"),
-        ("vip_underdog", "💎 VIP 역배 픽", "오늘은 기준 충족 VIP 역배 없음", "#FFD54A"),
+        ("honey", "🍯 역배 가치 꿀픽", "오늘은 기준 충족 꿀픽 없음", "#F59E0B"),
+        ("vip_underdog", "💎 VIP 검증 등급", "꿀픽 중 엄격 기준 통과 없음", "#FFD54A"),
     ]
     html = ""
     for key, label, empty_text, color in slot_specs:
@@ -2233,32 +2226,19 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             )
             continue
 
-        if key == "honey" and vip_promoted:
-            edge_text = float(pick.get("edge", 0) or 0) * 100
-            html += (
-                "<div class='pred-box'>"
-                f"<div class='pred-label' style='color:{color};'>{label}</div>"
-                "<span class='pred-value'>VIP 역배픽으로 승격</span>"
-                f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>"
-                f"팀 역배 가치차 {edge_text:+.1f}%p · 꿀픽 채점 대상으로 기록</span>"
-                "<span class='pred-prob' style='background:#1E293B;color:#F59E0B;'>승격</span>"
-                "</div>"
-            )
-            continue
-
         prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
         raw_pick = escape(_human_pick_label(pick.get("raw_pick", ""), home_team))
         pick_label = escape(str(pick.get("label", "")))
         detail = {
             "high_probability": "항상 표시",
             "honey": "팀 역배 가치 기준 통과",
-            "vip_underdog": "꿀픽 승격 · 엄격 역배 기준 통과",
+            "vip_underdog": "별도 픽 아님 · 꿀픽 엄격 검증 통과",
         }[key]
         meta_parts = [detail]
         if pick.get("fair_prob") is not None:
             meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
         if key == "honey":
-            meta_parts.append(f"가치차 {float(pick.get('edge', 0) or 0) * 100:+.1f}%p")
+            meta_parts.append(f"보수적 가치차 {float(pick.get('robust_edge', 0) or 0) * 100:+.1f}%p")
         if key == "vip_underdog" and pick.get("support_signals"):
             meta_parts.append(f"독립근거 {len(pick['support_signals'])}개")
         detail = " · ".join(meta_parts)
@@ -2891,7 +2871,7 @@ with main_tab4:
 
             now = datetime.now(timezone(timedelta(hours=9)))
             active_pending = []
-            legacy_unlinked = []
+            archived_unresolved = []
             for row in pending_data:
                 match_time = str(row.get('match_time') or '')
                 match_dt = parse_time_for_ui(match_time)
@@ -2899,8 +2879,15 @@ with main_tab4:
                     not str(row.get('analysis_version') or '').strip()
                     and not int(row.get('api_fixture_id') or 0)
                 )
-                if missing_identity and now >= match_dt + timedelta(hours=5):
-                    legacy_unlinked.append(row)
+                # 종료 예상 시점을 충분히 지난 미채점 기록은
+                # 고유번호 유무와 관계없이 현재 경기 목록에서 분리한다.
+                if now >= match_dt + timedelta(hours=5):
+                    archived_row = dict(row)
+                    archived_row['_archive_reason'] = (
+                        '고유번호·버전 정보 없음'
+                        if missing_identity else '결과 연결 미완료'
+                    )
+                    archived_unresolved.append(archived_row)
                 else:
                     active_pending.append(row)
 
@@ -2969,24 +2956,24 @@ with main_tab4:
             if displayed_pending == 0:
                 st.info("현재 대기 중인 향후 경기 일정이 없습니다.")
 
-            if legacy_unlinked:
+            if archived_unresolved:
                 st.markdown(
                     "<h4 style='color:#64748B;font-weight:900;margin-top:32px;"
-                    "margin-bottom:8px;'>🗂️ 이전 버전 미연결 기록</h4>"
+                    "margin-bottom:8px;'>🗂️ 과거 미채점·미연결 기록</h4>"
                     "<p style='color:#64748B;font-size:12px;margin-bottom:12px;'>"
-                    "예전 수집기가 경기 고유번호와 분석 버전을 저장하지 못한 기록입니다. "
-                    "다른 경기에 잘못 채점하지 않도록 현재 적중률에서는 제외하고 원본은 보존합니다."
+                    "종료 예상 시간이 5시간 이상 지났지만 결과가 정확히 연결되지 않은 기록입니다. "
+                    "현재 경기 목록과 적중률에서는 제외하고 원본은 보존합니다."
                     "</p>",
                     unsafe_allow_html=True,
                 )
-                with st.expander(f"자동 채점 불가 기록 {len(legacy_unlinked)}건 확인"):
+                with st.expander(f"과거 미연결 기록 {len(archived_unresolved)}건 확인"):
                     legacy_table = pd.DataFrame([
                         {
                             "경기 시각": row.get("match_time", ""),
                             "경기": f"{row.get('home_team', '')} vs {row.get('away_team', '')}",
-                            "상태": "고유번호 없음 · 통계 제외",
+                            "상태": f"{row.get('_archive_reason', '결과 미연결')} · 통계 제외",
                         }
-                        for row in legacy_unlinked
+                        for row in archived_unresolved
                     ])
                     st.dataframe(
                         legacy_table,
