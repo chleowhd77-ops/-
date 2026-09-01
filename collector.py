@@ -3278,184 +3278,6 @@ def parse_betman_toto14_html(html, round_id="current"):
     return sorted(parsed, key=lambda item: item["num"])
 
 
-_BETMAN_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
-
-
-def _betman_epoch_text(value):
-    """Format Betman's millisecond timestamp in the same KST form as the page."""
-    try:
-        timestamp = float(value) / 1000.0
-        moment = datetime.fromtimestamp(timestamp, KST)
-    except (TypeError, ValueError, OSError, OverflowError):
-        return "시간 미정"
-    return (
-        moment.strftime("%y.%m.%d")
-        + f" ({_BETMAN_WEEKDAYS[moment.weekday()]}) "
-        + moment.strftime("%H:%M")
-    )
-
-
-def _betman_float(value):
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _expand_betman_rows(value):
-    """Expand Betman's compact {keys, datas} table into ordinary dictionaries."""
-    if isinstance(value, list):
-        return [row for row in value if isinstance(row, dict)]
-    if not isinstance(value, dict):
-        return []
-    keys = value.get("keys")
-    datas = value.get("datas")
-    if not isinstance(keys, list) or not isinstance(datas, list):
-        return []
-    rows = []
-    for values in datas:
-        if isinstance(values, list):
-            rows.append(dict(zip(keys, values)))
-    return rows
-
-
-def parse_betman_proto_json(payload):
-    """Parse the same official JSON that Betman's Proto page renders."""
-    if not isinstance(payload, dict):
-        return []
-    rows = [
-        row
-        for row in _expand_betman_rows(payload.get("compSchedules"))
-        if str(row.get("itemCode", "")).upper() == "SC"
-    ]
-    groups = {}
-    for row in rows:
-        key = str(row.get("gameKey") or "").strip()
-        if not key:
-            key = "|".join(
-                str(row.get(field) or "")
-                for field in ("gameDate", "homeName", "awayName")
-            )
-        groups.setdefault(key, []).append(row)
-
-    parsed = []
-    for group in groups.values():
-        main_market = next(
-            (row for row in group if str(row.get("betTypId")) == "1"),
-            None,
-        )
-        if main_market is None:
-            continue
-        home = str(main_market.get("homeName") or "").strip()
-        away = str(main_market.get("awayName") or "").strip()
-        if not home or not away:
-            continue
-
-        handicap_market = next(
-            (row for row in group if str(row.get("betTypId")) == "4"),
-            None,
-        )
-        under_over_market = next(
-            (row for row in group if str(row.get("betTypId")) == "7"),
-            None,
-        )
-        odds_1x2 = [
-            _betman_float(main_market.get("winAllot")),
-            _betman_float(main_market.get("drawAllot")),
-            _betman_float(main_market.get("loseAllot")),
-        ]
-        if min(odds_1x2) <= 1.0:
-            odds_1x2 = [0.0, 0.0, 0.0]
-
-        match_time = _betman_epoch_text(main_market.get("gameDate"))
-        deadline_text = _betman_epoch_text(main_market.get("endDate"))
-        deadline_time = ""
-        if deadline_text != "시간 미정":
-            deadline_time = f"{deadline_text[-5:]} 마감"
-
-        parsed.append({
-            "id": str(main_market.get("matchSeq") or ""),
-            "league": str(
-                main_market.get("leagueShortName")
-                or main_market.get("leagueName")
-                or "축구"
-            ).strip(),
-            "time": match_time,
-            "match_time": match_time,
-            "deadline_time": deadline_time,
-            "home": home,
-            "away": away,
-            "odd_h": odds_1x2[0],
-            "odd_d": odds_1x2[1],
-            "odd_a": odds_1x2[2],
-            "handi_h": _betman_float((handicap_market or {}).get("winAllot")),
-            "handi_d": _betman_float((handicap_market or {}).get("drawAllot")),
-            "handi_a": _betman_float((handicap_market or {}).get("loseAllot")),
-            # winHandi is the exact H value printed by Betman's own JavaScript.
-            "handi_base": _betman_float((handicap_market or {}).get("winHandi")),
-            "uo_under": _betman_float((under_over_market or {}).get("winAllot")),
-            "uo_over": _betman_float((under_over_market or {}).get("loseAllot")),
-            # For U/O, Betman also renders winHandi as the displayed goal line.
-            "uo_base": _betman_float((under_over_market or {}).get("winHandi")),
-        })
-    return sorted(parsed, key=lambda item: int(item["id"]) if item["id"].isdigit() else 0)
-
-
-def parse_betman_toto14_json(payload, round_id="current"):
-    """Parse the official Toto14 schedule and convert vote counts to percentages."""
-    if not isinstance(payload, dict):
-        return []
-    schedules = payload.get("schedulesList")
-    if not isinstance(schedules, list):
-        return []
-    vote_status = payload.get("voteStatus") or {}
-    vote_rows = vote_status.get("homeVoteStatusList") or []
-    parsed = []
-    for index, schedule_row in enumerate(schedules):
-        if not isinstance(schedule_row, dict):
-            continue
-        try:
-            number = int(schedule_row.get("matchSeq"))
-        except (TypeError, ValueError):
-            continue
-        home = str(schedule_row.get("homeName") or "").strip()
-        away = str(schedule_row.get("awayName") or "").strip()
-        if not home or not away:
-            continue
-
-        counts = []
-        vote_row = vote_rows[index] if index < len(vote_rows) else {}
-        away_votes = vote_row.get("awayVoteStatusList") if isinstance(vote_row, dict) else []
-        for vote in (away_votes or [])[:3]:
-            counts.append(_betman_float(vote.get("voteCount") if isinstance(vote, dict) else 0))
-        while len(counts) < 3:
-            counts.append(0.0)
-        total_votes = sum(counts)
-        percentages = (
-            [round(value * 100.0 / total_votes, 1) for value in counts]
-            if total_votes > 0
-            else [None, None, None]
-        )
-
-        raw_time = str(schedule_row.get("gameDateStr") or "").strip()
-        match_time = re.sub(r"\s+", " ", raw_time) if raw_time else ""
-        if not re.search(r"\d{2}\.\d{2}.*\d{2}:\d{2}", match_time):
-            match_time = _betman_epoch_text(schedule_row.get("gameDate"))
-        parsed.append({
-            "id": f"{round_id}_{number}",
-            "round_id": str(round_id),
-            "num": number,
-            "league": "축구 승무패",
-            "home": home,
-            "away": away,
-            "match_time": match_time,
-            "vote_h": percentages[0],
-            "vote_d": percentages[1],
-            "vote_a": percentages[2],
-        })
-    return sorted(parsed, key=lambda item: item["num"])
-
-
 def _valid_toto14_round(records):
     if not isinstance(records, list) or len(records) != 14:
         return False
@@ -3485,34 +3307,6 @@ BETMAN_HUB_URL = urljoin(
     BETMAN_BASE_URL + "/",
     "main/mainPage/gamebuy/buyableGameList.do",
 )
-
-BETMAN_REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Safari/537.36"
-    ),
-    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
-    # Betman closes these responses itself. Explicitly closing avoids reusing a
-    # half-closed keep-alive socket, which caused intermittent EC2 resets.
-    "Connection": "close",
-}
-
-
-def _betman_request(session, method, url, attempts=3, **kwargs):
-    """Make a small official Betman request with restrained reset/timeout retries."""
-    last_error = None
-    for attempt in range(max(1, attempts)):
-        try:
-            request_method = getattr(session, method.lower())
-            response = request_method(url, **kwargs)
-            response.raise_for_status()
-            return response
-        except requests.RequestException as error:
-            last_error = error
-            if attempt + 1 >= attempts:
-                break
-            time.sleep(2 ** attempt)
-    raise last_error or RuntimeError(f"베트맨 {method.upper()} 요청 실패: {url}")
 
 
 def _betman_round_target(row, base_url=BETMAN_BASE_URL):
@@ -3544,17 +3338,23 @@ def _fetch_betman_round_targets(session=None):
     """
     owned_session = session is None
     session = session or requests.Session()
-    common_headers = BETMAN_REQUEST_HEADERS
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Safari/537.36"
+    )
+    common_headers = {
+        "User-Agent": user_agent,
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+    }
     try:
         # The first GET establishes the anonymous session cookie expected by
         # the JSON endpoint. It does not wait for any browser-side assets.
-        hub_response = _betman_request(
-            session,
-            "get",
+        hub_response = session.get(
             BETMAN_HUB_URL,
             headers=common_headers,
             timeout=(10, 30),
         )
+        hub_response.raise_for_status()
         # requests follows official redirects. Build every later address from
         # the final host, rather than assuming Betman's domain never changes.
         resolved_base_url = urljoin(hub_response.url, "/").rstrip("/")
@@ -3563,9 +3363,7 @@ def _fetch_betman_round_targets(session=None):
             "buyPsblGame/inqBuyAbleGameInfoList.do",
         )
         payload = {"_sbmInfo": {"_sbmInfo": {"debugMode": "false"}}}
-        response = _betman_request(
-            session,
-            "post",
+        response = session.post(
             round_list_url,
             json=payload,
             headers={
@@ -3576,6 +3374,7 @@ def _fetch_betman_round_targets(session=None):
             },
             timeout=(10, 30),
         )
+        response.raise_for_status()
         result = response.json()
         if not isinstance(result, dict):
             raise RuntimeError("베트맨 회차 조회 응답이 JSON 객체가 아님")
@@ -3602,43 +3401,6 @@ def _fetch_betman_round_targets(session=None):
     finally:
         if owned_session:
             session.close()
-
-
-def _fetch_betman_game_data(session, target):
-    """Read the official JSON used by a Proto or Toto14 game-slip page."""
-    if not isinstance(target, dict) or not target.get("gm_id") or not target.get("gm_ts"):
-        raise RuntimeError("베트맨 경기 회차 주소가 없음")
-    target_url = str(target.get("url") or BETMAN_HUB_URL)
-    base_url = urljoin(target_url, "/").rstrip("/")
-    endpoint = urljoin(base_url + "/", "buyPsblGame/gameInfoInq.do")
-    payload = {
-        "gmId": str(target["gm_id"]),
-        "gmTs": str(target["gm_ts"]),
-        "gameYear": "",
-        "_sbmInfo": {"_sbmInfo": {"debugMode": "false"}},
-    }
-    response = _betman_request(
-        session,
-        "post",
-        endpoint,
-        json=payload,
-        headers={
-            **BETMAN_REQUEST_HEADERS,
-            "Referer": target_url,
-            "Origin": base_url,
-            "X-Requested-With": "XMLHttpRequest",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Content-Type": "application/json; charset=UTF-8",
-        },
-        timeout=(10, 30),
-    )
-    result = response.json()
-    if not isinstance(result, dict):
-        raise RuntimeError("베트맨 경기 응답이 JSON 객체가 아님")
-    status = result.get("rsMsg") or {}
-    if status and status.get("statusCode") not in (None, "S"):
-        raise RuntimeError(f"베트맨 경기 조회 상태 오류: {status.get('statusCode')}")
-    return result
 
 
 def _select_latest_complete_toto14_round(records):
@@ -3949,9 +3711,8 @@ def scrape_betman():
     matches_14 = []
 
     round_targets = {}
-    betman_session = requests.Session()
     try:
-        round_targets = _fetch_betman_round_targets(betman_session)
+        round_targets = _fetch_betman_round_targets()
         proto_round = (round_targets.get("proto") or {}).get("display_round", "-")
         toto_round = (round_targets.get("toto14") or {}).get("display_round", "-")
         print(f"✅ 베트맨 현재 회차 직접 확인: 프로토 {proto_round} / 승무패 {toto_round}")
@@ -3959,85 +3720,6 @@ def scrape_betman():
         # Keep the old hub navigation as a safety fallback if Betman changes
         # the lightweight endpoint in the future.
         print(f"⚠️ 베트맨 회차 직접 조회 실패, 기존 화면 탐색으로 전환: {error}")
-
-    # A reset while reading the round list must not prevent a direct data retry
-    # for the last confirmed round. Toto14 records already carry their official
-    # gmTs; V7 also stores both source round IDs after every successful cycle.
-    saved_source_status = old_data.get("source_status", {})
-    if not isinstance(saved_source_status, dict):
-        saved_source_status = {}
-    if not round_targets.get("proto"):
-        saved_proto_status = saved_source_status.get("proto", {})
-        saved_proto_round = (
-            str(saved_proto_status.get("round_id") or "")
-            if isinstance(saved_proto_status, dict)
-            else ""
-        )
-        if saved_proto_round.isdigit():
-            round_targets["proto"] = _betman_round_target({
-                "gmId": "G101",
-                "gmTs": saved_proto_round,
-                "gmOsidTs": saved_proto_round,
-            })
-            print(f"↪️ 저장된 프로토 {saved_proto_round}회차로 공식 JSON 재시도")
-    if not round_targets.get("toto14"):
-        saved_toto_status = saved_source_status.get("toto14", {})
-        saved_toto_round = (
-            str(saved_toto_status.get("round_id") or "")
-            if isinstance(saved_toto_status, dict)
-            else ""
-        )
-        if not saved_toto_round:
-            complete_old_toto = _select_latest_complete_toto14_round(old_toto14)
-            old_round_ids = {
-                str(record.get("round_id") or "")
-                for record in complete_old_toto
-                if isinstance(record, dict)
-            }
-            if len(old_round_ids) == 1:
-                saved_toto_round = next(iter(old_round_ids))
-        if saved_toto_round.isdigit():
-            round_targets["toto14"] = _betman_round_target({
-                "gmId": "G011",
-                "gmTs": saved_toto_round,
-                "gmOsidTs": saved_toto_round,
-            })
-            print(f"↪️ 저장된 승무패 {saved_toto_round}회차로 공식 JSON 재시도")
-
-    # Betman's browser page renders these two payloads through AJAX. Reading
-    # them directly avoids Edge renderer crashes and does not depend on DOM or
-    # on the game-slip URL shape. Each source is accepted independently.
-    if round_targets.get("proto"):
-        try:
-            proto_payload = _fetch_betman_game_data(betman_session, round_targets["proto"])
-            matches = parse_betman_proto_json(proto_payload)
-            proto_stable = bool(matches and _valid_scrape_records(matches))
-            if not proto_stable:
-                raise RuntimeError(f"공식 프로토 JSON에 정상 축구 경기 없음: {len(matches)}건")
-            print(f"✅ 공식 JSON 프로토 축구 경기 추출: {len(matches)}경기 (브라우저 미사용)")
-        except Exception as error:
-            matches = []
-            proto_stable = False
-            print(f"⚠️ 공식 JSON 프로토 조회 실패, 브라우저 1회 대체: {error}")
-
-    if round_targets.get("toto14"):
-        try:
-            toto_target = round_targets["toto14"]
-            toto_payload = _fetch_betman_game_data(betman_session, toto_target)
-            round_id = str(toto_target.get("gm_ts") or toto_target.get("display_round"))
-            matches_14 = parse_betman_toto14_json(toto_payload, round_id)
-            toto_stable = _valid_toto14_round(matches_14)
-            if not toto_stable:
-                raise RuntimeError(f"공식 승무패 JSON이 14경기 완본 아님: {len(matches_14)}건")
-            print(
-                "✅ 공식 JSON 승무패 "
-                f"{toto_target.get('display_round', round_id)}회차 추출: 14경기 (브라우저 미사용)"
-            )
-        except Exception as error:
-            matches_14 = []
-            toto_stable = False
-            print(f"⚠️ 공식 JSON 승무패 조회 실패, 브라우저 1회 대체: {error}")
-    betman_session.close()
 
     def scrape_proto_page(driver):
         proto_target = round_targets.get("proto") or {}
@@ -4142,8 +3824,7 @@ def scrape_betman():
         return parsed, stable, round_id
 
     try:
-        if not proto_stable:
-            matches, proto_stable = _scrape_with_fresh_browser("프로토 승부식", scrape_proto_page)
+        matches, proto_stable = _scrape_with_fresh_browser("프로토 승부식", scrape_proto_page)
         proto_limit = 0
         if os.getenv("ALLOW_PROTO_LIMIT", "0") == "1":
             try:
@@ -4157,10 +3838,7 @@ def scrape_betman():
         print(f"❌ 프로토 최종 수집 실패: {error}")
 
     try:
-        if not toto_stable:
-            matches_14, toto_stable, round_id = _scrape_with_fresh_browser("축구 승무패", scrape_toto_page)
-        else:
-            round_id = str((round_targets.get("toto14") or {}).get("gm_ts") or "current")
+        matches_14, toto_stable, round_id = _scrape_with_fresh_browser("축구 승무패", scrape_toto_page)
         print(f"✅ 축구 승무패 {round_id}회차 추출: {len(matches_14)}경기")
     except Exception as error:
         print(f"❌ 축구 승무패 최종 수집 실패: {error}")
@@ -4232,11 +3910,6 @@ def scrape_betman():
                 "fresh": proto_accepted,
                 "fresh_count": len(matches),
                 "published_count": len(final_proto),
-                "round_id": (
-                    (round_targets.get("proto") or {}).get("gm_ts")
-                    if proto_accepted
-                    else old_proto_status.get("round_id")
-                ),
                 "last_success_at": now_iso if proto_accepted else old_proto_status.get("last_success_at"),
             },
             "toto14": {
@@ -4244,11 +3917,6 @@ def scrape_betman():
                 "fresh_count": len(matches_14),
                 "published_count": len(final_toto14),
                 "retained_lifecycle_count": len(retained_toto14),
-                "round_id": (
-                    (round_targets.get("toto14") or {}).get("gm_ts")
-                    if toto_accepted
-                    else old_toto_status.get("round_id")
-                ),
                 "last_success_at": now_iso if toto_accepted else old_toto_status.get("last_success_at"),
             },
         },
