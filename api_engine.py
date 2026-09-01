@@ -23,7 +23,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.2-analysis-ui-integrity"
+ANALYSIS_VERSION = "V7.3-always-pick-odds-fallback"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -1338,7 +1338,51 @@ def fetch_weather_api(city_name, ttl_h):
         return result
     except: return "Clear"
 
-def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str="시간 미정"):
+def _extract_match_winner_odds(odds_data):
+    """Return median 1X2 odds across bookmakers with complete prices."""
+    samples = {"odd_h": [], "odd_d": [], "odd_a": []}
+    complete_bookmakers = 0
+    for odds_row in odds_data or []:
+        for bookmaker in odds_row.get("bookmakers", []) or []:
+            bookmaker_values = {}
+            for bet in bookmaker.get("bets", []) or []:
+                if str(bet.get("name", "")).strip().casefold() not in {
+                    "match winner", "1x2"
+                }:
+                    continue
+                for value in bet.get("values", []) or []:
+                    label = str(value.get("value", "")).strip().casefold()
+                    key = {"home": "odd_h", "draw": "odd_d", "away": "odd_a"}.get(label)
+                    try:
+                        odd = float(value.get("odd") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if key and odd > 1.0:
+                        bookmaker_values[key] = odd
+            if all(key in bookmaker_values for key in samples):
+                complete_bookmakers += 1
+                for key in samples:
+                    samples[key].append(bookmaker_values[key])
+
+    if not complete_bookmakers:
+        return None
+
+    result = {"bookmaker_count": complete_bookmakers}
+    for key, values in samples.items():
+        ordered = sorted(values)
+        middle = len(ordered) // 2
+        median = (
+            ordered[middle]
+            if len(ordered) % 2
+            else (ordered[middle - 1] + ordered[middle]) / 2.0
+        )
+        result[key] = round(median, 3)
+    return result
+
+
+def fetch_overseas_odds_and_fixture_api(
+    home_id, away_id, ttl_h, match_time_str="시간 미정", include_odds=False
+):
     """두 팀과 경기 날짜가 모두 일치하는 API fixture만 반환한다.
 
     예전 코드는 홈 팀의 다음/이전 경기로 대체해 다른 경기 점수가 LIVE로
@@ -1349,7 +1393,8 @@ def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str=
 
     m_dt = parse_match_time(match_time_str)
     date_str = m_dt.strftime('%Y-%m-%d')
-    cache_key = f"odds_fixture_v9_{home_id}_{away_id}_{date_str}"
+    odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
+    cache_key = f"odds_fixture_v10_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1381,23 +1426,20 @@ def fetch_overseas_odds_and_fixture_api(home_id, away_id, ttl_h, match_time_str=
             city_name = match_data["fixture"].get("venue", {}).get("city")
             res_val = {"fixture_id": fix_id, "odd_h": None, "odd_d": None, "odd_a": None, "referee": referee_name, "city": city_name}
 
-            # 베트맨 실제 배당이 이미 있으므로 해외 배당은 선택 기능으로 둔다.
-            # 기본 OFF는 경기당 추가 API 1회를 없애 주말 호출 폭주를 막는다.
-            if os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1":
-                odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
-                odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
-                odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
-                if odds_data:
-                    bookmakers = odds_data[0].get("bookmakers", [])
-                    if bookmakers:
-                        bets = bookmakers[0].get("bets", [])
-                        for b in bets:
-                            if b["name"] == "Match Winner":
-                                for value in b.get("values", []):
-                                    label = str(value.get("value", "")).casefold()
-                                    key = {"home": "odd_h", "draw": "odd_d", "away": "odd_a"}.get(label)
-                                    if key:
-                                        res_val[key] = float(value["odd"])
+            # 베트맨 배당이 없을 때만 호출자가 해외배당을 명시적으로 요청한다.
+            # 여러 북메이커 중 한 곳을 임의 선택하지 않고 완전한 1X2 세트의
+            # 중앙값을 사용해 한 업체의 튀는 배당 영향을 줄인다.
+            if odds_requested:
+                try:
+                    odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
+                    odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
+                    odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
+                    extracted = _extract_match_winner_odds(odds_data)
+                    if extracted:
+                        res_val.update(extracted)
+                        res_val["odds_source"] = "overseas_median"
+                except Exception as odds_error:
+                    print(f"⚠️ 해외배당 조회 실패({fix_id}): {odds_error}")
             set_db_cache(cache_key, res_val)
             return res_val
         print(f"⚠️ 두 팀이 정확히 일치하는 경기 ID 없음: {home_id} vs {away_id} ({date_str})")

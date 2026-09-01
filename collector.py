@@ -1542,6 +1542,13 @@ def _build_grading_snapshot():
             conn.close()
 
 
+def _valid_three_way_odds(values):
+    try:
+        return len(values) == 3 and all(float(value or 0) > 1.0 for value in values)
+    except (TypeError, ValueError):
+        return False
+
+
 def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
     """Return cached recent form for identified teams even before odds arrive."""
     return (
@@ -1612,10 +1619,15 @@ def build_dashboard_data():
             home_team, away_team, final_match_time, ttl_h=2
         )
 
+        now = datetime.now(timezone(timedelta(hours=9)))
+        diff_hours = (m_dt - now).total_seconds() / 3600.0
+        odds_ttl = 0.5 if diff_hours <= 2 else 4
         odd_h = float(m.get("odd_h") or 0)
         odd_d = float(m.get("odd_d") or 0)
         odd_a = float(m.get("odd_a") or 0)
-        if min(odd_h, odd_d, odd_a) <= 1.0:
+        analysis_odds_source = "betman"
+        preloaded_os_data = None
+        if not _valid_three_way_odds([odd_h, odd_d, odd_a]):
             # 배당이 잠시 비었을 때 같은 경기의 마지막 정상 분석이 있으면
             # 그대로 유지한다. 새 경기라서 계산 근거 자체가 없을 때만 대기한다.
             previous_item = previous_proto.get(str(m.get("id", "")))
@@ -1626,6 +1638,7 @@ def build_dashboard_data():
                 and previous_match.get("away") == away_team
                 and isinstance(previous_item.get("pick_categories"), dict)
                 and previous_item["pick_categories"].get("high_probability")
+                and str(previous_item.get("odds_source") or "betman") != "model_only"
             ):
                 preserved = dict(previous_item)
                 preserved["match"] = dict(m)
@@ -1635,40 +1648,38 @@ def build_dashboard_data():
                 dashboard_proto.append(preserved)
                 print(f"⚠️ 배당 일시 누락 - 마지막 정상 분석 유지: {home_team} vs {away_team}")
                 continue
-            # 마지막 정상 분석도 없으면 값을 임의로 만들지 않고 대기 상태로 둔다.
-            # 다만 팀 신원이 확인된 경우 로고와 최근 전적은 한 묶음으로
-            # 제공한다. 최근 전적은 24시간 캐시되어 배당 대기 경기 때문에
-            # 같은 팀 API를 반복 호출하지 않는다.
-            h_form, a_form = _waiting_odds_team_forms(home_info, away_info)
-            dashboard_proto.append({
-                "match": m,
-                "final_match_time": final_match_time,
-                "timestamp": m_dt.timestamp(),
-                "league": m.get("league", "축구"),
-                "home_logo": home_info.get("logo"),
-                "away_logo": away_info.get("logo"),
-                "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
-                "ev_sorted_picks": [],
-                "pick_categories": {
-                    "high_probability": None,
-                    "honey": None,
-                    "vip_underdog": None,
-                },
-                "home_form": h_form,
-                "away_form": a_form,
-                "analysis_version": ANALYSIS_VERSION,
-                "analysis_confidence": 0.0,
-                "analysis_stage": "waiting_odds",
-                "reliability_score": 0.0,
-                "h_inj_html": "",
-                "a_inj_html": "",
-                "h_rest_html": "",
-                "a_rest_html": "",
-                "h_rank_html": "",
-                "a_rank_html": "",
-            })
-            print(f"⚠️ 실제 승무패 배당 대기 중(경기는 유지): {home_team} vs {away_team}")
-            continue
+
+            # 신규 경기의 베트맨 배당이 비어 있으면 정확히 연결된 동일 경기의
+            # 해외 1X2 중앙값을 먼저 사용한다. 해외배당도 없을 때는 배당을
+            # 만들어내지 않고 팀 데이터만으로 확률픽 하나를 계산한다.
+            preloaded_os_data = fetch_overseas_odds_and_fixture_api(
+                home_info.get("id"), away_info.get("id"), odds_ttl,
+                final_match_time, include_odds=True,
+            )
+            overseas_values = [
+                (preloaded_os_data or {}).get("odd_h"),
+                (preloaded_os_data or {}).get("odd_d"),
+                (preloaded_os_data or {}).get("odd_a"),
+            ]
+            m = dict(m)
+            m["betman_odds_pending"] = True
+            if _valid_three_way_odds(overseas_values):
+                odd_h, odd_d, odd_a = map(float, overseas_values)
+                m.update({
+                    "odd_h": odd_h,
+                    "odd_d": odd_d,
+                    "odd_a": odd_a,
+                    "odds_source": "overseas_fallback",
+                    "overseas_bookmaker_count": int(
+                        (preloaded_os_data or {}).get("bookmaker_count") or 0
+                    ),
+                })
+                analysis_odds_source = "overseas_fallback"
+                print(f"🌍 베트맨 배당 대기 - 해외 1X2 임시 분석: {home_team} vs {away_team}")
+            else:
+                m["odds_source"] = "model_only"
+                analysis_odds_source = "model_only"
+                print(f"📊 모든 배당 대기 - 팀 데이터 모델 선픽: {home_team} vs {away_team}")
         handi_h = float(m.get("handi_h") or 0)
         handi_d = float(m.get("handi_d") or 0)
         handi_a = float(m.get("handi_a") or 0)
@@ -1678,15 +1689,13 @@ def build_dashboard_data():
         uo_base = float(m.get("uo_base") or 2.5)
 
         # 🔥 '시간 미정' 경기들 살리기 위해 예외처리(continue) 삭제!
-        now = datetime.now(timezone(timedelta(hours=9)))
-        diff_hours = (m_dt - now).total_seconds() / 3600.0
-
         heavy_ttl = 24
         inj_ttl = 0.5 if diff_hours <= 1.5 else 12
-        odds_ttl = 0.5 if diff_hours <= 2 else 4
         lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
-        os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time)
+        os_data = preloaded_os_data or fetch_overseas_odds_and_fixture_api(
+            home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time
+        )
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
@@ -1704,7 +1713,11 @@ def build_dashboard_data():
         is_derby = check_derby_match(home_team, away_team)
          
         h_market_bonus, a_market_bonus = 0.0, 0.0
-        if os_data and os_data.get("odd_h") and odd_h > 1.0 and odd_a > 1.0:
+        if (
+            analysis_odds_source == "betman"
+            and os_data and os_data.get("odd_h")
+            and odd_h > 1.0 and odd_a > 1.0
+        ):
             if os_data["odd_h"] < odd_h - 0.15: h_market_bonus = 0.05
             if os_data["odd_a"] < odd_a - 0.15: a_market_bonus = 0.05
              
@@ -1821,8 +1834,22 @@ def build_dashboard_data():
         h_xg_multi = max(0.82, min(1.22, 1.0 + h_xg_component + ((h_stats.get('possession',50) - 50) * 0.008) + ((h_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((h_corners - 4.5) * 0.012) - ((h_cards - 1.5) * 0.015)))
         a_xg_multi = max(0.82, min(1.22, 1.0 + a_xg_component + ((a_stats.get('possession',50) - 50) * 0.008) + ((a_stats.get('shots_on_goal',4.0) - 4.0) * 0.05) + ((a_corners - 4.5) * 0.012) - ((a_cards - 1.5) * 0.015)))
          
-        base_exp_h = (math_exp_h * h_xg_multi * 0.85) + (((1/odd_h) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
-        base_exp_a = (math_exp_a * a_xg_multi * 0.85) + (((1/odd_a) / ((1/odd_h)+(1/odd_d)+(1/odd_a)) * 2.8) * 0.15)
+        has_market_odds = _valid_three_way_odds([odd_h, odd_d, odd_a])
+        if has_market_odds:
+            inverse_total = (1 / odd_h) + (1 / odd_d) + (1 / odd_a)
+            base_exp_h = (
+                (math_exp_h * h_xg_multi * 0.85)
+                + (((1 / odd_h) / inverse_total * 2.8) * 0.15)
+            )
+            base_exp_a = (
+                (math_exp_a * a_xg_multi * 0.85)
+                + (((1 / odd_a) / inverse_total * 2.8) * 0.15)
+            )
+        else:
+            # 배당이 전혀 없는 경기는 시장값을 만들어 넣지 않고 팀 데이터
+            # 기대득점만 사용한다. 이 경우 가치픽은 만들지 않고 확률픽만 낸다.
+            base_exp_h = math_exp_h * h_xg_multi
+            base_exp_a = math_exp_a * a_xg_multi
 
         h_depth_factor = 0.5 if h_rank <= 5 else (1.5 if h_rank >= 15 and h_rank != 99 else 1.0)
         a_depth_factor = 0.5 if a_rank <= 5 else (1.5 if a_rank >= 15 and a_rank != 99 else 1.0)
@@ -1907,6 +1934,10 @@ def build_dashboard_data():
             max(0.35, min(0.95, (base_confidence * 0.45) + (coverage_confidence * 0.55))),
             3,
         )
+        if analysis_odds_source == "overseas_fallback":
+            analysis_confidence = round(max(0.35, analysis_confidence * 0.95), 3)
+        elif analysis_odds_source == "model_only":
+            analysis_confidence = round(max(0.35, analysis_confidence * 0.85), 3)
          
         h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_base, uo_base)
 
@@ -1921,9 +1952,10 @@ def build_dashboard_data():
             prob_o = 1.0 - prob_u
             draw = min(0.55, draw * 1.10) 
 
-        h_win, draw, a_win = calibrate_three_way_probabilities(
-            [h_win, draw, a_win], [odd_h, odd_d, odd_a], analysis_confidence
-        )
+        if has_market_odds:
+            h_win, draw, a_win = calibrate_three_way_probabilities(
+                [h_win, draw, a_win], [odd_h, odd_d, odd_a], analysis_confidence
+            )
         if uo_under > 1.0 and uo_over > 1.0:
             prob_u, prob_o = calibrate_two_way_probabilities(
                 [prob_u, prob_o], [uo_under, uo_over], analysis_confidence
@@ -1934,8 +1966,13 @@ def build_dashboard_data():
                 [handi_h, handi_d, handi_a], analysis_confidence,
             )
 
-        wdl_market = normalize_probabilities([1 / odd_h, 1 / odd_d, 1 / odd_a])
-        underdog_side = "home" if odd_h > odd_a else ("away" if odd_a > odd_h else "")
+        wdl_market = (
+            normalize_probabilities([1 / odd_h, 1 / odd_d, 1 / odd_a])
+            if has_market_odds else [0.0, 0.0, 0.0]
+        )
+        underdog_side = (
+            "home" if odd_h > odd_a else ("away" if odd_a > odd_h else "")
+        ) if has_market_odds else ""
         wdl_cands = [
             {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home_team} 승", "html_pick": f"{home_team} 승", "prob": h_win, "ev": h_win * odd_h, "odd": odd_h, "market_prob": wdl_market[0], "selection_side": "home"},
             {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "html_pick": "무승부", "prob": draw, "ev": draw * odd_d, "odd": odd_d, "market_prob": wdl_market[1], "selection_side": "draw"},
@@ -2070,6 +2107,10 @@ def build_dashboard_data():
                 )
 
         analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
+        if analysis_odds_source == "overseas_fallback":
+            analysis_stage = "overseas-preview"
+        elif analysis_odds_source == "model_only":
+            analysis_stage = "model-only-preview"
         reliability_score = round(
             (highest_prob_pick.get("safe_score", 0) * 0.75)
             + (highest_prob_pick.get("recommendation_score", 0) * 0.25), 4
@@ -2095,6 +2136,19 @@ def build_dashboard_data():
             paragraph.replace("\n", "<br>")
             for paragraph in detailed_report.split("\n\n")
         )
+        if analysis_odds_source == "overseas_fallback":
+            story = (
+                "🌍 <b>[해외 임시배당 분석]</b> 베트맨 승무패 배당 공개 전이라 "
+                "동일 경기의 해외 1X2 중앙값으로 먼저 계산했습니다. 베트맨 "
+                "배당이 들어오면 자동으로 다시 분석합니다.<br><br>" + story
+            )
+        elif analysis_odds_source == "model_only":
+            story = (
+                "📊 <b>[팀 데이터 모델 선픽]</b> 베트맨과 해외배당이 모두 준비되지 "
+                "않아 최근 경기·득실·홈원정·선수 정보를 중심으로 확률픽 하나를 "
+                "먼저 계산했습니다. 배당이 들어오면 가치픽까지 자동 재분석합니다."
+                "<br><br>" + story
+            )
         
         if is_derby: story += " ⚔️ [로컬 더비 매치] 양 팀의 자존심이 걸린 치열한 라이벌전으로, 통계를 뛰어넘는 혈투와 변수(카드/극장골)가 예상됩니다."
         if h_manager_buff > 0: story += f" 👔 [경질 버프] {home_team}은(는) 새 감독 부임 이후 선수들의 주전 경쟁과 동기부여가 극에 달해 있습니다."
@@ -2135,6 +2189,8 @@ def build_dashboard_data():
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "analysis_stage": analysis_stage, "reliability_score": reliability_score,
+            "odds_source": analysis_odds_source,
+            "betman_odds_pending": bool(m.get("betman_odds_pending")),
             "data_coverage": data_coverage,
             "probability_error_margin": highest_prob_pick.get("error_margin"),
             "probability_interval": highest_prob_pick.get("probability_interval"),

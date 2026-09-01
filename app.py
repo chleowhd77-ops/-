@@ -2341,6 +2341,31 @@ with main_tab1:
                     home_team=m.get('home', ''),
                 )
 
+                odds_source = str(
+                    item.get("odds_source") or m.get("odds_source") or "betman"
+                )
+                if odds_source == "model_only":
+                    odds_bar_html = (
+                        "<div class='odd-bar'><span class='odd-item'>"
+                        "📊 승무패 배당 대기 · 팀 데이터 모델 선픽 제공 중"
+                        "</span></div>"
+                    )
+                elif odds_source == "overseas_fallback":
+                    odds_bar_html = (
+                        "<div class='odd-bar'>"
+                        f"<span class='odd-item'>🌍 해외 임시배당 · 승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
+                        "<span class='odd-item'>핸디캡·언오버는 베트맨 배당 대기</span>"
+                        "</div>"
+                    )
+                else:
+                    odds_bar_html = (
+                        "<div class='odd-bar'>"
+                        f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
+                        f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
+                        f"<span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>"
+                        "</div>"
+                    )
+
                 upset_html = ""
                 if item.get('upset_warning'):
                     upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color:#ffcccc; border-radius:4px; margin-bottom:15px; line-height:1.6;'><span style='background-color:#FFD700; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>후원회원 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
@@ -2357,11 +2382,7 @@ with main_tab1:
                     f"<div class='ai-story'>{item.get('story','')}</div>"
                     f"{_detail_html(item)}"
                     f"{upset_html}"
-                    f"<div class='odd-bar'>"
-                    f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
-                    f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
-                    f"<span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>"
-                    f"</div>"
+                    f"{odds_bar_html}"
                     f"<div class='pred-grid'>{dynamic_pred_boxes}</div>"
                     f"</div>"
                 )
@@ -2520,9 +2541,16 @@ with main_tab3:
                 pick_categories=_pick_categories(item),
                 home_team=m.get('home', ''),
             )
+            top3_odds_source = str(
+                item.get("odds_source") or m.get("odds_source") or "betman"
+            )
+            top3_source_label = {
+                "overseas_fallback": "해외배당 임시 추천 픽",
+                "model_only": "팀 데이터 모델 선픽",
+            }.get(top3_odds_source, "최고 가치 추천 픽")
             html_code = (
                 f"<div class='match-card top3-glow'>"
-                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} 최고 가치 추천 픽 • {m.get('league','')}</div>"
+                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} {top3_source_label} • {m.get('league','')}</div>"
                 f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
