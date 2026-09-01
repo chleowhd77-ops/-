@@ -1542,6 +1542,14 @@ def _build_grading_snapshot():
             conn.close()
 
 
+def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
+    """Return cached recent form for identified teams even before odds arrive."""
+    return (
+        fetch_team_form_api((home_info or {}).get("id"), ttl_h),
+        fetch_team_form_api((away_info or {}).get("id"), ttl_h),
+    )
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -1628,6 +1636,10 @@ def build_dashboard_data():
                 print(f"⚠️ 배당 일시 누락 - 마지막 정상 분석 유지: {home_team} vs {away_team}")
                 continue
             # 마지막 정상 분석도 없으면 값을 임의로 만들지 않고 대기 상태로 둔다.
+            # 다만 팀 신원이 확인된 경우 로고와 최근 전적은 한 묶음으로
+            # 제공한다. 최근 전적은 24시간 캐시되어 배당 대기 경기 때문에
+            # 같은 팀 API를 반복 호출하지 않는다.
+            h_form, a_form = _waiting_odds_team_forms(home_info, away_info)
             dashboard_proto.append({
                 "match": m,
                 "final_match_time": final_match_time,
@@ -1635,15 +1647,15 @@ def build_dashboard_data():
                 "league": m.get("league", "축구"),
                 "home_logo": home_info.get("logo"),
                 "away_logo": away_info.get("logo"),
-            "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
-            "ev_sorted_picks": [],
-            "pick_categories": {
-                "high_probability": None,
-                "honey": None,
-                "vip_underdog": None,
-            },
-            "home_form": "",
-                "away_form": "",
+                "story": "⏳ 베트맨 경기 확인 완료. 현재 승무패 배당이 준비되지 않아 분석 결과를 기다리는 중입니다.",
+                "ev_sorted_picks": [],
+                "pick_categories": {
+                    "high_probability": None,
+                    "honey": None,
+                    "vip_underdog": None,
+                },
+                "home_form": h_form,
+                "away_form": a_form,
                 "analysis_version": ANALYSIS_VERSION,
                 "analysis_confidence": 0.0,
                 "analysis_stage": "waiting_odds",
