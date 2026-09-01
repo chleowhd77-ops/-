@@ -23,7 +23,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.9-betman-direct-round-api"
+ANALYSIS_VERSION = "V7.1-betman-json-date-fix"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -1130,9 +1130,21 @@ def parse_match_time(match_time_str):
     if not match_time_str or match_time_str in ["시간 미정", "마감/진행중"]:
         return now - timedelta(hours=3)
     try:
-        m_match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
+        m_match = re.search(
+            r'(?:(\d{2,4})\.)?(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})',
+            str(match_time_str),
+        )
         if m_match:
-            mo, d, h, m = map(int, m_match.groups())
+            year_text, mo, d, h, m = m_match.groups()
+            mo, d, h, m = map(int, (mo, d, h, m))
+            if year_text:
+                year = int(year_text)
+                if year < 100:
+                    year += 2000
+                return datetime(
+                    year, mo, d, h, m,
+                    tzinfo=timezone(timedelta(hours=9)),
+                )
             candidates = [
                 datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
                 for year in (now.year - 1, now.year, now.year + 1)
