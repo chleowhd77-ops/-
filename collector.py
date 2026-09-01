@@ -679,9 +679,15 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return False
             cursor.execute("""
                 INSERT INTO predictions 
-                (match_id, league, home_team, away_team, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob, odd_h, odd_d, odd_a, match_time, is_toto14, api_fixture_id) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id))
+                (match_id, league, home_team, away_team, prob_pick, prob_pick_prob,
+                 ev_pick, ev_pick_prob, odd_h, odd_d, odd_a, match_time,
+                 is_toto14, api_fixture_id, analysis_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                m_id, league, home_team, away_team, prob_pick, prob_val,
+                ev_pick, ev_val, odd_h, odd_d, odd_a, match_time,
+                is_toto14, fixture_id, ANALYSIS_VERSION,
+            ))
         else:
             existing_fix_id, actual_result, stored_match_time, stored_home, stored_away = row
             if str(stored_home) != str(home_team) or str(stored_away) != str(away_team):
@@ -722,9 +728,13 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
             cursor.execute("""
                 UPDATE predictions
                 SET api_fixture_id = ?, match_time = ?, league = ?,
-                    prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ?
+                    prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ?,
+                    analysis_version = ?
                 WHERE match_id = ?
-            """, (final_fix_id, match_time, league, prob_pick, prob_val, ev_pick, ev_val, m_id))
+            """, (
+                final_fix_id, match_time, league, prob_pick, prob_val,
+                ev_pick, ev_val, ANALYSIS_VERSION, m_id,
+            ))
 
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
@@ -1128,7 +1138,41 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
     return picks
 
 
-def _report_pick_line(pick):
+def _has_korean_final_consonant(text):
+    """Return whether the last Hangul syllable has a 받침."""
+    for char in reversed(str(text or "").strip()):
+        code = ord(char)
+        if 0xAC00 <= code <= 0xD7A3:
+            return (code - 0xAC00) % 28 != 0
+        if char.isalnum():
+            return False
+    return False
+
+
+def _subject_form(name):
+    name = str(name or "팀").strip()
+    return f"{name}{'이' if _has_korean_final_consonant(name) else '가'}"
+
+
+def _human_pick_label(raw_pick, home_team=""):
+    """Explain Betman handicap notation without changing the stored grading key."""
+    raw = str(raw_pick or "").strip()
+    matched = re.match(
+        r"^\[\s*([+-]?\d+(?:\.\d+)?)\s*\]\s*(.*?)\s*핸디(승|무|패)$",
+        raw,
+    )
+    if not matched:
+        return raw
+    handicap, team_name, result = matched.groups()
+    team_name = team_name.strip() or str(home_team or "홈팀").strip()
+    try:
+        handicap = f"{float(handicap):+.1f}"
+    except (TypeError, ValueError):
+        pass
+    return f"{team_name} {handicap} 적용 후 {result}"
+
+
+def _report_pick_line(pick, home_team=""):
     if not pick:
         return "계산 가능한 선택지 없음"
     probability = float(pick.get("prob") or 0)
@@ -1139,7 +1183,8 @@ def _report_pick_line(pick):
             f"시장 공정확률 {float(fair_probability) * 100:.1f}%, "
             f"차이 {float(pick.get('edge') or 0) * 100:+.1f}%p"
         )
-    return f"{pick.get('raw_pick', '')} · 모델 {probability * 100:.1f}% · {comparison}"
+    display_pick = _human_pick_label(pick.get("raw_pick", ""), home_team)
+    return f"{display_pick} · 모델 {probability * 100:.1f}% · {comparison}"
 
 
 def build_detailed_report(
@@ -1186,9 +1231,9 @@ def build_detailed_report(
     exp_h = float(context.get("exp_h") or 0)
     exp_a = float(context.get("exp_a") or 0)
     if exp_h - exp_a >= 0.30:
-        flow = f"{home}이 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다."
+        flow = f"{_subject_form(home)} 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다."
     elif exp_a - exp_h >= 0.30:
-        flow = f"{away}이 역습과 전환 과정에서 더 위협적인 장면을 만들 가능성을 높게 봅니다."
+        flow = f"{_subject_form(away)} 역습과 전환 과정에서 더 위협적인 장면을 만들 가능성을 높게 봅니다."
     else:
         flow = "기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다."
     weather = str(context.get("weather") or "")
@@ -1202,15 +1247,15 @@ def build_detailed_report(
 
     honey = categories.get("honey")
     vip = categories.get("vip_underdog")
-    final_parts = [f"확률 높은 픽은 {_report_pick_line(selected_pick)}입니다."]
+    final_parts = [f"확률 높은 픽은 {_report_pick_line(selected_pick, home)}입니다."]
     if honey and vip and honey.get("raw_pick") == vip.get("raw_pick"):
         signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
         final_parts.append(
-            f"AI 꿀픽 {_report_pick_line(honey)}은 엄격 기준까지 통과해 VIP 역배픽으로 승격됐으며, "
+            f"AI 꿀픽 {_report_pick_line(honey, home)}은 엄격 기준까지 통과해 VIP 역배픽으로 승격됐으며, "
             f"독립 근거는 {signals}입니다."
         )
     elif honey:
-        final_parts.append(f"AI 꿀픽은 {_report_pick_line(honey)}입니다.")
+        final_parts.append(f"AI 꿀픽은 {_report_pick_line(honey, home)}입니다.")
     else:
         final_parts.append("AI 꿀픽은 실제 팀 역배 후보 중 가치 기준을 통과한 선택지가 없어 표시하지 않습니다.")
     if honey and not vip:
@@ -1224,9 +1269,9 @@ def build_detailed_report(
             f"[종합 경기 흐름] 예상 정규시간 득점은 {home} {exp_h:.2f}골, "
             f"{away} {exp_a:.2f}골입니다. {flow}{weather_note}"
         ),
-        f"[일반 승무패 분석] {_report_pick_line(market_best.get('1x2'))}.",
-        f"[핸디캡 분석] {_report_pick_line(market_best.get('handicap'))}.",
-        f"[언더오버 분석] {_report_pick_line(market_best.get('totals'))}.",
+        f"[일반 승무패 분석] {_report_pick_line(market_best.get('1x2'), home)}.",
+        f"[핸디캡 분석] {_report_pick_line(market_best.get('handicap'), home)}.",
+        f"[언더오버 분석] {_report_pick_line(market_best.get('totals'), home)}.",
         f"[실제 사용 근거] {evidence_text}. {missing_text}",
         (
             f"[최종 선택과 신뢰도] {' '.join(final_parts)} 선택된 확률픽의 보정 확률은 "
@@ -1412,6 +1457,33 @@ def select_pick_categories(picks, confidence):
             display_picks.append(pick)
     return categories, display_picks
 
+
+_PLACEHOLDER_TEAM_NAMES = {
+    "", "-", "미정", "미확정", "tbd", "unknown", "홈팀", "원정팀",
+    "home", "away", "team1", "team2",
+}
+
+
+def _is_placeholder_team_name(value):
+    normalized = re.sub(r"[\s._-]+", "", str(value or "").strip().casefold())
+    return normalized in {
+        re.sub(r"[\s._-]+", "", name.casefold())
+        for name in _PLACEHOLDER_TEAM_NAMES
+    }
+
+
+def _is_placeholder_match(match):
+    if not isinstance(match, dict):
+        return True
+    home = str(match.get("home") or "").strip()
+    away = str(match.get("away") or "").strip()
+    if _is_placeholder_team_name(home) or _is_placeholder_team_name(away):
+        return True
+    return re.sub(r"\W+", "", home.casefold()) == re.sub(
+        r"\W+", "", away.casefold()
+    )
+
+
 def _build_grading_snapshot():
     """Publish lightweight grading rows so the web never downloads the full DB."""
     conn = None
@@ -1431,6 +1503,25 @@ def _build_grading_snapshot():
                 "SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0"
             ).fetchall()
         ]
+        snapshot_versions = {
+            str(row["match_id"]): str(row["analysis_version"] or "")
+            for row in conn.execute(
+                """
+                SELECT ps.match_id, ps.analysis_version
+                FROM prediction_snapshots ps
+                INNER JOIN (
+                    SELECT match_id, MAX(id) AS latest_id
+                    FROM prediction_snapshots
+                    GROUP BY match_id
+                ) latest ON latest.latest_id = ps.id
+                """
+            ).fetchall()
+        }
+        for row in finished + pending:
+            stored_version = str(row.get("analysis_version") or "").strip()
+            row["analysis_version"] = stored_version or snapshot_versions.get(
+                str(row.get("match_id")), ""
+            )
 
         def sort_timestamp(row):
             parsed = _parse_kst_match_time(row.get("match_time"))
@@ -1458,7 +1549,17 @@ def build_dashboard_data():
         print("❌ 베트맨 데이터가 손상되어 대시보드 정상본을 보존합니다.")
         return False
      
-    proto_matches = betman_data.get("proto_matches", [])
+    raw_proto_matches = betman_data.get("proto_matches", [])
+    proto_matches = [
+        match for match in raw_proto_matches
+        if not _is_placeholder_match(match)
+    ]
+    rejected_proto_count = len(raw_proto_matches) - len(proto_matches)
+    if rejected_proto_count:
+        print(
+            f"⚠️ 팀명이 확인되지 않은 가짜 경기 {rejected_proto_count}건을 "
+            "분석·화면·채점 대상에서 제외했습니다."
+        )
     toto_14_matches = betman_data.get("toto_14_matches", [])
     if toto_14_matches and not _valid_toto14_round(toto_14_matches):
         toto_14_matches = _select_latest_complete_toto14_round(toto_14_matches)
@@ -2478,6 +2579,8 @@ def build_dashboard_data():
         "top3": top_3_picks,
         "source_meta": {
             "analysis_version": ANALYSIS_VERSION,
+            "raw_betman_proto_count": len(raw_proto_matches),
+            "rejected_placeholder_count": rejected_proto_count,
             "betman_proto_count": len(proto_matches),
             "display_proto_count": len(dashboard_proto),
             "betman_toto14_count": len(toto_14_matches),

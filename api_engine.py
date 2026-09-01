@@ -23,7 +23,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.1-betman-json-date-fix"
+ANALYSIS_VERSION = "V7.2-analysis-ui-integrity"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -577,9 +577,17 @@ def init_cache_db():
                 actual_score TEXT DEFAULT '-:-', actual_result TEXT DEFAULT 'PENDING', 
                 is_correct_prob INTEGER DEFAULT 0, is_correct_ev INTEGER DEFAULT 0,
                 ai_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-                is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT ''
+                is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT '',
+                analysis_version TEXT DEFAULT ''
             )
         """)
+        prediction_columns = {
+            str(column[1]) for column in cursor.execute("PRAGMA table_info(predictions)")
+        }
+        if "analysis_version" not in prediction_columns:
+            cursor.execute(
+                "ALTER TABLE predictions ADD COLUMN analysis_version TEXT DEFAULT ''"
+            )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS prediction_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

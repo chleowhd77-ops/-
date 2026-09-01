@@ -140,6 +140,35 @@ def load_prediction_results(grading_snapshot=None):
     except Exception:
         return {}
 
+
+_PLACEHOLDER_TEAM_NAMES = {
+    "", "-", "미정", "미확정", "tbd", "unknown", "홈팀", "원정팀",
+    "home", "away", "team1", "team2",
+}
+_NORMALIZED_PLACEHOLDER_TEAM_NAMES = {
+    re.sub(r"[\s._-]+", "", name.casefold())
+    for name in _PLACEHOLDER_TEAM_NAMES
+}
+
+
+def _is_displayable_match_item(item):
+    """Block only unidentified placeholder rows, never a real named team."""
+    if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
+        return False
+    match = item["match"]
+    home = str(match.get("home") or "").strip()
+    away = str(match.get("away") or "").strip()
+    home_key = re.sub(r"[\s._-]+", "", home.casefold())
+    away_key = re.sub(r"[\s._-]+", "", away.casefold())
+    if (
+        home_key in _NORMALIZED_PLACEHOLDER_TEAM_NAMES
+        or away_key in _NORMALIZED_PLACEHOLDER_TEAM_NAMES
+    ):
+        return False
+    return re.sub(r"\W+", "", home.casefold()) != re.sub(
+        r"\W+", "", away.casefold()
+    )
+
 # -----------------------------------------------------------------------------
 # 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
@@ -685,11 +714,12 @@ st.markdown("""
         box-shadow: 0 8px 20px rgba(0, 0, 0, .25);
     }
     .center-time-box {
-        min-height: 72px;
-        padding: 8px 6px;
-        border-radius: 14px;
-        background: rgba(6, 9, 18, 0.58);
-        border: 1px solid rgba(148, 163, 184, 0.10);
+        min-height: 0;
+        padding: 0 6px;
+        border-radius: 0;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
     }
     .match-time-text { color: #D7E1EF !important; font-size: 12px !important; }
     .deadline-open { border-radius: 999px !important; padding: 4px 9px !important; }
@@ -1494,6 +1524,13 @@ visible_match_limit = access_profile["match_limit"]
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
 live_scores_data = load_live_scores()
+if isinstance(dashboard_data, dict):
+    # 수집기가 새 버전으로 교체되기 전 남아 있는 캐시에도 같은 안전망을 적용한다.
+    for collection_name in ("proto", "top3", "toto14"):
+        dashboard_data[collection_name] = [
+            item for item in dashboard_data.get(collection_name, [])
+            if _is_displayable_match_item(item)
+        ]
 grading_snapshot = dashboard_data.get("grading", {})
 prediction_results_data = load_prediction_results(grading_snapshot)
 
@@ -1936,7 +1973,11 @@ def check_is_live(item):
     m = item.get('match', {})
     match_id_str = str(m.get('id', ''))
     live_info = live_scores_data.get(match_id_str, {})
-    explicit_status = _status_value(live_info) or _status_value(item) or _status_value(m)
+    db_result = prediction_results_data.get(match_id_str, {})
+    explicit_status = (
+        _status_value(db_result) or _status_value(live_info)
+        or _status_value(item) or _status_value(m)
+    )
     if _is_final_status(explicit_status):
         return False
     if explicit_status.upper() in {"LIVE", "1H", "HT", "2H", "ET", "BT", "P", "INT", "BREAK"}:
@@ -1974,7 +2015,11 @@ def _proto_is_recent_or_active(item):
     match = item.get("match", {}) if isinstance(item, dict) else {}
     match_id = str(match.get("id", ""))
     live_info = live_scores_data.get(match_id, {})
-    explicit_status = _status_value(live_info) or _status_value(item) or _status_value(match)
+    db_result = prediction_results_data.get(match_id, {})
+    explicit_status = (
+        _status_value(db_result) or _status_value(live_info)
+        or _status_value(item) or _status_value(match)
+    )
     time_status, _ = get_match_status(
         item.get("final_match_time", match.get("match_time", "")),
         match.get("deadline_time", "23:00"),
@@ -2014,7 +2059,78 @@ def render_logo_html(logo_url):
         f'onerror="this.onerror=null;this.src=\'{safe_fallback}\';">'
     )
 
-def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None):
+
+def _human_pick_label(raw_pick, home_team=""):
+    """Turn terse Betman handicap notation into an unambiguous sentence."""
+    raw = str(raw_pick or "").strip()
+    matched = re.match(
+        r"^\[\s*([+-]?\d+(?:\.\d+)?)\s*\]\s*(.*?)\s*핸디(승|무|패)$",
+        raw,
+    )
+    if not matched:
+        return raw
+    handicap, team_name, result = matched.groups()
+    team_name = team_name.strip() or str(home_team or "홈팀").strip()
+    try:
+        handicap = f"{float(handicap):+.1f}"
+    except (TypeError, ValueError):
+        pass
+    return f"{team_name} {handicap} 적용 후 {result}"
+
+
+def _top3_strategy_html(item):
+    """Show the decision and risk summary without making users open the long report."""
+    categories = _pick_categories(item)
+    high = categories.get("high_probability") if isinstance(categories, dict) else None
+    honey = categories.get("honey") if isinstance(categories, dict) else None
+    if not isinstance(high, dict):
+        return ""
+
+    match = item.get("match", {}) if isinstance(item, dict) else {}
+    home_team = str(match.get("home") or "")
+    high_text = escape(_human_pick_label(high.get("raw_pick"), home_team))
+    high_probability = float(high.get("prob") or 0) * 100
+    fair_probability = high.get("fair_prob")
+    confidence = float(item.get("analysis_confidence") or 0) * 100
+    interval = high.get("probability_interval") or {}
+    low = float(interval.get("low") or 0) * 100
+    high_bound = float(interval.get("high") or 0) * 100
+
+    if confidence < 60:
+        risk_text = "자료 신뢰도가 낮아 단일 방향 확정보다 보수적으로 보는 경기입니다."
+    elif high_bound and high_bound - low >= 18:
+        risk_text = "예상 오차범위가 넓어 확률 숫자만 보고 강하게 선택하면 안 됩니다."
+    else:
+        risk_text = "우선 방향은 뚜렷하지만 적중을 보장하는 수치는 아닙니다."
+
+    fair_text = (
+        f"시장 공정확률 {float(fair_probability) * 100:.1f}%와 비교"
+        if fair_probability is not None else "시장 비교값 없음"
+    )
+    if isinstance(honey, dict):
+        honey_text = escape(_human_pick_label(honey.get("raw_pick"), home_team))
+        if str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
+            support_text = f"가치 분석도 같은 방향인 {honey_text}을 가리킵니다."
+        else:
+            support_text = f"가치 보조 후보는 {honey_text}이며, 주력과 별도 기준으로 판단합니다."
+    else:
+        support_text = "가치 기준을 통과한 별도 꿀픽은 없어 억지로 추가하지 않았습니다."
+
+    return (
+        "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"
+        "border:1px solid rgba(0,242,254,.18);border-radius:10px;"
+        "background:rgba(0,242,254,.035);line-height:1.65;color:#CBD5E1;'>"
+        "<div style='font-weight:900;color:#00F2FE;margin-bottom:5px;'>추천 전략 한눈에 보기</div>"
+        f"<div><b style='color:#F8FAFC;'>우선 방향</b> · {high_text} "
+        f"(모델 {high_probability:.1f}%, {fair_text})</div>"
+        f"<div><b style='color:#F8FAFC;'>가치 확인</b> · {support_text}</div>"
+        f"<div><b style='color:#F8FAFC;'>주의점</b> · {risk_text} "
+        f"데이터 신뢰도 {confidence:.1f}%.</div>"
+        "</div>"
+    )
+
+
+def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None, home_team=""):
     """확률픽, 팀 역배 꿀픽, 꿀픽의 VIP 승격 상태를 세 칸에 표시합니다."""
     picks = picks or []
     categories = {
@@ -2078,7 +2194,7 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             continue
 
         prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
-        raw_pick = escape(str(pick.get("raw_pick", "")))
+        raw_pick = escape(_human_pick_label(pick.get("raw_pick", ""), home_team))
         pick_label = escape(str(pick.get("label", "")))
         detail = {
             "high_probability": "항상 표시",
@@ -2222,6 +2338,7 @@ with main_tab1:
                     is_top3_tab=False,
                     pick_categories=_pick_categories(item),
                     grading=db_result if is_final_now else None,
+                    home_team=m.get('home', ''),
                 )
 
                 upset_html = ""
@@ -2401,6 +2518,7 @@ with main_tab3:
                 item.get('ev_sorted_picks', []),
                 is_top3_tab=True,
                 pick_categories=_pick_categories(item),
+                home_team=m.get('home', ''),
             )
             html_code = (
                 f"<div class='match-card top3-glow'>"
@@ -2409,6 +2527,7 @@ with main_tab3:
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
                 f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
+                f"{_top3_strategy_html(item)}"
                 f"{_detail_html(item)}"
                 f"</div>"
             )
@@ -2452,7 +2571,7 @@ with main_tab4:
             required_columns = [
                 "is_toto14", "is_correct_prob", "is_correct_ev", "actual_result",
                 "match_time", "home_team", "away_team", "league", "actual_score",
-                "prob_pick", "ev_pick", "ai_note", "match_id",
+                "prob_pick", "ev_pick", "ai_note", "match_id", "analysis_version",
             ]
             df_finished = pd.DataFrame(finished_rows)
             df_pending = pd.DataFrame(pending_rows)
@@ -2461,12 +2580,36 @@ with main_tab4:
                     df_finished[column] = 0 if column.startswith("is_") else ""
                 if column not in df_pending.columns:
                     df_pending[column] = 0 if column.startswith("is_") else ""
-            df_proto = df_finished[df_finished['is_toto14'].fillna(0).astype(int) == 0]
-            df_toto = df_finished[df_finished['is_toto14'].fillna(0).astype(int) == 1]
+            current_version = str(
+                dashboard_data.get("source_meta", {}).get("analysis_version") or ""
+            ).strip()
+            df_proto_all = df_finished[
+                df_finished['is_toto14'].fillna(0).astype(int) == 0
+            ]
+            df_toto_all = df_finished[
+                df_finished['is_toto14'].fillna(0).astype(int) == 1
+            ]
+            if current_version:
+                df_proto = df_proto_all[
+                    df_proto_all['analysis_version'].fillna('').astype(str) == current_version
+                ]
+                df_toto = df_toto_all[
+                    df_toto_all['analysis_version'].fillna('').astype(str) == current_version
+                ]
+            else:
+                df_proto = df_proto_all
+                df_toto = df_toto_all
             
             proto_total = len(df_proto)
             proto_prob_hit = int(pd.to_numeric(df_proto['is_correct_prob'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
-            honey_mask = df_proto['ev_pick'].fillna('').astype(str).str.strip().ne('')
+            # A/B 비교에서는 확률픽과 완전히 같은 꿀픽을 두 번 센 것처럼
+            # 보이지 않도록 별도 전략인 꿀픽만 집계한다.
+            honey_mask = (
+                df_proto['ev_pick'].fillna('').astype(str).str.strip().ne('')
+                & df_proto['ev_pick'].fillna('').astype(str).ne(
+                    df_proto['prob_pick'].fillna('').astype(str)
+                )
+            )
             df_honey = df_proto[honey_mask]
             proto_ev_total = len(df_honey)
             proto_ev_hit = int(pd.to_numeric(df_honey['is_correct_ev'], errors='coerce').fillna(0).sum()) if proto_ev_total > 0 else 0
@@ -2481,8 +2624,10 @@ with main_tab4:
             return {
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "ev_total": proto_ev_total, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
+                "current_version": current_version,
+                "legacy_count": max(0, len(df_proto_all) - len(df_proto)) + max(0, len(df_toto_all) - len(df_toto)),
                 # 오답노트는 회원 등급과 관계없이 전체 기록을 공개한다.
-                "history": df_proto.to_dict('records'),
+                "history": df_proto_all.to_dict('records'),
                 "pending": df_pending.to_dict('records')
             }
         except Exception as e:
@@ -2495,30 +2640,40 @@ with main_tab4:
     else:
         p_stats = stats['proto']
         t_stats = stats['toto']
+        current_version_label = escape(stats.get('current_version') or '버전 정보 없음')
+        prob_value = f"{p_stats['prob_acc']}%" if p_stats['total'] else "채점 대기"
+        prob_note = f"({p_stats['prob_hit']}건 적중)" if p_stats['total'] else "종료 경기 결과를 기다리는 중"
+        honey_value = f"{p_stats['ev_acc']}%" if p_stats['ev_total'] else "채점 대기"
+        honey_note = f"({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)" if p_stats['ev_total'] else "별도 꿀픽 결과를 기다리는 중"
+        toto_value = f"{t_stats['acc']}%" if t_stats['total'] else "채점 대기"
+        toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "현재 버전의 종료 경기 없음"
         
         st.markdown(f"""
         <div class='grade-summary-grid'>
             <div class='grade-summary-card'>
-                <span class='grade-summary-title'>📊 라이브 승부식 A/B 채점 (총 {p_stats['total']}경기)</span>
+                <span class='grade-summary-title'>📊 현재 버전 승부식 채점 (총 {p_stats['total']}경기)</span>
                 <div class='grade-dual-row'>
                     <div class='grade-metric'>
                         <span class='grade-metric-label'>안전제일 확률픽</span>
-                        <span class='grade-metric-value probability'>{p_stats['prob_acc']}%</span>
-                        <span class='grade-metric-note'>({p_stats['prob_hit']}건 적중)</span>
+                        <span class='grade-metric-value probability'>{prob_value}</span>
+                        <span class='grade-metric-note'>{prob_note}</span>
                     </div>
                     <div class='grade-versus'>VS</div>
                     <div class='grade-metric'>
                         <span class='grade-metric-label'>팀 역배 가치 꿀픽</span>
-                        <span class='grade-metric-value gold'>{p_stats['ev_acc']}%</span>
-                        <span class='grade-metric-note'>({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)</span>
+                        <span class='grade-metric-value gold'>{honey_value}</span>
+                        <span class='grade-metric-note'>{honey_note}</span>
                     </div>
                 </div>
             </div>
             <div class='grade-summary-card grade-toto'>
                 <span class='grade-summary-title'>🏆 승무패 14경기 단통 적중률</span>
-                <span class='grade-metric-value toto'>{t_stats['acc']}%</span>
-                <span class='grade-metric-note'>총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중</span>
+                <span class='grade-metric-value toto'>{toto_value}</span>
+                <span class='grade-metric-note'>{toto_note}</span>
             </div>
+        </div>
+        <div style='color:#64748B;font-size:12px;margin:-3px 0 20px 2px;'>
+            집계 기준: {current_version_label} · 구버전 {stats['legacy_count']}건은 아래 기록에서만 확인
         </div>
         """, unsafe_allow_html=True)
         
@@ -2534,12 +2689,16 @@ with main_tab4:
             m_time = escape(str(row.get('match_time', '')))
             score = escape(str(row.get('actual_score', '-:-')))
             league_name = escape(str(row.get('league', '')))
+            row_version = escape(str(row.get('analysis_version') or '구버전 기록'))
             
-            prob_pick = escape(str(row.get('prob_pick', '')))
-            ev_pick = escape(str(row.get('ev_pick', '')))
+            prob_pick_raw = str(row.get('prob_pick') or '')
+            ev_pick_raw = str(row.get('ev_pick') or '')
+            prob_pick = escape(_human_pick_label(prob_pick_raw, row.get('home_team', '')))
+            ev_pick = escape(_human_pick_label(ev_pick_raw, row.get('home_team', '')))
             prob_ok = row.get('is_correct_prob', 0) == 1
             ev_ok = row.get('is_correct_ev', 0) == 1
-            has_ev_pick = bool(str(row.get('ev_pick') or '').strip())
+            has_ev_pick = bool(ev_pick_raw.strip())
+            same_pick = has_ev_pick and ev_pick_raw == prob_pick_raw
             note = _clean_grading_note(row.get('ai_note', ''), prob_ok, ev_ok, has_ev_pick)
             
             if row.get('actual_result') == 'CANCELED':
@@ -2553,6 +2712,9 @@ with main_tab4:
             if not has_ev_pick:
                 ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>미선정</span>"
                 ev_pick = "기준 충족 꿀픽 없음"
+            elif same_pick:
+                ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>동일픽</span>"
+                ev_pick += " · A/B 별도 집계 제외"
             else:
                 ev_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if ev_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
 
@@ -2560,7 +2722,7 @@ with main_tab4:
                 f"<div class='report-card'>"
                 f"<div class='report-head'>"
                 f"<div class='report-match'>"
-                f"<span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {league_name}</span>"
+                f"<span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {league_name} • {row_version}</span>"
                 f"<span class='report-team'>{h_team} <span style='color:#475569;'>VS</span> {a_team}</span>"
                 f"</div>"
                 f"<div class='report-result'>"
