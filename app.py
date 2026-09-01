@@ -1925,7 +1925,8 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick):
 
     result_parts = [f"확률픽 {'적중' if prob_ok else '미적중'}"]
     result_parts.append(
-        f"꿀픽 {'적중' if ev_ok else '미적중'}" if has_ev_pick else "꿀픽 미선정"
+        f"배당형 대안픽 {'적중' if ev_ok else '미적중'}"
+        if has_ev_pick else "배당형 대안픽 미선정"
     )
     sections = [f"[채점 결과] {' · '.join(result_parts)}."]
     if main_text.strip():
@@ -2165,9 +2166,9 @@ def _top3_strategy_html(item):
         if str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
             support_text = f"가치 분석도 같은 방향인 {honey_text}을 가리킵니다."
         else:
-            support_text = f"가치 보조 후보는 {honey_text}이며, 주력과 별도 기준으로 판단합니다."
+            support_text = f"승무패·핸디 대안은 {honey_text}이며, 주력과 별도 기준으로 판단합니다."
     else:
-        support_text = "가치 기준을 통과한 별도 꿀픽은 없어 억지로 추가하지 않았습니다."
+        support_text = "승무패·핸디캡의 실제 배당 자료가 없어 대안픽은 대기 상태입니다."
 
     return (
         "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"
@@ -2184,7 +2185,7 @@ def _top3_strategy_html(item):
 
 
 def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None, home_team=""):
-    """확률픽, 팀 역배 꿀픽, 꿀픽의 VIP 승격 상태를 세 칸에 표시합니다."""
+    """확률픽, 배당형 대안픽, 대안픽의 VIP 승격 상태를 세 칸에 표시한다."""
     picks = picks or []
     categories = {
         "high_probability": None,
@@ -2201,7 +2202,7 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
         if key in categories and categories[key] is None:
             categories[key] = pick
 
-    # 이전 버전 데이터는 확률 높은 픽만 복원합니다. 꿀픽과 VIP 역배는
+    # 이전 버전 데이터는 확률 높은 픽만 복원합니다. 배당형 대안픽과 VIP 역배는
     # 엄격한 신규 기준을 거치지 않았으므로 임의로 만들어 표시하지 않습니다.
     if categories["high_probability"] is None and picks:
         categories["high_probability"] = max(
@@ -2210,8 +2211,8 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
 
     slot_specs = [
         ("high_probability", "📈 확률 높은 픽", "분석 가능한 선택지가 없습니다.", "#00F2FE"),
-        ("honey", "🍯 역배 가치 꿀픽", "오늘은 기준 충족 꿀픽 없음", "#F59E0B"),
-        ("vip_underdog", "💎 VIP 검증 등급", "꿀픽 중 엄격 기준 통과 없음", "#FFD54A"),
+        ("honey", "🍯 배당형 대안픽", "승무패·핸디캡 배당 대기", "#F59E0B"),
+        ("vip_underdog", "💎 VIP 검증 등급", "대안픽 중 엄격 기준 통과 없음", "#FFD54A"),
     ]
     html = ""
     for key, label, empty_text, color in slot_specs:
@@ -2229,10 +2230,15 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
         prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
         raw_pick = escape(_human_pick_label(pick.get("raw_pick", ""), home_team))
         pick_label = escape(str(pick.get("label", "")))
+        honey_tier = str(pick.get("value_pick_tier") or "")
         detail = {
             "high_probability": "항상 표시",
-            "honey": "팀 역배 가치 기준 통과",
-            "vip_underdog": "별도 픽 아님 · 꿀픽 엄격 검증 통과",
+            "honey": (
+                "보수적 가치 기준 통과"
+                if honey_tier == "qualified"
+                else "항상 제공 · 참고 등급"
+            ),
+            "vip_underdog": "별도 픽 아님 · 대안픽 엄격 검증 통과",
         }[key]
         meta_parts = [detail]
         if pick.get("fair_prob") is not None:
@@ -2684,8 +2690,8 @@ with main_tab4:
             
             proto_total = len(df_proto)
             proto_prob_hit = int(pd.to_numeric(df_proto['is_correct_prob'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
-            # A/B 비교에서는 확률픽과 완전히 같은 꿀픽을 두 번 센 것처럼
-            # 보이지 않도록 별도 전략인 꿀픽만 집계한다.
+            # A/B 비교에서는 확률픽과 완전히 같은 대안픽을 두 번 센 것처럼
+            # 보이지 않도록 별도 방향인 배당형 대안픽만 집계한다.
             honey_mask = (
                 df_proto['ev_pick'].fillna('').astype(str).str.strip().ne('')
                 & df_proto['ev_pick'].fillna('').astype(str).ne(
@@ -2745,7 +2751,7 @@ with main_tab4:
         prob_value = f"{p_stats['prob_acc']}%" if p_stats['total'] else "채점 대기"
         prob_note = f"({p_stats['prob_hit']}건 적중)" if p_stats['total'] else "종료 경기 결과를 기다리는 중"
         honey_value = f"{p_stats['ev_acc']}%" if p_stats['ev_total'] else "채점 대기"
-        honey_note = f"({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)" if p_stats['ev_total'] else "별도 꿀픽 결과를 기다리는 중"
+        honey_note = f"({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)" if p_stats['ev_total'] else "배당형 대안픽 결과를 기다리는 중"
         toto_value = f"{t_stats['acc']}%" if t_stats['total'] else "채점 대기"
         toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "현재 버전의 종료 경기 없음"
         
@@ -2761,7 +2767,7 @@ with main_tab4:
                     </div>
                     <div class='grade-versus'>VS</div>
                     <div class='grade-metric'>
-                        <span class='grade-metric-label'>팀 역배 가치 꿀픽</span>
+                        <span class='grade-metric-label'>배당형 대안픽</span>
                         <span class='grade-metric-value gold'>{honey_value}</span>
                         <span class='grade-metric-note'>{honey_note}</span>
                     </div>
@@ -2828,7 +2834,7 @@ with main_tab4:
             prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
             if not has_ev_pick:
                 ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>미선정</span>"
-                ev_pick = "기준 충족 꿀픽 없음"
+                ev_pick = "승무패·핸디캡 배당 자료 없음"
             elif same_pick:
                 ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>동일픽</span>"
                 ev_pick += " · A/B 별도 집계 제외"
@@ -2853,7 +2859,7 @@ with main_tab4:
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>"
                 f"</div>"
                 f"<div class='report-pick-box'>"
-                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 꿀픽 예측</span>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 배당형 대안픽 예측</span>"
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>"
                 f"</div>"
                 f"</div>"

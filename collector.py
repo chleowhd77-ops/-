@@ -46,7 +46,7 @@ from api_engine import _normalize_player_name
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 KST = timezone(timedelta(hours=9))
-UNDERDOG_GATE_VERSION = "U2-conservative-edge-20260902"
+UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
@@ -591,7 +591,7 @@ def _locked_toto14_fallback(match):
         cutoff = kickoff.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         row = conn.execute(
             """
-            SELECT prob_pick, prob_pick_prob, stage
+            SELECT prob_pick, prob_pick_prob, stage, analysis_version
             FROM prediction_snapshots
             WHERE match_id = ? AND created_at <= ?
             ORDER BY created_at DESC, id DESC LIMIT 1
@@ -659,7 +659,8 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            SELECT stage, confidence, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob
+            SELECT stage, confidence, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob,
+                   analysis_version
             FROM prediction_snapshots
             WHERE match_id = ?
             ORDER BY id DESC LIMIT 1
@@ -739,13 +740,15 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
 
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
-            round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2)
+            round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2),
+            ANALYSIS_VERSION,
         )
         previous_normalized = None
         if previous:
             previous_normalized = (
                 str(previous[0]), round(float(previous[1] or 0), 4), str(previous[2]),
-                round(float(previous[3] or 0), 2), str(previous[4]), round(float(previous[5] or 0), 2)
+                round(float(previous[3] or 0), 2), str(previous[4]), round(float(previous[5] or 0), 2),
+                str(previous[6] or ""),
             )
         if previous_normalized != current:
             cursor.execute("""
@@ -1263,13 +1266,20 @@ def build_detailed_report(
     if honey and vip and honey.get("raw_pick") == vip.get("raw_pick"):
         signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
         final_parts.append(
-            f"AI 꿀픽 {_report_pick_line(honey, home)}은 엄격 기준까지 통과해 VIP 역배픽으로 승격됐으며, "
+            f"배당형 대안픽 {_report_pick_line(honey, home)}은 엄격 기준까지 통과해 VIP 역배 등급으로 승격됐으며, "
             f"독립 근거는 {signals}입니다."
         )
     elif honey:
-        final_parts.append(f"AI 꿀픽은 {_report_pick_line(honey, home)}입니다.")
+        tier_note = (
+            "보수적 가치 기준도 통과했습니다"
+            if honey.get("value_pick_tier") == "qualified"
+            else "승무패·핸디캡 중 가장 나은 대안이지만 참고 등급입니다"
+        )
+        final_parts.append(
+            f"배당형 대안픽은 {_report_pick_line(honey, home)}이며, {tier_note}."
+        )
     else:
-        final_parts.append("AI 꿀픽은 실제 팀 역배 후보 중 가치 기준을 통과한 선택지가 없어 표시하지 않습니다.")
+        final_parts.append("승무패·핸디캡 실제 배당이 없어 배당형 대안픽은 대기 상태입니다.")
     if honey and not vip:
         final_parts.append("VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
     missing_text = (
@@ -1397,7 +1407,7 @@ def annotate_pick_metrics(picks, confidence):
 
 PICK_CATEGORY_LABELS = {
     "high_probability": "확률 높은 픽",
-    "honey": "AI 꿀픽",
+    "honey": "배당형 대안픽",
     "vip_underdog": "VIP 역배 픽",
 }
 
@@ -1413,7 +1423,7 @@ def _tag_pick_category(pick, category_key):
 
 
 def select_pick_categories(picks, confidence):
-    """확률픽을 독립 선정하고, 팀 역배 꿀픽 중 엄격 통과분만 VIP로 승격합니다."""
+    """확률픽과 배당형 대안픽을 따로 선정하고 엄격한 역배만 VIP로 승격한다."""
     categories = {
         "high_probability": None,
         "honey": None,
@@ -1433,40 +1443,55 @@ def select_pick_categories(picks, confidence):
         ),
     )
 
-    # 꿀픽은 언더/오버가 아니라 실제 팀 방향(승무패·핸디캡)의 역배 후보만 허용합니다.
+    # 두 번째 칸은 언더/오버와 별개로, 승무패·핸디캡에서
+    # 배당과 모델 가치의 균형이 가장 나은 대안을 하나 제공한다.
     honey_edge_floor = 0.015 + max(0.0, 0.65 - confidence) * 0.05
     honey_candidates = [
         pick for pick in picks
-        if pick.get("is_true_underdog")
-        and infer_pick_market(pick) in {"1x2", "handicap"}
-        and 2.20 <= float(pick.get("odd", 0) or 0) <= 5.00
-        and float(pick.get("prob", 0) or 0) >= 0.22
-        and float(pick.get("robust_edge", 0) or 0) >= honey_edge_floor
-        and float(pick.get("robust_ev", 0) or 0) >= 1.02
-        and confidence >= 0.55
-        and int(pick.get("independent_support_count", 0) or 0) >= 1
+        if infer_pick_market(pick) in {"1x2", "handicap"}
+        and 1.65 <= float(pick.get("odd", 0) or 0) <= 4.50
+        and float(pick.get("prob", 0) or 0) >= 0.18
         and pick.get("fair_prob") is not None
-        and float(pick.get("value_score", 0) or 0) > 0
     ]
+    different_candidates = [
+        pick for pick in honey_candidates
+        if str(pick.get("raw_pick") or "") != str(high_source.get("raw_pick") or "")
+    ]
+    if different_candidates:
+        honey_candidates = different_candidates
     honey_source = max(
         honey_candidates,
         key=lambda pick: (
+            float(pick.get("robust_edge", 0) or 0) > 0,
             float(pick.get("robust_edge", 0) or 0),
-            int(pick.get("independent_support_count", 0) or 0),
-            float(pick.get("value_score", 0) or 0),
+            float(pick.get("robust_ev", 0) or 0),
             float(pick.get("recommendation_score", 0) or 0),
-            float(pick.get("ev", 0) or 0),
+            float(pick.get("prob", 0) or 0),
         ),
         default=None,
     )
+    if honey_source:
+        # 선택 등급은 화면용 메타데이터이므로 원본 시장 후보를 변형하지 않는다.
+        honey_source = dict(honey_source)
+        value_qualified = bool(
+            float(honey_source.get("robust_edge", 0) or 0) >= honey_edge_floor
+            and float(honey_source.get("robust_ev", 0) or 0) >= 1.02
+            and confidence >= 0.55
+        )
+        honey_source["value_pick_tier"] = (
+            "qualified" if value_qualified else "alternative"
+        )
+        honey_source["value_pick_always_provided"] = True
 
-    # VIP는 별도 세 번째 예측이 아니라, 선택된 꿀픽 하나가 더 엄격한
+    # VIP는 별도 세 번째 예측이 아니라, 선택된 대안픽 하나가 더 엄격한
     # 가치·신뢰도·복수 독립근거 기준을 모두 통과했을 때의 승격 등급입니다.
     vip_source = None
     if honey_source:
         fair_probability = honey_source.get("fair_prob")
         vip_passed = bool(
-            float(honey_source.get("robust_edge", 0) or 0) >= 0.03
+            honey_source.get("value_pick_tier") == "qualified"
+            and honey_source.get("is_true_underdog")
+            and float(honey_source.get("robust_edge", 0) or 0) >= 0.03
             and float(honey_source.get("robust_ev", 0) or 0) >= 1.08
             and confidence >= 0.68
             and int(honey_source.get("independent_support_count", 0) or 0) >= 3
@@ -2105,7 +2130,7 @@ def build_dashboard_data():
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
 
-        # 채점 대상은 확률픽과 꿀픽 두 개뿐입니다. VIP는 꿀픽의 승격 표시이므로
+        # 채점 대상은 확률픽과 배당형 대안픽 두 개뿐입니다. VIP는 대안픽의 승격 표시이므로
         # 별도의 세 번째 예측으로 저장하거나 채점하지 않습니다.
         highest_ev_pick = honey_pick
         detailed_report = build_detailed_report(
@@ -2125,7 +2150,7 @@ def build_dashboard_data():
 
         badge_templates = {
             "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>📈 확률 높은 픽</span>",
-            "honey": "<span style='background:#F59E0B;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🍯 AI 꿀픽</span>",
+            "honey": "<span style='background:#F59E0B;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🍯 배당형 대안픽</span>",
             "vip_underdog": "<span style='background:linear-gradient(to right,#FFD700,#F59E0B);color:#000;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:900;margin-right:4px;box-shadow:0 0 5px rgba(255,215,0,.5);'>💎 VIP 역배 픽</span>",
         }
         for pick in valid_all_picks:
@@ -2700,7 +2725,9 @@ def build_dashboard_data():
         },
         "top3": top_3_picks,
         "source_meta": {
-            "analysis_version": ANALYSIS_VERSION,
+            # 이미 동결된 예측은 당시 버전을 그대로 표시해야 새 버전의
+            # 성적으로 잘못 섞이지 않는다.
+            "analysis_version": str(row[3] or ANALYSIS_VERSION),
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "raw_betman_proto_count": len(raw_proto_matches),
             "rejected_placeholder_count": rejected_proto_count,
