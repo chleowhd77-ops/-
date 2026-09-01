@@ -3597,10 +3597,19 @@ def scrape_betman():
             By.XPATH,
             "//a[contains(normalize-space(.), '프로토 승부식') and contains(normalize-space(.), '회차')]",
         )))
-        driver.execute_script("arguments[0].click();", proto_btn)
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".box-data-group [data-rowname]"))
-        )
+        proto_target_url = _open_link_target(driver, proto_btn, hub_url)
+        proto_row_selector = ".box-data-group [data-rowname]"
+        try:
+            WebDriverWait(driver, 45).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, proto_row_selector))
+            )
+        except Exception as error:
+            row_count = len(driver.find_elements(By.CSS_SELECTOR, proto_row_selector))
+            raise RuntimeError(
+                "프로토 경기행 대기 실패 "
+                f"(행={row_count}, 현재주소={driver.current_url or '-'}, "
+                f"직접주소={proto_target_url or '-'}, 제목={driver.title or '-'})"
+            ) from error
         for _ in range(20):
             visible_more = [button for button in driver.find_elements(
                 By.XPATH,
@@ -3610,7 +3619,7 @@ def scrape_betman():
                 break
             driver.execute_script("arguments[0].click();", visible_more[0])
             time.sleep(0.8)
-        stable, _ = _wait_for_stable_rows(driver, ".box-data-group [data-rowname]")
+        stable, _ = _wait_for_stable_rows(driver, proto_row_selector)
         if not stable:
             raise RuntimeError("프로토 행 개수가 제한시간 안에 안정되지 않음")
         return parse_betman_proto_html(driver.page_source), stable
