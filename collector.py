@@ -3213,7 +3213,11 @@ def parse_betman_toto14_html(html, round_id="current"):
     """축구 승무패 표의 공식 행 번호, 팀, 시간, 투표율을 그대로 읽는다."""
     soup = BeautifulSoup(html, 'html.parser')
     parsed = []
-    for row in soup.select("table#grid_victory tbody#grid_victory_tbody > tr"):
+    rows = soup.select("table#grid_victory tbody#grid_victory_tbody > tr")
+    if not rows:
+        # Betman has occasionally omitted the tbody id while keeping the table id.
+        rows = soup.select("table#grid_victory tbody > tr")
+    for row in rows:
         cells = row.find_all("td", recursive=False)
         if len(cells) < 6:
             continue
@@ -3438,12 +3442,35 @@ def _wait_for_stable_rows(driver, selector, timeout=18, stable_samples=3):
     return False, latest_count
 
 
+def _betman_link_target(element, base_url):
+    """Return the real game-slip URL hidden in either href or JavaScript."""
+    candidates = [
+        (element.get_attribute("href") or "").strip(),
+        (element.get_attribute("onclick") or "").strip(),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if not candidate.lower().startswith(("javascript:", "#")):
+            return urljoin(base_url, candidate)
+        # The hub currently exposes links like:
+        # javascript:leftA.checkLeftSlipData(5,'/main/.../gameSlip.do?...')
+        embedded = re.search(
+            r"['\"]((?:https?://[^'\"]+|/[^'\"]*gameSlip\.do\?[^'\"]+))['\"]",
+            candidate,
+            re.IGNORECASE,
+        )
+        if embedded:
+            return urljoin(base_url, embedded.group(1).replace("&amp;", "&"))
+    return None
+
+
 def _open_link_target(driver, element, base_url):
     """새 창 여부와 관계없이 베트맨 경기표 링크의 실제 주소로 이동한다."""
-    href = (element.get_attribute("href") or "").strip()
-    if href and not href.lower().startswith(("javascript:", "#")):
-        driver.get(urljoin(base_url, href))
-        return
+    target_url = _betman_link_target(element, base_url)
+    if target_url:
+        driver.get(target_url)
+        return target_url
 
     previous_handles = set(driver.window_handles)
     driver.execute_script("arguments[0].click();", element)
@@ -3457,6 +3484,7 @@ def _open_link_target(driver, element, base_url):
     except Exception:
         # 같은 창에서 자바스크립트로 이동하는 링크도 있으므로 그대로 계속한다.
         pass
+    return driver.current_url or ""
 
 
 def _scrape_with_fresh_browser(label, operation):
@@ -3599,16 +3627,22 @@ def scrape_betman():
             toto_btn.get_attribute("onclick") or "",
             toto_btn.text or "",
         ]
-        _open_link_target(driver, toto_btn, hub_url)
-        WebDriverWait(driver, 45).until(
-            lambda current: len(current.find_elements(
-                By.CSS_SELECTOR,
-                "table#grid_victory tbody tr, #grid_victory_tbody > tr",
-            )) >= 14
-        )
+        target_url = _open_link_target(driver, toto_btn, hub_url)
+        row_selector = "table#grid_victory tbody tr, #grid_victory_tbody > tr"
+        try:
+            WebDriverWait(driver, 60).until(
+                lambda current: len(current.find_elements(By.CSS_SELECTOR, row_selector)) >= 14
+            )
+        except Exception as error:
+            row_count = len(driver.find_elements(By.CSS_SELECTOR, row_selector))
+            raise RuntimeError(
+                "승무패 표 14행 대기 실패 "
+                f"(행={row_count}, 현재주소={driver.current_url or '-'}, "
+                f"직접주소={target_url or '-'}, 제목={driver.title or '-'})"
+            ) from error
         stable, _ = _wait_for_stable_rows(
             driver,
-            "table#grid_victory tbody tr, #grid_victory_tbody > tr",
+            row_selector,
             timeout=30,
             stable_samples=2,
         )
