@@ -3,6 +3,7 @@ import json
 import sqlite3
 import re
 import math
+import time
 import requests
 import difflib
 import unicodedata
@@ -22,20 +23,71 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V6.3-honey-vip-hierarchy-livefix"
+ANALYSIS_VERSION = "V6.4-quota-toto14-hotfix"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
 API_DAILY_TOTAL_LIMIT = max(100, int(os.getenv("API_DAILY_TOTAL_LIMIT", "7500")))
 API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "600")))
 API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
+API_MIN_REQUEST_INTERVAL = max(0.0, float(os.getenv("API_MIN_REQUEST_INTERVAL", "0.22")))
+API_RATE_LIMIT_RETRIES = max(0, int(os.getenv("API_RATE_LIMIT_RETRIES", "2")))
 _API_PROVIDER_REMAINING = None
 _API_PROVIDER_DAY = None
 _API_QUOTA_NOTICE_SHOWN = False
+_API_LAST_REQUEST_AT = 0.0
 
 
 class ApiQuotaUnavailable(RuntimeError):
     """일일 API 한도 보호 장치가 요청을 중단했음을 뜻한다."""
+
+
+class ApiRateLimited(RuntimeError):
+    """공급사의 분당/순간 요청 제한이 잠시 적용됐음을 뜻한다."""
+
+
+def _response_error_text(response):
+    try:
+        return json.dumps(response.json().get("errors", {}), ensure_ascii=False).lower()
+    except Exception:
+        return ""
+
+
+def _header_int(response, name):
+    try:
+        value = response.headers.get(name)
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_daily_quota_response(response, error_text=""):
+    """하루 한도 소진과 일시적인 분당 제한을 구분한다.
+
+    API-Sports는 일일 잔여량과 분당 잔여량을 서로 다른 헤더로 보낸다.
+    일반적인 ``rate limit`` 문구만으로 하루 전체를 잠그면 결제 갱신 뒤에도
+    최근 전적ㆍ부상자ㆍLIVE 조회가 모두 중단될 수 있다.
+    """
+    daily_remaining = _header_int(response, "x-ratelimit-requests-remaining")
+    if daily_remaining is not None:
+        return daily_remaining <= 0
+    daily_markers = (
+        "daily quota",
+        "daily request",
+        "requests per day",
+        "request limit for the day",
+        "quota for the day",
+    )
+    return any(marker in error_text for marker in daily_markers)
+
+
+def _pace_api_request():
+    global _API_LAST_REQUEST_AT
+    if API_MIN_REQUEST_INTERVAL > 0:
+        wait_seconds = API_MIN_REQUEST_INTERVAL - (time.monotonic() - _API_LAST_REQUEST_AT)
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+    _API_LAST_REQUEST_AT = time.monotonic()
 
 
 def _api_provider_day_key():
@@ -149,7 +201,13 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
     day_key, local_calls, stored_remaining = _api_usage_today()
     _API_PROVIDER_DAY = day_key
     if _API_PROVIDER_REMAINING is None and stored_remaining is not None:
-        _API_PROVIDER_REMAINING = int(stored_remaining)
+        # 이전 실행이 0을 저장했더라도 결제 갱신ㆍ플랜 변경이 있었을 수 있다.
+        # 새 프로세스에서는 첫 요청 한 번으로 공급사 상태를 다시 확인하고,
+        # 실제로 일일 잔여량이 0일 때만 그 실행 동안 차단한다.
+        if int(stored_remaining) > 0:
+            _API_PROVIDER_REMAINING = int(stored_remaining)
+        else:
+            print("[API] 저장된 소진 기록 재확인: 공급사 상태를 한 번 조회합니다.")
 
     allowed_calls = API_DAILY_TOTAL_LIMIT - 50 if purpose in {"live", "scoring"} else API_ANALYSIS_SOFT_LIMIT
     if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
@@ -159,30 +217,42 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
         _show_api_quota_notice(f"{purpose} 예산 도달 {local_calls}/{allowed_calls}")
         raise ApiQuotaUnavailable("Local API safety budget reached")
 
-    response = requests.get(
-        f"https://{API_HOST}/{str(path).lstrip('/')}",
-        headers=headers,
-        params=params,
-        timeout=timeout,
-    )
-    remaining_header = response.headers.get("x-ratelimit-requests-remaining")
-    try:
-        _API_PROVIDER_REMAINING = int(remaining_header) if remaining_header is not None else _API_PROVIDER_REMAINING
-    except (TypeError, ValueError):
-        pass
-    _record_api_usage(day_key, _API_PROVIDER_REMAINING)
+    response = None
+    for attempt in range(API_RATE_LIMIT_RETRIES + 1):
+        _pace_api_request()
+        response = requests.get(
+            f"https://{API_HOST}/{str(path).lstrip('/')}",
+            headers=headers,
+            params=params,
+            timeout=timeout,
+        )
+        error_text = _response_error_text(response)
+        daily_remaining = _header_int(response, "x-ratelimit-requests-remaining")
+        if daily_remaining is not None:
+            _API_PROVIDER_REMAINING = daily_remaining
+        _record_api_usage(day_key, _API_PROVIDER_REMAINING)
 
-    quota_error = response.status_code == 429
-    if not quota_error:
+        if _is_daily_quota_response(response, error_text):
+            _API_PROVIDER_REMAINING = 0
+            _mark_api_quota_exhausted(day_key)
+            _show_api_quota_notice("공급사 일일 사용량 소진")
+            return response
+
+        transient_rate_limit = response.status_code == 429 or "rate limit" in error_text
+        if not transient_rate_limit:
+            return response
+        if attempt >= API_RATE_LIMIT_RETRIES:
+            raise ApiRateLimited("API temporary rate limit; retry on next collection cycle")
+
         try:
-            errors_text = json.dumps(response.json().get("errors", {}), ensure_ascii=False).lower()
-            quota_error = "request limit" in errors_text or "rate limit" in errors_text
-        except Exception:
-            quota_error = False
-    if quota_error:
-        _API_PROVIDER_REMAINING = 0
-        _mark_api_quota_exhausted(day_key)
-        _show_api_quota_notice("공급사 일일 사용량 소진")
+            retry_after = float(response.headers.get("Retry-After", "0") or 0)
+        except (TypeError, ValueError):
+            retry_after = 0
+        delay = retry_after if retry_after > 0 else 10 * (attempt + 1)
+        delay = max(1.0, min(60.0, delay))
+        print(f"⏳ API 분당 제한 감지: {delay:g}초 후 재시도 ({attempt + 1}/{API_RATE_LIMIT_RETRIES})")
+        time.sleep(delay)
+
     return response
 
 
