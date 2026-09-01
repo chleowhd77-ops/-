@@ -14,6 +14,7 @@ import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 import schedule
@@ -3227,10 +3228,15 @@ def parse_betman_toto14_html(html, round_id="current"):
 
         teams_box = cells[2].select_one(".vsDIv") or cells[2]
         team_parts = teams_box.find_all("div", recursive=False)
-        if len(team_parts) < 2:
-            continue
-        home = team_parts[0].get_text(" ", strip=True)
-        away = re.sub(r'^\s*v\s*s\s*', '', team_parts[1].get_text(" ", strip=True), flags=re.IGNORECASE).strip()
+        if len(team_parts) >= 2:
+            home = team_parts[0].get_text(" ", strip=True)
+            away = re.sub(r'^\s*v\s*s\s*', '', team_parts[1].get_text(" ", strip=True), flags=re.IGNORECASE).strip()
+        else:
+            team_text = teams_box.get_text(" ", strip=True)
+            split_teams = re.split(r'\s+v\s*s\s+', team_text, maxsplit=1, flags=re.IGNORECASE)
+            if len(split_teams) != 2:
+                continue
+            home, away = (part.strip() for part in split_teams)
         if not home or not away:
             continue
 
@@ -3432,6 +3438,27 @@ def _wait_for_stable_rows(driver, selector, timeout=18, stable_samples=3):
     return False, latest_count
 
 
+def _open_link_target(driver, element, base_url):
+    """새 창 여부와 관계없이 베트맨 경기표 링크의 실제 주소로 이동한다."""
+    href = (element.get_attribute("href") or "").strip()
+    if href and not href.lower().startswith(("javascript:", "#")):
+        driver.get(urljoin(base_url, href))
+        return
+
+    previous_handles = set(driver.window_handles)
+    driver.execute_script("arguments[0].click();", element)
+    try:
+        WebDriverWait(driver, 8).until(
+            lambda current: len(set(current.window_handles) - previous_handles) > 0
+        )
+        new_handles = list(set(driver.window_handles) - previous_handles)
+        if new_handles:
+            driver.switch_to.window(new_handles[-1])
+    except Exception:
+        # 같은 창에서 자바스크립트로 이동하는 링크도 있으므로 그대로 계속한다.
+        pass
+
+
 def _scrape_with_fresh_browser(label, operation):
     last_error = None
     for attempt in range(2):
@@ -3563,7 +3590,7 @@ def scrape_betman():
     def scrape_toto_page(driver):
         driver.get(hub_url)
         _accept_alert(driver)
-        toto_btn = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((
+        toto_btn = WebDriverWait(driver, 35).until(EC.element_to_be_clickable((
             By.XPATH,
             "//a[contains(normalize-space(.), '축구 승무패') and contains(normalize-space(.), '회차')]",
         )))
@@ -3572,11 +3599,19 @@ def scrape_betman():
             toto_btn.get_attribute("onclick") or "",
             toto_btn.text or "",
         ]
-        driver.execute_script("arguments[0].click();", toto_btn)
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "#grid_victory_tbody > tr"))
+        _open_link_target(driver, toto_btn, hub_url)
+        WebDriverWait(driver, 45).until(
+            lambda current: len(current.find_elements(
+                By.CSS_SELECTOR,
+                "table#grid_victory tbody tr, #grid_victory_tbody > tr",
+            )) >= 14
         )
-        stable, _ = _wait_for_stable_rows(driver, "#grid_victory_tbody > tr")
+        stable, _ = _wait_for_stable_rows(
+            driver,
+            "table#grid_victory tbody tr, #grid_victory_tbody > tr",
+            timeout=30,
+            stable_samples=2,
+        )
         round_hints.append(driver.current_url or "")
         round_id = None
         for hint in round_hints:
