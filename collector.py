@@ -1542,6 +1542,28 @@ def _build_grading_snapshot():
             conn.close()
 
 
+def _refresh_dashboard_grading_snapshot():
+    """Attach the latest grading rows without rebuilding any prediction.
+
+    The score worker runs more often than the heavy analysis worker.  Publishing
+    only the refreshed grading block makes a completed match appear in the
+    grading note on the same cycle while leaving the pre-kickoff probabilities,
+    picks, reports, and version labels untouched.
+    """
+    dashboard = _read_json("dashboard_data.json", {})
+    if not isinstance(dashboard, dict) or not dashboard:
+        print("⚠️ 채점 화면 갱신 보류: 기존 대시보드 데이터가 없습니다.")
+        return False
+    dashboard["grading"] = _build_grading_snapshot()
+    source_meta = dashboard.get("source_meta")
+    if not isinstance(source_meta, dict):
+        source_meta = {}
+        dashboard["source_meta"] = source_meta
+    source_meta["grading_generated_at"] = _utc_iso()
+    _atomic_write_json("dashboard_data.json", dashboard)
+    return True
+
+
 def _valid_three_way_odds(values):
     try:
         return len(values) == 3 and all(float(value or 0) > 1.0 for value in values)
@@ -4458,9 +4480,13 @@ def run_master_job():
 
 def run_score_job():
     success = auto_score_matches()
-    if success:
-        success = upload_sqlite_to_github("ai_predictions.db") and success
-    return success
+    if not success:
+        return False
+    if not upload_sqlite_to_github("ai_predictions.db"):
+        return False
+    if not _refresh_dashboard_grading_snapshot():
+        return False
+    return upload_to_github("dashboard_data.json")
 
 
 def _initialize_db_safely():

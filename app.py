@@ -1728,12 +1728,24 @@ def get_match_status(match_time_str, deadline_str):
 def _ui_match_datetime(match_time_str):
     if not match_time_str or match_time_str == "시간 미정":
         return None
-    match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', str(match_time_str))
+    match = re.search(
+        r'(?:(\d{2,4})\.)?(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})',
+        str(match_time_str),
+    )
     if not match:
         return None
     try:
         now = datetime.now(timezone(timedelta(hours=9)))
-        month, day, hour, minute = map(int, match.groups())
+        year_text, month, day, hour, minute = match.groups()
+        month, day, hour, minute = map(int, (month, day, hour, minute))
+        if year_text:
+            year = int(year_text)
+            if year < 100:
+                year += 2000
+            return datetime(
+                year, month, day, hour, minute,
+                tzinfo=timezone(timedelta(hours=9)),
+            )
         candidates = [
             datetime(year, month, day, hour, minute, tzinfo=timezone(timedelta(hours=9)))
             for year in (now.year - 1, now.year, now.year + 1)
@@ -1966,6 +1978,47 @@ def _detail_html(item):
         "border-radius:10px;background:rgba(15,23,42,.55);line-height:1.65;"
         f"overflow-wrap:anywhere;word-break:keep-all;white-space:normal'>{safe_detail}</div></details>"
     )
+
+
+def _analysis_data_quality_html(item):
+    """Show whether the model had a rich or partial evidence set."""
+    if not isinstance(item, dict):
+        return ""
+    try:
+        coverage = max(0.0, min(1.0, float(item.get("data_coverage") or 0)))
+    except (TypeError, ValueError):
+        coverage = 0.0
+    if coverage <= 0:
+        return ""
+    percent = int(round(coverage * 100))
+    odds_source = str(item.get("odds_source") or "betman")
+    if odds_source == "model_only":
+        label, color = "배당 대기 · 팀 자료", "#F59E0B"
+    elif coverage >= 0.8:
+        label, color = "분석 자료 충분", "#10B981"
+    elif coverage >= 0.65:
+        label, color = "분석 자료 보통", "#38BDF8"
+    else:
+        label, color = "분석 자료 일부 부족", "#F59E0B"
+    return (
+        "<span style='display:inline-block;margin-left:8px;padding:3px 7px;"
+        f"border:1px solid {color};border-radius:999px;color:{color};"
+        f"font-size:10px;letter-spacing:0;'>{label} {percent}%</span>"
+    )
+
+
+def _has_display_odds(*values):
+    """실제로 화면에 표시할 수 있는 십진수 배당인지 확인합니다.
+
+    배당 출처 표시가 누락된 예전 대시보드 데이터라도 0, 0.0, '-'를
+    실제 배당으로 잘못 보여주지 않도록 값 자체를 한 번 더 검증합니다.
+    """
+    if not values:
+        return False
+    try:
+        return all(float(value) > 1.0 for value in values)
+    except (TypeError, ValueError):
+        return False
 
 
 # 🔥 라이브 경기 판별 함수
@@ -2344,7 +2397,19 @@ with main_tab1:
                 odds_source = str(
                     item.get("odds_source") or m.get("odds_source") or "betman"
                 )
-                if odds_source == "model_only":
+                has_three_way_odds = _has_display_odds(
+                    m.get("odd_h"), m.get("odd_d"), m.get("odd_a")
+                )
+                has_handicap_odds = _has_display_odds(
+                    m.get("handi_h"), m.get("handi_d"), m.get("handi_a")
+                )
+                has_totals_odds = _has_display_odds(
+                    m.get("uo_under"), m.get("uo_over")
+                )
+
+                # 출처 표시가 누락된 데이터도 실제 1X2 배당이 없으면
+                # 0.0 숫자 대신 배당 대기 안내를 보여줍니다.
+                if odds_source == "model_only" or not has_three_way_odds:
                     odds_bar_html = (
                         "<div class='odd-bar'><span class='odd-item'>"
                         "📊 승무패 배당 대기 · 팀 데이터 모델 선픽 제공 중"
@@ -2358,11 +2423,19 @@ with main_tab1:
                         "</div>"
                     )
                 else:
+                    handicap_html = (
+                        f"핸디캡 <span class='odd-val'>{m.get('handi_h')} / {m.get('handi_d')} / {m.get('handi_a')}</span>"
+                        if has_handicap_odds else "핸디캡 배당 대기"
+                    )
+                    totals_html = (
+                        f"언오버 <span class='odd-val'>{m.get('uo_under')} / {m.get('uo_over')}</span>"
+                        if has_totals_odds else "언오버 배당 대기"
+                    )
                     odds_bar_html = (
                         "<div class='odd-bar'>"
                         f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
-                        f"<span class='odd-item'>핸디캡 <span class='odd-val'>{m.get('handi_h', '-')} / {m.get('handi_d', '-')} / {m.get('handi_a', '-')}</span></span>"
-                        f"<span class='odd-item'>언오버 <span class='odd-val'>{m.get('uo_under', '-')} / {m.get('uo_over', '-')}</span></span>"
+                        f"<span class='odd-item'>{handicap_html}</span>"
+                        f"<span class='odd-item'>{totals_html}</span>"
                         "</div>"
                     )
 
@@ -2372,7 +2445,7 @@ with main_tab1:
                 
                 html_code = (
                     f"<div class='match-card'>"
-                    f"<div class='league-title'>{m.get('league','축구')}</div>"
+                    f"<div class='league-title'>{m.get('league','축구')}{_analysis_data_quality_html(item)}</div>"
                     f"<div class='vs-row'>"
                     f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}</div>{logo_h_tag}</div>"
                     f"<div class='center-time-box'>{time_display}</div>"
@@ -2550,7 +2623,7 @@ with main_tab3:
             }.get(top3_odds_source, "최고 가치 추천 픽")
             html_code = (
                 f"<div class='match-card top3-glow'>"
-                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} {top3_source_label} • {m.get('league','')}</div>"
+                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} {top3_source_label} • {m.get('league','')}{_analysis_data_quality_html(item)}</div>"
                 f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
@@ -2600,6 +2673,7 @@ with main_tab4:
                 "is_toto14", "is_correct_prob", "is_correct_ev", "actual_result",
                 "match_time", "home_team", "away_team", "league", "actual_score",
                 "prob_pick", "ev_pick", "ai_note", "match_id", "analysis_version",
+                "api_fixture_id",
             ]
             df_finished = pd.DataFrame(finished_rows)
             df_pending = pd.DataFrame(pending_rows)
@@ -2648,12 +2722,31 @@ with main_tab4:
             toto_total = len(df_toto)
             toto_hit = int(pd.to_numeric(df_toto['is_correct_prob'], errors='coerce').fillna(0).sum()) if toto_total > 0 else 0
             toto_acc = round((toto_hit / toto_total) * 100, 1) if toto_total > 0 else 0.0
+
+            today = datetime.now(timezone(timedelta(hours=9))).date()
+            today_finished = []
+            for row in finished_rows:
+                if int(row.get("is_toto14") or 0) != 0:
+                    continue
+                parsed = _ui_match_datetime(row.get("match_time", ""))
+                if parsed and parsed.date() == today:
+                    today_finished.append(row)
+            today_versions = sorted({
+                str(row.get("analysis_version") or "이전 버전").strip()
+                for row in today_finished
+            })
+            today_hit_count = sum(
+                int(row.get("is_correct_prob") or 0) for row in today_finished
+            )
             
             return {
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "ev_total": proto_ev_total, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
                 "current_version": current_version,
                 "legacy_count": max(0, len(df_proto_all) - len(df_proto)) + max(0, len(df_toto_all) - len(df_toto)),
+                "today_finished_count": len(today_finished),
+                "today_hit_count": today_hit_count,
+                "today_versions": today_versions,
                 # 오답노트는 회원 등급과 관계없이 전체 기록을 공개한다.
                 "history": df_proto_all.to_dict('records'),
                 "pending": df_pending.to_dict('records')
@@ -2701,9 +2794,25 @@ with main_tab4:
             </div>
         </div>
         <div style='color:#64748B;font-size:12px;margin:-3px 0 20px 2px;'>
-            집계 기준: {current_version_label} · 구버전 {stats['legacy_count']}건은 아래 기록에서만 확인
+            집계 기준: {current_version_label} · 현재 버전으로 킥오프 전에 동결된 경기만 위 적중률에 포함 · 이전 버전 {stats['legacy_count']}건은 아래 기록에서 확인
         </div>
         """, unsafe_allow_html=True)
+
+        if stats.get("today_finished_count"):
+            today_versions = " · ".join(
+                escape(version) for version in stats.get("today_versions", [])
+            )
+            st.markdown(
+                "<div style='margin:0 0 20px;padding:12px 14px;border-radius:10px;"
+                "border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.07);"
+                "color:#D1FAE5;font-size:13px;font-weight:800;'>"
+                f"✅ 오늘 종료 경기 {stats['today_finished_count']}경기 채점 완료"
+                f" · 확률픽 {stats.get('today_hit_count', 0)}/{stats['today_finished_count']} 적중"
+                f"<span style='display:block;margin-top:4px;color:#94A3B8;font-size:11px;'>"
+                f"당시 경기 전 동결 버전: {today_versions}. 분석 확률과 픽은 그대로 두고 결과만 연결했습니다."
+                "</span></div>",
+                unsafe_allow_html=True,
+            )
         
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 실제 데이터 채점 기록</h4>", unsafe_allow_html=True)
         
@@ -2775,22 +2884,31 @@ with main_tab4:
             
         pending_data = stats['pending']
         if pending_data:
-            st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 향후 경기 일정 및 분석 현황</h4>", unsafe_allow_html=True)
-            
             def parse_time_for_ui(t_str):
                 now = datetime.now(timezone(timedelta(hours=9)))
-                if not t_str or t_str in ["시간 미정", "마감/진행중"]: return now - timedelta(hours=3)
-                try:
-                    m = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', t_str)
-                    if m:
-                        mo, d, h, mn = map(int, m.groups())
-                        yr = now.year if mo <= now.month + 1 else now.year - 1
-                        return datetime(yr, mo, d, h, mn, tzinfo=timezone(timedelta(hours=9)))
-                except: pass
-                return now - timedelta(hours=3)
+                parsed = _ui_match_datetime(t_str)
+                return parsed if parsed else now - timedelta(hours=3)
 
-            displayed_pending = 0
+            now = datetime.now(timezone(timedelta(hours=9)))
+            active_pending = []
+            legacy_unlinked = []
             for row in pending_data:
+                match_time = str(row.get('match_time') or '')
+                match_dt = parse_time_for_ui(match_time)
+                missing_identity = (
+                    not str(row.get('analysis_version') or '').strip()
+                    and not int(row.get('api_fixture_id') or 0)
+                )
+                if missing_identity and now >= match_dt + timedelta(hours=5):
+                    legacy_unlinked.append(row)
+                else:
+                    active_pending.append(row)
+
+            if active_pending:
+                st.markdown("<h4 style='color:#64748B; font-weight:900; margin-top:40px; margin-bottom:15px;'>⏳ 현재 경기 일정 및 채점 현황</h4>", unsafe_allow_html=True)
+            
+            displayed_pending = 0
+            for row in active_pending:
                 m_time_str = row.get('match_time', '')
                 
                 if m_time_str == "시간 미정":
@@ -2850,6 +2968,31 @@ with main_tab4:
                 
             if displayed_pending == 0:
                 st.info("현재 대기 중인 향후 경기 일정이 없습니다.")
+
+            if legacy_unlinked:
+                st.markdown(
+                    "<h4 style='color:#64748B;font-weight:900;margin-top:32px;"
+                    "margin-bottom:8px;'>🗂️ 이전 버전 미연결 기록</h4>"
+                    "<p style='color:#64748B;font-size:12px;margin-bottom:12px;'>"
+                    "예전 수집기가 경기 고유번호와 분석 버전을 저장하지 못한 기록입니다. "
+                    "다른 경기에 잘못 채점하지 않도록 현재 적중률에서는 제외하고 원본은 보존합니다."
+                    "</p>",
+                    unsafe_allow_html=True,
+                )
+                with st.expander(f"자동 채점 불가 기록 {len(legacy_unlinked)}건 확인"):
+                    legacy_table = pd.DataFrame([
+                        {
+                            "경기 시각": row.get("match_time", ""),
+                            "경기": f"{row.get('home_team', '')} vs {row.get('away_team', '')}",
+                            "상태": "고유번호 없음 · 통계 제외",
+                        }
+                        for row in legacy_unlinked
+                    ])
+                    st.dataframe(
+                        legacy_table,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
 # -----------------------------------------------------------------------------
 # [TAB 5] 인증 게시판 · 모두 열람, 후원회원/관리자 작성
