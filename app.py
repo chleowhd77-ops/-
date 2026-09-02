@@ -1830,6 +1830,34 @@ def _ui_match_datetime(match_time_str):
     except (TypeError, ValueError):
         return None
 
+
+def _toto14_round_has_started(items, now=None):
+    """Hide a pools ticket once its first match has kicked off.
+
+    The frozen predictions remain in the dashboard payload and grading DB.  This
+    helper controls only the current recommendation screen, so historical picks
+    are still available to the grading note and learning pipeline.
+    """
+    if not isinstance(items, list):
+        return False
+    current = now or datetime.now(timezone(timedelta(hours=9)))
+    kickoffs = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        match = item.get("match", {})
+        if not isinstance(match, dict):
+            continue
+        kickoff = _ui_match_datetime(
+            item.get("final_match_time")
+            or match.get("match_time")
+            or match.get("time")
+        )
+        if kickoff:
+            kickoffs.append(kickoff)
+    return bool(kickoffs) and current >= min(kickoffs)
+
+
 def _status_value(source):
     if not isinstance(source, dict):
         return ""
@@ -2624,7 +2652,10 @@ with main_tab6:
 # -----------------------------------------------------------------------------
 with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
-    toto14_list = dashboard_data.get("toto14", [])
+    stored_toto14_list = dashboard_data.get("toto14", [])
+    toto14_round_closed = _toto14_round_has_started(stored_toto14_list)
+    # 화면에서만 지난 회차를 숨긴다. 동결 예측과 채점 자료는 원본에 보존된다.
+    toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
         total_combinations = dashboard_data.get("toto14_meta", {}).get("total_combinations", 1)
@@ -2686,7 +2717,10 @@ with main_tab2:
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
-    else: st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
+    elif toto14_round_closed:
+        st.info("이전 승무패14 회차는 첫 경기 시작과 함께 마감되어 추천 화면에서 숨겼습니다. 예측과 결과는 채점 노트에 그대로 보존됩니다. 새 회차가 수집되면 자동으로 표시됩니다.")
+    else:
+        st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
 # -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3
