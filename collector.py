@@ -612,7 +612,9 @@ def _locked_toto14_fallback(match):
             "probabilities_unavailable": True,
             "picks": picks,
             "picks_html": _render_toto14_picks_html(picks),
-            "analysis_version": ANALYSIS_VERSION,
+            # 이미 동결된 예측은 당시 버전을 그대로 표시해야 새 버전의
+            # 성적으로 잘못 섞이지 않는다.
+            "analysis_version": str(row[3] or ANALYSIS_VERSION),
             "analysis_confidence": 0.0,
             "analysis_stage": "locked",
             "frozen_from_stage": str(row[2] or "regular"),
@@ -2725,9 +2727,7 @@ def build_dashboard_data():
         },
         "top3": top_3_picks,
         "source_meta": {
-            # 이미 동결된 예측은 당시 버전을 그대로 표시해야 새 버전의
-            # 성적으로 잘못 섞이지 않는다.
-            "analysis_version": str(row[3] or ANALYSIS_VERSION),
+            "analysis_version": ANALYSIS_VERSION,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "raw_betman_proto_count": len(raw_proto_matches),
             "rejected_placeholder_count": rejected_proto_count,
