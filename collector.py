@@ -1,5 +1,6 @@
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -53,6 +54,7 @@ APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
+PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v1"
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
@@ -977,21 +979,53 @@ def infer_pick_market(pick_or_text):
 
 
 def load_market_performance():
-    """종료 경기의 시장별 적중 기록과 최근 선택 비중을 한 번만 읽는다."""
+    """Read each market's honest top-pick record, with a legacy fallback."""
     summary = {
         key: {"samples": 0, "hits": 0, "hit_rate": 0.5, "selection_share": 0.0}
         for key in MARKET_LABELS
     }
+    candidate_rows = []
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=15)
-        rows = conn.execute(
-            """
-            SELECT prob_pick, is_correct_prob, ev_pick, is_correct_ev
-            FROM predictions
-            WHERE actual_result = 'FINISHED'
-            ORDER BY match_time DESC LIMIT 300
-            """
-        ).fetchall()
+        tables = {
+            str(row[0]) for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "prediction_candidate_results" in tables:
+            result_columns = {
+                str(row[1]) for row in conn.execute(
+                    "PRAGMA table_info(prediction_candidate_results)"
+                )
+            }
+            if "market_rank" in result_columns:
+                candidate_rows = conn.execute(
+                    """
+                    SELECT market_key, is_correct
+                    FROM prediction_candidate_results
+                    WHERE market_rank = 1
+                    ORDER BY id DESC LIMIT 900
+                    """
+                ).fetchall()
+        prediction_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
+        }
+        required_columns = {
+            "prob_pick", "is_correct_prob", "ev_pick", "is_correct_ev",
+            "actual_result", "match_time",
+        }
+        rows = (
+            conn.execute(
+                """
+                SELECT prob_pick, is_correct_prob, ev_pick, is_correct_ev
+                FROM predictions
+                WHERE actual_result = 'FINISHED'
+                ORDER BY match_time DESC LIMIT 300
+                """
+            ).fetchall()
+            if required_columns.issubset(prediction_columns)
+            else []
+        )
         conn.close()
     except Exception:
         return summary
@@ -1004,6 +1038,21 @@ def load_market_performance():
             if not pick_text:
                 continue
             market = infer_pick_market(pick_text)
+            summary[market]["samples"] += 1
+            summary[market]["hits"] += 1 if int(hit or 0) == 1 else 0
+
+    # The old record contains only picks the selector happened to expose, so it
+    # is selection-biased.  New snapshots grade the top candidate inside every
+    # available market.  As soon as those exist, they become the calibration
+    # source and let 1X2, handicap and totals compete on their actual record.
+    if candidate_rows:
+        for market in MARKET_LABELS:
+            summary[market]["samples"] = 0
+            summary[market]["hits"] = 0
+        for market, hit in candidate_rows:
+            market = str(market or "")
+            if market not in summary:
+                continue
             summary[market]["samples"] += 1
             summary[market]["hits"] += 1 if int(hit or 0) == 1 else 0
 
@@ -1055,9 +1104,6 @@ def calibrate_market_candidates(picks, market_performance, confidence):
 
         normalized = normalize_probabilities(adjusted_values)
         neutral = 1.0 / len(market_picks)
-        dominant_penalty = max(
-            0.0, float(history.get("selection_share") or 0.0) - 0.45
-        ) * 0.12
         for pick, probability in zip(market_picks, normalized):
             fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
             edge = probability - fair_probability if fair_probability > 0 else 0.0
@@ -1078,13 +1124,13 @@ def calibrate_market_candidates(picks, market_performance, confidence):
                 "low": round(max(0.0, probability - error_margin), 6),
                 "high": round(min(1.0, probability + error_margin), 6),
             }
-            # 확률 자체와 시장 내 우위ㆍ가치를 함께 사용하고, 최근 한 시장이
-            # 45%를 넘게 독점했다면 작은 감점을 줘 언더오버 쏠림을 막는다.
+            # 특정 시장이 자주 선택됐다는 이유만으로 감점하지 않는다.
+            # 새 동결 기록에서 각 시장 1위 후보의 실제 성적을 채점한 뒤 그
+            # 검증된 성적으로 보정한다.
             pick["balanced_score"] = round(
                 (probability * 0.55)
                 + (conviction * 0.35)
-                + (max(edge, 0.0) * 0.10)
-                - dominant_penalty,
+                + (max(edge, 0.0) * 0.10),
                 6,
             )
     return picks
@@ -1320,16 +1366,20 @@ def build_detailed_report(
             f"독립 근거는 {signals}입니다."
         )
     elif honey:
-        tier_note = (
-            "보수적 가치 기준도 통과했습니다"
-            if honey.get("value_pick_tier") == "qualified"
-            else "승무패·핸디캡 중 가장 나은 대안이지만 참고 등급입니다"
-        )
+        if honey.get("value_pick_tier") == "qualified":
+            tier_note = "보수적 가치 기준도 통과했습니다"
+        elif honey.get("value_pick_tier") == "unpriced_reference":
+            tier_note = (
+                "승무패·핸디캡 중 가장 강한 다른 방향이지만 실제 배당을 "
+                "확인하지 못한 참고픽입니다"
+            )
+        else:
+            tier_note = "승무패·핸디캡 중 가장 나은 대안이지만 참고 등급입니다"
         final_parts.append(
             f"배당형 대안픽은 {_report_pick_line(honey, home)}이며, {tier_note}."
         )
     else:
-        final_parts.append("승무패·핸디캡 실제 배당이 없어 배당형 대안픽은 대기 상태입니다.")
+        final_parts.append("승무패·핸디캡에서 계산 가능한 별도 대안 방향이 없습니다.")
     if honey and not vip:
         final_parts.append("VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
     missing_text = (
@@ -1354,66 +1404,356 @@ def build_detailed_report(
     ])
 
 
-def save_prediction_analysis(match_id, pick, confidence, evidence, candidates, report):
-    """화면 표시용 JSON과 별도로 선택 당시 계산값을 DB에 보존한다."""
-    if not pick:
-        return
+def _audit_number(value, default=None):
+    try:
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")):
+            return default
+        return round(number, 6)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_pick_selection_audit(candidates, categories, confidence):
+    """Create one deterministic, machine-readable record of the full decision.
+
+    Customer HTML is intentionally excluded.  The learning robot needs the
+    values that existed before kickoff, the complete candidate set, and the
+    exact reason a candidate won; it must not try to reconstruct them later.
+    """
+    candidates = list(candidates or [])
+    categories = categories or {}
+    category_membership = {}
+    compact_categories = {}
+    for category_key in ("high_probability", "honey", "vip_underdog"):
+        selected = categories.get(category_key)
+        if not selected:
+            compact_categories[category_key] = None
+            continue
+        raw_pick = str(selected.get("raw_pick") or "")
+        category_membership.setdefault(raw_pick, []).append(category_key)
+        compact_categories[category_key] = {
+            "raw_pick": raw_pick,
+            "market_key": infer_pick_market(selected),
+            "probability": _audit_number(selected.get("prob"), 0.0),
+            "odd": _audit_number(selected.get("odd"), 0.0),
+            "fair_probability": _audit_number(selected.get("fair_prob")),
+            "robust_edge": _audit_number(selected.get("robust_edge"), 0.0),
+            "value_pick_tier": str(selected.get("value_pick_tier") or ""),
+            "independent_support_count": int(
+                selected.get("independent_support_count", 0) or 0
+            ),
+        }
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            float(item.get("balanced_score", 0) or 0),
+            float(item.get("prob", 0) or 0),
+            float(item.get("safe_score", 0) or 0),
+            float(item.get("recommendation_score", 0) or 0),
+        ),
+        reverse=True,
+    )
+    rank_by_identity = {
+        (infer_pick_market(item), str(item.get("raw_pick") or "")): index
+        for index, item in enumerate(ranked, start=1)
+    }
+    market_rank_by_identity = {}
+    for market in MARKET_LABELS:
+        market_ranked = sorted(
+            [item for item in candidates if infer_pick_market(item) == market],
+            key=lambda item: (
+                float(item.get("prob", 0) or 0),
+                float(item.get("balanced_score", 0) or 0),
+                str(item.get("raw_pick") or ""),
+            ),
+            reverse=True,
+        )
+        for index, item in enumerate(market_ranked, start=1):
+            market_rank_by_identity[
+                (market, str(item.get("raw_pick") or ""))
+            ] = index
+    candidate_rows = []
+    for item in candidates:
+        raw_pick = str(item.get("raw_pick") or "")
+        market_key = infer_pick_market(item)
+        selected_as = list(category_membership.get(raw_pick, []))
+        rank = rank_by_identity.get((market_key, raw_pick))
+        candidate_rows.append({
+            "market_key": market_key,
+            "label": str(item.get("label") or ""),
+            "raw_pick": raw_pick,
+            "selection_side": str(item.get("selection_side") or ""),
+            "sort_id": int(item.get("sort_id", 0) or 0),
+            "model_probability": _audit_number(item.get("prob"), 0.0),
+            "raw_model_probability": _audit_number(item.get("raw_model_prob")),
+            "fair_probability": _audit_number(item.get("fair_prob")),
+            "odd": _audit_number(item.get("odd"), 0.0),
+            "edge": _audit_number(item.get("edge"), 0.0),
+            "robust_probability": _audit_number(
+                item.get("robust_probability"), 0.0
+            ),
+            "robust_edge": _audit_number(item.get("robust_edge"), 0.0),
+            "robust_ev": _audit_number(item.get("robust_ev"), 0.0),
+            "balanced_score": _audit_number(item.get("balanced_score"), 0.0),
+            "safe_score": _audit_number(item.get("safe_score"), 0.0),
+            "recommendation_score": _audit_number(
+                item.get("recommendation_score"), 0.0
+            ),
+            "market_hit_rate": _audit_number(item.get("market_hit_rate"), 0.5),
+            "market_history_samples": int(
+                item.get("market_history_samples", 0) or 0
+            ),
+            "data_confidence": _audit_number(
+                item.get("data_confidence"), confidence
+            ),
+            "error_margin": _audit_number(item.get("error_margin"), 0.0),
+            "probability_interval": {
+                "low": _audit_number(
+                    (item.get("probability_interval") or {}).get("low"), 0.0
+                ),
+                "high": _audit_number(
+                    (item.get("probability_interval") or {}).get("high"), 1.0
+                ),
+            },
+            "is_true_underdog": bool(item.get("is_true_underdog")),
+            "is_qualified_underdog": bool(item.get("is_qualified_underdog")),
+            "support_signals": list(item.get("support_signals") or []),
+            "independent_support_count": int(
+                item.get("independent_support_count", 0) or 0
+            ),
+            "selection_rank": rank,
+            "market_rank": market_rank_by_identity.get((market_key, raw_pick)),
+            "selected_as": selected_as,
+            "selection_reason": (
+                "전체 시장의 보정 선택점수 1위"
+                if "high_probability" in selected_as
+                else (
+                    "승무패·핸디캡 중 배당가치 대안 선정"
+                    if "honey" in selected_as
+                    else f"전체 시장 보정 선택점수 {rank}위"
+                )
+            ),
+        })
+
+    market_counts = {
+        market: sum(1 for item in candidate_rows if item["market_key"] == market)
+        for market in MARKET_LABELS
+    }
+    selected_high = compact_categories.get("high_probability") or {}
+    decision = {
+        "schema_version": PICK_AUDIT_SCHEMA_VERSION,
+        "analysis_version": ANALYSIS_VERSION,
+        "selector": "all-markets-balanced-score-v1",
+        "score_order": [
+            "balanced_score", "model_probability", "safe_score",
+            "recommendation_score",
+        ],
+        "candidate_count": len(candidate_rows),
+        "market_candidate_counts": market_counts,
+        "missing_markets": [
+            market for market, count in market_counts.items() if count == 0
+        ],
+        "data_confidence": _audit_number(confidence, 0.0),
+        "selected_pick": selected_high.get("raw_pick", ""),
+        "selected_market": selected_high.get("market_key", ""),
+        "selection_reason": (
+            "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 "
+            "비교해 선택점수가 가장 높은 방향을 확률픽으로 확정"
+        ),
+        "vip_promoted": compact_categories.get("vip_underdog") is not None,
+    }
+    return candidate_rows, compact_categories, decision
+
+
+def _ensure_prediction_analysis_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prediction_analysis (
+            match_id TEXT PRIMARY KEY,
+            analysis_version TEXT DEFAULT '',
+            stage TEXT DEFAULT '',
+            odds_source TEXT DEFAULT '',
+            selected_market TEXT,
+            selected_pick TEXT,
+            model_probability REAL,
+            fair_probability REAL,
+            edge REAL,
+            confidence REAL,
+            error_margin REAL,
+            probability_low REAL,
+            probability_high REAL,
+            evidence_json TEXT DEFAULT '[]',
+            markets_json TEXT DEFAULT '[]',
+            categories_json TEXT DEFAULT '{}',
+            decision_json TEXT DEFAULT '{}',
+            report_text TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(prediction_analysis)")
+    }
+    migrations = {
+        "analysis_version": "TEXT DEFAULT ''",
+        "stage": "TEXT DEFAULT ''",
+        "odds_source": "TEXT DEFAULT ''",
+        "categories_json": "TEXT DEFAULT '{}'",
+        "decision_json": "TEXT DEFAULT '{}'",
+    }
+    for column, declaration in migrations.items():
+        if column not in columns:
+            conn.execute(
+                f"ALTER TABLE prediction_analysis ADD COLUMN {column} {declaration}"
+            )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prediction_analysis_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            analysis_version TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            odds_source TEXT DEFAULT '',
+            confidence REAL DEFAULT 0,
+            selected_market TEXT,
+            selected_pick TEXT,
+            candidate_count INTEGER DEFAULT 0,
+            evidence_json TEXT DEFAULT '[]',
+            candidates_json TEXT DEFAULT '[]',
+            categories_json TEXT DEFAULT '{}',
+            decision_json TEXT DEFAULT '{}',
+            report_text TEXT DEFAULT '',
+            fingerprint TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(match_id, analysis_version, stage, fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_match "
+        "ON prediction_analysis_snapshots(match_id, id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prediction_candidate_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            analysis_snapshot_id INTEGER NOT NULL,
+            analysis_version TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            market_key TEXT NOT NULL,
+            raw_pick TEXT NOT NULL,
+            model_probability REAL DEFAULT 0,
+            fair_probability REAL,
+            odd REAL DEFAULT 0,
+            selection_rank INTEGER,
+            market_rank INTEGER,
+            selected_as TEXT DEFAULT '',
+            is_correct INTEGER NOT NULL,
+            actual_score TEXT NOT NULL,
+            graded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(analysis_snapshot_id, market_key, raw_pick)
+        )
+        """
+    )
+    candidate_result_columns = {
+        str(row[1]) for row in conn.execute(
+            "PRAGMA table_info(prediction_candidate_results)"
+        )
+    }
+    if "market_rank" not in candidate_result_columns:
+        conn.execute(
+            "ALTER TABLE prediction_candidate_results ADD COLUMN market_rank INTEGER"
+        )
+
+
+def save_prediction_analysis(
+    match_id, pick, confidence, evidence, candidates, report,
+    categories=None, analysis_stage="regular", odds_source="",
+):
+    """Freeze every market candidate and the exact pre-kickoff decision path."""
+    if not pick or str(analysis_stage or "").startswith("locked"):
+        return False
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prediction_analysis (
-                match_id TEXT PRIMARY KEY,
-                selected_market TEXT,
-                selected_pick TEXT,
-                model_probability REAL,
-                fair_probability REAL,
-                edge REAL,
-                confidence REAL,
-                error_margin REAL,
-                probability_low REAL,
-                probability_high REAL,
-                evidence_json TEXT,
-                markets_json TEXT,
-                report_text TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+        _ensure_prediction_analysis_tables(conn)
+        prediction_row = conn.execute(
+            "SELECT actual_result, match_time FROM predictions WHERE match_id = ?",
+            (str(match_id),),
+        ).fetchone()
+        if prediction_row:
+            stored_kickoff = _parse_kst_match_time(prediction_row[1])
+            if (
+                str(prediction_row[0] or "PENDING") != "PENDING"
+                or (stored_kickoff and datetime.now(KST) >= stored_kickoff)
+            ):
+                return False
+
         interval = pick.get("probability_interval") or {}
-        market_rows = [
-            {
-                "market": infer_pick_market(item),
-                "pick": item.get("raw_pick"),
-                "model_probability": item.get("prob"),
-                "fair_probability": item.get("fair_prob"),
-                "edge": item.get("edge"),
-                "market_hit_rate": item.get("market_hit_rate"),
-            }
-            for item in candidates
-        ]
+        candidate_rows, compact_categories, decision = build_pick_selection_audit(
+            candidates, categories or {"high_probability": pick}, confidence
+        )
+        evidence_json = json.dumps(evidence or [], ensure_ascii=False, sort_keys=True)
+        candidates_json = json.dumps(
+            candidate_rows, ensure_ascii=False, sort_keys=True
+        )
+        categories_json = json.dumps(
+            compact_categories, ensure_ascii=False, sort_keys=True
+        )
+        decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
+        fingerprint_payload = "|".join((
+            str(ANALYSIS_VERSION), str(analysis_stage), str(odds_source or ""),
+            evidence_json, candidates_json, categories_json, decision_json,
+        ))
+        fingerprint = hashlib.sha256(
+            fingerprint_payload.encode("utf-8")
+        ).hexdigest()
+
         conn.execute(
             """
             INSERT OR REPLACE INTO prediction_analysis (
-                match_id, selected_market, selected_pick, model_probability,
+                match_id, analysis_version, stage, odds_source,
+                selected_market, selected_pick, model_probability,
                 fair_probability, edge, confidence, error_margin,
                 probability_low, probability_high, evidence_json, markets_json,
-                report_text, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                categories_json, decision_json, report_text, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
-                str(match_id), infer_pick_market(pick), pick.get("raw_pick"),
-                pick.get("prob"), pick.get("fair_prob"), pick.get("edge"), confidence,
-                pick.get("error_margin"), interval.get("low"), interval.get("high"),
-                json.dumps(evidence, ensure_ascii=False),
-                json.dumps(market_rows, ensure_ascii=False), report,
+                str(match_id), ANALYSIS_VERSION, str(analysis_stage),
+                str(odds_source or ""), infer_pick_market(pick),
+                pick.get("raw_pick"), pick.get("prob"), pick.get("fair_prob"),
+                pick.get("edge"), confidence, pick.get("error_margin"),
+                interval.get("low"), interval.get("high"), evidence_json,
+                candidates_json, categories_json, decision_json, report,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO prediction_analysis_snapshots (
+                match_id, analysis_version, stage, odds_source, confidence,
+                selected_market, selected_pick, candidate_count, evidence_json,
+                candidates_json, categories_json, decision_json, report_text,
+                fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(match_id), ANALYSIS_VERSION, str(analysis_stage),
+                str(odds_source or ""), float(confidence or 0),
+                infer_pick_market(pick), str(pick.get("raw_pick") or ""),
+                len(candidate_rows), evidence_json, candidates_json,
+                categories_json, decision_json, str(report or ""), fingerprint,
             ),
         )
         conn.commit()
+        return True
     except Exception as error:
         print(f"⚠️ 통합 분석값 DB 저장 실패({match_id}): {error}")
+        return False
     finally:
         if conn is not None:
             conn.close()
@@ -1496,30 +1836,49 @@ def select_pick_categories(picks, confidence):
     # 두 번째 칸은 언더/오버와 별개로, 승무패·핸디캡에서
     # 배당과 모델 가치의 균형이 가장 나은 대안을 하나 제공한다.
     honey_edge_floor = 0.015 + max(0.0, 0.65 - confidence) * 0.05
-    honey_candidates = [
+    alternative_pool = [
         pick for pick in picks
         if infer_pick_market(pick) in {"1x2", "handicap"}
-        and 1.65 <= float(pick.get("odd", 0) or 0) <= 4.50
-        and float(pick.get("prob", 0) or 0) >= 0.18
-        and pick.get("fair_prob") is not None
+        and float(pick.get("prob", 0) or 0) > 0
     ]
     different_candidates = [
-        pick for pick in honey_candidates
+        pick for pick in alternative_pool
         if str(pick.get("raw_pick") or "") != str(high_source.get("raw_pick") or "")
     ]
     if different_candidates:
-        honey_candidates = different_candidates
-    honey_source = max(
-        honey_candidates,
-        key=lambda pick: (
-            float(pick.get("robust_edge", 0) or 0) > 0,
-            float(pick.get("robust_edge", 0) or 0),
-            float(pick.get("robust_ev", 0) or 0),
-            float(pick.get("recommendation_score", 0) or 0),
-            float(pick.get("prob", 0) or 0),
-        ),
-        default=None,
-    )
+        alternative_pool = different_candidates
+    priced_candidates = [
+        pick for pick in alternative_pool
+        if 1.65 <= float(pick.get("odd", 0) or 0) <= 4.50
+        and float(pick.get("prob", 0) or 0) >= 0.18
+        and pick.get("fair_prob") is not None
+    ]
+    if priced_candidates:
+        honey_source = max(
+            priced_candidates,
+            key=lambda pick: (
+                float(pick.get("robust_edge", 0) or 0) > 0,
+                float(pick.get("robust_edge", 0) or 0),
+                float(pick.get("robust_ev", 0) or 0),
+                float(pick.get("recommendation_score", 0) or 0),
+                float(pick.get("prob", 0) or 0),
+            ),
+        )
+    else:
+        # A normal match always receives a direction.  When no verified price
+        # is available, choose the strongest different 1X2/handicap direction
+        # but label it honestly as an unpriced reference pick.  It can never be
+        # promoted to value-qualified or VIP status.
+        honey_source = max(
+            alternative_pool,
+            key=lambda pick: (
+                pick.get("fair_prob") is not None,
+                float(pick.get("balanced_score", 0) or 0),
+                float(pick.get("prob", 0) or 0),
+                float(pick.get("recommendation_score", 0) or 0),
+            ),
+            default=None,
+        )
     if honey_source:
         # 선택 등급은 화면용 메타데이터이므로 원본 시장 후보를 변형하지 않는다.
         honey_source = dict(honey_source)
@@ -1528,9 +1887,14 @@ def select_pick_categories(picks, confidence):
             and float(honey_source.get("robust_ev", 0) or 0) >= 1.02
             and confidence >= 0.55
         )
-        honey_source["value_pick_tier"] = (
-            "qualified" if value_qualified else "alternative"
-        )
+        if honey_source.get("fair_prob") is None or float(
+            honey_source.get("odd", 0) or 0
+        ) <= 1.0:
+            value_pick_tier = "unpriced_reference"
+        else:
+            value_pick_tier = "qualified" if value_qualified else "alternative"
+        honey_source["value_pick_tier"] = value_pick_tier
+        honey_source["odds_verified"] = value_pick_tier != "unpriced_reference"
         honey_source["value_pick_always_provided"] = True
 
     # VIP는 별도 세 번째 예측이 아니라, 선택된 대안픽 하나가 더 엄격한
@@ -2135,20 +2499,12 @@ def build_dashboard_data():
                 {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over, "market_prob": uo_market[1], "selection_side": "over"}
             ]
          
-        base_wdl_pick = max(wdl_cands, key=lambda x: x["prob"])["raw_pick"]
-        valid_all_picks = wdl_cands + uo_cands
-        for pick in handi_cands:
-            is_contra = False
-            p_name = pick["raw_pick"]
-            if "무승부" in base_wdl_pick and ("핸디무" in p_name or (handi_base < 0 and home_team in p_name) or (handi_base > 0 and "패" in p_name)): is_contra = True 
-            elif home_team in base_wdl_pick and (handi_base < 0 and "패" in p_name): is_contra = True 
-            elif away_team in base_wdl_pick and (handi_base > 0 and home_team in p_name and "핸디승" in p_name): is_contra = True 
-            if not is_contra: valid_all_picks.append(pick)
-
-        # 시장별 확률은 승무패 3개·핸디캡 3개·언더오버 2개 전체를
-        # 보정한 뒤 화면 후보를 거른다. 일부 후보만 다시 정규화해 확률이
-        # 비정상적으로 커지는 현상을 막는다.
+        # 승무패와 핸디캡은 서로 모순되는 시장이 아니다. 예를 들어 홈팀의
+        # 1골 차 승리는 일반 승과 -1.0 핸디무를 동시에 만들 수 있다.
+        # 예전의 문자열 기반 "상충 후보" 제거는 실제 정답 후보를 버릴 수
+        # 있으므로, 제공된 세 시장의 모든 방향을 같은 출발선에서 비교한다.
         all_market_picks = wdl_cands + handi_cands + uo_cands
+        valid_all_picks = all_market_picks
         calibrate_market_candidates(
             all_market_picks, market_performance, analysis_confidence
         )
@@ -2187,7 +2543,7 @@ def build_dashboard_data():
             highest_prob_pick,
             evidence,
             analysis_confidence,
-            valid_all_picks,
+            all_market_picks,
             pick_categories,
             {
                 "home": home_team,
@@ -2255,7 +2611,10 @@ def build_dashboard_data():
         )
         save_prediction_analysis(
             m["id"], highest_prob_pick, analysis_confidence,
-            evidence, valid_all_picks, detailed_report,
+            evidence, all_market_picks, detailed_report,
+            categories=pick_categories,
+            analysis_stage=analysis_stage,
+            odds_source=analysis_odds_source,
         )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
@@ -2273,8 +2632,9 @@ def build_dashboard_data():
         elif analysis_odds_source == "model_only":
             story = (
                 "📊 <b>[팀 데이터 모델 선픽]</b> 베트맨과 해외배당이 모두 준비되지 "
-                "않아 최근 경기·득실·홈원정·선수 정보를 중심으로 확률픽 하나를 "
-                "먼저 계산했습니다. 배당이 들어오면 가치픽까지 자동 재분석합니다."
+                "않아 최근 경기·득실·홈원정·선수 정보를 중심으로 확률픽과 "
+                "배당 미확인 참고 대안픽을 먼저 계산했습니다. 실제 배당이 들어오면 "
+                "가치 여부를 자동으로 다시 검증합니다."
                 "<br><br>" + story
             )
         
@@ -2958,6 +3318,125 @@ def _backfill_finished_postmortems(conn):
     return len(updates)
 
 
+def _grade_prediction_candidates(
+    conn, match_id, home_team, away_team, goals_h, goals_a
+):
+    """Grade the last frozen full-market audit without changing its forecast."""
+    _ensure_prediction_analysis_tables(conn)
+    snapshot = conn.execute(
+        """
+        SELECT id, analysis_version, stage, candidates_json
+        FROM prediction_analysis_snapshots
+        WHERE match_id = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (str(match_id),),
+    ).fetchone()
+    if not snapshot:
+        return None
+    try:
+        candidates = json.loads(snapshot[3] or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(candidates, list):
+        return None
+
+    result_rows = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        raw_pick = str(candidate.get("raw_pick") or "").strip()
+        market_key = str(candidate.get("market_key") or "").strip()
+        if not raw_pick or market_key not in MARKET_LABELS:
+            continue
+        is_correct = int(evaluate_single_pick(
+            raw_pick, home_team, away_team, int(goals_h), int(goals_a)
+        ))
+        selected_as = list(candidate.get("selected_as") or [])
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO prediction_candidate_results (
+                match_id, analysis_snapshot_id, analysis_version, stage,
+                market_key, raw_pick, model_probability, fair_probability,
+                odd, selection_rank, market_rank, selected_as, is_correct,
+                actual_score, graded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                str(match_id), int(snapshot[0]), str(snapshot[1] or ""),
+                str(snapshot[2] or ""), market_key, raw_pick,
+                float(candidate.get("model_probability") or 0),
+                candidate.get("fair_probability"),
+                float(candidate.get("odd") or 0),
+                candidate.get("selection_rank"),
+                candidate.get("market_rank"),
+                json.dumps(selected_as, ensure_ascii=False), is_correct,
+                f"{int(goals_h)}:{int(goals_a)}",
+            ),
+        )
+        result_rows.append({
+            "market_key": market_key,
+            "market_label": MARKET_LABELS[market_key],
+            "raw_pick": raw_pick,
+            "model_probability": _audit_number(
+                candidate.get("model_probability"), 0.0
+            ),
+            "selection_rank": candidate.get("selection_rank"),
+            "selected_as": selected_as,
+            "is_correct": is_correct,
+        })
+
+    hits = [item for item in result_rows if item["is_correct"] == 1]
+    selected = [
+        item for item in result_rows if "high_probability" in item["selected_as"]
+    ]
+    unselected_hits = [
+        item for item in hits if "high_probability" not in item["selected_as"]
+    ]
+    unselected_hits.sort(
+        key=lambda item: (
+            float(item.get("model_probability") or 0),
+            -(int(item.get("selection_rank") or 999)),
+        ),
+        reverse=True,
+    )
+    return {
+        "schema_version": PICK_AUDIT_SCHEMA_VERSION,
+        "analysis_snapshot_id": int(snapshot[0]),
+        "analysis_version": str(snapshot[1] or ""),
+        "stage": str(snapshot[2] or ""),
+        "graded_candidate_count": len(result_rows),
+        "hit_candidate_count": len(hits),
+        "selected_pick_hit": bool(selected and selected[0]["is_correct"] == 1),
+        "selected_pick": selected[0] if selected else None,
+        "market_answers": hits,
+        "highest_probability_unselected_answer": (
+            unselected_hits[0] if unselected_hits else None
+        ),
+    }
+
+
+def _candidate_review_text(review):
+    if not review:
+        return ""
+    answer = review.get("highest_probability_unselected_answer")
+    base = (
+        f"[전체 시장 복기] 킥오프 전 동결 후보 "
+        f"{int(review.get('graded_candidate_count') or 0)}개를 동일 점수로 채점했습니다."
+    )
+    if review.get("selected_pick_hit"):
+        return base + " 최종 확률픽이 실제 결과 조건을 충족했습니다."
+    if answer:
+        return (
+            base
+            + f" 확률픽은 미적중했고, 미선택 후보 중 실제 조건을 충족한 "
+            f"최상위 방향은 {answer.get('market_label')} · "
+            f"{answer.get('raw_pick')}({float(answer.get('model_probability') or 0) * 100:.1f}%)였습니다. "
+            "이는 경기 후 확인한 복기 자료이며 과거 예측을 소급 변경하지 않습니다."
+        )
+    return base + " 미선택 후보까지 포함해 원인을 다음 도전자 모델의 학습 자료로 보존했습니다."
+
+
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
     conn = None
@@ -3046,6 +3525,9 @@ def auto_score_matches():
                         score_str = f"{final_h}:{final_a}"
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
+                        candidate_review = _grade_prediction_candidates(
+                            conn, match_id, h_team, a_team, eval_h, eval_a
+                        )
                         event_timeline = _load_stored_event_timeline(match_id, limit=8)
                         ai_note, postmortem_data = generate_real_ai_note(
                             fixture_id, final_h, final_a, is_corr_prob, is_corr_ev,
@@ -3057,6 +3539,20 @@ def auto_score_matches():
                             event_timeline=event_timeline,
                             return_postmortem=True,
                         )
+                        if candidate_review:
+                            try:
+                                postmortem_payload = json.loads(postmortem_data or "{}")
+                                postmortem_payload["candidate_review"] = candidate_review
+                                postmortem_data = json.dumps(
+                                    postmortem_payload,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                )
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                pass
+                            review_text = _candidate_review_text(candidate_review)
+                            if review_text:
+                                ai_note += "\n\n" + review_text
                         if event_timeline:
                             ai_note += "\n\n🎬 주요 사건 기록(최대 8건)\n" + "\n".join(event_timeline)
                         cursor.execute("""

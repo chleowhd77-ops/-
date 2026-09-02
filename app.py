@@ -2349,7 +2349,7 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
 
     slot_specs = [
         ("high_probability", "📈 확률 높은 픽", "분석 가능한 선택지가 없습니다.", "#00F2FE"),
-        ("honey", "🍯 배당형 대안픽", "승무패·핸디캡 배당 대기", "#F59E0B"),
+        ("honey", "🍯 배당형 대안픽", "분석 가능한 별도 대안이 없습니다.", "#F59E0B"),
         ("vip_underdog", "💎 VIP 검증 등급", "대안픽 중 엄격 기준 통과 없음", "#FFD54A"),
     ]
     html = ""
@@ -2374,14 +2374,18 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             "honey": (
                 "보수적 가치 기준 통과"
                 if honey_tier == "qualified"
-                else "항상 제공 · 참고 등급"
+                else (
+                    "항상 제공 · 배당 미확인 참고픽"
+                    if honey_tier == "unpriced_reference"
+                    else "항상 제공 · 참고 등급"
+                )
             ),
             "vip_underdog": "별도 픽 아님 · 대안픽 엄격 검증 통과",
         }[key]
         meta_parts = [detail]
         if pick.get("fair_prob") is not None:
             meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
-        if key == "honey":
+        if key == "honey" and pick.get("fair_prob") is not None:
             meta_parts.append(f"보수적 가치차 {float(pick.get('robust_edge', 0) or 0) * 100:+.1f}%p")
         if key == "vip_underdog" and pick.get("support_signals"):
             meta_parts.append(f"독립근거 {len(pick['support_signals'])}개")

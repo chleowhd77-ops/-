@@ -31,7 +31,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.4-budget-squad-status"
+ANALYSIS_VERSION = "V7.3.5-all-market-learning-audit"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -619,6 +619,79 @@ def init_cache_db():
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_prediction_snapshots_match ON prediction_snapshots(match_id, created_at)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_analysis (
+                match_id TEXT PRIMARY KEY,
+                analysis_version TEXT DEFAULT '',
+                stage TEXT DEFAULT '',
+                odds_source TEXT DEFAULT '',
+                selected_market TEXT,
+                selected_pick TEXT,
+                model_probability REAL,
+                fair_probability REAL,
+                edge REAL,
+                confidence REAL,
+                error_margin REAL,
+                probability_low REAL,
+                probability_high REAL,
+                evidence_json TEXT DEFAULT '[]',
+                markets_json TEXT DEFAULT '[]',
+                categories_json TEXT DEFAULT '{}',
+                decision_json TEXT DEFAULT '{}',
+                report_text TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_analysis_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT NOT NULL,
+                analysis_version TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                odds_source TEXT DEFAULT '',
+                confidence REAL DEFAULT 0,
+                selected_market TEXT,
+                selected_pick TEXT,
+                candidate_count INTEGER DEFAULT 0,
+                evidence_json TEXT DEFAULT '[]',
+                candidates_json TEXT DEFAULT '[]',
+                categories_json TEXT DEFAULT '{}',
+                decision_json TEXT DEFAULT '{}',
+                report_text TEXT DEFAULT '',
+                fingerprint TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(match_id, analysis_version, stage, fingerprint)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_match "
+            "ON prediction_analysis_snapshots(match_id, id)"
+        )
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_candidate_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT NOT NULL,
+                analysis_snapshot_id INTEGER NOT NULL,
+                analysis_version TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                raw_pick TEXT NOT NULL,
+                model_probability REAL DEFAULT 0,
+                fair_probability REAL,
+                odd REAL DEFAULT 0,
+                selection_rank INTEGER,
+                market_rank INTEGER,
+                selected_as TEXT DEFAULT '',
+                is_correct INTEGER NOT NULL,
+                actual_score TEXT NOT NULL,
+                graded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(analysis_snapshot_id, market_key, raw_pick)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_results_match "
+            "ON prediction_candidate_results(match_id, analysis_version)"
+        )
         conn.commit()
         conn.close()
     except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
