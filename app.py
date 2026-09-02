@@ -2521,9 +2521,13 @@ with main_tab2:
         single_pick_count = dashboard_data.get("toto14_meta", {}).get("single_pick_count", 0)
         double_pick_count = dashboard_data.get("toto14_meta", {}).get("double_pick_count", 0)
         total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
+        max_budget = dashboard_data.get("toto14_meta", {}).get("max_budget", 8000)
+        cap_exceeded_by_frozen = dashboard_data.get("toto14_meta", {}).get("cost_cap_exceeded_by_frozen", False)
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 · 소액 상한 {max_budget:,}원</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
+        if cap_exceeded_by_frozen:
+            st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
 
         toto_displayed = 0
         toto_paywall_shown = False

@@ -51,7 +51,9 @@ UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
 PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
-TOTO14_MAX_COMBINATIONS = max(1, int(os.getenv("TOTO14_MAX_COMBINATIONS", "64")))
+# 승무패 14는 소액 참고 조합으로 운영한다. 서버 환경변수에 예전 64가
+# 남아 있어도 8조합(8,000원)을 넘지 않도록 상한을 강제한다.
+TOTO14_MAX_COMBINATIONS = max(1, min(8, int(os.getenv("TOTO14_MAX_COMBINATIONS", "8"))))
 TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
 LIVE_STATUSES = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'}
 TERMINAL_STATUSES = {'FT', 'AET', 'PEN'}
@@ -459,6 +461,46 @@ def _render_toto14_picks_html(picks):
         f"<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {styles[pick]}'>{pick}</div>"
         for pick in ("승", "무", "패")
     )
+
+
+def _render_team_availability_status(injury_data, diff_hours, lineup_confirmed, lineup_msg=""):
+    """Show whether squad data is clean, unavailable, or still awaiting lineups."""
+    badges = []
+    injury_data = injury_data if isinstance(injury_data, dict) else {}
+    if injury_data.get("available"):
+        if int(injury_data.get("count", 0) or 0) == 0:
+            badges.append(
+                "<div class='injury-badge' style='color:#10B981; border-color:#10B981;'>"
+                "🏥 부상자료 확인 · 등록 결장 없음</div>"
+            )
+        elif not injury_data.get("ace_missing"):
+            badges.append(
+                "<div class='injury-badge' style='color:#94A3B8; border-color:#475569;'>"
+                "🏥 부상자료 확인 · 핵심 결장 없음</div>"
+            )
+    else:
+        badges.append(
+            "<div class='injury-badge' style='color:#F59E0B; border-color:#F59E0B;'>"
+            "⚠️ 부상자료 미수신</div>"
+        )
+
+    if not lineup_msg:
+        if lineup_confirmed:
+            badges.append(
+                "<div class='injury-badge' style='color:#10B981; border-color:#10B981;'>"
+                "👥 선발 확인 · 핵심 제외 없음</div>"
+            )
+        elif float(diff_hours or 0) <= 1.5:
+            badges.append(
+                "<div class='injury-badge' style='color:#F59E0B; border-color:#F59E0B;'>"
+                "⏳ 선발 발표 대기</div>"
+            )
+        else:
+            badges.append(
+                "<div class='injury-badge' style='color:#64748B; border-color:#334155;'>"
+                "👥 선발 확인 예정</div>"
+            )
+    return "".join(badges)
 
 
 def _choose_toto14_picks(probs_dict, current_combinations, max_combinations=None):
@@ -2235,7 +2277,9 @@ def build_dashboard_data():
         if a_manager_buff > 0: story += f" 👔 [경질 버프] 원정팀 {away_team}은(는) 최근 감독 교체로 인한 '허니문 효과'가 강력하게 발동될 타이밍입니다."
         if h_vacation > 0 or a_vacation > 0: story += " 🏖️ [휴가 모드 주의] 시즌 막판 동기부여가 떨어진 중위권 팀의 안일한 경기력이 이변을 만들 수 있습니다."
 
-        h_inj_html = ""
+        h_inj_html = _render_team_availability_status(
+            h_inj_data, diff_hours, lineup_confirmed, h_lineup_msg
+        )
         if h_war_score > 0:
             h_war_text = " / ".join(h_war_details)
             if h_oneman_penalty > 0: h_inj_html += f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 득점루트 붕괴: 팀 득점의 {int(h_goal_dep_ratio*100)}% 이탈</div>"
@@ -2248,7 +2292,9 @@ def build_dashboard_data():
         if h_matchup_msg: h_inj_html += f"<div class='injury-badge' style='background: rgba(59, 130, 246, 0.2); border-color: #3B82F6; color: #3B82F6;'>{h_matchup_msg}</div>"
         if is_derby: h_inj_html += f"<div class='injury-badge' style='background: rgba(239, 68, 68, 0.2); border-color: #EF4444; color: #EF4444;'>⚔️ 치열한 로컬 더비 매치</div>"
 
-        a_inj_html = ""
+        a_inj_html = _render_team_availability_status(
+            a_inj_data, diff_hours, lineup_confirmed, a_lineup_msg
+        )
         if a_war_score > 0:
             a_war_text = " / ".join(a_war_details)
             if a_oneman_penalty > 0: a_inj_html += f"<div class='injury-badge' style='background: rgba(220,38,38,0.2); border-color: #EF4444; color: #EF4444;'>🚨 득점루트 붕괴: 팀 득점의 {int(a_goal_dep_ratio*100)}% 이탈</div>"
@@ -2478,10 +2524,11 @@ def build_dashboard_data():
         a_goal_dep_ratio = (a_missing_goals / a_team_goals) if a_team_goals > 0 else 0
         a_oneman_penalty = 0.15 if a_goal_dep_ratio >= 0.25 else 0.0
         
-        h_war_pct, _, _ = calculate_war_penalty(home_team, h_inj_data["ace_names"], h_inj_count, home_info.get("id"))
-        a_war_pct, _, _ = calculate_war_penalty(away_team, a_inj_data["ace_names"], a_inj_count, away_info.get("id"))
+        h_war_pct, h_war_details, h_war_score = calculate_war_penalty(home_team, h_inj_data["ace_names"], h_inj_count, home_info.get("id"))
+        a_war_pct, a_war_details, a_war_score = calculate_war_penalty(away_team, a_inj_data["ace_names"], a_inj_count, away_info.get("id"))
 
         h_lineup_penalty, a_lineup_penalty = 0.0, 0.0
+        h_lineup_msg, a_lineup_msg = "", ""
         lineup_confirmed = False
         if 0 < diff_hours <= 1.5 and api_fixture_id:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
@@ -2499,6 +2546,27 @@ def build_dashboard_data():
                 a_unexpected = [name for name in a_missing if _normalize_player_name(name) not in a_injury_names]
                 h_lineup_penalty = 0.12 if len(h_unexpected) == 1 else (0.20 if len(h_unexpected) >= 2 else 0.0)
                 a_lineup_penalty = 0.12 if len(a_unexpected) == 1 else (0.20 if len(a_unexpected) >= 2 else 0.0)
+                if h_missing:
+                    h_lineup_msg = f"🚨 [선발 확인] 핵심 {', '.join(h_missing[:3])} 선발 제외"
+                if a_missing:
+                    a_lineup_msg = f"🚨 [선발 확인] 핵심 {', '.join(a_missing[:3])} 선발 제외"
+
+        h_inj_html = _render_team_availability_status(
+            h_inj_data, diff_hours, lineup_confirmed, h_lineup_msg
+        )
+        a_inj_html = _render_team_availability_status(
+            a_inj_data, diff_hours, lineup_confirmed, a_lineup_msg
+        )
+        if h_war_score > 0:
+            h_war_text = " / ".join(h_war_details)
+            h_inj_html += f"<div class='injury-badge'>🏥 전력누수(-{h_war_score:.1f}점): {h_war_text}</div>"
+        if a_war_score > 0:
+            a_war_text = " / ".join(a_war_details)
+            a_inj_html += f"<div class='injury-badge'>🏥 전력누수(-{a_war_score:.1f}점): {a_war_text}</div>"
+        if h_lineup_msg:
+            h_inj_html += f"<div class='injury-badge' style='background:#EF4444; color:#fff;'>{h_lineup_msg}</div>"
+        if a_lineup_msg:
+            a_inj_html += f"<div class='injury-badge' style='background:#EF4444; color:#fff;'>{a_lineup_msg}</div>"
 
         h_last_data = fetch_team_last_match_date_api(home_info.get("id"), heavy_ttl)
         a_last_data = fetch_team_last_match_date_api(away_info.get("id"), heavy_ttl)
@@ -2655,6 +2723,7 @@ def build_dashboard_data():
                 "analysis_stage": analysis_stage,
                 "picks": picks,
                 "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
+                "h_inj_html": h_inj_html, "a_inj_html": a_inj_html,
                 "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
             }
         if (
