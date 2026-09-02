@@ -10,6 +10,14 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
+from grading_postmortem import (
+    build_postmortem,
+    normalize_official_stats,
+    official_stats_text,
+    postmortem_json,
+    postmortem_text,
+)
+
 load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
@@ -578,7 +586,7 @@ def init_cache_db():
                 is_correct_prob INTEGER DEFAULT 0, is_correct_ev INTEGER DEFAULT 0,
                 ai_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
                 is_toto14 INTEGER DEFAULT 0, api_fixture_id INTEGER DEFAULT 0, match_time TEXT DEFAULT '',
-                analysis_version TEXT DEFAULT ''
+                analysis_version TEXT DEFAULT '', postmortem_json TEXT DEFAULT '{}'
             )
         """)
         prediction_columns = {
@@ -587,6 +595,10 @@ def init_cache_db():
         if "analysis_version" not in prediction_columns:
             cursor.execute(
                 "ALTER TABLE predictions ADD COLUMN analysis_version TEXT DEFAULT ''"
+            )
+        if "postmortem_json" not in prediction_columns:
+            cursor.execute(
+                "ALTER TABLE predictions ADD COLUMN postmortem_json TEXT DEFAULT '{}'"
             )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS prediction_snapshots (
@@ -2100,57 +2112,49 @@ def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
     return 0
 
 def generate_real_ai_note(
-    fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev, has_ev_pick=True
+    fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev, has_ev_pick=True,
+    home_team="", away_team="", prob_pick="", ev_pick="", event_timeline=None,
+    return_postmortem=False,
 ):
-    """채점에 실제로 확보한 최종 점수와 공식 통계만 기록합니다."""
+    """Record verified score, official facts, and deterministic miss reasons."""
+    normalized_stats = []
     try:
         stat_res = api_get("/fixtures/statistics", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
-        stats = stat_res.json().get("response", []) if stat_res.status_code == 200 else []
-
-        result_parts = [
-            f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
-            (
-                f"꿀픽 {'적중' if is_correct_ev == 1 else '미적중'}"
-                if has_ev_pick else "꿀픽 미선정"
-            ),
-        ]
-        note_parts = [
-            f"[채점 결과] {' · '.join(result_parts)}.",
-            f"[최종 점수] {int(goals_h)}:{int(goals_a)}.",
-        ]
-
-        stat_parts = []
-        for index, team_stats in enumerate(stats[:2]):
-            team_name = str(team_stats.get("team", {}).get("name") or f"{'홈' if index == 0 else '원정'}팀")
-            possession = None
-            shots_on_goal = None
-            for stat in team_stats.get("statistics", []):
-                if stat.get("type") == "Ball Possession" and stat.get("value") is not None:
-                    possession = str(stat.get("value"))
-                elif stat.get("type") == "Shots on Goal" and stat.get("value") is not None:
-                    shots_on_goal = int(stat.get("value"))
-            values = []
-            if possession is not None:
-                values.append(f"점유율 {possession}")
-            if shots_on_goal is not None:
-                values.append(f"유효슈팅 {shots_on_goal}개")
-            if values:
-                stat_parts.append(f"{team_name} {' · '.join(values)}")
-        if stat_parts:
-            note_parts.append(f"[공식 경기 통계] {' / '.join(stat_parts)}.")
-        else:
-            note_parts.append("[공식 경기 통계] 제공된 상세 통계가 없어 임의 수치를 넣지 않았습니다.")
-        return "\n".join(note_parts)
+        raw_stats = stat_res.json().get("response", []) if stat_res.status_code == 200 else []
+        normalized_stats = normalize_official_stats(raw_stats)
     except Exception:
-        result_parts = [
-            f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
-            (
-                f"꿀픽 {'적중' if is_correct_ev == 1 else '미적중'}"
-                if has_ev_pick else "꿀픽 미선정"
-            ),
-        ]
-        return "\n".join([
-            f"[채점 결과] {' · '.join(result_parts)}.",
-            f"[최종 점수] {int(goals_h)}:{int(goals_a)}.",
-            "[공식 경기 통계] 조회되지 않아 임의 수치를 넣지 않았습니다.",
-        ])
+        normalized_stats = []
+
+    result_parts = [
+        f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
+        (
+            f"배당형 대안픽 {'적중' if is_correct_ev == 1 else '미적중'}"
+            if has_ev_pick else "배당형 대안픽 미선정"
+        ),
+    ]
+    payload = build_postmortem(
+        home_team=home_team,
+        away_team=away_team,
+        prob_pick=prob_pick,
+        ev_pick=ev_pick,
+        goals_h=int(goals_h),
+        goals_a=int(goals_a),
+        is_correct_prob=is_correct_prob,
+        is_correct_ev=is_correct_ev,
+        has_ev_pick=has_ev_pick,
+        official_stats=normalized_stats,
+        event_timeline=event_timeline or [],
+    )
+    note_parts = [
+        f"[채점 결과] {' · '.join(result_parts)}.",
+        f"[최종 점수] {int(goals_h)}:{int(goals_a)}.",
+    ]
+    stats_text = official_stats_text(normalized_stats)
+    if stats_text:
+        note_parts.append(f"[공식 경기 통계] {stats_text}.")
+    review_text = postmortem_text(payload)
+    if review_text:
+        note_parts.append(review_text)
+    note = "\n\n".join(note_parts)
+    encoded = postmortem_json(payload)
+    return (note, encoded) if return_postmortem else note

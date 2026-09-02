@@ -41,6 +41,12 @@ except Exception:
 from config import *
 from api_engine import *
 from api_engine import _normalize_player_name
+from grading_postmortem import (
+    build_postmortem,
+    events_from_note,
+    postmortem_json,
+    stats_from_note,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2903,12 +2909,64 @@ def _scoring_row_matches_fixture(row, match_info):
     )
 
 
+def _ensure_postmortem_column(conn):
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(predictions)")}
+    if "postmortem_json" not in columns:
+        conn.execute("ALTER TABLE predictions ADD COLUMN postmortem_json TEXT DEFAULT '{}'")
+        conn.commit()
+
+
+def _backfill_finished_postmortems(conn):
+    """Give older graded rows deterministic learning labels without API calls."""
+    _ensure_postmortem_column(conn)
+    rows = conn.execute(
+        """
+        SELECT match_id, home_team, away_team, prob_pick, ev_pick,
+               actual_score, is_correct_prob, is_correct_ev, ai_note
+        FROM predictions
+        WHERE actual_result = 'FINISHED'
+          AND COALESCE(NULLIF(postmortem_json, ''), '{}') = '{}'
+        """
+    ).fetchall()
+    updates = []
+    for row in rows:
+        score_match = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(row[5] or ""))
+        if not score_match:
+            continue
+        goals_h, goals_a = int(score_match.group(1)), int(score_match.group(2))
+        events = events_from_note(row[8]) or _load_stored_event_timeline(row[0], limit=8)
+        payload = build_postmortem(
+            home_team=row[1],
+            away_team=row[2],
+            prob_pick=row[3],
+            ev_pick=row[4],
+            goals_h=goals_h,
+            goals_a=goals_a,
+            is_correct_prob=row[6],
+            is_correct_ev=row[7],
+            has_ev_pick=bool(str(row[4] or "").strip()),
+            official_stats=stats_from_note(row[8]),
+            event_timeline=events,
+        )
+        updates.append((postmortem_json(payload), row[0]))
+    if updates:
+        conn.executemany(
+            "UPDATE predictions SET postmortem_json = ? WHERE match_id = ?",
+            updates,
+        )
+        conn.commit()
+    return len(updates)
+
+
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
+        backfilled_count = _backfill_finished_postmortems(conn)
+        if backfilled_count:
+            print(f"✅ 기존 오답노트 학습 태그 보강: {backfilled_count}건")
         cursor = conn.cursor()
         cursor.execute("""
             SELECT match_id, home_team, away_team, prob_pick, ev_pick,
@@ -2988,19 +3046,29 @@ def auto_score_matches():
                         score_str = f"{final_h}:{final_a}"
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
-                        ai_note = generate_real_ai_note(
+                        event_timeline = _load_stored_event_timeline(match_id, limit=8)
+                        ai_note, postmortem_data = generate_real_ai_note(
                             fixture_id, final_h, final_a, is_corr_prob, is_corr_ev,
                             has_ev_pick=bool(str(ev_pick or "").strip()),
+                            home_team=h_team,
+                            away_team=a_team,
+                            prob_pick=prob_pick,
+                            ev_pick=ev_pick,
+                            event_timeline=event_timeline,
+                            return_postmortem=True,
                         )
-                        event_timeline = _load_stored_event_timeline(match_id, limit=8)
                         if event_timeline:
                             ai_note += "\n\n🎬 주요 사건 기록(최대 8건)\n" + "\n".join(event_timeline)
                         cursor.execute("""
                             UPDATE predictions
                             SET actual_score = ?, actual_result = 'FINISHED',
-                                is_correct_prob = ?, is_correct_ev = ?, ai_note = ?
+                                is_correct_prob = ?, is_correct_ev = ?, ai_note = ?,
+                                postmortem_json = ?
                             WHERE match_id = ? AND actual_result = 'PENDING'
-                        """, (score_str, is_corr_prob, is_corr_ev, ai_note, match_id))
+                        """, (
+                            score_str, is_corr_prob, is_corr_ev, ai_note,
+                            postmortem_data, match_id,
+                        ))
                         print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
                     elif status in CANCELED_STATUSES:
                         cursor.execute("""

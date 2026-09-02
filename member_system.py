@@ -41,6 +41,9 @@ ALLOWED_POST_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 NOTICE_MODES = {"banner", "popup"}
 NOTICE_AUDIENCES = {"all", "guest", "member", "supporter"}
 AUTH_SESSION_DAYS = max(1, min(int(os.getenv("DJ_AUTH_SESSION_DAYS", "30")), 90))
+SUPPORTER_ACCESS_DAYS = max(
+    1, min(int(os.getenv("DJ_SUPPORTER_ACCESS_DAYS", "30")), 365)
+)
 AUTH_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 KST = timezone(timedelta(hours=9))
 _REMOTE_STORAGE_LOCK = threading.RLock()
@@ -269,6 +272,53 @@ def kst_today() -> str:
     return datetime.now(KST).date().isoformat()
 
 
+def _supporter_expiry(
+    current_expiry: str | None = None, days: int = SUPPORTER_ACCESS_DAYS
+) -> tuple[str, str]:
+    """Return grant time and expiry, extending an active grant instead of losing days."""
+    now_dt = datetime.now(timezone.utc)
+    base_dt = now_dt
+    if current_expiry:
+        try:
+            parsed = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            if parsed > now_dt:
+                base_dt = parsed.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    granted_at = now_dt.isoformat(timespec="seconds")
+    expires_at = (base_dt + timedelta(days=max(1, int(days)))).isoformat(
+        timespec="seconds"
+    )
+    return granted_at, expires_at
+
+
+def _expire_supporter_memberships(
+    conn: sqlite3.Connection, now: str | None = None
+) -> list[str]:
+    """Downgrade elapsed supporter grants and preserve an audit trail."""
+    checked_at = now or utc_now()
+    expired = conn.execute(
+        """
+        SELECT id, username FROM users
+        WHERE role=? AND supporter_expires_at IS NOT NULL
+          AND supporter_expires_at<=?
+        """,
+        (ROLE_SUPPORTER, checked_at),
+    ).fetchall()
+    for row in expired:
+        conn.execute(
+            "UPDATE users SET role=? WHERE id=?",
+            (ROLE_MEMBER, int(row["id"])),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(NULL,?,?,?)",
+            ("supporter_expired", str(row["username"]), checked_at),
+        )
+    return [str(row["username"]) for row in expired]
+
+
 def get_db_path() -> Path:
     configured = os.getenv("DJ_MEMBER_DB_PATH", "").strip()
     if configured:
@@ -331,7 +381,9 @@ def init_member_db() -> None:
                 status TEXT NOT NULL DEFAULT 'active'
                     CHECK(status IN ('active', 'suspended')),
                 created_at TEXT NOT NULL,
-                last_login_at TEXT
+                last_login_at TEXT,
+                supporter_started_at TEXT,
+                supporter_expires_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS posts (
@@ -393,6 +445,19 @@ def init_member_db() -> None:
             """
         )
         # 기존 users.db도 그대로 사용할 수 있도록 새 열만 안전하게 추가한다.
+        user_columns = {
+            str(row["name"]) for row in conn.execute("PRAGMA table_info(users)")
+        }
+        if "supporter_started_at" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN supporter_started_at TEXT")
+        if "supporter_expires_at" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN supporter_expires_at TEXT")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_users_supporter_expires_at
+            ON users(role, supporter_expires_at)
+            """
+        )
         post_columns = {
             str(row["name"]) for row in conn.execute("PRAGMA table_info(posts)")
         }
@@ -415,6 +480,7 @@ def init_member_db() -> None:
         if "notice_link" not in post_columns:
             conn.execute("ALTER TABLE posts ADD COLUMN notice_link TEXT")
         _migrate_legacy_users(conn)
+        _expire_supporter_memberships(conn)
     if _REMOTE_STORAGE_NEEDS_INITIAL_SYNC:
         _sync_remote_member_db()
 
@@ -471,6 +537,7 @@ def register_user(username: str, password: str, display_name: str = "") -> tuple
 
 def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
         row = conn.execute(
             "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username.strip(),)
         ).fetchone()
@@ -494,6 +561,7 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
             "display_name": row["display_name"],
             "role": row["role"],
             "status": row["status"],
+            "supporter_expires_at": row["supporter_expires_at"],
         }
 
 
@@ -536,9 +604,11 @@ def authenticate_session(token: str) -> dict[str, Any] | None:
         return None
     now = utc_now()
     with _connect() as conn:
+        _expire_supporter_memberships(conn, now)
         row = conn.execute(
             """
-            SELECT u.id, u.username, u.display_name, u.role, u.status
+            SELECT u.id, u.username, u.display_name, u.role, u.status,
+                   u.supporter_expires_at
             FROM auth_sessions s
             JOIN users u ON u.id=s.user_id
             WHERE s.token_hash=? AND s.revoked_at IS NULL
@@ -555,6 +625,20 @@ def authenticate_session(token: str) -> dict[str, Any] | None:
     return dict(row)
 
 
+def refresh_user_access(user_id: int) -> dict[str, Any] | None:
+    """Return the current account role after applying supporter expiration."""
+    with _connect() as conn:
+        _expire_supporter_memberships(conn)
+        row = conn.execute(
+            """
+            SELECT id, username, display_name, role, status, supporter_expires_at
+            FROM users WHERE id=? AND status='active'
+            """,
+            (int(user_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def revoke_login_session(token: str) -> None:
     """Invalidate the current browser token on an explicit logout."""
     token = (token or "").strip()
@@ -569,9 +653,11 @@ def revoke_login_session(token: str) -> None:
 
 def list_users() -> list[dict[str, Any]]:
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
         rows = conn.execute(
             """
-            SELECT id, username, display_name, role, status, created_at, last_login_at
+            SELECT id, username, display_name, role, status, created_at, last_login_at,
+                   supporter_started_at, supporter_expires_at
             FROM users ORDER BY created_at DESC
             """
         ).fetchall()
@@ -605,6 +691,7 @@ def bootstrap_admin(
         return False, "관리자 인증키가 일치하지 않습니다."
 
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
         user = conn.execute(
             "SELECT id, username, status, role FROM users WHERE id=?", (user_id,)
         ).fetchone()
@@ -614,7 +701,14 @@ def bootstrap_admin(
             return False, "로그인 정보가 변경되었습니다. 다시 로그인해주세요."
         if user["role"] == ROLE_ADMIN:
             return True, "이미 관리자 계정으로 설정되어 있습니다."
-        conn.execute("UPDATE users SET role=? WHERE id=?", (ROLE_ADMIN, user_id))
+        conn.execute(
+            """
+            UPDATE users
+            SET role=?, supporter_started_at=NULL, supporter_expires_at=NULL
+            WHERE id=?
+            """,
+            (ROLE_ADMIN, user_id),
+        )
         conn.execute(
             "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
             (user_id, "bootstrap_admin", str(user["username"]), utc_now()),
@@ -630,7 +724,11 @@ def set_user_role(actor_id: int, username: str, role: str) -> tuple[bool, str]:
         if not actor or actor["role"] != ROLE_ADMIN:
             return False, "관리자만 등급을 변경할 수 있습니다."
         target = conn.execute(
-            "SELECT id, role, status FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)
+            """
+            SELECT id, role, status, supporter_expires_at
+            FROM users WHERE username=? COLLATE NOCASE
+            """,
+            (username.strip(),),
         ).fetchone()
         if not target:
             return False, "해당 회원을 찾지 못했습니다."
@@ -641,10 +739,40 @@ def set_user_role(actor_id: int, username: str, role: str) -> tuple[bool, str]:
             ).fetchone()[0]
             if int(active_admins) <= 1:
                 return False, "마지막 정상 관리자 계정은 강등할 수 없습니다."
-        conn.execute("UPDATE users SET role=? WHERE id=?", (role, target["id"]))
+        expires_at = None
+        if role == ROLE_SUPPORTER:
+            started_at, expires_at = _supporter_expiry(target["supporter_expires_at"])
+            conn.execute(
+                """
+                UPDATE users
+                SET role=?, supporter_started_at=?, supporter_expires_at=?
+                WHERE id=?
+                """,
+                (role, started_at, expires_at, target["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE users
+                SET role=?, supporter_started_at=NULL, supporter_expires_at=NULL
+                WHERE id=?
+                """,
+                (role, target["id"]),
+            )
         conn.execute(
             "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
-            (actor_id, "set_role", f"{username}:{role}", utc_now()),
+            (
+                actor_id,
+                "set_role",
+                f"{username}:{role}:{expires_at or '-'}",
+                utc_now(),
+            ),
+        )
+    if role == ROLE_SUPPORTER:
+        expiry_kst = datetime.fromisoformat(expires_at).astimezone(KST)
+        return True, (
+            f"{username} 회원에게 후원회원 권한 30일을 적용했습니다. "
+            f"만료: {expiry_kst:%Y-%m-%d %H:%M}"
         )
     return True, f"{username} 회원의 등급을 변경했습니다."
 
@@ -726,6 +854,7 @@ def create_post(
             return False, "지원하지 않는 사진 형식입니다."
 
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
         user = conn.execute(
             "SELECT role, status FROM users WHERE id=?", (author_id,)
         ).fetchone()
@@ -1050,6 +1179,14 @@ def request_supporter(
     if len(depositor_name) < 2 or len(depositor_name) > 30:
         return False, "입금자명을 확인해주세요."
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
+        user = conn.execute(
+            "SELECT role, status FROM users WHERE id=?", (int(user_id),)
+        ).fetchone()
+        if not user or user["status"] != "active":
+            return False, "정상 상태의 회원 계정을 찾지 못했습니다."
+        if user["role"] in {ROLE_SUPPORTER, ROLE_ADMIN}:
+            return False, "이미 전체 이용 권한이 적용된 계정입니다."
         existing = conn.execute(
             """
             SELECT id FROM support_requests
@@ -1089,13 +1226,20 @@ def review_support_request(
     if decision not in {"approved", "rejected"}:
         return False, "지원하지 않는 처리 방식입니다."
     with _connect() as conn:
+        _expire_supporter_memberships(conn)
         actor = conn.execute(
             "SELECT role, status FROM users WHERE id=?", (actor_id,)
         ).fetchone()
         if not actor or actor["role"] != ROLE_ADMIN or actor["status"] != "active":
             return False, "관리자만 후원 확인 요청을 처리할 수 있습니다."
         request = conn.execute(
-            "SELECT id, user_id, status FROM support_requests WHERE id=?", (request_id,)
+            """
+            SELECT r.id, r.user_id, r.status, u.role, u.supporter_expires_at
+            FROM support_requests r
+            JOIN users u ON u.id=r.user_id
+            WHERE r.id=?
+            """,
+            (request_id,),
         ).fetchone()
         if not request:
             return False, "확인 요청을 찾지 못했습니다."
@@ -1111,19 +1255,41 @@ def review_support_request(
             """,
             (decision, now, actor_id, request_id),
         )
+        supporter_expires_at = None
         if decision == "approved":
-            conn.execute(
-                """
-                UPDATE users SET role=?
-                WHERE id=? AND role!=?
-                """,
-                (ROLE_SUPPORTER, request["user_id"], ROLE_ADMIN),
-            )
+            if request["role"] != ROLE_ADMIN:
+                supporter_started_at, supporter_expires_at = _supporter_expiry(
+                    request["supporter_expires_at"]
+                )
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET role=?, supporter_started_at=?, supporter_expires_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        ROLE_SUPPORTER,
+                        supporter_started_at,
+                        supporter_expires_at,
+                        request["user_id"],
+                    ),
+                )
         conn.execute(
             "INSERT INTO audit_log(actor_id, action, target, created_at) VALUES(?,?,?,?)",
-            (actor_id, f"support_request_{decision}", str(request_id), now),
+            (
+                actor_id,
+                f"support_request_{decision}",
+                f"{request_id}:{supporter_expires_at or '-'}",
+                now,
+            ),
         )
     action_label = "승인" if decision == "approved" else "거절"
+    if decision == "approved" and supporter_expires_at:
+        expiry_kst = datetime.fromisoformat(supporter_expires_at).astimezone(KST)
+        return True, (
+            f"후원회원 전환 요청을 승인했습니다. 권한은 "
+            f"{expiry_kst:%Y-%m-%d %H:%M}까지 유지됩니다."
+        )
     return True, f"후원회원 전환 요청을 {action_label}했습니다."
 
 

@@ -12,6 +12,13 @@ import base64
 from pathlib import Path
 from html import escape
 
+from grading_postmortem import (
+    build_postmortem,
+    parse_postmortem_json,
+    postmortem_text,
+    stats_from_note,
+)
+
 from member_system import (
     ROLE_ADMIN,
     ROLE_GUEST,
@@ -34,6 +41,7 @@ from member_system import (
     list_posts,
     list_support_requests,
     list_users,
+    refresh_user_access,
     register_user,
     request_supporter,
     revoke_login_session,
@@ -108,16 +116,20 @@ def load_prediction_results(grading_snapshot=None):
                 "ev_pick": row.get("ev_pick"),
                 "is_correct_prob": int(row.get("is_correct_prob") or 0),
                 "is_correct_ev": int(row.get("is_correct_ev") or 0),
+                "postmortem_json": row.get("postmortem_json"),
             }
             for row in embedded_rows
             if row.get("match_id") is not None
         }
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=5)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(predictions)")}
+        postmortem_expr = "postmortem_json" if "postmortem_json" in columns else "'{}'"
         rows = conn.execute(
-            """
+            f"""
             SELECT match_id, actual_score, actual_result, ai_note,
-                   prob_pick, ev_pick, is_correct_prob, is_correct_ev
+                   prob_pick, ev_pick, is_correct_prob, is_correct_ev,
+                   {postmortem_expr}
             FROM predictions
             """
         ).fetchall()
@@ -131,10 +143,12 @@ def load_prediction_results(grading_snapshot=None):
                 "ev_pick": ev_pick,
                 "is_correct_prob": int(is_correct_prob or 0),
                 "is_correct_ev": int(is_correct_ev or 0),
+                "postmortem_json": postmortem_data,
             }
             for (
                 match_id, actual_score, actual_result, ai_note,
                 prob_pick, ev_pick, is_correct_prob, is_correct_ev,
+                postmortem_data,
             ) in rows
         }
     except Exception:
@@ -931,6 +945,8 @@ if 'role' not in st.session_state:
     st.session_state['role'] = ROLE_GUEST
 if 'auth_token' not in st.session_state:
     st.session_state['auth_token'] = ""
+if 'supporter_expires_at' not in st.session_state:
+    st.session_state['supporter_expires_at'] = None
 
 # 서버의 live_scores.json은 5분마다 갱신된다. 브라우저도 1분마다 조용히
 # 다시 읽어야 사용자가 수동 새로고침을 하지 않아도 점수가 움직인다.
@@ -984,6 +1000,19 @@ def apply_user_session(user, auth_token=""):
     st.session_state['username'] = user['username']
     st.session_state['role'] = user['role']
     st.session_state['auth_token'] = auth_token
+    st.session_state['supporter_expires_at'] = user.get('supporter_expires_at')
+
+
+def format_membership_expiry(value):
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return ""
 
 
 def begin_user_session(user):
@@ -1001,6 +1030,31 @@ if not st.session_state['logged_in']:
             apply_user_session(restored_user, saved_auth_token)
         else:
             clear_auth_query_token()
+
+# 로그인 상태가 유지되는 동안에도 매 화면 실행마다 실제 DB 등급을 다시 확인한다.
+# 따라서 관리자가 지정한 후원 만료 시각이 지나면 다음 자동 새로고침(최대 1분)에서
+# 세션과 DB가 함께 일반회원으로 복귀한다.
+if st.session_state['logged_in'] and st.session_state.get('user_id'):
+    previous_role = st.session_state.get('role', ROLE_MEMBER)
+    refreshed_user = refresh_user_access(int(st.session_state['user_id']))
+    if refreshed_user:
+        st.session_state['username'] = refreshed_user['username']
+        st.session_state['role'] = refreshed_user['role']
+        st.session_state['supporter_expires_at'] = refreshed_user.get(
+            'supporter_expires_at'
+        )
+        if previous_role == ROLE_SUPPORTER and refreshed_user['role'] == ROLE_MEMBER:
+            st.session_state['auth_flash'] = (
+                "후원회원 이용기간 30일이 종료되어 일반회원으로 전환되었습니다."
+            )
+    else:
+        clear_auth_query_token()
+        st.session_state['logged_in'] = False
+        st.session_state['user_id'] = None
+        st.session_state['username'] = ""
+        st.session_state['role'] = ROLE_GUEST
+        st.session_state['auth_token'] = ""
+        st.session_state['supporter_expires_at'] = None
 
 
 def submit_registration(username, display_name, password, password_check,
@@ -1228,6 +1282,12 @@ else:
         f"<div class='member-access-note'>{escape(access_note)}</div>",
         unsafe_allow_html=True,
     )
+    if current_role == ROLE_SUPPORTER:
+        expiry_label = format_membership_expiry(
+            st.session_state.get('supporter_expires_at')
+        )
+        if expiry_label:
+            st.sidebar.caption(f"후원회원 이용 만료 · {expiry_label}")
 
     if current_role not in {ROLE_SUPPORTER, ROLE_ADMIN}:
         with st.sidebar.expander("후원회원 전환 확인 요청"):
@@ -1282,6 +1342,7 @@ else:
         st.session_state['username'] = ""
         st.session_state['role'] = ROLE_GUEST
         st.session_state['auth_token'] = ""
+        st.session_state['supporter_expires_at'] = None
         st.rerun()
 
     # 관리자 전용 회원·권한 관리
@@ -1319,9 +1380,16 @@ else:
                 user_df = pd.DataFrame(users).rename(columns={
                     "username": "아이디", "display_name": "표시 이름",
                     "role": "등급", "status": "상태", "created_at": "가입 시각",
-                    "last_login_at": "최근 로그인",
+                    "last_login_at": "최근 로그인", "supporter_expires_at": "후원 만료",
                 })
-                visible_columns = ["아이디", "표시 이름", "등급", "상태", "가입 시각", "최근 로그인"]
+                if "후원 만료" in user_df.columns:
+                    user_df["후원 만료"] = user_df["후원 만료"].map(
+                        lambda value: format_membership_expiry(value) or "-"
+                    )
+                visible_columns = [
+                    "아이디", "표시 이름", "등급", "상태",
+                    "가입 시각", "최근 로그인", "후원 만료",
+                ]
                 st.dataframe(
                     user_df[visible_columns], hide_index=True,
                     use_container_width=True, height=min(230, 36 * (len(user_df) + 1)),
@@ -1341,7 +1409,15 @@ else:
                     format_func=lambda value: ROLE_LABELS[value],
                     key="admin-target-role",
                 )
-                if st.button("등급 적용", key="admin-role-apply", use_container_width=True):
+                role_button_label = (
+                    "후원회원 지정 · 30일 적용/연장"
+                    if selected_role == ROLE_SUPPORTER else "등급 적용"
+                )
+                if st.button(
+                    role_button_label,
+                    key="admin-role-apply",
+                    use_container_width=True,
+                ):
                     ok, message = set_user_role(
                         int(st.session_state['user_id']), target_username, selected_role
                     )
@@ -1885,8 +1961,8 @@ def _event_html(*sources):
     )
 
 
-def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick):
-    """기존 고정 홍보 문구와 중복 사건을 걷어내고 실제 채점값만 표시합니다."""
+def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
+    """Show verified facts and a deterministic reason for every missed pick."""
     raw = str(raw_note or "").strip()
     canned_prefixes = (
         "💡 [퍼펙트 적중] AI의 분석이 경기 흐름과 정확히 일치했습니다! ",
@@ -1910,6 +1986,14 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick):
     ).strip()
 
     main_text, marker, event_text = raw.partition("🎬")
+    # The old provider-missing sentence was identical on every match and added
+    # no learning signal.  The structured limitation below replaces it.
+    main_text = re.sub(
+        r"^\[공식 경기 통계\]\s*(?:제공된|조회된|조회되지 않아).*?(?:\n|$)",
+        "",
+        main_text,
+        flags=re.MULTILINE,
+    ).strip()
     event_lines = []
     signatures = set()
     if marker:
@@ -1931,8 +2015,34 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick):
     sections = [f"[채점 결과] {' · '.join(result_parts)}."]
     if main_text.strip():
         sections.append(main_text.strip())
-    else:
-        sections.append("[공식 경기 통계] 조회된 상세 수치가 없어 임의 수치를 표시하지 않았습니다.")
+
+    # New rows carry JSON for the future learning robot.  Old rows are rebuilt
+    # from their frozen picks, final score, and any facts already in the note.
+    row = row if isinstance(row, dict) else {}
+    payload = parse_postmortem_json(row.get("postmortem_json"))
+    if payload is None and (not prob_ok or (has_ev_pick and not ev_ok)):
+        score_match = re.match(
+            r"^\s*(\d+)\s*:\s*(\d+)\s*$",
+            str(row.get("actual_score") or ""),
+        )
+        if score_match:
+            payload = build_postmortem(
+                home_team=row.get("home_team", ""),
+                away_team=row.get("away_team", ""),
+                prob_pick=row.get("prob_pick", ""),
+                ev_pick=row.get("ev_pick", ""),
+                goals_h=int(score_match.group(1)),
+                goals_a=int(score_match.group(2)),
+                is_correct_prob=int(bool(prob_ok)),
+                is_correct_ev=int(bool(ev_ok)),
+                has_ev_pick=has_ev_pick,
+                official_stats=stats_from_note(raw_note),
+                event_timeline=event_lines,
+            )
+    if payload and "[미적중 원인 · 확인된 결과]" not in main_text:
+        review = postmortem_text(payload)
+        if review:
+            sections.append(review)
     if event_lines:
         sections.append("[주요 사건 기록 · 최대 8건]\n" + "\n".join(event_lines))
     return escape("\n\n".join(sections)).replace("\n", "<br>")
@@ -2826,7 +2936,9 @@ with main_tab4:
             ev_ok = row.get('is_correct_ev', 0) == 1
             has_ev_pick = bool(ev_pick_raw.strip())
             same_pick = has_ev_pick and ev_pick_raw == prob_pick_raw
-            note = _clean_grading_note(row.get('ai_note', ''), prob_ok, ev_ok, has_ev_pick)
+            note = _clean_grading_note(
+                row.get('ai_note', ''), prob_ok, ev_ok, has_ev_pick, row=row
+            )
             
             if row.get('actual_result') == 'CANCELED':
                 score_html = "<span class='report-score' style='color:#94A3B8 !important;'>취소/무효</span>"
