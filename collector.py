@@ -2,6 +2,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -94,6 +95,21 @@ WORLD_LEAGUES = {
 WORLD_SCHEDULE_DAYS = max(1, min(3, int(os.getenv("WORLD_SCHEDULE_DAYS", "2"))))
 WORLD_MAX_SCHEDULE_MATCHES = max(
     20, min(300, int(os.getenv("WORLD_MAX_SCHEDULE_MATCHES", "160")))
+)
+WORLD_MAX_DEEP_ANALYSES_DAILY = max(
+    1, min(30, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_DAILY", "30")))
+)
+WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE = max(
+    1, min(5, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE", "5")))
+)
+WORLD_ANALYSIS_HORIZON_HOURS = max(
+    3, min(36, int(os.getenv("WORLD_ANALYSIS_HORIZON_HOURS", "24")))
+)
+WORLD_SCHEDULE_REFRESH_HOURS = max(
+    2, min(12, int(os.getenv("WORLD_SCHEDULE_REFRESH_HOURS", "6")))
+)
+WORLD_ANALYSIS_INTERVAL_MINUTES = max(
+    10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
 )
 WORLD_REJECTION_LABELS = {
     "UNSUPPORTED_LEAGUE": "1단계 허용 리그 아님",
@@ -2363,6 +2379,7 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
 def collect_world_schedule():
     """Fetch today/tomorrow once and preserve the last good file on any failure."""
     now = datetime.now(KST)
+    previous_payload = _read_json(WORLD_DASHBOARD_FILE, {})
     fixtures_by_date = {}
     for day_offset in range(WORLD_SCHEDULE_DAYS):
         date_key = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
@@ -2373,6 +2390,7 @@ def collect_world_schedule():
         fixtures_by_date[date_key] = fixtures
 
     payload = build_world_schedule_payload(fixtures_by_date, now=now)
+    _carry_world_shadow_analyses(payload, previous_payload)
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})
     print(
@@ -2382,6 +2400,919 @@ def collect_world_schedule():
         f"제외 {source_meta.get('rejected_count', 0)}"
     )
     return True
+
+
+WORLD_ANALYSIS_FIELDS = (
+    "analysis_status", "pick_status", "analysis_version", "analysis_stage",
+    "analyzed_at", "frozen_at", "data_quality_score", "data_quality_grade",
+    "missing_data", "lineup_confirmed", "lineup_attempts", "analysis",
+)
+
+
+def _carry_world_shadow_analyses(payload, previous_payload):
+    """Keep pre-kickoff analyses across the six-hour schedule refresh."""
+    if not isinstance(payload, dict) or not isinstance(previous_payload, dict):
+        return payload
+    previous_by_fixture = {
+        int(item.get("api_fixture_id") or 0): item
+        for item in previous_payload.get("matches", []) or []
+        if isinstance(item, dict) and int(item.get("api_fixture_id") or 0) > 0
+    }
+    for item in payload.get("matches", []) or []:
+        previous = previous_by_fixture.get(int(item.get("api_fixture_id") or 0))
+        if not previous:
+            continue
+        old_kickoff = str((previous.get("match") or {}).get("kickoff_at") or "")
+        new_kickoff = str((item.get("match") or {}).get("kickoff_at") or "")
+        if old_kickoff and new_kickoff and old_kickoff != new_kickoff:
+            item["analysis_status"] = "PENDING_SHADOW_ANALYSIS"
+            item["schedule_changed_after_analysis"] = True
+            continue
+        for field in WORLD_ANALYSIS_FIELDS:
+            if field in previous:
+                item[field] = previous[field]
+    return payload
+
+
+def _world_median(values):
+    ordered = []
+    for value in values or []:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 1.0 and math.isfinite(number):
+            ordered.append(number)
+    ordered.sort()
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return round(ordered[middle], 3)
+    return round((ordered[middle - 1] + ordered[middle]) / 2.0, 3)
+
+
+def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=None):
+    """Extract comparable median 1X2, totals and three-way handicap prices."""
+    wdl_samples = {"home": [], "draw": [], "away": []}
+    totals_by_line = {}
+    handicap_by_line = {}
+    bookmaker_ids = set()
+
+    def number_from(value):
+        matched = re.search(r"([+-]?\d+(?:\.\d+)?)", str(value or ""))
+        try:
+            return float(matched.group(1)) if matched else None
+        except (TypeError, ValueError):
+            return None
+
+    for odds_row in odds_rows or []:
+        for bookmaker in (odds_row or {}).get("bookmakers", []) or []:
+            bookmaker_ids.add(str(bookmaker.get("id") or bookmaker.get("name") or len(bookmaker_ids)))
+            for bet in bookmaker.get("bets", []) or []:
+                bet_name = str(bet.get("name") or "").strip().casefold()
+                values = bet.get("values", []) or []
+                if bet_name in {"match winner", "1x2", "fulltime result", "full time result"}:
+                    found = {}
+                    for value in values:
+                        label = str(value.get("value") or "").strip().casefold()
+                        side = {
+                            "home": "home", "1": "home", "draw": "draw", "x": "draw",
+                            "away": "away", "2": "away",
+                        }.get(label)
+                        try:
+                            odd = float(value.get("odd") or 0)
+                        except (TypeError, ValueError):
+                            odd = 0.0
+                        if side and odd > 1.0:
+                            found[side] = odd
+                    if len(found) == 3:
+                        for side, odd in found.items():
+                            wdl_samples[side].append(odd)
+                    continue
+
+                if "over/under" in bet_name or "goals over" in bet_name or "total goals" in bet_name:
+                    found_by_line = {}
+                    for value in values:
+                        label = str(value.get("value") or "").strip().casefold()
+                        side = "under" if "under" in label else ("over" if "over" in label else "")
+                        line = number_from(label)
+                        try:
+                            odd = float(value.get("odd") or 0)
+                        except (TypeError, ValueError):
+                            odd = 0.0
+                        if side and line is not None and odd > 1.0:
+                            found_by_line.setdefault(round(line, 2), {})[side] = odd
+                    for line, found in found_by_line.items():
+                        if {"under", "over"}.issubset(found):
+                            target = totals_by_line.setdefault(line, {"under": [], "over": []})
+                            target["under"].append(found["under"])
+                            target["over"].append(found["over"])
+                    continue
+
+                if not any(key in bet_name for key in ("handicap result", "3 way handicap", "european handicap")):
+                    continue
+                line = number_from(bet_name)
+                found = {}
+                for value in values:
+                    label = str(value.get("value") or "").strip().casefold()
+                    side = (
+                        "home" if label.startswith("home") or label == "1"
+                        else ("draw" if label.startswith("draw") or label == "x"
+                              else ("away" if label.startswith("away") or label == "2" else ""))
+                    )
+                    if side == "home" and number_from(label) is not None:
+                        line = number_from(label)
+                    try:
+                        odd = float(value.get("odd") or 0)
+                    except (TypeError, ValueError):
+                        odd = 0.0
+                    if side and odd > 1.0:
+                        found[side] = odd
+                if line is not None and {"home", "draw", "away"}.issubset(found):
+                    line = round(float(line), 2)
+                    target = handicap_by_line.setdefault(
+                        line, {"home": [], "draw": [], "away": []}
+                    )
+                    for side in target:
+                        target[side].append(found[side])
+
+    result = {
+        "fixture_id": int(fixture_id or 0),
+        "fetched_at": fetched_at or datetime.now(KST).isoformat(),
+        "bookmaker_count": len(bookmaker_ids),
+        "odds_source": "api_football_bookmaker_median",
+        "1x2": None,
+        "totals": None,
+        "handicap": None,
+    }
+    if all(wdl_samples[side] for side in wdl_samples):
+        result["1x2"] = {
+            side: _world_median(wdl_samples[side]) for side in ("home", "draw", "away")
+        }
+    complete_totals = [
+        (line, values) for line, values in totals_by_line.items()
+        if values["under"] and values["over"]
+    ]
+    if complete_totals:
+        line, values = min(
+            complete_totals,
+            key=lambda row: (-min(len(row[1]["under"]), len(row[1]["over"])), abs(row[0] - 2.5)),
+        )
+        result["totals"] = {
+            "line": float(line),
+            "under": _world_median(values["under"]),
+            "over": _world_median(values["over"]),
+        }
+    complete_handicaps = [
+        (line, values) for line, values in handicap_by_line.items()
+        if all(values[side] for side in ("home", "draw", "away"))
+        and abs(float(line)) >= 0.25
+    ]
+    if complete_handicaps:
+        line, values = min(
+            complete_handicaps,
+            key=lambda row: (-min(len(row[1][side]) for side in ("home", "draw", "away")), abs(abs(row[0]) - 1.0)),
+        )
+        result["handicap"] = {
+            "line": float(line),
+            "home": _world_median(values["home"]),
+            "draw": _world_median(values["draw"]),
+            "away": _world_median(values["away"]),
+        }
+    result["available_markets"] = [
+        market for market in ("1x2", "totals", "handicap") if result.get(market)
+    ]
+    return result
+
+
+def fetch_world_market_snapshot(fixture_id, diff_hours):
+    fixture_id = int(fixture_id or 0)
+    if fixture_id <= 0:
+        return None
+    ttl_h = 4.0 if diff_hours > 3 else (0.5 if diff_hours > 1 else 0.2)
+    cache_key = f"world_market_v1_{fixture_id}"
+    cached = get_db_cache(cache_key, ttl_h)
+    if isinstance(cached, dict):
+        return cached
+    stale = get_db_cache(cache_key, 24)
+    try:
+        response = api_get("/odds", params={"fixture": fixture_id}, timeout=10)
+        payload = response.json() if response.status_code == 200 else {}
+        if response.status_code != 200 or payload.get("errors"):
+            raise RuntimeError(f"odds HTTP {response.status_code}: {payload.get('errors')}")
+        snapshot = _world_market_snapshot_from_response(
+            payload.get("response", []), fixture_id=fixture_id
+        )
+        set_db_cache(cache_key, snapshot)
+        return snapshot
+    except Exception as error:
+        print(f"⚠️ 세계경기 배당 조회 실패({fixture_id}): {error}")
+        if isinstance(stale, dict):
+            preserved = dict(stale)
+            preserved["stale"] = True
+            return preserved
+        return None
+
+
+def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, season, ttl_h):
+    fixture_id = int(fixture_id or 0)
+    team_ids = {int(home_id or 0), int(away_id or 0)}
+    default = {
+        str(team_id): {
+            "count": 0, "ace_missing": False, "ace_names": [],
+            "missing_goals": 0, "available": False, "source": "none",
+        }
+        for team_id in team_ids if team_id > 0
+    }
+    if fixture_id <= 0 or len(default) != 2:
+        return default
+    cache_key = f"world_injuries_v1_{fixture_id}"
+    cached = get_db_cache(cache_key, ttl_h)
+    if isinstance(cached, dict):
+        return cached
+    stale = get_db_cache(cache_key, max(24, ttl_h))
+    try:
+        response = api_get("/injuries", params={"fixture": fixture_id}, timeout=10)
+        payload = response.json() if response.status_code == 200 else {}
+        if response.status_code != 200 or payload.get("errors"):
+            raise RuntimeError(f"injuries HTTP {response.status_code}: {payload.get('errors')}")
+        names_by_team = {team_id: [] for team_id in team_ids}
+        for row in payload.get("response", []) or []:
+            team_id = int((row.get("team") or {}).get("id") or 0)
+            player_name = str((row.get("player") or {}).get("name") or "").strip()
+            if team_id in names_by_team and player_name:
+                names_by_team[team_id].append(player_name)
+        key_players = {}
+        if any(names_by_team.values()) and league_id and season:
+            key_players = fetch_league_key_players(league_id, season)
+        result = {}
+        for team_id, names in names_by_team.items():
+            names = sorted(set(names))
+            ace_names = []
+            missing_goals = 0
+            for name in names:
+                normalized = _normalize_player_name(name)
+                matched = next((
+                    stats for key_name, stats in key_players.items()
+                    if stats.get("team_id") in (None, team_id)
+                    and (
+                        normalized == _normalize_player_name(key_name)
+                        or (
+                            len(normalized) >= 6
+                            and (
+                                normalized in _normalize_player_name(key_name)
+                                or _normalize_player_name(key_name) in normalized
+                            )
+                        )
+                    )
+                ), None)
+                if matched or find_protected_star(name):
+                    ace_names.append(name)
+                    missing_goals += int((matched or {}).get("goals", 0) or 0)
+            result[str(team_id)] = {
+                "count": len(names),
+                "ace_missing": bool(ace_names),
+                "ace_names": ace_names,
+                "missing_goals": missing_goals,
+                "available": True,
+                "source": "target_fixture",
+            }
+        set_db_cache(cache_key, result)
+        return result
+    except Exception as error:
+        print(f"⚠️ 세계경기 부상자 조회 실패({fixture_id}): {error}")
+        if isinstance(stale, dict):
+            return stale
+        return default
+
+
+def _world_analysis_stage(diff_hours):
+    if diff_hours <= 0:
+        return "LOCKED_AFTER_KICKOFF"
+    if diff_hours <= 0.5:
+        return "T-30-final"
+    if diff_hours <= 1.0:
+        return "T-60-lineup"
+    if diff_hours <= 3.0:
+        return "T-3-refresh"
+    if diff_hours <= WORLD_ANALYSIS_HORIZON_HOURS:
+        return "T-24-initial"
+    return "WAITING_T24_ANALYSIS"
+
+
+def _world_data_quality(match, odds, h_recent, a_recent, h_long, a_long,
+                        h_stand, a_stand, injuries, lineup_confirmed):
+    score = 0
+    missing = []
+    if (
+        int(match.get("fixture_id") or 0) > 0
+        and int(match.get("home_team_id") or 0) > 0
+        and int(match.get("away_team_id") or 0) > 0
+        and match.get("kickoff_at")
+    ):
+        score += 15
+    else:
+        missing.append("경기·팀 신원 또는 시간")
+
+    if odds and odds.get("1x2"):
+        score += 15
+    else:
+        missing.append("승무패 배당")
+    if odds and odds.get("totals"):
+        score += 5
+    else:
+        missing.append("언더오버 배당")
+    if odds and odds.get("handicap"):
+        score += 5
+    else:
+        missing.append("핸디캡 배당")
+    if odds and odds.get("stale"):
+        score = max(0, score - 5)
+        missing.append("최신 배당")
+
+    recent_sample = min(int(h_recent.get("matches") or 0), int(a_recent.get("matches") or 0))
+    long_sample = min(int(h_long.get("home_total") or 0), int(a_long.get("away_total") or 0))
+    if recent_sample >= 5 and long_sample >= 3:
+        score += 20
+    elif recent_sample >= 3:
+        score += 12
+        missing.append("충분한 최근 경기 표본")
+    elif recent_sample > 0:
+        score += 6
+        missing.append("충분한 최근 경기 표본")
+    else:
+        missing.append("최근 경기 표본")
+
+    if (
+        int(h_stand.get("rank") or 99) != 99
+        and int(a_stand.get("rank") or 99) != 99
+        and long_sample >= 3
+    ):
+        score += 15
+    elif int(h_stand.get("rank") or 99) != 99 and int(a_stand.get("rank") or 99) != 99:
+        score += 8
+        missing.append("홈·원정 공격수비 표본")
+    else:
+        missing.append("순위·홈원정 공격수비")
+
+    if injuries.get("home", {}).get("available") and injuries.get("away", {}).get("available"):
+        score += 10
+    elif injuries.get("home", {}).get("available") or injuries.get("away", {}).get("available"):
+        score += 5
+        missing.append("양 팀 전체 부상·징계")
+    else:
+        missing.append("부상·징계")
+    if lineup_confirmed:
+        score += 10
+    else:
+        missing.append("확정 선발명단")
+    # 허용 리그의 정상 fixture_id는 종료 후 결과·사건 조회 대상으로 사용할 수 있다.
+    if int(match.get("fixture_id") or 0) > 0:
+        score += 5
+    else:
+        missing.append("경기 후 사건·통계 지원")
+
+    score = max(0, min(100, int(score)))
+    grade = "정상" if score >= 80 else ("주의" if score >= 60 else "보조 분석")
+    return score, grade, list(dict.fromkeys(missing))
+
+
+def _ensure_world_analysis_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS world_prediction_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_id INTEGER NOT NULL,
+            match_id TEXT NOT NULL,
+            league_id INTEGER NOT NULL,
+            season INTEGER,
+            analysis_version TEXT NOT NULL,
+            analysis_stage TEXT NOT NULL,
+            analysis_day TEXT NOT NULL,
+            kickoff_at TEXT NOT NULL,
+            analyzed_at TEXT NOT NULL,
+            frozen_at TEXT,
+            data_quality_score INTEGER NOT NULL,
+            odds_json TEXT NOT NULL DEFAULT '{}',
+            inputs_json TEXT NOT NULL DEFAULT '{}',
+            candidates_json TEXT NOT NULL DEFAULT '[]',
+            categories_json TEXT NOT NULL DEFAULT '{}',
+            decision_json TEXT NOT NULL DEFAULT '{}',
+            report_text TEXT NOT NULL DEFAULT '',
+            fingerprint TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(fixture_id, analysis_version, analysis_stage, fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_world_snapshot_day "
+        "ON world_prediction_snapshots(analysis_day, league_id, fixture_id)"
+    )
+
+
+def _world_analysis_usage():
+    day_key = datetime.now(KST).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+    try:
+        _ensure_world_analysis_table(conn)
+        today_rows = conn.execute(
+            "SELECT DISTINCT fixture_id, league_id FROM world_prediction_snapshots "
+            "WHERE analysis_day = ?", (day_key,),
+        ).fetchall()
+        all_rows = conn.execute(
+            "SELECT DISTINCT fixture_id FROM world_prediction_snapshots"
+        ).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+    today_ids = {int(row[0]) for row in today_rows}
+    all_ids = {int(row[0]) for row in all_rows}
+    league_counts = {}
+    for _, league_id in today_rows:
+        league_counts[int(league_id)] = int(league_counts.get(int(league_id), 0)) + 1
+    return day_key, today_ids, all_ids, league_counts
+
+
+def _save_world_analysis_snapshot(match, analysis):
+    payload_parts = {
+        "odds": analysis.get("odds_snapshot") or {},
+        "inputs": analysis.get("inputs_snapshot") or {},
+        "candidates": analysis.get("candidates") or [],
+        "categories": analysis.get("categories") or {},
+        "decision": analysis.get("decision") or {},
+    }
+    encoded = {
+        key: json.dumps(value, ensure_ascii=False, sort_keys=True)
+        for key, value in payload_parts.items()
+    }
+    fingerprint = hashlib.sha256(
+        "|".join((
+            ANALYSIS_VERSION, str(analysis.get("analysis_stage") or ""),
+            encoded["odds"], encoded["inputs"], encoded["candidates"],
+            encoded["categories"], encoded["decision"],
+        )).encode("utf-8")
+    ).hexdigest()
+    conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_world_analysis_table(conn)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO world_prediction_snapshots (
+                fixture_id, match_id, league_id, season, analysis_version,
+                analysis_stage, analysis_day, kickoff_at, analyzed_at, frozen_at,
+                data_quality_score, odds_json, inputs_json, candidates_json,
+                categories_json, decision_json, report_text, fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(match.get("fixture_id") or 0), str(match.get("id") or ""),
+                int(match.get("league_id") or 0), match.get("season"), ANALYSIS_VERSION,
+                str(analysis.get("analysis_stage") or ""),
+                datetime.now(KST).strftime("%Y-%m-%d"), str(match.get("kickoff_at") or ""),
+                str(analysis.get("analyzed_at") or ""), analysis.get("frozen_at"),
+                int(analysis.get("data_quality_score") or 0), encoded["odds"],
+                encoded["inputs"], encoded["candidates"], encoded["categories"],
+                encoded["decision"], str(analysis.get("report") or ""), fingerprint,
+            ),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def _analyze_world_match(item, now, market_performance):
+    """Analyze one verified fixture across 1X2, totals and handicap markets."""
+    match = dict((item or {}).get("match") or {})
+    fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+    home_id = int(match.get("home_team_id") or 0)
+    away_id = int(match.get("away_team_id") or 0)
+    home = str(match.get("home") or "홈팀")
+    away = str(match.get("away") or "원정팀")
+    league_id = int(match.get("league_id") or 0)
+    season = match.get("season")
+    kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    kickoff = kickoff.astimezone(KST)
+    diff_hours = (kickoff - now).total_seconds() / 3600.0
+    analysis_stage = _world_analysis_stage(diff_hours)
+    if analysis_stage in {"LOCKED_AFTER_KICKOFF", "WAITING_T24_ANALYSIS"}:
+        raise ValueError(f"not analyzable in stage {analysis_stage}")
+
+    heavy_ttl = 24
+    injury_ttl = 0.5 if diff_hours <= 3 else 12
+    odds = fetch_world_market_snapshot(fixture_id, diff_hours) or {}
+    h_recent_fixtures = fetch_team_recent_fixtures_api(home_id, heavy_ttl)
+    a_recent_fixtures = fetch_team_recent_fixtures_api(away_id, heavy_ttl)
+    h_long = fetch_team_long_term_stats_api(home_id, heavy_ttl)
+    a_long = fetch_team_long_term_stats_api(away_id, heavy_ttl)
+    h_recent = fetch_team_recent_form_metrics(home_id, heavy_ttl)
+    a_recent = fetch_team_recent_form_metrics(away_id, heavy_ttl)
+    h_stand = fetch_team_standing_api(home_id, heavy_ttl)
+    a_stand = fetch_team_standing_api(away_id, heavy_ttl)
+    h_survival = calculate_survival_motivation(h_stand)
+    a_survival = calculate_survival_motivation(a_stand)
+    h2h = fetch_fixture_details_api(home_id, away_id, heavy_ttl)
+    injury_map = fetch_world_injuries_snapshot(
+        fixture_id, home_id, away_id, league_id, season, injury_ttl
+    )
+    h_inj = injury_map.get(str(home_id), {})
+    a_inj = injury_map.get(str(away_id), {})
+
+    lineup_data = {"confirmed": False}
+    h_missing = []
+    a_missing = []
+    if diff_hours <= 1.0:
+        lineup_data = fetch_lineups_api(fixture_id, 0.2)
+        if lineup_data.get("confirmed"):
+            h_core = get_expected_core_players(home_id, league_id, season)
+            a_core = get_expected_core_players(away_id, league_id, season)
+            h_missing = find_missing_core_players(
+                sorted(set(h_core + list(h_inj.get("ace_names") or []))),
+                lineup_data.get(str(home_id), []),
+            )
+            a_missing = find_missing_core_players(
+                sorted(set(a_core + list(a_inj.get("ace_names") or []))),
+                lineup_data.get(str(away_id), []),
+            )
+    lineup_confirmed = bool(lineup_data.get("confirmed"))
+
+    h_last = fetch_team_last_match_date_api(home_id, heavy_ttl)
+    a_last = fetch_team_last_match_date_api(away_id, heavy_ttl)
+    h_rest = calculate_rest_days(h_last.get("date"), match.get("match_time"))
+    a_rest = calculate_rest_days(a_last.get("date"), match.get("match_time"))
+
+    injuries_for_quality = {"home": h_inj, "away": a_inj}
+    quality_score, quality_grade, missing_data = _world_data_quality(
+        match, odds, h_recent, a_recent, h_long, a_long,
+        h_stand, a_stand, injuries_for_quality, lineup_confirmed,
+    )
+    confidence = round(max(0.35, min(0.95, quality_score / 100.0)), 3)
+
+    league_name = str(match.get("league_name_ko") or match.get("league") or "")
+    avg_h_gf, avg_a_gf = get_league_averages(league_name)
+    avg_h_ga, avg_a_ga = avg_a_gf, avg_h_gf
+    has = (
+        (float(h_long.get("home_gf") or 0) / float(h_long.get("home_total") or 1)) / avg_h_gf
+        if int(h_long.get("home_total") or 0) > 0 else 1.0
+    )
+    hds = (
+        (float(h_long.get("home_ga") or 0) / float(h_long.get("home_total") or 1)) / avg_h_ga
+        if int(h_long.get("home_total") or 0) > 0 else 1.0
+    )
+    aas = (
+        (float(a_long.get("away_gf") or 0) / float(a_long.get("away_total") or 1)) / avg_a_gf
+        if int(a_long.get("away_total") or 0) > 0 else 1.0
+    )
+    ads = (
+        (float(a_long.get("away_ga") or 0) / float(a_long.get("away_total") or 1)) / avg_a_ga
+        if int(a_long.get("away_total") or 0) > 0 else 1.0
+    )
+    math_exp_h = has * ads * avg_h_gf * 1.08 * (1.0 + float(h_recent.get("strength") or 0))
+    math_exp_a = aas * hds * avg_a_gf * (1.0 + float(a_recent.get("strength") or 0))
+
+    wdl_odds = odds.get("1x2") or {}
+    valid_wdl_odds = all(float(wdl_odds.get(side) or 0) > 1.0 for side in ("home", "draw", "away"))
+    if valid_wdl_odds:
+        implied = normalize_probabilities([
+            1.0 / float(wdl_odds["home"]),
+            1.0 / float(wdl_odds["draw"]),
+            1.0 / float(wdl_odds["away"]),
+        ])
+        math_exp_h = math_exp_h * 0.85 + (implied[0] * 2.8) * 0.15
+        math_exp_a = math_exp_a * 0.85 + (implied[2] * 2.8) * 0.15
+
+    h_absence = min(
+        0.28,
+        (int(h_inj.get("count") or 0) * 0.015)
+        + (len(h_inj.get("ace_names") or []) * 0.07)
+        + (len(h_missing) * 0.08),
+    )
+    a_absence = min(
+        0.28,
+        (int(a_inj.get("count") or 0) * 0.015)
+        + (len(a_inj.get("ace_names") or []) * 0.07)
+        + (len(a_missing) * 0.08),
+    )
+    h_rank = int(h_stand.get("rank") or 99)
+    a_rank = int(a_stand.get("rank") or 99)
+    h_rank_bonus = max(-0.16, min(0.16, (a_rank - h_rank) * 0.01)) if 99 not in (h_rank, a_rank) else 0.0
+    a_rank_bonus = -h_rank_bonus
+    h2h_total = int(h2h.get("total") or 0)
+    h_h2h = (
+        max(-0.08, min(0.08, ((int(h2h.get("h_wins") or 0) - int(h2h.get("a_wins") or 0)) / h2h_total) * 0.10))
+        if h2h_total else 0.0
+    )
+    a_h2h = -h_h2h
+    exp_h = round(max(0.3, min(3.2,
+        math_exp_h * (1.0 - h_absence) + a_absence * 0.35 + h_rank_bonus + h_h2h
+        + float(h_survival.get("attack_boost") or 0)
+        + float(a_survival.get("opponent_risk_boost") or 0)
+    )), 2)
+    exp_a = round(max(0.3, min(3.2,
+        math_exp_a * (1.0 - a_absence) + h_absence * 0.35 + a_rank_bonus + a_h2h
+        + float(a_survival.get("attack_boost") or 0)
+        + float(h_survival.get("opponent_risk_boost") or 0)
+    )), 2)
+
+    totals_odds = odds.get("totals") or {}
+    uo_base = float(totals_odds.get("line") or 2.5)
+    handicap_odds = odds.get("handicap") or {}
+    preliminary = calculate_poisson_probs(exp_h, exp_a, 0.0, uo_base)
+    handi_base = handicap_odds.get("line")
+    if handi_base is None or abs(float(handi_base or 0)) < 0.25:
+        handi_base = -1.0 if preliminary[0] >= preliminary[2] else 1.0
+    handi_base = float(handi_base)
+    h_win, draw, a_win, prob_u, prob_o, handi_h, handi_d, handi_a = calculate_poisson_probs(
+        exp_h, exp_a, handi_base, uo_base
+    )
+    if valid_wdl_odds:
+        h_win, draw, a_win = calibrate_three_way_probabilities(
+            [h_win, draw, a_win],
+            [wdl_odds["home"], wdl_odds["draw"], wdl_odds["away"]],
+            confidence,
+        )
+    valid_totals_odds = all(float(totals_odds.get(side) or 0) > 1.0 for side in ("under", "over"))
+    if valid_totals_odds:
+        prob_u, prob_o = calibrate_two_way_probabilities(
+            [prob_u, prob_o], [totals_odds["under"], totals_odds["over"]], confidence
+        )
+    valid_handicap_odds = all(float(handicap_odds.get(side) or 0) > 1.0 for side in ("home", "draw", "away"))
+    if valid_handicap_odds:
+        handi_h, handi_d, handi_a = calibrate_three_way_probabilities(
+            [handi_h, handi_d, handi_a],
+            [handicap_odds["home"], handicap_odds["draw"], handicap_odds["away"]],
+            confidence,
+        )
+
+    wdl_market = normalize_probabilities([
+        1.0 / float(wdl_odds["home"]), 1.0 / float(wdl_odds["draw"]), 1.0 / float(wdl_odds["away"]),
+    ]) if valid_wdl_odds else [0.0, 0.0, 0.0]
+    totals_market = normalize_probabilities([
+        1.0 / float(totals_odds["under"]), 1.0 / float(totals_odds["over"]),
+    ]) if valid_totals_odds else [0.0, 0.0]
+    handicap_market = normalize_probabilities([
+        1.0 / float(handicap_odds["home"]), 1.0 / float(handicap_odds["draw"]),
+        1.0 / float(handicap_odds["away"]),
+    ]) if valid_handicap_odds else [0.0, 0.0, 0.0]
+    candidates = [
+        {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{home} 승", "prob": h_win, "odd": float(wdl_odds.get("home") or 0), "market_prob": wdl_market[0], "selection_side": "home"},
+        {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": "무승부", "prob": draw, "odd": float(wdl_odds.get("draw") or 0), "market_prob": wdl_market[1], "selection_side": "draw"},
+        {"label": "일반 승무패 예측", "sort_id": 3, "raw_pick": f"{away} 승", "prob": a_win, "odd": float(wdl_odds.get("away") or 0), "market_prob": wdl_market[2], "selection_side": "away"},
+        {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"[{handi_base:+.1f}] {home} 핸디승", "prob": handi_h, "odd": float(handicap_odds.get("home") or 0), "market_prob": handicap_market[0], "selection_side": "home", "handicap_base": handi_base},
+        {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"[{handi_base:+.1f}] 핸디무", "prob": handi_d, "odd": float(handicap_odds.get("draw") or 0), "market_prob": handicap_market[1], "selection_side": "draw", "handicap_base": handi_base},
+        {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"[{handi_base:+.1f}] {home} 핸디패", "prob": handi_a, "odd": float(handicap_odds.get("away") or 0), "market_prob": handicap_market[2], "selection_side": "away", "handicap_base": handi_base},
+        {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 (U/O {uo_base:g})", "prob": prob_u, "odd": float(totals_odds.get("under") or 0), "market_prob": totals_market[0], "selection_side": "under"},
+        {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 (U/O {uo_base:g})", "prob": prob_o, "odd": float(totals_odds.get("over") or 0), "market_prob": totals_market[1], "selection_side": "over"},
+    ]
+    calibrate_market_candidates(candidates, market_performance, confidence)
+    underdog_side = (
+        "home" if float(wdl_odds.get("home") or 0) > float(wdl_odds.get("away") or 0)
+        else ("away" if float(wdl_odds.get("away") or 0) > float(wdl_odds.get("home") or 0) else "")
+    ) if valid_wdl_odds else ""
+    attach_underdog_signals(candidates, home, away, {
+        "home_absence": h_absence, "away_absence": a_absence,
+        "home_market_bonus": 0.0, "away_market_bonus": 0.0,
+        "home_tactical": max(0.0, h_h2h), "away_tactical": max(0.0, a_h2h),
+        "home_recent": float(h_recent.get("strength") or 0),
+        "away_recent": float(a_recent.get("strength") or 0),
+        "home_rest": h_rest if h_rest < 90 else 0,
+        "away_rest": a_rest if a_rest < 90 else 0,
+        "home_lineup": min(0.24, len(h_missing) * 0.08),
+        "away_lineup": min(0.24, len(a_missing) * 0.08),
+        "underdog_side": underdog_side,
+    })
+    annotate_pick_metrics(candidates, confidence)
+    categories, _ = select_pick_categories(candidates, confidence)
+    # World VIP is a future paid-grade candidate.  A strong price alone cannot
+    # bypass the separately agreed 90/100 input-quality gate.
+    if quality_score < 90:
+        categories["vip_underdog"] = None
+    selected = categories.get("high_probability")
+    evidence, coverage = build_analysis_evidence({
+        "h_recent": h_recent, "a_recent": a_recent,
+        "h_stats": {}, "a_stats": {}, "h_long": h_long, "a_long": a_long,
+        "h_inj": h_inj, "a_inj": a_inj,
+        "h2h_total": h2h_total, "h_wins": int(h2h.get("h_wins") or 0),
+        "draws": int(h2h.get("draws") or 0), "a_wins": int(h2h.get("a_wins") or 0),
+        "h_rest_days": h_rest, "a_rest_days": a_rest,
+        "weather": None, "referee": None,
+        "tactical_text": ", ".join(filter(None, (
+            f"{home} 강등권 생존 동기" if h_survival.get("active") else "",
+            f"{away} 강등권 생존 동기" if a_survival.get("active") else "",
+        ))),
+        "movement_text": None,
+        "home_id": home_id, "away_id": away_id, "fixture_id": fixture_id,
+    })
+    if odds.get("available_markets"):
+        evidence.append({
+            "name": "시장 배당", "weight": 0.25,
+            "value": f"{', '.join(odds['available_markets'])} · {int(odds.get('bookmaker_count') or 0)}개 업체 중앙값",
+        })
+    evidence.append({
+        "name": "데이터 품질", "weight": 0.0,
+        "value": f"{quality_score}/100 ({quality_grade})",
+    })
+    candidate_rows, compact_categories, decision = build_pick_selection_audit(
+        candidates, categories, confidence
+    )
+    report = build_detailed_report(
+        selected, evidence, confidence, candidates, categories,
+        {"home": home, "away": away, "exp_h": exp_h, "exp_a": exp_a, "weather": None},
+    )
+    analyzed_at = datetime.now(KST).isoformat()
+    frozen_at = analyzed_at if analysis_stage == "T-30-final" else None
+    selected_summary = dict(compact_categories.get("high_probability") or {})
+    selected_summary["display"] = _human_pick_label(selected_summary.get("raw_pick"), home)
+    honey_summary = dict(compact_categories.get("honey") or {})
+    if honey_summary:
+        honey_summary["display"] = _human_pick_label(honey_summary.get("raw_pick"), home)
+    inputs_snapshot = {
+        "home_team_id": home_id, "away_team_id": away_id,
+        "league_id": league_id, "season": season, "fixture_id": fixture_id,
+        "kickoff_at": kickoff.isoformat(), "expected_goals": {"home": exp_h, "away": exp_a},
+        "recent": {"home": h_recent, "away": a_recent},
+        "long_term": {"home": h_long, "away": a_long},
+        "standings": {"home": h_stand, "away": a_stand},
+        "survival_motivation": {"home": h_survival, "away": a_survival},
+        "injuries": injuries_for_quality,
+        "lineups": {
+            "confirmed": lineup_confirmed,
+            "home_missing_core": h_missing, "away_missing_core": a_missing,
+        },
+        "rest_days": {"home": h_rest, "away": a_rest},
+        "h2h": h2h, "evidence_coverage": coverage,
+    }
+    return {
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_stage": analysis_stage,
+        "analyzed_at": analyzed_at,
+        "frozen_at": frozen_at,
+        "data_quality_score": quality_score,
+        "data_quality_grade": quality_grade,
+        "missing_data": missing_data,
+        "lineup_confirmed": lineup_confirmed,
+        "odds_snapshot": odds,
+        "inputs_snapshot": inputs_snapshot,
+        "candidates": candidate_rows,
+        "categories": compact_categories,
+        "selected": selected_summary,
+        "alternative": honey_summary,
+        "decision": decision,
+        "report": report,
+    }
+
+
+def analyze_world_schedule():
+    """Run stage 6-2 without exposing any unverified prediction to customers."""
+    payload = _read_json(WORLD_DASHBOARD_FILE, {})
+    if not isinstance(payload, dict) or not isinstance(payload.get("matches"), list):
+        print("⚠️ 세계경기 일정 정상본이 없어 그림자 분석을 건너뜁니다.")
+        return False, False
+    now = datetime.now(KST)
+    day_key, today_ids, all_ids, league_counts = _world_analysis_usage()
+    market_performance = load_market_performance()
+    changed = False
+    analyzed_now = 0
+    errors_now = 0
+    quota_paused = False
+    stage_priority = {
+        "T-30-final": 0, "T-60-lineup": 1,
+        "T-3-refresh": 2, "T-24-initial": 3,
+    }
+    due_items = []
+
+    for item in payload.get("matches", []):
+        match = item.get("match") or {}
+        try:
+            kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
+            if kickoff.tzinfo is None:
+                kickoff = kickoff.replace(tzinfo=KST)
+            kickoff = kickoff.astimezone(KST)
+        except (TypeError, ValueError):
+            item["analysis_status"] = "ANALYSIS_ERROR"
+            item["analysis_error"] = "킥오프 시간 해석 실패"
+            changed = True
+            errors_now += 1
+            continue
+        stage = _world_analysis_stage((kickoff - now).total_seconds() / 3600.0)
+        if stage == "WAITING_T24_ANALYSIS":
+            if item.get("analysis_status") == "PENDING_SHADOW_ANALYSIS":
+                item["analysis_status"] = stage
+                changed = True
+            continue
+        if stage == "LOCKED_AFTER_KICKOFF":
+            if not item.get("analysis") and item.get("analysis_status") not in {
+                "MISSED_PREKICKOFF", "FROZEN_SHADOW"
+            }:
+                item["analysis_status"] = "MISSED_PREKICKOFF"
+                item["pick_status"] = "NOT_ANALYZED"
+                changed = True
+            continue
+        if item.get("frozen_at") or item.get("analysis_status") == "FROZEN_SHADOW":
+            continue
+        previous_stage = str(item.get("analysis_stage") or "")
+        if previous_stage == stage:
+            if not (
+                stage == "T-60-lineup"
+                and not item.get("lineup_confirmed")
+                and int(item.get("lineup_attempts") or 0) < 2
+            ):
+                continue
+        due_items.append((stage_priority.get(stage, 9), float(item.get("timestamp") or 0), stage, item))
+
+    due_items.sort(key=lambda row: (row[0], row[1]))
+    world_calls_before = int(get_api_usage_status().get("world_calls") or 0)
+    with api_purpose_context("world"):
+        for _, _, stage, item in due_items:
+            match = item.get("match") or {}
+            fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+            league_id = int(match.get("league_id") or 0)
+            is_existing = fixture_id in all_ids
+            if not is_existing and len(today_ids) >= WORLD_MAX_DEEP_ANALYSES_DAILY:
+                if item.get("analysis_status") != "DEFERRED_DAILY_CAP":
+                    item["analysis_status"] = "DEFERRED_DAILY_CAP"
+                    changed = True
+                continue
+            if (
+                not is_existing
+                and int(league_counts.get(league_id, 0)) >= WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE
+            ):
+                if item.get("analysis_status") != "DEFERRED_LEAGUE_CAP":
+                    item["analysis_status"] = "DEFERRED_LEAGUE_CAP"
+                    changed = True
+                continue
+            try:
+                analysis = _analyze_world_match(item, now, market_performance)
+                if not _save_world_analysis_snapshot(match, analysis):
+                    raise RuntimeError("세계경기 분석 스냅샷 저장 실패")
+                item["analysis"] = analysis
+                item["analysis_version"] = ANALYSIS_VERSION
+                item["analysis_stage"] = analysis["analysis_stage"]
+                item["analyzed_at"] = analysis["analyzed_at"]
+                item["frozen_at"] = analysis.get("frozen_at")
+                item["data_quality_score"] = analysis["data_quality_score"]
+                item["data_quality_grade"] = analysis["data_quality_grade"]
+                item["missing_data"] = analysis["missing_data"]
+                item["lineup_confirmed"] = analysis["lineup_confirmed"]
+                if stage == "T-60-lineup" and not analysis["lineup_confirmed"]:
+                    item["lineup_attempts"] = int(item.get("lineup_attempts") or 0) + 1
+                item["analysis_status"] = (
+                    "FROZEN_SHADOW" if analysis.get("frozen_at") else "ANALYZED_SHADOW"
+                )
+                item["pick_status"] = "SHADOW_PICK_READY"
+                changed = True
+                analyzed_now += 1
+                today_ids.add(fixture_id)
+                all_ids.add(fixture_id)
+                league_counts[league_id] = int(league_counts.get(league_id, 0)) + (0 if is_existing else 1)
+                print(
+                    f"🧪 세계경기 그림자 분석: {match.get('home')} vs {match.get('away')} · "
+                    f"{analysis['selected'].get('display')} "
+                    f"{float(analysis['selected'].get('probability') or 0) * 100:.1f}% · "
+                    f"품질 {analysis['data_quality_score']}점"
+                )
+            except ApiQuotaUnavailable as error:
+                quota_paused = True
+                print(f"⚠️ 세계경기 분석 예산 보호로 중단: {error}")
+                break
+            except Exception as error:
+                errors_now += 1
+                item["analysis_status"] = "ANALYSIS_ERROR"
+                item["analysis_error"] = f"{type(error).__name__}: {error}"[:500]
+                changed = True
+                print(f"⚠️ 세계경기 분석 실패({fixture_id}): {type(error).__name__}: {error}")
+
+    matches = payload.get("matches", [])
+    source_meta = payload.setdefault("source_meta", {})
+    source_meta.update({
+        "analysis_started": True,
+        "analysis_day": day_key,
+        "analysis_daily_limit": WORLD_MAX_DEEP_ANALYSES_DAILY,
+        "analysis_per_league_limit": WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE,
+        "analyzed_shadow_count": sum(
+            1 for item in matches if item.get("analysis_status") in {"ANALYZED_SHADOW", "FROZEN_SHADOW"}
+        ),
+        "frozen_shadow_count": sum(1 for item in matches if item.get("analysis_status") == "FROZEN_SHADOW"),
+        "analysis_error_count": sum(1 for item in matches if item.get("analysis_status") == "ANALYSIS_ERROR"),
+        "quota_paused": quota_paused,
+        "api_usage": get_api_usage_status(),
+    })
+    if changed:
+        payload["schema_version"] = "world-shadow.v2"
+        payload["stage"] = "SHADOW_ANALYSIS"
+        payload["last_analysis_at"] = datetime.now(KST).isoformat()
+        _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
+    world_calls_after = int(get_api_usage_status().get("world_calls") or 0)
+    print(
+        f"✅ 세계경기 2단계 종료: 이번 분석 {analyzed_now}경기 / 오류 {errors_now} / "
+        f"WORLD API {max(0, world_calls_after - world_calls_before)}회"
+    )
+    return True, changed
 
 
 def calculate_survival_motivation(standing):
@@ -5720,11 +6651,44 @@ def run_score_job():
     return upload_to_github("dashboard_data.json")
 
 
+def _world_schedule_refresh_due(now=None):
+    """Refresh the broad schedule slowly while allowing frequent cached analysis."""
+    now = now or datetime.now(KST)
+    payload = _read_json(WORLD_DASHBOARD_FILE, {})
+    generated_at = str((payload or {}).get("generated_at") or "")
+    if not generated_at:
+        return True
+    try:
+        generated = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            generated = generated.replace(tzinfo=KST)
+        return (now - generated.astimezone(KST)).total_seconds() >= (
+            WORLD_SCHEDULE_REFRESH_HOURS * 3600
+        )
+    except (TypeError, ValueError):
+        return True
+
+
 def run_world_job():
     """Run independently so WORLD failures never block PROTO/LIVE/scoring."""
-    if not collect_world_schedule():
+    schedule_refreshed = False
+    if _world_schedule_refresh_due():
+        if not collect_world_schedule():
+            return False
+        schedule_refreshed = True
+
+    analysis_ok, analysis_changed = analyze_world_schedule()
+    if not analysis_ok:
         return False
-    return upload_to_github(WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name)
+
+    # Store the private learning snapshot before publishing its matching admin JSON.
+    if analysis_changed and not upload_sqlite_to_github("ai_predictions.db"):
+        return False
+    if schedule_refreshed or analysis_changed:
+        return upload_to_github(
+            WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name
+        )
+    return True
 
 
 def _initialize_db_safely():
@@ -5748,7 +6712,7 @@ JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
-    "world": max(120, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "300"))),
+    "world": max(600, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "1200"))),
 }
 
 
@@ -5922,9 +6886,14 @@ def run_scheduler():
     schedule.every(5).minutes.do(_launch_isolated_job, "live")
     schedule.every(5).minutes.do(_launch_isolated_job, "score")
     schedule.every(20).minutes.do(_launch_isolated_job, "master")
-    schedule.every(6).hours.do(_launch_isolated_job, "world")
+    schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
+        _launch_isolated_job, "world"
+    )
 
-    print("\n🚀 [감시 스케줄러] master/live/score/world 분리 · 중복 방지 · 하드 타임아웃 적용")
+    print(
+        "\n🚀 [감시 스케줄러] master/live/score/world 분리 · 중복 방지 · "
+        f"WORLD {WORLD_ANALYSIS_INTERVAL_MINUTES}분 분석/{WORLD_SCHEDULE_REFRESH_HOURS}시간 일정"
+    )
     last_heartbeat = 0.0
     while True:
         try:

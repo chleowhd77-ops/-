@@ -7,6 +7,7 @@ import time
 import requests
 import difflib
 import unicodedata
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -31,7 +32,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.6.1-quota-cache-world"
+ANALYSIS_VERSION = "V7.3.7-world-shadow-analysis"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -46,6 +47,7 @@ _API_PROVIDER_REMAINING = None
 _API_PROVIDER_DAY = None
 _API_QUOTA_NOTICE_SHOWN = False
 _API_LAST_REQUEST_AT = 0.0
+_API_PURPOSE_OVERRIDE = None
 
 
 class ApiQuotaUnavailable(RuntimeError):
@@ -235,7 +237,25 @@ def _show_api_quota_notice(message):
         _API_QUOTA_NOTICE_SHOWN = True
 
 
-def api_get(path, params=None, timeout=7, purpose="analysis"):
+@contextmanager
+def api_purpose_context(purpose):
+    """Count nested helper requests under one isolated job purpose.
+
+    Most data helpers are shared by PROTO and WORLD.  The world worker runs in
+    its own process, so a short-lived process-local override lets those helpers
+    keep their stable signatures while every real network request is charged
+    to the WORLD safety budget.
+    """
+    global _API_PURPOSE_OVERRIDE
+    previous = _API_PURPOSE_OVERRIDE
+    _API_PURPOSE_OVERRIDE = str(purpose or "analysis").strip().lower()
+    try:
+        yield
+    finally:
+        _API_PURPOSE_OVERRIDE = previous
+
+
+def api_get(path, params=None, timeout=7, purpose=None):
     """API-Football 호출을 한곳에서 집계하고 분석/라이브 예산을 분리한다."""
     global _API_PROVIDER_REMAINING, _API_PROVIDER_DAY, _API_QUOTA_NOTICE_SHOWN
     current_day = _api_provider_day_key()
@@ -250,7 +270,7 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
         raise ApiQuotaUnavailable("API daily quota exhausted")
 
     day_key, local_calls, stored_remaining = _api_usage_today()
-    purpose = str(purpose or "analysis").strip().lower()
+    purpose = str(purpose or _API_PURPOSE_OVERRIDE or "analysis").strip().lower()
     world_calls = _api_purpose_usage_today(day_key, "world") if purpose == "world" else 0
     _API_PROVIDER_DAY = day_key
     if _API_PROVIDER_REMAINING is None and stored_remaining is not None:
