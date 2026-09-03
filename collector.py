@@ -59,6 +59,13 @@ PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v1"
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
+SQUAD_CACHE_TTL_HOURS = max(24, min(720, int(os.getenv("SQUAD_CACHE_TTL_HOURS", "168"))))
+FIXTURE_IDENTITY_CACHE_HOURS = max(
+    1, min(24, int(os.getenv("FIXTURE_IDENTITY_CACHE_HOURS", "6")))
+)
+FIXTURE_IDENTITY_RETRY_HOURS = max(
+    1, min(6, int(os.getenv("FIXTURE_IDENTITY_RETRY_HOURS", "1")))
+)
 PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
 # 승무패 14는 소액 참고 조합으로 운영한다. 서버 환경변수에 예전 64가
 # 남아 있어도 8조합(8,000원)을 넘지 않도록 상한을 강제한다.
@@ -863,18 +870,49 @@ POSITION_WEIGHTS = {
 SQUAD_CACHE = {} 
 
 def fetch_team_squad_cached(team_id):
-    if not team_id: return []
-    if team_id in SQUAD_CACHE: return SQUAD_CACHE[team_id]
+    if not team_id:
+        return []
+    team_id = int(team_id)
+    if team_id in SQUAD_CACHE:
+        return SQUAD_CACHE[team_id]
+
+    cache_key = f"team_squad_v2_{team_id}"
+    cached_players = get_db_cache(cache_key, SQUAD_CACHE_TTL_HOURS)
+    if isinstance(cached_players, list):
+        SQUAD_CACHE[team_id] = cached_players
+        return cached_players
+
+    # 프로세스가 20분마다 새로 시작되어도 같은 선수단을 다시 부르지 않도록
+    # SQLite 캐시를 사용한다. 일시 오류 때는 오래된 정상본을 사용한다.
+    stale_players = get_db_cache(cache_key, 24 * 365 * 2)
+    retry_guard = get_db_cache(
+        f"{cache_key}_retry_guard", FIXTURE_IDENTITY_RETRY_HOURS
+    )
+    if retry_guard is not None:
+        players = stale_players if isinstance(stale_players, list) else []
+        SQUAD_CACHE[team_id] = players
+        return players
     try:
         res = api_get("/players/squads", params={"team": team_id}, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            if data.get("response"):
-                players = data["response"][0]["players"]
+            if not data.get("errors"):
+                response_rows = data.get("response") or []
+                players = (
+                    response_rows[0].get("players", [])
+                    if response_rows and isinstance(response_rows[0], dict)
+                    else []
+                )
+                players = players if isinstance(players, list) else []
                 SQUAD_CACHE[team_id] = players
+                set_db_cache(cache_key, players)
                 return players
-    except: pass
-    return []
+    except Exception:
+        pass
+    set_db_cache(f"{cache_key}_retry_guard", {"failed": True})
+    players = stale_players if isinstance(stale_players, list) else []
+    SQUAD_CACHE[team_id] = players
+    return players
 
 def calculate_war_penalty(team_name, ace_names, total_inj_count, team_id):
     squad = fetch_team_squad_cached(team_id)
@@ -3647,6 +3685,39 @@ def build_dashboard_data():
     print(f"✅ 대시보드 데이터 패키징 완료! ({ANALYSIS_VERSION} 과신 방지·핵심선수·신뢰도 적용)")
     return True
 
+def _cached_fixture_identity_board(date_key, purpose="scoring"):
+    """Reuse one date board across score/live workers instead of every 5 minutes."""
+    date_key = str(date_key or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_key):
+        return []
+    cache_key = f"fixture_identity_board_v2_{date_key}"
+    cached = get_db_cache(cache_key, FIXTURE_IDENTITY_CACHE_HOURS)
+    if isinstance(cached, list):
+        return cached
+
+    stale = get_db_cache(cache_key, 24 * 14)
+    retry_guard = get_db_cache(
+        f"{cache_key}_retry_guard", FIXTURE_IDENTITY_RETRY_HOURS
+    )
+    if retry_guard is not None:
+        return stale if isinstance(stale, list) else []
+
+    try:
+        board = _request_fixture_board(
+            {"date": date_key, "timezone": "Asia/Seoul"},
+            purpose=purpose,
+        )
+        board = board if isinstance(board, list) else []
+        set_db_cache(cache_key, board)
+        return board
+    except Exception:
+        set_db_cache(f"{cache_key}_retry_guard", {"failed": True})
+        if isinstance(stale, list):
+            print(f"♻️ 경기 신원판 API 오류 - 저장된 정상본 사용({date_key})")
+            return stale
+        raise
+
+
 def _recover_due_fixture_ids(rows, conn):
     """Recover unresolved fixtures from their scheduled date, including terminal games."""
     unresolved = [row for row in rows if not int(row[6] or 0)]
@@ -3666,9 +3737,8 @@ def _recover_due_fixture_ids(rows, conn):
         if date_key in boards:
             continue
         try:
-            boards[date_key] = _request_fixture_board(
-                {"date": date_key, "timezone": "Asia/Seoul"},
-                purpose="scoring",
+            boards[date_key] = _cached_fixture_identity_board(
+                date_key, purpose="scoring"
             )
         except Exception as error:
             print(f"⚠️ 미연결 경기판 조회 실패({date_key}): {error}")
@@ -3902,6 +3972,7 @@ def _candidate_review_text(review):
 
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
+    scoring_calls_before = int(get_api_usage_status().get("scoring_calls") or 0)
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
@@ -4044,7 +4115,12 @@ def auto_score_matches():
                 conn.rollback()
                 print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
 
-        print(f"✅ 스마트 채점 사이클 종료 (묶음 조회 API 소모량: {api_call_count}회)")
+        scoring_calls_after = int(get_api_usage_status().get("scoring_calls") or 0)
+        scoring_calls_used = max(0, scoring_calls_after - scoring_calls_before)
+        print(
+            "✅ 스마트 채점 사이클 종료 "
+            f"(전체 채점 API {scoring_calls_used}회 / 결과 묶음 {api_call_count}회)"
+        )
         return True
     except Exception as error:
         print(f"❌ [관제 봇 떡밥] 채점 중 오류: {error}")
@@ -4304,10 +4380,9 @@ def update_live_scores():
                 recovery_dates.append(date_key)
         for date_key in recovery_dates[:3]:
             try:
-                date_board = _request_fixture_board({
-                    "date": date_key,
-                    "timezone": "Asia/Seoul",
-                })
+                date_board = _cached_fixture_identity_board(
+                    date_key, purpose="live"
+                )
                 for item in date_board:
                     fixture_id = int(item.get("fixture", {}).get("id") or 0)
                     if fixture_id:

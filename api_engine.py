@@ -31,7 +31,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.6-world-schedule-survival"
+ANALYSIS_VERSION = "V7.3.6.1-quota-cache-world"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -329,6 +329,9 @@ def get_api_usage_status():
     remaining = stored_remaining
     if _API_PROVIDER_DAY == day_key and _API_PROVIDER_REMAINING is not None:
         remaining = _API_PROVIDER_REMAINING
+    analysis_calls = _api_purpose_usage_today(day_key, "analysis")
+    live_calls = _api_purpose_usage_today(day_key, "live")
+    scoring_calls = _api_purpose_usage_today(day_key, "scoring")
     world_calls = _api_purpose_usage_today(day_key, "world")
     return {
         "usage_day": day_key.removeprefix("utc:"),
@@ -339,6 +342,9 @@ def get_api_usage_status():
         "daily_limit": API_DAILY_TOTAL_LIMIT,
         "live_reserve": API_LIVE_RESERVE,
         "world_calls": int(world_calls or 0),
+        "analysis_calls": int(analysis_calls or 0),
+        "live_calls": int(live_calls or 0),
+        "scoring_calls": int(scoring_calls or 0),
         "world_daily_limit": API_WORLD_DAILY_LIMIT,
         "world_min_remaining": API_WORLD_MIN_REMAINING,
         "quota_exhausted": remaining is not None and int(remaining) <= 0,
