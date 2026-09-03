@@ -32,7 +32,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.7.1-world-mainline-hotfix"
+ANALYSIS_VERSION = "V7.3.7.2-world-mainline-cache-refresh"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.

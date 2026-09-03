@@ -2642,7 +2642,9 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
     if fixture_id <= 0:
         return None
     ttl_h = 4.0 if diff_hours > 3 else (0.5 if diff_hours > 1 else 0.2)
-    cache_key = f"world_market_v1_{fixture_id}"
+    # v1에는 ``3 Way Handicap``의 숫자 3을 +3.0 선으로 오인한 결과가
+    # 저장될 수 있다. 파서 변경 뒤에는 새 세대 키로 실제 배당을 다시 받는다.
+    cache_key = f"world_market_v2_{fixture_id}"
     cached = get_db_cache(cache_key, ttl_h)
     if isinstance(cached, dict):
         return cached
