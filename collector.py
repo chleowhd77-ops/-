@@ -1536,8 +1536,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
     ranked = sorted(
         candidates,
         key=lambda item: (
-            float(item.get("balanced_score", 0) or 0),
             float(item.get("prob", 0) or 0),
+            float(item.get("balanced_score", 0) or 0),
             float(item.get("safe_score", 0) or 0),
             float(item.get("recommendation_score", 0) or 0),
         ),
@@ -1634,9 +1634,9 @@ def build_pick_selection_audit(candidates, categories, confidence):
     decision = {
         "schema_version": PICK_AUDIT_SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
-        "selector": "all-markets-balanced-score-v1",
+        "selector": "all-markets-probability-first-v2",
         "score_order": [
-            "balanced_score", "model_probability", "safe_score",
+            "model_probability", "balanced_score", "safe_score",
             "recommendation_score",
         ],
         "candidate_count": len(candidate_rows),
@@ -1649,7 +1649,7 @@ def build_pick_selection_audit(candidates, categories, confidence):
         "selected_market": selected_high.get("market_key", ""),
         "selection_reason": (
             "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 "
-            "비교해 선택점수가 가장 높은 방향을 확률픽으로 확정"
+            "비교해 보정확률이 가장 높은 방향을 확률픽으로 확정"
         ),
         "vip_promoted": compact_categories.get("vip_underdog") is not None,
     }
@@ -1971,8 +1971,8 @@ def select_pick_categories(picks, confidence):
     high_source = max(
         picks,
         key=lambda pick: (
-            float(pick.get("balanced_score", 0) or 0),
             float(pick.get("prob", 0) or 0),
+            float(pick.get("balanced_score", 0) or 0),
             float(pick.get("safe_score", 0) or 0),
             float(pick.get("recommendation_score", 0) or 0),
         ),
