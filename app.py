@@ -2120,7 +2120,7 @@ def _detail_html(item):
 
 
 def _analysis_data_quality_html(item):
-    """Show whether the model had a rich or partial evidence set."""
+    """Keep evidence coverage separate from adjusted analysis confidence."""
     if not isinstance(item, dict):
         return ""
     try:
@@ -2130,20 +2130,39 @@ def _analysis_data_quality_html(item):
     if coverage <= 0:
         return ""
     percent = int(round(coverage * 100))
-    odds_source = str(item.get("odds_source") or "betman")
-    if odds_source == "model_only":
-        label, color = "배당 대기 · 팀 자료", "#F59E0B"
-    elif coverage >= 0.8:
-        label, color = "분석 자료 충분", "#10B981"
-    elif coverage >= 0.65:
-        label, color = "분석 자료 보통", "#38BDF8"
-    else:
-        label, color = "분석 자료 일부 부족", "#F59E0B"
-    return (
-        "<span style='display:inline-block;margin-left:8px;padding:3px 7px;"
-        f"border:1px solid {color};border-radius:999px;color:{color};"
-        f"font-size:10px;letter-spacing:0;'>{label} {percent}%</span>"
+    try:
+        confidence = max(
+            0.0, min(1.0, float(item.get("analysis_confidence") or 0))
+        )
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence_percent = int(round(confidence * 100))
+    coverage_color = (
+        "#10B981" if coverage >= 0.8 else
+        ("#38BDF8" if coverage >= 0.65 else "#F59E0B")
     )
+    confidence_color = (
+        "#10B981" if confidence >= 0.8 else
+        ("#38BDF8" if confidence >= 0.65 else "#F59E0B")
+    )
+    coverage_badge = (
+        "<span style='display:inline-block;margin-left:8px;padding:3px 7px;"
+        f"border:1px solid {coverage_color};border-radius:999px;color:{coverage_color};"
+        f"font-size:10px;letter-spacing:0;'>데이터 확보율 {percent}%</span>"
+    )
+    confidence_badge = (
+        "<span style='display:inline-block;margin-left:6px;padding:3px 7px;"
+        f"border:1px solid {confidence_color};border-radius:999px;color:{confidence_color};"
+        f"font-size:10px;letter-spacing:0;'>최종 신뢰도 {confidence_percent}%</span>"
+        if confidence > 0 else ""
+    )
+    lineup_badge = (
+        "<span style='display:inline-block;margin-left:6px;padding:3px 7px;"
+        "border:1px solid #A78BFA;border-radius:999px;color:#A78BFA;"
+        "font-size:10px;letter-spacing:0;'>선발 미확인 감점</span>"
+        if not bool(item.get("lineup_confirmed")) else ""
+    )
+    return coverage_badge + confidence_badge + lineup_badge
 
 
 def _has_display_odds(*values):
@@ -2304,9 +2323,9 @@ def _top3_strategy_html(item):
         if str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
             support_text = f"가치 분석도 같은 방향인 {honey_text}을 가리킵니다."
         else:
-            support_text = f"승무패·핸디 대안은 {honey_text}이며, 주력과 별도 기준으로 판단합니다."
+            support_text = f"함께 적중 가능한 다른 시장 대안은 {honey_text}입니다."
     else:
-        support_text = "승무패·핸디캡의 실제 배당 자료가 없어 대안픽은 대기 상태입니다."
+        support_text = "함께 적중 가능한 별도 시장 대안을 계산할 수 없습니다."
 
     return (
         "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"

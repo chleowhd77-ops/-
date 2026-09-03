@@ -1370,16 +1370,16 @@ def build_detailed_report(
             tier_note = "보수적 가치 기준도 통과했습니다"
         elif honey.get("value_pick_tier") == "unpriced_reference":
             tier_note = (
-                "승무패·핸디캡 중 가장 강한 다른 방향이지만 실제 배당을 "
+                "주력과 함께 적중 가능한 다른 시장 방향이지만 실제 배당을 "
                 "확인하지 못한 참고픽입니다"
             )
         else:
-            tier_note = "승무패·핸디캡 중 가장 나은 대안이지만 참고 등급입니다"
+            tier_note = "주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다"
         final_parts.append(
             f"배당형 대안픽은 {_report_pick_line(honey, home)}이며, {tier_note}."
         )
     else:
-        final_parts.append("승무패·핸디캡에서 계산 가능한 별도 대안 방향이 없습니다.")
+        final_parts.append("주력과 함께 적중 가능한 별도 시장 대안을 계산하지 못했습니다.")
     if honey and not vip:
         final_parts.append("VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
     missing_text = (
@@ -1485,6 +1485,7 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "label": str(item.get("label") or ""),
             "raw_pick": raw_pick,
             "selection_side": str(item.get("selection_side") or ""),
+            "handicap_base": _audit_number(item.get("handicap_base")),
             "sort_id": int(item.get("sort_id", 0) or 0),
             "model_probability": _audit_number(item.get("prob"), 0.0),
             "raw_model_probability": _audit_number(item.get("raw_model_prob")),
@@ -1812,8 +1813,64 @@ def _tag_pick_category(pick, category_key):
     return selected
 
 
+def _pick_possible_wdl_results(pick):
+    """Return the regulation-time 1X2 results compatible with a candidate."""
+    market = infer_pick_market(pick)
+    side = str((pick or {}).get("selection_side") or "").strip().lower()
+    all_sides = {"home", "draw", "away"}
+    if market == "totals":
+        return all_sides
+    if market == "1x2":
+        return {side} if side in all_sides else all_sides
+    if market != "handicap" or side not in all_sides:
+        return all_sides
+
+    handicap = (pick or {}).get("handicap_base")
+    if handicap is None:
+        matched = re.search(
+            r"\[\s*([+-]?\d+(?:\.\d+)?)\s*\]",
+            str((pick or {}).get("raw_pick") or ""),
+        )
+        handicap = matched.group(1) if matched else None
+    try:
+        handicap = float(handicap)
+    except (TypeError, ValueError):
+        return all_sides
+
+    possible = set()
+    for goal_difference in range(-20, 21):
+        adjusted = goal_difference + handicap
+        handicap_side = (
+            "home" if adjusted > 1e-9
+            else ("away" if adjusted < -1e-9 else "draw")
+        )
+        if handicap_side != side:
+            continue
+        possible.add(
+            "home" if goal_difference > 0
+            else ("away" if goal_difference < 0 else "draw")
+        )
+    return possible
+
+
+def picks_can_coexist(primary, alternative):
+    """True only when two different-market picks can win on one final score."""
+    if not primary or not alternative:
+        return False
+    primary_market = infer_pick_market(primary)
+    alternative_market = infer_pick_market(alternative)
+    if primary_market == alternative_market:
+        return False
+    if "totals" in {primary_market, alternative_market}:
+        return True
+    return bool(
+        _pick_possible_wdl_results(primary)
+        & _pick_possible_wdl_results(alternative)
+    )
+
+
 def select_pick_categories(picks, confidence):
-    """확률픽과 배당형 대안픽을 따로 선정하고 엄격한 역배만 VIP로 승격한다."""
+    """Select a primary and a compatible cross-market alternative."""
     categories = {
         "high_probability": None,
         "honey": None,
@@ -1833,20 +1890,15 @@ def select_pick_categories(picks, confidence):
         ),
     )
 
-    # 두 번째 칸은 언더/오버와 별개로, 승무패·핸디캡에서
-    # 배당과 모델 가치의 균형이 가장 나은 대안을 하나 제공한다.
+    # 두 번째 칸은 주력과 동시에 적중할 수 있는 다른 시장에서 고른다.
+    # 같은 핸디캡의 승/패처럼 서로 반대인 결과를 양쪽에 추천하지 않는다.
     honey_edge_floor = 0.015 + max(0.0, 0.65 - confidence) * 0.05
     alternative_pool = [
         pick for pick in picks
-        if infer_pick_market(pick) in {"1x2", "handicap"}
-        and float(pick.get("prob", 0) or 0) > 0
+        if float(pick.get("prob", 0) or 0) > 0
+        and str(pick.get("raw_pick") or "") != str(high_source.get("raw_pick") or "")
+        and picks_can_coexist(high_source, pick)
     ]
-    different_candidates = [
-        pick for pick in alternative_pool
-        if str(pick.get("raw_pick") or "") != str(high_source.get("raw_pick") or "")
-    ]
-    if different_candidates:
-        alternative_pool = different_candidates
     priced_candidates = [
         pick for pick in alternative_pool
         if 1.65 <= float(pick.get("odd", 0) or 0) <= 4.50
@@ -1865,10 +1917,9 @@ def select_pick_categories(picks, confidence):
             ),
         )
     else:
-        # A normal match always receives a direction.  When no verified price
-        # is available, choose the strongest different 1X2/handicap direction
-        # but label it honestly as an unpriced reference pick.  It can never be
-        # promoted to value-qualified or VIP status.
+        # When no verified price is available, choose the strongest compatible
+        # cross-market direction and label it honestly as an unpriced reference.
+        # It can never be promoted to value-qualified or VIP status.
         honey_source = max(
             alternative_pool,
             key=lambda pick: (
@@ -2484,20 +2535,30 @@ def build_dashboard_data():
         d_html = f"<span style='color:#00F2FE; font-size:14px; font-weight:900;'>핸디무 ({handi_base:+1.1f})</span><br>"
 
         handi_cands = []
-        handi_market = normalize_probabilities([1 / handi_h, 1 / handi_d, 1 / handi_a]) if min(handi_h, handi_d, handi_a) > 1.0 else [0, 0, 0]
-        if handi_h > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h, "odd": handi_h, "market_prob": handi_market[0], "selection_side": "home"})
-        if handi_d > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d, "odd": handi_d, "market_prob": handi_market[1], "selection_side": "draw"})
-        if handi_a > 1.0: handi_cands.append({"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a, "odd": handi_a, "market_prob": handi_market[2], "selection_side": "away"}) 
+        handi_has_odds = min(handi_h, handi_d, handi_a) > 1.0
+        handi_market = normalize_probabilities(
+            [1 / handi_h, 1 / handi_d, 1 / handi_a]
+        ) if handi_has_odds else [0, 0, 0]
+        if handi_has_odds or abs(handi_base) > 0.001:
+            handi_cands = [
+                {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디승", "html_pick": h_html, "prob": prob_handi_h, "ev": prob_handi_h * handi_h, "odd": handi_h if handi_h > 1.0 else 0.0, "market_prob": handi_market[0], "selection_side": "home", "handicap_base": handi_base},
+                {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}핸디무", "html_pick": d_html, "prob": prob_handi_d, "ev": prob_handi_d * handi_d, "odd": handi_d if handi_d > 1.0 else 0.0, "market_prob": handi_market[1], "selection_side": "draw", "handicap_base": handi_base},
+                {"label": "핸디캡 예측", "sort_id": 2, "raw_pick": f"{handi_str_raw}{home_team} 핸디패", "html_pick": a_html, "prob": prob_handi_a, "ev": prob_handi_a * handi_a, "odd": handi_a if handi_a > 1.0 else 0.0, "market_prob": handi_market[2], "selection_side": "away", "handicap_base": handi_base},
+            ]
          
         uo_str_raw = f"(U/O {uo_base})"
         uo_str_html = f"<span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 {uo_base}]</span><br>"
-        uo_cands = []
-        if uo_under > 1.0 and uo_over > 1.0:
-            uo_market = normalize_probabilities([1 / uo_under, 1 / uo_over])
-            uo_cands = [
-                {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under, "odd": uo_under, "market_prob": uo_market[0], "selection_side": "under"},
-                {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over, "market_prob": uo_market[1], "selection_side": "over"}
-            ]
+        uo_has_odds = uo_under > 1.0 and uo_over > 1.0
+        uo_market = normalize_probabilities(
+            [1 / uo_under, 1 / uo_over]
+        ) if uo_has_odds else [0, 0]
+        # 2.5 기준 득점 모델은 배당이 없어도 계산할 수 있다. 따라서 모든
+        # 정상 경기에서 교차 시장 대안 후보를 유지하되, 배당이 없으면 가치나
+        # VIP 검증에는 사용하지 않는다.
+        uo_cands = [
+            {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 {uo_str_raw}", "html_pick": f"{uo_str_html}⬇️ 언더", "prob": prob_u, "ev": prob_u * uo_under, "odd": uo_under if uo_under > 1.0 else 0.0, "market_prob": uo_market[0], "selection_side": "under"},
+            {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 {uo_str_raw}", "html_pick": f"{uo_str_html}⬆️ 오버", "prob": prob_o, "ev": prob_o * uo_over, "odd": uo_over if uo_over > 1.0 else 0.0, "market_prob": uo_market[1], "selection_side": "over"},
+        ]
          
         # 승무패와 핸디캡은 서로 모순되는 시장이 아니다. 예를 들어 홈팀의
         # 1골 차 승리는 일반 승과 -1.0 핸디무를 동시에 만들 수 있다.
@@ -2685,6 +2746,7 @@ def build_dashboard_data():
             "odds_source": analysis_odds_source,
             "betman_odds_pending": bool(m.get("betman_odds_pending")),
             "data_coverage": data_coverage,
+            "lineup_confirmed": bool(lineup_confirmed),
             "probability_error_margin": highest_prob_pick.get("error_margin"),
             "probability_interval": highest_prob_pick.get("probability_interval"),
             "model_probability": highest_prob_pick.get("prob"),
