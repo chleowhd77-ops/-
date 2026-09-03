@@ -41,7 +41,7 @@ except Exception:
 
 from config import *
 from api_engine import *
-from api_engine import _normalize_player_name
+from api_engine import _fetch_date_fixtures_api, _normalize_player_name
 from grading_postmortem import (
     build_postmortem,
     events_from_note,
@@ -52,6 +52,7 @@ from grading_postmortem import (
 
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
+WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v1"
@@ -67,6 +68,39 @@ LIVE_STATUSES = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'}
 TERMINAL_STATUSES = {'FT', 'AET', 'PEN'}
 CANCELED_STATUSES = {'CANC', 'ABD', 'AWD', 'WO'}
 POSTPONED_STATUSES = {'PST', 'PSTP'}
+
+# 전 세계 경기 1단계는 검증된 11개 1부 리그의 일정만 그림자 상태로 모은다.
+# league_id를 신원으로 사용하므로 번역된 리그명 변화로 다른 대회가 섞이지 않는다.
+WORLD_LEAGUES = {
+    39: {"name": "잉글랜드 프리미어리그", "tier": 1},
+    140: {"name": "스페인 라리가", "tier": 1},
+    135: {"name": "이탈리아 세리에 A", "tier": 1},
+    78: {"name": "독일 분데스리가", "tier": 1},
+    61: {"name": "프랑스 리그 1", "tier": 1},
+    88: {"name": "네덜란드 에레디비시", "tier": 1},
+    94: {"name": "포르투갈 프리메이라리가", "tier": 1},
+    292: {"name": "대한민국 K리그1", "tier": 1},
+    98: {"name": "일본 J1리그", "tier": 1},
+    253: {"name": "미국 MLS", "tier": 1},
+    71: {"name": "브라질 세리에 A", "tier": 1},
+}
+WORLD_SCHEDULE_DAYS = max(1, min(3, int(os.getenv("WORLD_SCHEDULE_DAYS", "2"))))
+WORLD_MAX_SCHEDULE_MATCHES = max(
+    20, min(300, int(os.getenv("WORLD_MAX_SCHEDULE_MATCHES", "160")))
+)
+WORLD_REJECTION_LABELS = {
+    "UNSUPPORTED_LEAGUE": "1단계 허용 리그 아님",
+    "INVALID_FIXTURE_ID": "공식 경기 ID 없음",
+    "INVALID_TEAM_ID": "홈·원정 팀 ID 확인 실패",
+    "DUPLICATE_TEAM_ID": "홈·원정 팀 ID가 동일함",
+    "TEAM_TBD": "출전 팀 미정",
+    "KICKOFF_TBD": "킥오프 시간 미정",
+    "UNSUPPORTED_STATUS": "분석 전 일정 상태가 아님",
+    "ALREADY_STARTED": "수집 전에 이미 시작 또는 종료",
+    "CANCELED_OR_POSTPONED": "취소·연기·중단 경기",
+    "DUPLICATE_FIXTURE": "중복 경기 ID",
+    "SCHEDULE_CAP": "세계 일정 안전 상한 초과",
+}
 
 
 def _local_path(path):
@@ -2092,6 +2126,359 @@ def _valid_three_way_odds(values):
         return False
 
 
+def _world_fixture_datetime(fixture_data):
+    fixture = (fixture_data or {}).get("fixture", {}) or {}
+    try:
+        timestamp = int(fixture.get("timestamp") or 0)
+    except (TypeError, ValueError):
+        timestamp = 0
+    if timestamp > 0:
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(KST)
+        except (OSError, OverflowError, ValueError):
+            pass
+    raw_date = str(fixture.get("date") or "").strip()
+    if raw_date:
+        try:
+            parsed = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(KST)
+        except ValueError:
+            pass
+    return None
+
+
+def _world_fixture_candidate(fixture_data, now=None):
+    """Turn one provider fixture into a verified WORLD shadow-schedule row."""
+    now = (now or datetime.now(KST)).astimezone(KST)
+    fixture_data = fixture_data if isinstance(fixture_data, dict) else {}
+    fixture = fixture_data.get("fixture", {}) or {}
+    league = fixture_data.get("league", {}) or {}
+    teams = fixture_data.get("teams", {}) or {}
+    home = teams.get("home", {}) or {}
+    away = teams.get("away", {}) or {}
+    status = fixture.get("status", {}) or {}
+
+    try:
+        league_id = int(league.get("id") or 0)
+    except (TypeError, ValueError):
+        league_id = 0
+    if league_id not in WORLD_LEAGUES:
+        return None, "UNSUPPORTED_LEAGUE"
+
+    try:
+        fixture_id = int(fixture.get("id") or 0)
+    except (TypeError, ValueError):
+        fixture_id = 0
+    if fixture_id <= 0:
+        return None, "INVALID_FIXTURE_ID"
+
+    try:
+        home_id = int(home.get("id") or 0)
+        away_id = int(away.get("id") or 0)
+    except (TypeError, ValueError):
+        home_id, away_id = 0, 0
+    if home_id <= 0 or away_id <= 0:
+        return None, "INVALID_TEAM_ID"
+    if home_id == away_id:
+        return None, "DUPLICATE_TEAM_ID"
+
+    home_name = str(home.get("name") or "").strip()
+    away_name = str(away.get("name") or "").strip()
+    tbd_names = {"", "tbd", "to be defined", "winner", "unknown"}
+    if home_name.casefold() in tbd_names or away_name.casefold() in tbd_names:
+        return None, "TEAM_TBD"
+
+    kickoff = _world_fixture_datetime(fixture_data)
+    if kickoff is None:
+        return None, "KICKOFF_TBD"
+
+    status_short = str(status.get("short") or "NS").upper().strip()
+    if status_short == "TBD":
+        return None, "KICKOFF_TBD"
+    if status_short in CANCELED_STATUSES | POSTPONED_STATUSES | {"SUSP", "INT"}:
+        return None, "CANCELED_OR_POSTPONED"
+    if status_short in LIVE_STATUSES | TERMINAL_STATUSES or kickoff <= now:
+        return None, "ALREADY_STARTED"
+    if status_short != "NS":
+        return None, "UNSUPPORTED_STATUS"
+
+    weekday = "월화수목금토일"[kickoff.weekday()]
+    match_time = kickoff.strftime(f"%y.%m.%d ({weekday}) %H:%M")
+    league_config = WORLD_LEAGUES[league_id]
+    match = {
+        "id": f"WORLD_{fixture_id}",
+        "fixture_id": fixture_id,
+        "league_id": league_id,
+        "season": league.get("season"),
+        "league": str(league.get("name") or league_config["name"]),
+        "league_name_ko": league_config["name"],
+        "country": str(league.get("country") or ""),
+        "round": str(league.get("round") or ""),
+        "home": home_name,
+        "away": away_name,
+        "home_team_id": home_id,
+        "away_team_id": away_id,
+        "home_logo": str(home.get("logo") or ""),
+        "away_logo": str(away.get("logo") or ""),
+        "match_time": match_time,
+        "kickoff_at": kickoff.isoformat(),
+        "status": status_short,
+    }
+    return {
+        "source_type": "WORLD",
+        "visibility_status": "SHADOW",
+        "analysis_status": "PENDING_SHADOW_ANALYSIS",
+        "pick_status": "NOT_ANALYZED",
+        "identity_verified": True,
+        "match": match,
+        "api_fixture_id": fixture_id,
+        "final_match_time": match_time,
+        "timestamp": kickoff.timestamp(),
+    }, None
+
+
+def build_world_schedule_payload(fixtures_by_date, now=None):
+    """Build the isolated stage-6.1 schedule with explicit rejection accounting."""
+    now = (now or datetime.now(KST)).astimezone(KST)
+    matches = []
+    seen_fixture_ids = set()
+    rejected_counts = {key: 0 for key in WORLD_REJECTION_LABELS}
+    rejected_samples = []
+    raw_count = 0
+
+    for date_key, fixtures in (fixtures_by_date or {}).items():
+        for fixture_data in fixtures or []:
+            raw_count += 1
+            item, reason = _world_fixture_candidate(fixture_data, now=now)
+            if item is not None:
+                fixture_id = int(item.get("api_fixture_id") or 0)
+                if fixture_id in seen_fixture_ids:
+                    reason = "DUPLICATE_FIXTURE"
+                    item = None
+                else:
+                    seen_fixture_ids.add(fixture_id)
+            if item is not None:
+                matches.append(item)
+                continue
+
+            reason = reason or "INVALID_FIXTURE_ID"
+            rejected_counts[reason] = int(rejected_counts.get(reason, 0)) + 1
+            if len(rejected_samples) < 30:
+                fixture_data = fixture_data if isinstance(fixture_data, dict) else {}
+                rejected_samples.append({
+                    "date": str(date_key),
+                    "fixture_id": (fixture_data.get("fixture", {}) or {}).get("id"),
+                    "league": (fixture_data.get("league", {}) or {}).get("name"),
+                    "home": ((fixture_data.get("teams", {}) or {}).get("home", {}) or {}).get("name"),
+                    "away": ((fixture_data.get("teams", {}) or {}).get("away", {}) or {}).get("name"),
+                    "reason_code": reason,
+                    "reason": WORLD_REJECTION_LABELS.get(reason, reason),
+                })
+
+    matches.sort(key=lambda item: (float(item.get("timestamp") or 0), int(item.get("api_fixture_id") or 0)))
+    if len(matches) > WORLD_MAX_SCHEDULE_MATCHES:
+        overflow = len(matches) - WORLD_MAX_SCHEDULE_MATCHES
+        rejected_counts["SCHEDULE_CAP"] += overflow
+        matches = matches[:WORLD_MAX_SCHEDULE_MATCHES]
+
+    league_counts = {}
+    for item in matches:
+        league_name = item.get("match", {}).get("league_name_ko") or item.get("match", {}).get("league")
+        league_counts[str(league_name)] = int(league_counts.get(str(league_name), 0)) + 1
+
+    rejected_counts = {
+        key: value for key, value in rejected_counts.items() if int(value or 0) > 0
+    }
+    return {
+        "schema_version": "world-schedule.v1",
+        "source_type": "WORLD",
+        "stage": "COLLECTION_ONLY",
+        "default_visibility_status": "SHADOW",
+        "generated_at": now.isoformat(),
+        "scheduled_dates": list((fixtures_by_date or {}).keys()),
+        "matches": matches,
+        "rejected_summary": [
+            {
+                "reason_code": key,
+                "reason": WORLD_REJECTION_LABELS.get(key, key),
+                "count": int(value),
+            }
+            for key, value in sorted(rejected_counts.items())
+        ],
+        "rejected_samples": rejected_samples,
+        "source_meta": {
+            "raw_fixture_count": raw_count,
+            "eligible_shadow_count": len(matches),
+            "rejected_count": sum(rejected_counts.values()),
+            "league_counts": league_counts,
+            "allowed_league_ids": sorted(WORLD_LEAGUES),
+            "schedule_days": WORLD_SCHEDULE_DAYS,
+            "analysis_started": False,
+            "public_count": 0,
+            "api_usage": get_api_usage_status(),
+        },
+    }
+
+
+def collect_world_schedule():
+    """Fetch today/tomorrow once and preserve the last good file on any failure."""
+    now = datetime.now(KST)
+    fixtures_by_date = {}
+    for day_offset in range(WORLD_SCHEDULE_DAYS):
+        date_key = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        fixtures = _fetch_date_fixtures_api(date_key, ttl_h=2, purpose="world")
+        if fixtures is None:
+            print(f"❌ 세계경기 일정 수집 실패({date_key}) - 마지막 정상본을 유지합니다.")
+            return False
+        fixtures_by_date[date_key] = fixtures
+
+    payload = build_world_schedule_payload(fixtures_by_date, now=now)
+    _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
+    source_meta = payload.get("source_meta", {})
+    print(
+        "🌍 세계경기 1단계 수집 완료: "
+        f"전체 {source_meta.get('raw_fixture_count', 0)} / "
+        f"그림자 후보 {source_meta.get('eligible_shadow_count', 0)} / "
+        f"제외 {source_meta.get('rejected_count', 0)}"
+    )
+    return True
+
+
+def calculate_survival_motivation(standing):
+    """Model relegation pressure without treating every rank 15+ team alike.
+
+    The boost represents a verified increase in attacking urgency.  A smaller
+    opponent-risk term is also returned because a team that must chase points
+    can expose space; the old fixed +0.06 only made the weak team stronger.
+    """
+    standing = standing if isinstance(standing, dict) else {}
+    result = {
+        "active": False,
+        "state": "NOT_APPLICABLE",
+        "attack_boost": 0.0,
+        "opponent_risk_boost": 0.0,
+        "season_progress": 0.0,
+        "rank": int(standing.get("rank") or 99),
+        "relegation_start_rank": standing.get("relegation_start_rank"),
+        "points_to_safety": standing.get("points_to_safety"),
+        "points_above_zone": standing.get("points_above_zone"),
+        "source": str(standing.get("relegation_zone_source") or "none"),
+        "reason": "강등선 자료 없음",
+    }
+    try:
+        rank = int(standing.get("rank") or 99)
+        played = max(0, int(standing.get("played") or 0))
+        total_teams = max(0, int(standing.get("total_teams") or 0))
+        zone_start = int(standing.get("relegation_start_rank") or 0)
+    except (TypeError, ValueError):
+        return result
+    if rank <= 0 or rank == 99 or played <= 0 or total_teams < 8 or zone_start <= 1:
+        return result
+
+    # 30경기 미만으로 시즌 전체를 가정하지 않아 소규모·스플릿 리그의
+    # 시즌 중반을 막판으로 잘못 판단하는 일을 줄인다.
+    estimated_schedule = max(30, (total_teams - 1) * 2)
+    progress = min(1.0, played / max(1, estimated_schedule))
+    result["season_progress"] = round(progress, 3)
+
+    description = str(standing.get("description") or "").casefold()
+    if any(marker in description for marker in ("relegated", "강등 확정", "descendido")):
+        result.update({
+            "state": "RELEGATION_CONFIRMED",
+            "reason": "공식 순위표상 강등 확정으로 생존 버프 미적용",
+        })
+        return result
+
+    in_zone = rank >= zone_start
+    just_above_zone = rank == zone_start - 1
+    points_above = standing.get("points_above_zone")
+    try:
+        points_above = int(points_above) if points_above is not None else None
+    except (TypeError, ValueError):
+        points_above = None
+    at_risk = bool(just_above_zone and points_above is not None and points_above <= 3)
+    if not in_zone and not at_risk:
+        result.update({"state": "SAFE", "reason": "현재 강등권·강등선 인접 팀 아님"})
+        return result
+    if progress < 0.55:
+        result.update({
+            "state": "TOO_EARLY",
+            "reason": "시즌 초중반이라 순위만으로 생존 버프 미적용",
+        })
+        return result
+
+    if progress >= 0.88:
+        base_attack, base_risk, state = 0.055, 0.030, "SURVIVAL_MUST_WIN"
+    elif progress >= 0.72:
+        base_attack, base_risk, state = 0.040, 0.020, "SURVIVAL_PRESSURE"
+    else:
+        base_attack, base_risk, state = 0.025, 0.012, "SURVIVAL_WATCH"
+
+    points_to_safety = standing.get("points_to_safety")
+    try:
+        points_to_safety = int(points_to_safety) if points_to_safety is not None else None
+    except (TypeError, ValueError):
+        points_to_safety = None
+    if in_zone and points_to_safety is not None:
+        if 1 <= points_to_safety <= 3:
+            base_attack += 0.015
+        elif 4 <= points_to_safety <= 6:
+            base_attack += 0.010
+            base_risk += 0.005
+        elif points_to_safety >= 7:
+            base_risk += 0.010
+    if at_risk:
+        base_attack *= 0.70
+        base_risk *= 0.75
+
+    # 리그 규정 설명에서 직접 찾지 못하고 팀 수로 추정한 강등선은 보수적으로 쓴다.
+    if result["source"] != "official_description":
+        base_attack *= 0.70
+        base_risk *= 0.70
+
+    attack_boost = round(min(0.08, max(0.0, base_attack)), 3)
+    opponent_risk = round(min(0.045, max(0.0, base_risk)), 3)
+    if in_zone:
+        gap_text = (
+            f"잔류선까지 {points_to_safety}점"
+            if points_to_safety is not None
+            else "강등권"
+        )
+        reason = f"{rank}위·{gap_text}·시즌 {int(progress * 100)}% 진행"
+    else:
+        reason = f"강등선 바로 위·승점 여유 {points_above}점·시즌 {int(progress * 100)}% 진행"
+    result.update({
+        "active": True,
+        "state": state,
+        "attack_boost": attack_boost,
+        "opponent_risk_boost": opponent_risk,
+        "reason": reason,
+    })
+    return result
+
+
+def calculate_squad_depth_factor(standing):
+    """Scale absence damage by relative table position, not a fixed rank 15."""
+    standing = standing if isinstance(standing, dict) else {}
+    try:
+        rank = int(standing.get("rank") or 99)
+        total_teams = int(standing.get("total_teams") or 0)
+        zone_start = int(standing.get("relegation_start_rank") or 0)
+    except (TypeError, ValueError):
+        return 1.0
+    if rank <= 0 or rank == 99 or total_teams < 8:
+        return 1.0
+    if rank <= max(3, round(total_teams * 0.25)):
+        return 0.5
+    if zone_start > 1 and rank >= zone_start:
+        return 1.5
+    if rank >= max(1, round(total_teams * 0.75)):
+        return 1.25
+    return 1.0
+
+
 def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
     """Return cached recent form for identified teams even before odds arrive."""
     return (
@@ -2267,8 +2654,8 @@ def build_dashboard_data():
         rank_diff_bonus_h = max(-0.18, min(0.18, (a_rank - h_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
         rank_diff_bonus_a = max(-0.18, min(0.18, (h_rank - a_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
         
-        h_desperation = 0.06 if h_rank >= 15 and h_rank != 99 else 0.0
-        a_desperation = 0.06 if a_rank >= 15 and a_rank != 99 else 0.0
+        h_survival = calculate_survival_motivation(h_stand)
+        a_survival = calculate_survival_motivation(a_stand)
         
         h_title_buff = 0.06 if 1 <= h_rank <= 3 else 0.0
         a_title_buff = 0.06 if 1 <= a_rank <= 3 else 0.0
@@ -2394,8 +2781,8 @@ def build_dashboard_data():
             base_exp_h = math_exp_h * h_xg_multi
             base_exp_a = math_exp_a * a_xg_multi
 
-        h_depth_factor = 0.5 if h_rank <= 5 else (1.5 if h_rank >= 15 and h_rank != 99 else 1.0)
-        a_depth_factor = 0.5 if a_rank <= 5 else (1.5 if a_rank >= 15 and a_rank != 99 else 1.0)
+        h_depth_factor = calculate_squad_depth_factor(h_stand)
+        a_depth_factor = calculate_squad_depth_factor(a_stand)
 
         # 🔥 확률 떡락 방지 (최대 2개 악재만 반영하여 35% 캡 적용)
         h_fatigue_pct = (0.15 if h_extreme_fatigue else 0.08) if h_rest_days <= 3 else 0.0
@@ -2433,8 +2820,8 @@ def build_dashboard_data():
                 a_kryptonite = 0.04
                 a_matchup_msg = f"⚔️ 천적 상성 ({a_wins}승/{h2h_total}전)"
 
-        exp_h = round(max(0.3, min(3.2, (base_exp_h * (1 - h_total_penalty) + cross_boost_h) + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_market_bonus + h_manager_buff)), 2)
-        exp_a = round(max(0.3, min(3.2, (base_exp_a * (1 - a_total_penalty) + cross_boost_a) + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_market_bonus + a_manager_buff)), 2)
+        exp_h = round(max(0.3, min(3.2, (base_exp_h * (1 - h_total_penalty) + cross_boost_h) + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_survival["attack_boost"] + a_survival["opponent_risk_boost"] + h_title_buff + h_market_bonus + h_manager_buff)), 2)
+        exp_a = round(max(0.3, min(3.2, (base_exp_a * (1 - a_total_penalty) + cross_boost_a) + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_survival["attack_boost"] + h_survival["opponent_risk_boost"] + a_title_buff + a_market_bonus + a_manager_buff)), 2)
 
         base_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
@@ -2449,6 +2836,10 @@ def build_dashboard_data():
         tactical_parts = [text for text in (h_matchup_msg, a_matchup_msg) if text]
         if is_derby:
             tactical_parts.append("로컬 더비 변동성")
+        if h_survival.get("active"):
+            tactical_parts.append(f"{home_team} 잔류 경쟁({h_survival['reason']})")
+        if a_survival.get("active"):
+            tactical_parts.append(f"{away_team} 잔류 경쟁({a_survival['reason']})")
         evidence, data_coverage = build_analysis_evidence({
             "h_recent": h_recent,
             "a_recent": a_recent,
@@ -2703,6 +3094,8 @@ def build_dashboard_data():
         if h_manager_buff > 0: story += f" 👔 [경질 버프] {home_team}은(는) 새 감독 부임 이후 선수들의 주전 경쟁과 동기부여가 극에 달해 있습니다."
         if a_manager_buff > 0: story += f" 👔 [경질 버프] 원정팀 {away_team}은(는) 최근 감독 교체로 인한 '허니문 효과'가 강력하게 발동될 타이밍입니다."
         if h_vacation > 0 or a_vacation > 0: story += " 🏖️ [휴가 모드 주의] 시즌 막판 동기부여가 떨어진 중위권 팀의 안일한 경기력이 이변을 만들 수 있습니다."
+        if h_survival.get("active"): story += f" 🔥 [잔류 생존전] {home_team}: {h_survival['reason']}. 공격 의지와 뒷공간 위험을 함께 반영했습니다."
+        if a_survival.get("active"): story += f" 🔥 [잔류 생존전] {away_team}: {a_survival['reason']}. 공격 의지와 뒷공간 위험을 함께 반영했습니다."
 
         h_inj_html = _render_team_availability_status(
             h_inj_data, diff_hours, lineup_confirmed, h_lineup_msg
@@ -2716,6 +3109,7 @@ def build_dashboard_data():
         if h_title_buff > 0: h_inj_html += f"<div class='injury-badge' style='background: rgba(16, 185, 129, 0.2); border-color: #10B981; color: #10B981;'>🏆 우승 경쟁 버프</div>"
         if h_manager_buff > 0: h_inj_html += f"<div class='injury-badge' style='background: rgba(245, 158, 11, 0.2); border-color: #F59E0B; color: #F59E0B;'>👔 새 감독 버프 (부임 {h_manager['days_since_hired']}일차)</div>"
         if h_vacation > 0: h_inj_html += f"<div class='injury-badge' style='background: rgba(100, 116, 139, 0.2); border-color: #64748B; color: #64748B;'>🏖️ 동기부여 상실 (휴가 모드)</div>"
+        if h_survival.get("active"): h_inj_html += f"<div class='injury-badge' style='background: rgba(249, 115, 22, 0.18); border-color: #F97316; color: #FB923C;'>🔥 잔류 생존전 · {h_survival['reason']}</div>"
         if h_matchup_msg: h_inj_html += f"<div class='injury-badge' style='background: rgba(59, 130, 246, 0.2); border-color: #3B82F6; color: #3B82F6;'>{h_matchup_msg}</div>"
         if is_derby: h_inj_html += f"<div class='injury-badge' style='background: rgba(239, 68, 68, 0.2); border-color: #EF4444; color: #EF4444;'>⚔️ 치열한 로컬 더비 매치</div>"
 
@@ -2731,6 +3125,7 @@ def build_dashboard_data():
         if a_title_buff > 0: a_inj_html += f"<div class='injury-badge' style='background: rgba(16, 185, 129, 0.2); border-color: #10B981; color: #10B981;'>🏆 우승 경쟁 버프</div>"
         if a_manager_buff > 0: a_inj_html += f"<div class='injury-badge' style='background: rgba(245, 158, 11, 0.2); border-color: #F59E0B; color: #F59E0B;'>👔 새 감독 버프 (부임 {a_manager['days_since_hired']}일차)</div>"
         if a_vacation > 0: a_inj_html += f"<div class='injury-badge' style='background: rgba(100, 116, 139, 0.2); border-color: #64748B; color: #64748B;'>🏖️ 동기부여 상실 (휴가 모드)</div>"
+        if a_survival.get("active"): a_inj_html += f"<div class='injury-badge' style='background: rgba(249, 115, 22, 0.18); border-color: #F97316; color: #FB923C;'>🔥 잔류 생존전 · {a_survival['reason']}</div>"
         if a_matchup_msg: a_inj_html += f"<div class='injury-badge' style='background: rgba(59, 130, 246, 0.2); border-color: #3B82F6; color: #3B82F6;'>{a_matchup_msg}</div>"
         if is_derby: a_inj_html += f"<div class='injury-badge' style='background: rgba(239, 68, 68, 0.2); border-color: #EF4444; color: #EF4444;'>⚔️ 치열한 로컬 더비 매치</div>"
          
@@ -2753,6 +3148,7 @@ def build_dashboard_data():
             "fair_market_probability": highest_prob_pick.get("fair_prob"),
             "model_market_edge": highest_prob_pick.get("edge"),
             "used_feature_evidence": evidence,
+            "survival_motivation": {"home": h_survival, "away": a_survival},
             "market_probability_analysis": [
                 {
                     "market": infer_pick_market(pick),
@@ -2923,8 +3319,8 @@ def build_dashboard_data():
             rank_diff_bonus_a = -rank_diff_bonus_h
         else:
             rank_diff_bonus_h = rank_diff_bonus_a = 0.0
-        h_desperation = 0.06 if h_rank >= 15 and h_rank != 99 else 0.0
-        a_desperation = 0.06 if a_rank >= 15 and a_rank != 99 else 0.0
+        h_survival = calculate_survival_motivation(h_stand)
+        a_survival = calculate_survival_motivation(a_stand)
         h_title_buff = 0.06 if 1 <= h_rank <= 3 else 0.0
         a_title_buff = 0.06 if 1 <= a_rank <= 3 else 0.0
         
@@ -2995,6 +3391,10 @@ def build_dashboard_data():
             h_inj_html += f"<div class='injury-badge' style='background:#EF4444; color:#fff;'>{h_lineup_msg}</div>"
         if a_lineup_msg:
             a_inj_html += f"<div class='injury-badge' style='background:#EF4444; color:#fff;'>{a_lineup_msg}</div>"
+        if h_survival.get("active"):
+            h_inj_html += f"<div class='injury-badge' style='background:rgba(249,115,22,.18); border-color:#F97316; color:#FB923C;'>🔥 잔류 생존전 · {h_survival['reason']}</div>"
+        if a_survival.get("active"):
+            a_inj_html += f"<div class='injury-badge' style='background:rgba(249,115,22,.18); border-color:#F97316; color:#FB923C;'>🔥 잔류 생존전 · {a_survival['reason']}</div>"
 
         h_last_data = fetch_team_last_match_date_api(home_info.get("id"), heavy_ttl)
         a_last_data = fetch_team_last_match_date_api(away_info.get("id"), heavy_ttl)
@@ -3032,8 +3432,8 @@ def build_dashboard_data():
             math_exp_h *= 0.92
             math_exp_a *= 0.92
 
-        h_depth_factor = 0.5 if h_rank <= 5 else (1.5 if h_rank >= 15 and h_rank != 99 else 1.0)
-        a_depth_factor = 0.5 if a_rank <= 5 else (1.5 if a_rank >= 15 and a_rank != 99 else 1.0)
+        h_depth_factor = calculate_squad_depth_factor(h_stand)
+        a_depth_factor = calculate_squad_depth_factor(a_stand)
         
         # 중복 악재의 이중 계산을 막고 가장 큰 두 항목만 제한적으로 반영한다.
         h_inj_pct = h_war_pct
@@ -3075,8 +3475,8 @@ def build_dashboard_data():
         odds_exp_h = p_h * 2.8
         odds_exp_a = p_a * 2.8
          
-        exp_h = round(max(0.3, min(3.2, ((math_exp_h * 0.75) + (odds_exp_h * 0.25)) * (1 - h_total_penalty) + cross_boost_h + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_desperation + h_title_buff + h_manager_buff)), 2)
-        exp_a = round(max(0.3, min(3.2, ((math_exp_a * 0.75) + (odds_exp_a * 0.25)) * (1 - a_total_penalty) + cross_boost_a + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_desperation + a_title_buff + a_manager_buff)), 2)
+        exp_h = round(max(0.3, min(3.2, ((math_exp_h * 0.75) + (odds_exp_h * 0.25)) * (1 - h_total_penalty) + cross_boost_h + h_h2h_bonus + h_kryptonite + rank_diff_bonus_h + h_survival["attack_boost"] + a_survival["opponent_risk_boost"] + h_title_buff + h_manager_buff)), 2)
+        exp_a = round(max(0.3, min(3.2, ((math_exp_a * 0.75) + (odds_exp_a * 0.25)) * (1 - a_total_penalty) + cross_boost_a + a_h2h_bonus + a_kryptonite + rank_diff_bonus_a + a_survival["attack_boost"] + h_survival["opponent_risk_boost"] + a_title_buff + a_manager_buff)), 2)
 
         analysis_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
@@ -3149,6 +3549,7 @@ def build_dashboard_data():
                 "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
                 "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
                 "analysis_stage": analysis_stage,
+                "survival_motivation": {"home": h_survival, "away": a_survival},
                 "picks": picks,
                 "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
                 "h_inj_html": h_inj_html, "a_inj_html": a_inj_html,
@@ -5244,6 +5645,13 @@ def run_score_job():
     return upload_to_github("dashboard_data.json")
 
 
+def run_world_job():
+    """Run independently so WORLD failures never block PROTO/LIVE/scoring."""
+    if not collect_world_schedule():
+        return False
+    return upload_to_github(WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name)
+
+
 def _initialize_db_safely():
     fd, lock_path = _try_acquire_lock("db-init", stale_after=180, wait_seconds=45)
     if fd is None:
@@ -5259,11 +5667,13 @@ JOB_FUNCTIONS = {
     "master": run_master_job,
     "live": run_live_score_job,
     "score": run_score_job,
+    "world": run_world_job,
 }
 JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
+    "world": max(120, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "300"))),
 }
 
 
@@ -5433,11 +5843,13 @@ def run_scheduler():
     _launch_isolated_job("live")
     _launch_isolated_job("score")
     _launch_isolated_job("master")
+    _launch_isolated_job("world")
     schedule.every(5).minutes.do(_launch_isolated_job, "live")
     schedule.every(5).minutes.do(_launch_isolated_job, "score")
     schedule.every(20).minutes.do(_launch_isolated_job, "master")
+    schedule.every(6).hours.do(_launch_isolated_job, "world")
 
-    print("\n🚀 [감시 스케줄러] master/live/score 분리 · 중복 방지 · 하드 타임아웃 적용")
+    print("\n🚀 [감시 스케줄러] master/live/score/world 분리 · 중복 방지 · 하드 타임아웃 적용")
     last_heartbeat = 0.0
     while True:
         try:
@@ -5473,7 +5885,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "live", "score"),
+        choices=("scheduler", "master", "live", "score", "world"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )

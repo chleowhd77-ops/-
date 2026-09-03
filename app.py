@@ -101,6 +101,20 @@ def load_live_scores():
     except: pass
     return {}
 
+
+def load_world_dashboard_data():
+    """Load the isolated WORLD feed without affecting the main dashboard."""
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/world_dashboard.json?t={int(time.time())}"
+    try:
+        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
+        if res.status_code == 200:
+            payload = res.json()
+            if isinstance(payload, dict):
+                return payload
+    except Exception:
+        pass
+    return {"matches": [], "source_meta": {}, "rejected_summary": []}
+
 def load_prediction_results(grading_snapshot=None):
     """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
     embedded_rows = []
@@ -1599,6 +1613,7 @@ visible_match_limit = access_profile["match_limit"]
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
+world_dashboard_data = load_world_dashboard_data()
 live_scores_data = load_live_scores()
 if isinstance(dashboard_data, dict):
     # 수집기가 새 버전으로 교체되기 전 남아 있는 캐시에도 같은 안전망을 적용한다.
@@ -2624,22 +2639,58 @@ with main_tab6:
         </div>
     </div>
     """, unsafe_allow_html=True)
-    st.info("프로토 LIVE와 분리된 메뉴입니다. 베트맨에 없는 세계 경기도 이곳에 연결됩니다.")
+    st.info("프로토 LIVE와 분리된 메뉴입니다. 새 리그는 그림자 채점으로 검증한 뒤 공개됩니다.")
 
-    world_matches = (
+    legacy_world_matches = (
         dashboard_data.get("all_matches")
         or dashboard_data.get("global_matches")
         or dashboard_data.get("world_matches")
         or []
     )
+    raw_world_matches = world_dashboard_data.get("matches", []) or legacy_world_matches
+    world_source_meta = world_dashboard_data.get("source_meta", {}) or {}
+    is_world_admin = st.session_state.get('role') == ROLE_ADMIN
+    if is_world_admin:
+        world_matches = [
+            item for item in raw_world_matches
+            if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
+        ]
+        rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
+        rejected_text = " · ".join(
+            f"{entry.get('reason', entry.get('reason_code', '제외'))} {int(entry.get('count') or 0)}"
+            for entry in rejected_summary
+            if int(entry.get("count") or 0) > 0
+        )
+        st.caption(
+            "관리자 세계경기 관제 · "
+            f"원본 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
+            f"그림자 후보 {int(world_source_meta.get('eligible_shadow_count') or len(world_matches))}경기 · "
+            f"공개 {int(world_source_meta.get('public_count') or 0)}경기 · "
+            f"WORLD API {int((world_source_meta.get('api_usage') or {}).get('world_calls') or 0)}회"
+        )
+        if rejected_text:
+            with st.expander("세계경기 제외 사유 확인"):
+                st.write(rejected_text)
+    else:
+        world_matches = [
+            item for item in raw_world_matches
+            if str(item.get("visibility_status") or "").upper() == "PUBLIC"
+        ]
     if not world_matches:
+        shadow_count = int(world_source_meta.get("eligible_shadow_count") or 0)
+        readiness_text = (
+            f"현재 {shadow_count}경기를 비공개 그림자 검증 중입니다."
+            if shadow_count
+            else "오늘 분석 가능한 세계 경기 일정을 확인 중입니다."
+        )
         st.markdown("""
         <div class='match-card' style='text-align:center; padding:42px 20px;'>
-            <h3 style='margin-bottom:12px;'>🌍 전 세계 경기 데이터 연결 준비 중</h3>
-            <p style='color:#94A3B8; line-height:1.7;'>현재 베트맨 경기와 섞어 보여주지 않습니다.<br>
-            해외 경기 수집기가 연결되면 오늘 열리는 세계 축구 경기가 이 메뉴에만 표시됩니다.</p>
+            <h3 style='margin-bottom:12px;'>🌍 전 세계 경기 검증 중</h3>
+            <p style='color:#94A3B8; line-height:1.7;'>현재 베트맨 경기와 섞지 않고 별도로 수집·채점합니다.<br>
+            검증 기준을 통과한 리그부터 이 메뉴에 공개됩니다.</p>
         </div>
         """, unsafe_allow_html=True)
+        st.caption(readiness_text)
     else:
         world_limit = None if has_full_access else 3
         for world_index, world_item in enumerate(world_matches):
@@ -2656,6 +2707,19 @@ with main_tab6:
                 or world_match.get("date")
                 or "시간 확인 중"
             ))
+            visibility_status = str(world_item.get("visibility_status") or "PUBLIC").upper()
+            analysis_status = str(world_item.get("analysis_status") or "").upper()
+            world_status_html = ""
+            if is_world_admin and visibility_status == "SHADOW":
+                status_label = (
+                    "일정 수집 완료 · 그림자 분석 대기"
+                    if analysis_status == "PENDING_SHADOW_ANALYSIS"
+                    else analysis_status.replace("_", " ")
+                )
+                world_status_html = (
+                    "<div style='margin-top:14px; color:#F59E0B; font-weight:800;'>"
+                    f"🧪 SHADOW · {escape(status_label)}</div>"
+                )
             st.markdown(
                 f"""
                 <div class='match-card'>
@@ -2665,6 +2729,7 @@ with main_tab6:
                         <div class='center-time-box'><span class='match-time-text'>{world_time}</span></div>
                         <div class='team-box away'><div class='team-name-text'>{world_away}</div></div>
                     </div>
+                    {world_status_html}
                 </div>
                 """,
                 unsafe_allow_html=True,

@@ -31,13 +31,15 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.5.1-cross-market-confidence-ui"
+ANALYSIS_VERSION = "V7.3.6-world-schedule-survival"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
 API_DAILY_TOTAL_LIMIT = max(100, int(os.getenv("API_DAILY_TOTAL_LIMIT", "7500")))
 API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "600")))
 API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
+API_WORLD_DAILY_LIMIT = max(10, int(os.getenv("API_WORLD_DAILY_LIMIT", "1500")))
+API_WORLD_MIN_REMAINING = max(100, int(os.getenv("API_WORLD_MIN_REMAINING", "1000")))
 API_MIN_REQUEST_INTERVAL = max(0.0, float(os.getenv("API_MIN_REQUEST_INTERVAL", "0.22")))
 API_RATE_LIMIT_RETRIES = max(0, int(os.getenv("API_RATE_LIMIT_RETRIES", "2")))
 _API_PROVIDER_REMAINING = None
@@ -133,7 +135,32 @@ def _api_usage_today():
         return day_key, 0, None
 
 
-def _record_api_usage(day_key, provider_remaining=None):
+def _api_purpose_usage_today(day_key, purpose):
+    try:
+        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
+                usage_day TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                calls INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (usage_day, purpose)
+            )
+        """)
+        cursor.execute(
+            "SELECT calls FROM api_usage_purpose_daily WHERE usage_day = ? AND purpose = ?",
+            (day_key, str(purpose or "analysis")),
+        )
+        row = cursor.fetchone()
+        conn.commit()
+        conn.close()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def _record_api_usage(day_key, provider_remaining=None, purpose="analysis"):
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=10)
         cursor = conn.cursor()
@@ -153,6 +180,22 @@ def _record_api_usage(day_key, provider_remaining=None):
                 provider_remaining = COALESCE(excluded.provider_remaining, api_usage_daily.provider_remaining),
                 updated_at = CURRENT_TIMESTAMP
         """, (day_key, provider_remaining))
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
+                usage_day TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                calls INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (usage_day, purpose)
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO api_usage_purpose_daily (usage_day, purpose, calls, updated_at)
+            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(usage_day, purpose) DO UPDATE SET
+                calls = api_usage_purpose_daily.calls + 1,
+                updated_at = CURRENT_TIMESTAMP
+        """, (day_key, str(purpose or "analysis")))
         conn.commit()
         conn.close()
     except Exception:
@@ -207,6 +250,8 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
         raise ApiQuotaUnavailable("API daily quota exhausted")
 
     day_key, local_calls, stored_remaining = _api_usage_today()
+    purpose = str(purpose or "analysis").strip().lower()
+    world_calls = _api_purpose_usage_today(day_key, "world") if purpose == "world" else 0
     _API_PROVIDER_DAY = day_key
     if _API_PROVIDER_REMAINING is None and stored_remaining is not None:
         # 이전 실행이 0을 저장했더라도 결제 갱신ㆍ플랜 변경이 있었을 수 있다.
@@ -218,6 +263,20 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
             print("[API] 저장된 소진 기록 재확인: 공급사 상태를 한 번 조회합니다.")
 
     allowed_calls = API_DAILY_TOTAL_LIMIT - 50 if purpose in {"live", "scoring"} else API_ANALYSIS_SOFT_LIMIT
+    if purpose == "world":
+        if world_calls >= API_WORLD_DAILY_LIMIT:
+            _show_api_quota_notice(
+                f"세계경기 전용 예산 도달 {world_calls}/{API_WORLD_DAILY_LIMIT}"
+            )
+            raise ApiQuotaUnavailable("World-football API safety budget reached")
+        if (
+            _API_PROVIDER_REMAINING is not None
+            and int(_API_PROVIDER_REMAINING) <= API_WORLD_MIN_REMAINING
+        ):
+            _show_api_quota_notice(
+                f"세계경기 중단·기존 LIVE 보호 {int(_API_PROVIDER_REMAINING)}회 남음"
+            )
+            raise ApiQuotaUnavailable("World-football reserve protected")
     if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
         _show_api_quota_notice("공급사 일일 사용량 소진")
         raise ApiQuotaUnavailable("API daily quota exhausted")
@@ -238,7 +297,7 @@ def api_get(path, params=None, timeout=7, purpose="analysis"):
         daily_remaining = _header_int(response, "x-ratelimit-requests-remaining")
         if daily_remaining is not None:
             _API_PROVIDER_REMAINING = daily_remaining
-        _record_api_usage(day_key, _API_PROVIDER_REMAINING)
+        _record_api_usage(day_key, _API_PROVIDER_REMAINING, purpose=purpose)
 
         if _is_daily_quota_response(response, error_text):
             _API_PROVIDER_REMAINING = 0
@@ -270,6 +329,7 @@ def get_api_usage_status():
     remaining = stored_remaining
     if _API_PROVIDER_DAY == day_key and _API_PROVIDER_REMAINING is not None:
         remaining = _API_PROVIDER_REMAINING
+    world_calls = _api_purpose_usage_today(day_key, "world")
     return {
         "usage_day": day_key.removeprefix("utc:"),
         "reset_timezone": "UTC",
@@ -278,6 +338,9 @@ def get_api_usage_status():
         "analysis_soft_limit": API_ANALYSIS_SOFT_LIMIT,
         "daily_limit": API_DAILY_TOTAL_LIMIT,
         "live_reserve": API_LIVE_RESERVE,
+        "world_calls": int(world_calls or 0),
+        "world_daily_limit": API_WORLD_DAILY_LIMIT,
+        "world_min_remaining": API_WORLD_MIN_REMAINING,
         "quota_exhausted": remaining is not None and int(remaining) <= 0,
     }
 
@@ -1272,7 +1335,7 @@ def _team_name_match_score(local_name, api_name):
     return max(scores, default=0.0)
 
 
-def _fetch_date_fixtures_api(date_str, ttl_h=2):
+def _fetch_date_fixtures_api(date_str, ttl_h=2, purpose="analysis"):
     """한 날짜 경기표를 한 번만 받아 팀 신원·경기 ID가 함께 사용한다."""
     cache_key = f"fixtures_by_date_v2_{date_str}"
     cached = get_db_cache(cache_key, min(max(float(ttl_h or 0), 0.2), 2))
@@ -1283,6 +1346,7 @@ def _fetch_date_fixtures_api(date_str, ttl_h=2):
             "/fixtures",
             params={"date": date_str, "timezone": "Asia/Seoul"},
             timeout=12,
+            purpose=purpose,
         )
         if response.status_code != 200:
             print(f"⚠️ 실제 경기표 조회 실패({date_str}): HTTP {response.status_code}")
@@ -1677,9 +1741,16 @@ def fetch_team_long_term_stats_api(team_id, ttl_h):
     except: return default_res
 
 def fetch_team_standing_api(team_id, ttl_h):
-    default_res = {"rank": 99, "points": 0, "played": 0, "league_id": None, "season": None, "total_teams": 20, "team_goals": 0}
+    default_res = {
+        "rank": 99, "points": 0, "played": 0, "league_id": None,
+        "season": None, "total_teams": 0, "team_goals": 0,
+        "description": "", "relegation_start_rank": None,
+        "safety_rank": None, "safety_points": None,
+        "relegation_cut_points": None, "points_to_safety": None,
+        "points_above_zone": None, "relegation_zone_source": "none",
+    }
     if not team_id: return default_res
-    cache_key = f"standing_v4_{team_id}"
+    cache_key = f"standing_v5_survival_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1695,11 +1766,73 @@ def fetch_team_standing_api(team_id, ttl_h):
                 season = league_data.get("league", {}).get("season")
                 standings_list = league_data.get("league", {}).get("standings", [])
                 for group in standings_list:
+                    group = [row for row in (group or []) if isinstance(row, dict)]
+                    rank_rows = {}
+                    relegation_ranks = []
+                    for table_row in group:
+                        try:
+                            table_rank = int(table_row.get("rank") or 0)
+                            table_points = int(table_row.get("points") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if table_rank <= 0:
+                            continue
+                        rank_rows[table_rank] = table_points
+                        description = str(table_row.get("description") or "").casefold()
+                        if any(keyword in description for keyword in (
+                            "relegat", "descenso", "rebaixamento", "abstieg",
+                            "retrocessione", "降格", "강등",
+                        )):
+                            relegation_ranks.append(table_rank)
                     for s in group:
-                        if s["team"]["id"] == team_id:
+                        if int((s.get("team", {}) or {}).get("id") or 0) == int(team_id):
                             played = s.get("all", {}).get("played", 0)
                             team_goals = s.get("all", {}).get("goals", {}).get("for", 0)
-                            res_val = {"rank": s["rank"], "points": s["points"], "played": played, "league_id": league_id, "season": season, "total_teams": len(group), "team_goals": team_goals}
+                            rank = int(s.get("rank") or 99)
+                            points = int(s.get("points") or 0)
+                            total_teams = len(rank_rows)
+                            if relegation_ranks:
+                                relegation_start_rank = min(relegation_ranks)
+                                zone_source = "official_description"
+                            elif total_teams >= 18:
+                                relegation_start_rank = total_teams - 2
+                                zone_source = "league_size_fallback"
+                            elif total_teams >= 8:
+                                relegation_start_rank = total_teams - 1
+                                zone_source = "league_size_fallback"
+                            else:
+                                relegation_start_rank = None
+                                zone_source = "none"
+                            safety_rank = (
+                                relegation_start_rank - 1
+                                if relegation_start_rank and relegation_start_rank > 1
+                                else None
+                            )
+                            safety_points = rank_rows.get(safety_rank)
+                            relegation_cut_points = rank_rows.get(relegation_start_rank)
+                            points_to_safety = (
+                                max(0, int(safety_points) - points)
+                                if safety_points is not None and rank >= relegation_start_rank
+                                else None
+                            )
+                            points_above_zone = (
+                                max(0, points - int(relegation_cut_points))
+                                if relegation_cut_points is not None and rank < relegation_start_rank
+                                else None
+                            )
+                            res_val = {
+                                "rank": rank, "points": points, "played": played,
+                                "league_id": league_id, "season": season,
+                                "total_teams": total_teams, "team_goals": team_goals,
+                                "description": str(s.get("description") or ""),
+                                "relegation_start_rank": relegation_start_rank,
+                                "safety_rank": safety_rank,
+                                "safety_points": safety_points,
+                                "relegation_cut_points": relegation_cut_points,
+                                "points_to_safety": points_to_safety,
+                                "points_above_zone": points_above_zone,
+                                "relegation_zone_source": zone_source,
+                            }
                             set_db_cache(cache_key, res_val)
                             return res_val
     except: pass
