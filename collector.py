@@ -2512,8 +2512,22 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
 
                 if not any(key in bet_name for key in ("handicap result", "3 way handicap", "european handicap")):
                     continue
-                line = number_from(bet_name)
-                found = {}
+                # ``3 Way Handicap``의 3은 시장 종류(3방향)이지 실제 기준선이 아니다.
+                # 시장명에서 이 고정 문구를 먼저 지워 +3.0 가짜 선으로 해석하지 않는다.
+                handicap_name_without_market_count = re.sub(
+                    r"\b3\s*way\b", "", bet_name, flags=re.IGNORECASE
+                )
+                bet_line = number_from(handicap_name_without_market_count)
+                label_lines = {
+                    round(float(label_line), 2)
+                    for value in values
+                    for label_line in [number_from(value.get("value"))]
+                    if label_line is not None
+                }
+                shared_line = bet_line
+                if shared_line is None and len(label_lines) == 1:
+                    shared_line = next(iter(label_lines))
+                found_by_line = {}
                 for value in values:
                     label = str(value.get("value") or "").strip().casefold()
                     side = (
@@ -2521,16 +2535,17 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
                         else ("draw" if label.startswith("draw") or label == "x"
                               else ("away" if label.startswith("away") or label == "2" else ""))
                     )
-                    if side == "home" and number_from(label) is not None:
-                        line = number_from(label)
+                    label_line = number_from(label)
+                    line = label_line if label_line is not None else shared_line
                     try:
                         odd = float(value.get("odd") or 0)
                     except (TypeError, ValueError):
                         odd = 0.0
-                    if side and odd > 1.0:
-                        found[side] = odd
-                if line is not None and {"home", "draw", "away"}.issubset(found):
-                    line = round(float(line), 2)
+                    if side and line is not None and odd > 1.0:
+                        found_by_line.setdefault(round(float(line), 2), {})[side] = odd
+                for line, found in found_by_line.items():
+                    if not {"home", "draw", "away"}.issubset(found):
+                        continue
                     target = handicap_by_line.setdefault(
                         line, {"home": [], "draw": [], "away": []}
                     )
@@ -2555,14 +2570,30 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
         if values["under"] and values["over"]
     ]
     if complete_totals:
+        def totals_mainline_key(row):
+            line, values = row
+            under = _world_median(values["under"])
+            over = _world_median(values["over"])
+            inverse_total = (1.0 / under) + (1.0 / over)
+            balance = abs((1.0 / under) / inverse_total - (1.0 / over) / inverse_total)
+            coverage = min(len(values["under"]), len(values["over"]))
+            return (round(balance, 6), abs(float(line) - 2.5), -coverage)
+
         line, values = min(
             complete_totals,
-            key=lambda row: (-min(len(row[1]["under"]), len(row[1]["over"])), abs(row[0] - 2.5)),
+            key=totals_mainline_key,
         )
+        under = _world_median(values["under"])
+        over = _world_median(values["over"])
+        inverse_total = (1.0 / under) + (1.0 / over)
         result["totals"] = {
             "line": float(line),
-            "under": _world_median(values["under"]),
-            "over": _world_median(values["over"]),
+            "under": under,
+            "over": over,
+            "market_balance": round(
+                abs((1.0 / under) / inverse_total - (1.0 / over) / inverse_total), 4
+            ),
+            "selection_method": "balanced_mainline",
         }
     complete_handicaps = [
         (line, values) for line, values in handicap_by_line.items()
@@ -2570,15 +2601,35 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
         and abs(float(line)) >= 0.25
     ]
     if complete_handicaps:
+        def handicap_mainline_key(row):
+            line, values = row
+            medians = {
+                side: _world_median(values[side])
+                for side in ("home", "draw", "away")
+            }
+            inverse_total = sum(1.0 / medians[side] for side in medians)
+            probabilities = [(1.0 / medians[side]) / inverse_total for side in medians]
+            balance = max(probabilities) - min(probabilities)
+            coverage = min(len(values[side]) for side in medians)
+            return (round(balance, 6), abs(abs(float(line)) - 1.0), -coverage)
+
         line, values = min(
             complete_handicaps,
-            key=lambda row: (-min(len(row[1][side]) for side in ("home", "draw", "away")), abs(abs(row[0]) - 1.0)),
+            key=handicap_mainline_key,
         )
+        medians = {
+            side: _world_median(values[side])
+            for side in ("home", "draw", "away")
+        }
+        inverse_total = sum(1.0 / medians[side] for side in medians)
+        probabilities = [(1.0 / medians[side]) / inverse_total for side in medians]
         result["handicap"] = {
             "line": float(line),
-            "home": _world_median(values["home"]),
-            "draw": _world_median(values["draw"]),
-            "away": _world_median(values["away"]),
+            "home": medians["home"],
+            "draw": medians["draw"],
+            "away": medians["away"],
+            "market_balance": round(max(probabilities) - min(probabilities), 4),
+            "selection_method": "balanced_mainline",
         }
     result["available_markets"] = [
         market for market in ("1x2", "totals", "handicap") if result.get(market)
@@ -3216,7 +3267,12 @@ def analyze_world_schedule():
         if item.get("frozen_at") or item.get("analysis_status") == "FROZEN_SHADOW":
             continue
         previous_stage = str(item.get("analysis_stage") or "")
-        if previous_stage == stage:
+        previous_version = str(
+            item.get("analysis_version")
+            or (item.get("analysis") or {}).get("analysis_version")
+            or ""
+        )
+        if previous_stage == stage and previous_version == ANALYSIS_VERSION:
             if not (
                 stage == "T-60-lineup"
                 and not item.get("lineup_confirmed")
