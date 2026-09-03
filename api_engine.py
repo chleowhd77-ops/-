@@ -32,7 +32,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.7.4-probability-first-selector"
+ANALYSIS_VERSION = "V7.3.8-world-grading-market-movement"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -1569,7 +1569,7 @@ def fetch_overseas_odds_and_fixture_api(
     m_dt = parse_match_time(match_time_str)
     date_str = m_dt.strftime('%Y-%m-%d')
     odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
-    cache_key = f"odds_fixture_v10_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
+    cache_key = f"odds_fixture_v11_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1599,7 +1599,15 @@ def fetch_overseas_odds_and_fixture_api(
             fix_id = match_data["fixture"]["id"]
             referee_name = match_data["fixture"].get("referee")
             city_name = match_data["fixture"].get("venue", {}).get("city")
-            res_val = {"fixture_id": fix_id, "odd_h": None, "odd_d": None, "odd_a": None, "referee": referee_name, "city": city_name}
+            res_val = {
+                "fixture_id": fix_id,
+                "odd_h": None,
+                "odd_d": None,
+                "odd_a": None,
+                "referee": referee_name,
+                "city": city_name,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
 
             # 베트맨 배당이 없을 때만 호출자가 해외배당을 명시적으로 요청한다.
             # 여러 북메이커 중 한 곳을 임의 선택하지 않고 완전한 1X2 세트의

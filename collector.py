@@ -1066,8 +1066,8 @@ def infer_pick_market(pick_or_text):
     return "1x2"
 
 
-def load_market_performance():
-    """Read each market's honest top-pick record, with a legacy fallback."""
+def load_market_performance(league_name=None):
+    """Read honest market records, then cautiously blend a matching league."""
     summary = {
         key: {"samples": 0, "hits": 0, "hit_rate": 0.5, "selection_share": 0.0}
         for key in MARKET_LABELS
@@ -1087,14 +1087,31 @@ def load_market_performance():
                 )
             }
             if "market_rank" in result_columns:
-                candidate_rows = conn.execute(
-                    """
-                    SELECT market_key, is_correct
-                    FROM prediction_candidate_results
-                    WHERE market_rank = 1
-                    ORDER BY id DESC LIMIT 900
-                    """
-                ).fetchall()
+                prediction_columns = {
+                    str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
+                }
+                if "league" in prediction_columns:
+                    candidate_rows = conn.execute(
+                        """
+                        SELECT result.market_key, result.is_correct, prediction.league
+                        FROM prediction_candidate_results AS result
+                        LEFT JOIN predictions AS prediction
+                          ON prediction.match_id = result.match_id
+                        WHERE result.market_rank = 1
+                        ORDER BY result.id DESC LIMIT 1800
+                        """
+                    ).fetchall()
+                else:
+                    candidate_rows = [
+                        (market, hit, "") for market, hit in conn.execute(
+                            """
+                            SELECT market_key, is_correct
+                            FROM prediction_candidate_results
+                            WHERE market_rank = 1
+                            ORDER BY id DESC LIMIT 900
+                            """
+                        ).fetchall()
+                    ]
         prediction_columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
         }
@@ -1137,7 +1154,7 @@ def load_market_performance():
         for market in MARKET_LABELS:
             summary[market]["samples"] = 0
             summary[market]["hits"] = 0
-        for market, hit in candidate_rows:
+        for market, hit, _league in candidate_rows:
             market = str(market or "")
             if market not in summary:
                 continue
@@ -1145,11 +1162,32 @@ def load_market_performance():
             summary[market]["hits"] += 1 if int(hit or 0) == 1 else 0
 
     total_high = sum(high_market_counts.values())
+    target_league = " ".join(str(league_name or "").casefold().split())
     for market, values in summary.items():
         # 작은 표본이 한 시장을 과도하게 올리거나 내리지 않도록 베타 사전분포로 보정한다.
-        values["hit_rate"] = round(
-            (values["hits"] + 4.0) / (values["samples"] + 8.0), 4
-        )
+        global_rate = (values["hits"] + 4.0) / (values["samples"] + 8.0)
+        league_rows = [
+            int(hit or 0)
+            for row_market, hit, row_league in candidate_rows
+            if str(row_market or "") == market
+            and target_league
+            and " ".join(str(row_league or "").casefold().split()) == target_league
+        ]
+        league_samples = len(league_rows)
+        league_hits = sum(1 for hit in league_rows if hit == 1)
+        values["league_samples"] = league_samples
+        values["league_hits"] = league_hits
+        if league_samples >= 8:
+            league_rate = (league_hits + 4.0) / (league_samples + 8.0)
+            league_weight = min(0.50, league_samples / (league_samples + 24.0))
+            values["hit_rate"] = round(
+                global_rate * (1.0 - league_weight) + league_rate * league_weight,
+                4,
+            )
+            values["scope"] = "global+league"
+        else:
+            values["hit_rate"] = round(global_rate, 4)
+            values["scope"] = "global"
         values["selection_share"] = round(
             high_market_counts[market] / total_high, 4
         ) if total_high else 0.0
@@ -2590,6 +2628,9 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
         result["1x2"] = {
             side: _world_median(wdl_samples[side]) for side in ("home", "draw", "away")
         }
+        result["1x2"]["sample_count"] = min(
+            len(wdl_samples[side]) for side in ("home", "draw", "away")
+        )
     complete_totals = [
         (line, values) for line, values in totals_by_line.items()
         if values["under"] and values["over"]
@@ -2615,6 +2656,7 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
             "line": float(line),
             "under": under,
             "over": over,
+            "sample_count": min(len(values["under"]), len(values["over"])),
             "market_balance": round(
                 abs((1.0 / under) / inverse_total - (1.0 / over) / inverse_total), 4
             ),
@@ -2653,6 +2695,9 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
             "home": medians["home"],
             "draw": medians["draw"],
             "away": medians["away"],
+            "sample_count": min(
+                len(values[side]) for side in ("home", "draw", "away")
+            ),
             "market_balance": round(max(probabilities) - min(probabilities), 4),
             "selection_method": "balanced_mainline",
         }
@@ -2691,6 +2736,171 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
             preserved["stale"] = True
             return preserved
         return None
+
+
+def _ensure_odds_movement_table(conn):
+    """Persist genuine time-series snapshots without making extra API calls."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS odds_movement_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_id INTEGER NOT NULL,
+            source_type TEXT NOT NULL,
+            analysis_stage TEXT DEFAULT '',
+            odds_json TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(fixture_id, source_type, fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_odds_movement_fixture "
+        "ON odds_movement_snapshots(fixture_id, source_type, id)"
+    )
+
+
+def _movement_market_probabilities(market_name, market):
+    market = market if isinstance(market, dict) else {}
+    sides = {
+        "1x2": ("home", "draw", "away"),
+        "totals": ("under", "over"),
+        "handicap": ("home", "draw", "away"),
+    }.get(str(market_name), ())
+    try:
+        odds = [float(market.get(side) or 0) for side in sides]
+    except (TypeError, ValueError):
+        return {}, []
+    if not sides or not all(odd > 1.0 for odd in odds):
+        return {}, []
+    probabilities = normalize_probabilities([1.0 / odd for odd in odds])
+    return dict(zip(sides, probabilities)), odds
+
+
+def _detect_odds_movement(previous, current):
+    """Compare bookmaker medians from two real collection times.
+
+    A move is accepted only when both snapshots contain at least three complete
+    bookmaker quotes.  This makes the signal a broad market move rather than a
+    single bookmaker's temporary price.
+    """
+    previous = previous if isinstance(previous, dict) else {}
+    current = current if isinstance(current, dict) else {}
+    result = {
+        "has_history": bool(previous),
+        "qualified": False,
+        "summary": "",
+        "signals": [],
+        "home_bonus": 0.0,
+        "away_bonus": 0.0,
+    }
+    labels = {
+        ("1x2", "home"): "홈승",
+        ("1x2", "draw"): "무승부",
+        ("1x2", "away"): "원정승",
+        ("totals", "under"): "언더",
+        ("totals", "over"): "오버",
+        ("handicap", "home"): "핸디승",
+        ("handicap", "draw"): "핸디무",
+        ("handicap", "away"): "핸디패",
+    }
+    summaries = []
+    for market_name in ("1x2", "totals", "handicap"):
+        old_market = previous.get(market_name) or {}
+        new_market = current.get(market_name) or {}
+        if market_name in {"totals", "handicap"}:
+            try:
+                if abs(float(old_market.get("line")) - float(new_market.get("line"))) > 1e-9:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        old_count = int(old_market.get("sample_count") or previous.get("bookmaker_count") or 0)
+        new_count = int(new_market.get("sample_count") or current.get("bookmaker_count") or 0)
+        if min(old_count, new_count) < 3:
+            continue
+        old_probs, old_odds = _movement_market_probabilities(market_name, old_market)
+        new_probs, new_odds = _movement_market_probabilities(market_name, new_market)
+        if not old_probs or not new_probs:
+            continue
+        for index, side in enumerate(old_probs):
+            probability_shift = float(new_probs[side]) - float(old_probs[side])
+            odds_drop = float(old_odds[index]) - float(new_odds[index])
+            # Both price and margin-free implied probability must move.  A
+            # 1.8%p move plus a 0.10 price drop is large enough to track while
+            # routine rounding noise is ignored.
+            if probability_shift < 0.018 or odds_drop < 0.10:
+                continue
+            strength = "강한" if probability_shift >= 0.04 else "유의미한"
+            signal = {
+                "market": market_name,
+                "side": side,
+                "label": labels.get((market_name, side), side),
+                "previous_odd": round(float(old_odds[index]), 3),
+                "current_odd": round(float(new_odds[index]), 3),
+                "implied_probability_shift": round(probability_shift, 4),
+                "bookmaker_sample_count": min(old_count, new_count),
+                "strength": strength,
+            }
+            result["signals"].append(signal)
+            summaries.append(
+                f"{signal['label']} {signal['previous_odd']:.2f}→{signal['current_odd']:.2f} "
+                f"({probability_shift * 100:+.1f}%p, {signal['bookmaker_sample_count']}개 업체 중앙값)"
+            )
+            if market_name == "1x2" and side in {"home", "away"}:
+                result[f"{side}_bonus"] = max(
+                    float(result[f"{side}_bonus"]),
+                    min(0.05, 0.02 + probability_shift * 0.5),
+                )
+    result["qualified"] = bool(result["signals"])
+    result["summary"] = " · ".join(summaries)
+    return result
+
+
+def capture_odds_movement(fixture_id, source_type, analysis_stage, snapshot):
+    """Store the current quote and return movement versus the last changed quote."""
+    fixture_id = int(fixture_id or 0)
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    if fixture_id <= 0 or not any(snapshot.get(key) for key in ("1x2", "totals", "handicap")):
+        return _detect_odds_movement({}, snapshot)
+    normalized = {
+        key: snapshot.get(key)
+        for key in ("bookmaker_count", "1x2", "totals", "handicap")
+        if snapshot.get(key) is not None
+    }
+    encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+    fingerprint = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_odds_movement_table(conn)
+        previous_row = conn.execute(
+            """
+            SELECT odds_json FROM odds_movement_snapshots
+            WHERE fixture_id = ? AND source_type = ? AND fingerprint != ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (fixture_id, str(source_type), fingerprint),
+        ).fetchone()
+        try:
+            previous = json.loads(previous_row[0]) if previous_row else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            previous = {}
+        movement = _detect_odds_movement(previous, normalized)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO odds_movement_snapshots (
+                fixture_id, source_type, analysis_stage, odds_json, fingerprint
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (fixture_id, str(source_type), str(analysis_stage or ""), encoded, fingerprint),
+        )
+        conn.commit()
+        return movement
+    except Exception as error:
+        print(f"⚠️ 시간대별 해외배당 기록 실패({fixture_id}): {error}")
+        return _detect_odds_movement({}, snapshot)
+    finally:
+        conn.close()
 
 
 def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, season, ttl_h):
@@ -2962,6 +3172,96 @@ def _save_world_analysis_snapshot(match, analysis):
         conn.close()
 
 
+def _world_learning_candidate(row):
+    """Restore a WORLD audit row to the common candidate shape."""
+    row = dict(row or {})
+    return {
+        "market_key": str(row.get("market_key") or ""),
+        "label": str(row.get("label") or ""),
+        "raw_pick": str(row.get("raw_pick") or ""),
+        "selection_side": str(row.get("selection_side") or ""),
+        "handicap_base": row.get("handicap_base"),
+        "sort_id": int(row.get("sort_id") or 0),
+        "prob": float(row.get("model_probability") or 0),
+        "raw_model_prob": row.get("raw_model_probability"),
+        "fair_prob": row.get("fair_probability"),
+        "odd": float(row.get("odd") or 0),
+        "edge": float(row.get("edge") or 0),
+        "robust_probability": float(row.get("robust_probability") or 0),
+        "robust_edge": float(row.get("robust_edge") or 0),
+        "robust_ev": float(row.get("robust_ev") or 0),
+        "balanced_score": float(row.get("balanced_score") or 0),
+        "safe_score": float(row.get("safe_score") or 0),
+        "recommendation_score": float(row.get("recommendation_score") or 0),
+        "market_hit_rate": float(row.get("market_hit_rate") or 0.5),
+        "market_history_samples": int(row.get("market_history_samples") or 0),
+        "data_confidence": float(row.get("data_confidence") or 0.35),
+        "error_margin": float(row.get("error_margin") or 0),
+        "probability_interval": dict(row.get("probability_interval") or {}),
+        "is_true_underdog": bool(row.get("is_true_underdog")),
+        "is_qualified_underdog": bool(row.get("is_qualified_underdog")),
+        "support_signals": list(row.get("support_signals") or []),
+        "independent_support_count": int(row.get("independent_support_count") or 0),
+    }
+
+
+def _save_world_learning_record(match, analysis):
+    """Feed WORLD forecasts into the same immutable grading/learning pipeline."""
+    candidates = [
+        _world_learning_candidate(row)
+        for row in (analysis.get("candidates") or [])
+        if isinstance(row, dict)
+    ]
+    by_pick = {
+        (item.get("market_key"), item.get("raw_pick")): item
+        for item in candidates
+    }
+    categories = {}
+    for key in ("high_probability", "honey", "vip_underdog"):
+        summary = (analysis.get("categories") or {}).get(key) or {}
+        categories[key] = by_pick.get((
+            str(summary.get("market_key") or ""),
+            str(summary.get("raw_pick") or ""),
+        ))
+    selected = categories.get("high_probability")
+    if not selected:
+        return False
+    alternative = categories.get("honey")
+    confidence = float(
+        selected.get("data_confidence")
+        or (float(analysis.get("data_quality_score") or 35) / 100.0)
+    )
+    odds = analysis.get("odds_snapshot") or {}
+    wdl = odds.get("1x2") or {}
+    prediction_saved = save_dual_predictions_to_local_db(
+        str(match.get("id") or ""),
+        str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
+        str(match.get("home") or "홈팀"),
+        str(match.get("away") or "원정팀"),
+        str(selected.get("raw_pick") or ""),
+        round(float(selected.get("prob") or 0) * 100, 1),
+        str((alternative or {}).get("raw_pick") or ""),
+        round(float((alternative or {}).get("prob") or 0) * 100, 1),
+        float(wdl.get("home") or 0),
+        float(wdl.get("draw") or 0),
+        float(wdl.get("away") or 0),
+        str(match.get("match_time") or ""),
+        0,
+        int(match.get("fixture_id") or 0),
+        str(analysis.get("analysis_stage") or "regular"),
+        confidence,
+    )
+    if not prediction_saved:
+        return False
+    return save_prediction_analysis(
+        str(match.get("id") or ""), selected, confidence,
+        analysis.get("evidence") or [], candidates,
+        str(analysis.get("report") or ""), categories=categories,
+        analysis_stage=str(analysis.get("analysis_stage") or "regular"),
+        odds_source="world_bookmaker_median",
+    )
+
+
 def _analyze_world_match(item, now, market_performance):
     """Analyze one verified fixture across 1X2, totals and handicap markets."""
     match = dict((item or {}).get("match") or {})
@@ -2984,6 +3284,11 @@ def _analyze_world_match(item, now, market_performance):
     heavy_ttl = 24
     injury_ttl = 0.5 if diff_hours <= 3 else 12
     odds = fetch_world_market_snapshot(fixture_id, diff_hours) or {}
+    odds_movement = capture_odds_movement(
+        fixture_id, "WORLD", analysis_stage, odds
+    )
+    h_market_bonus = float(odds_movement.get("home_bonus") or 0)
+    a_market_bonus = float(odds_movement.get("away_bonus") or 0)
     h_recent_fixtures = fetch_team_recent_fixtures_api(home_id, heavy_ttl)
     a_recent_fixtures = fetch_team_recent_fixtures_api(away_id, heavy_ttl)
     h_long = fetch_team_long_term_stats_api(home_id, heavy_ttl)
@@ -3090,11 +3395,13 @@ def _analyze_world_match(item, now, market_performance):
         math_exp_h * (1.0 - h_absence) + a_absence * 0.35 + h_rank_bonus + h_h2h
         + float(h_survival.get("attack_boost") or 0)
         + float(a_survival.get("opponent_risk_boost") or 0)
+        + h_market_bonus
     )), 2)
     exp_a = round(max(0.3, min(3.2,
         math_exp_a * (1.0 - a_absence) + h_absence * 0.35 + a_rank_bonus + a_h2h
         + float(a_survival.get("attack_boost") or 0)
         + float(h_survival.get("opponent_risk_boost") or 0)
+        + a_market_bonus
     )), 2)
 
     totals_odds = odds.get("totals") or {}
@@ -3154,7 +3461,7 @@ def _analyze_world_match(item, now, market_performance):
     ) if valid_wdl_odds else ""
     attach_underdog_signals(candidates, home, away, {
         "home_absence": h_absence, "away_absence": a_absence,
-        "home_market_bonus": 0.0, "away_market_bonus": 0.0,
+        "home_market_bonus": h_market_bonus, "away_market_bonus": a_market_bonus,
         "home_tactical": max(0.0, h_h2h), "away_tactical": max(0.0, a_h2h),
         "home_recent": float(h_recent.get("strength") or 0),
         "away_recent": float(a_recent.get("strength") or 0),
@@ -3183,7 +3490,7 @@ def _analyze_world_match(item, now, market_performance):
             f"{home} 강등권 생존 동기" if h_survival.get("active") else "",
             f"{away} 강등권 생존 동기" if a_survival.get("active") else "",
         ))),
-        "movement_text": None,
+        "movement_text": odds_movement.get("summary") or None,
         "home_id": home_id, "away_id": away_id, "fixture_id": fixture_id,
     })
     if odds.get("available_markets"):
@@ -3224,6 +3531,7 @@ def _analyze_world_match(item, now, market_performance):
         },
         "rest_days": {"home": h_rest, "away": a_rest},
         "h2h": h2h, "evidence_coverage": coverage,
+        "odds_movement": odds_movement,
     }
     return {
         "analysis_version": ANALYSIS_VERSION,
@@ -3235,7 +3543,9 @@ def _analyze_world_match(item, now, market_performance):
         "missing_data": missing_data,
         "lineup_confirmed": lineup_confirmed,
         "odds_snapshot": odds,
+        "odds_movement": odds_movement,
         "inputs_snapshot": inputs_snapshot,
+        "evidence": evidence,
         "candidates": candidate_rows,
         "categories": compact_categories,
         "selected": selected_summary,
@@ -3253,7 +3563,7 @@ def analyze_world_schedule():
         return False, False
     now = datetime.now(KST)
     day_key, today_ids, all_ids, league_counts = _world_analysis_usage()
-    market_performance = load_market_performance()
+    market_performance_cache = {}
     changed = False
     analyzed_now = 0
     errors_now = 0
@@ -3330,9 +3640,20 @@ def analyze_world_schedule():
                     changed = True
                 continue
             try:
-                analysis = _analyze_world_match(item, now, market_performance)
+                league_name = str(
+                    match.get("league_name_ko") or match.get("league") or ""
+                )
+                if league_name not in market_performance_cache:
+                    market_performance_cache[league_name] = load_market_performance(
+                        league_name
+                    )
+                analysis = _analyze_world_match(
+                    item, now, market_performance_cache[league_name]
+                )
                 if not _save_world_analysis_snapshot(match, analysis):
                     raise RuntimeError("세계경기 분석 스냅샷 저장 실패")
+                if not _save_world_learning_record(match, analysis):
+                    raise RuntimeError("세계경기 통합 채점 기록 저장 실패")
                 item["analysis"] = analysis
                 item["analysis_version"] = ANALYSIS_VERSION
                 item["analysis_stage"] = analysis["analysis_stage"]
@@ -3590,8 +3911,8 @@ def build_dashboard_data():
         except (AttributeError, TypeError, ValueError):
             previous_generated_at = None
 
-    # 한 번 읽은 실제 시장별 적중 기록을 이번 전체 경기 분석에 공통 적용한다.
-    market_performance = load_market_performance()
+    # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
+    market_performance_cache = {}
       
     for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
@@ -3681,6 +4002,28 @@ def build_dashboard_data():
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
+        proto_movement = _detect_odds_movement({}, {})
+        overseas_three_way = [
+            (os_data or {}).get("odd_h"),
+            (os_data or {}).get("odd_d"),
+            (os_data or {}).get("odd_a"),
+        ]
+        if api_fixture_id and _valid_three_way_odds(overseas_three_way):
+            bookmaker_count = int((os_data or {}).get("bookmaker_count") or 0)
+            proto_movement = capture_odds_movement(
+                api_fixture_id,
+                "PROTO",
+                prediction_stage(diff_hours, False),
+                {
+                    "bookmaker_count": bookmaker_count,
+                    "1x2": {
+                        "home": float(overseas_three_way[0]),
+                        "draw": float(overseas_three_way[1]),
+                        "away": float(overseas_three_way[2]),
+                        "sample_count": bookmaker_count,
+                    },
+                },
+            )
         weather_condition = fetch_weather_api(city, odds_ttl)
          
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"], heavy_ttl)
@@ -3702,6 +4045,14 @@ def build_dashboard_data():
         ):
             if os_data["odd_h"] < odd_h - 0.15: h_market_bonus = 0.05
             if os_data["odd_a"] < odd_a - 0.15: a_market_bonus = 0.05
+        # 같은 경기의 서로 다른 수집 시점에서 여러 업체 중앙값이 함께
+        # 움직인 경우만 사용한다. 단일 업체 변동이나 한 번뿐인 조회는 제외한다.
+        h_market_bonus = max(
+            h_market_bonus, float(proto_movement.get("home_bonus") or 0)
+        )
+        a_market_bonus = max(
+            a_market_bonus, float(proto_movement.get("away_bonus") or 0)
+        )
              
         rank_diff_bonus_h = max(-0.18, min(0.18, (a_rank - h_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
         rank_diff_bonus_a = max(-0.18, min(0.18, (h_rank - a_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
@@ -3779,6 +4130,9 @@ def build_dashboard_data():
         a_recent = fetch_team_recent_form_metrics(away_info.get("id"), heavy_ttl)
          
         league_n = m.get('league', '')
+        if league_n not in market_performance_cache:
+            market_performance_cache[league_n] = load_market_performance(league_n)
+        market_performance = market_performance_cache[league_n]
         AVG_H_GF, AVG_A_GF = get_league_averages(league_n)
         AVG_H_GA, AVG_A_GA = AVG_A_GF, AVG_H_GF
          
@@ -3885,6 +4239,8 @@ def build_dashboard_data():
             movement_parts.append(f"{home_team} 해외 승 배당 하락")
         if a_market_bonus > 0:
             movement_parts.append(f"{away_team} 해외 승 배당 하락")
+        if proto_movement.get("summary"):
+            movement_parts.append(str(proto_movement["summary"]))
         tactical_parts = [text for text in (h_matchup_msg, a_matchup_msg) if text]
         if is_derby:
             tactical_parts.append("로컬 더비 변동성")
@@ -4872,7 +5228,7 @@ def _grade_prediction_candidates(
     _ensure_prediction_analysis_tables(conn)
     snapshot = conn.execute(
         """
-        SELECT id, analysis_version, stage, candidates_json
+        SELECT id, analysis_version, stage, candidates_json, evidence_json
         FROM prediction_analysis_snapshots
         WHERE match_id = ?
         ORDER BY id DESC LIMIT 1
@@ -4887,6 +5243,17 @@ def _grade_prediction_candidates(
         return None
     if not isinstance(candidates, list):
         return None
+    try:
+        evidence = json.loads(snapshot[4] or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        evidence = []
+    odds_movement_evidence = ""
+    for item in evidence if isinstance(evidence, list) else []:
+        if not isinstance(item, dict) or str(item.get("name") or "") != "배당 변동":
+            continue
+        odds_movement_evidence = str(item.get("value") or "").strip()
+        if odds_movement_evidence:
+            break
 
     result_rows = []
     for candidate in candidates:
@@ -4960,6 +5327,7 @@ def _grade_prediction_candidates(
         "highest_probability_unselected_answer": (
             unselected_hits[0] if unselected_hits else None
         ),
+        "odds_movement_evidence": odds_movement_evidence,
     }
 
 
@@ -4971,8 +5339,10 @@ def _candidate_review_text(review):
         f"[전체 시장 복기] 킥오프 전 동결 후보 "
         f"{int(review.get('graded_candidate_count') or 0)}개를 동일 점수로 채점했습니다."
     )
+    movement = str(review.get("odds_movement_evidence") or "").strip()
+    movement_note = f" 당시 확인된 해외배당 흐름: {movement}." if movement else ""
     if review.get("selected_pick_hit"):
-        return base + " 최종 확률픽이 실제 결과 조건을 충족했습니다."
+        return base + " 최종 확률픽이 실제 결과 조건을 충족했습니다." + movement_note
     if answer:
         return (
             base
@@ -4980,8 +5350,13 @@ def _candidate_review_text(review):
             f"최상위 방향은 {answer.get('market_label')} · "
             f"{answer.get('raw_pick')}({float(answer.get('model_probability') or 0) * 100:.1f}%)였습니다. "
             "이는 경기 후 확인한 복기 자료이며 과거 예측을 소급 변경하지 않습니다."
+            + movement_note
         )
-    return base + " 미선택 후보까지 포함해 원인을 다음 도전자 모델의 학습 자료로 보존했습니다."
+    return (
+        base
+        + " 미선택 후보까지 포함해 원인을 다음 도전자 모델의 학습 자료로 보존했습니다."
+        + movement_note
+    )
 
 
 def auto_score_matches():

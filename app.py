@@ -2639,7 +2639,10 @@ with main_tab6:
         </div>
     </div>
     """, unsafe_allow_html=True)
-    st.info("프로토 LIVE와 분리된 메뉴입니다. 새 리그는 그림자 채점으로 검증한 뒤 공개됩니다.")
+    st.info(
+        "프로토 LIVE와 분리된 전 세계 경기 픽입니다. '검증 중' 표시는 픽을 숨긴다는 뜻이 아니라, "
+        "아직 공식 VIP 성적표 표본에는 포함하지 않는다는 뜻입니다."
+    )
 
     legacy_world_matches = (
         dashboard_data.get("all_matches")
@@ -2650,11 +2653,19 @@ with main_tab6:
     raw_world_matches = world_dashboard_data.get("matches", []) or legacy_world_matches
     world_source_meta = world_dashboard_data.get("source_meta", {}) or {}
     is_world_admin = st.session_state.get('role') == ROLE_ADMIN
-    if is_world_admin:
-        world_matches = [
-            item for item in raw_world_matches
-            if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
+    eligible_world_matches = [
+        item for item in raw_world_matches
+        if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
+    ]
+    world_matches = (
+        eligible_world_matches
+        if has_full_access
+        else [
+            item for item in eligible_world_matches
+            if ((item.get("analysis") or {}).get("selected") or {}).get("raw_pick")
         ]
+    )
+    if is_world_admin:
         rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
         rejected_text = " · ".join(
             f"{entry.get('reason', entry.get('reason_code', '제외'))} {int(entry.get('count') or 0)}"
@@ -2674,23 +2685,18 @@ with main_tab6:
         if rejected_text:
             with st.expander("세계경기 제외 사유 확인"):
                 st.write(rejected_text)
-    else:
-        world_matches = [
-            item for item in raw_world_matches
-            if str(item.get("visibility_status") or "").upper() == "PUBLIC"
-        ]
     if not world_matches:
         shadow_count = int(world_source_meta.get("eligible_shadow_count") or 0)
         readiness_text = (
-            f"현재 {shadow_count}경기를 비공개 그림자 검증 중입니다."
+            f"현재 {shadow_count}경기의 분석 완료를 기다리고 있습니다."
             if shadow_count
             else "오늘 분석 가능한 세계 경기 일정을 확인 중입니다."
         )
         st.markdown("""
         <div class='match-card' style='text-align:center; padding:42px 20px;'>
-            <h3 style='margin-bottom:12px;'>🌍 전 세계 경기 검증 중</h3>
+            <h3 style='margin-bottom:12px;'>🌍 전 세계 경기 분석 중</h3>
             <p style='color:#94A3B8; line-height:1.7;'>현재 베트맨 경기와 섞지 않고 별도로 수집·채점합니다.<br>
-            검증 기준을 통과한 리그부터 이 메뉴에 공개됩니다.</p>
+            분석이 끝난 경기부터 이 메뉴에 순서대로 표시됩니다.</p>
         </div>
         """, unsafe_allow_html=True)
         st.caption(readiness_text)
@@ -2731,65 +2737,70 @@ with main_tab6:
                 or "대기"
             ))
             world_status_html = ""
-            if is_world_admin and visibility_status == "SHADOW":
-                status_label = {
-                    "PENDING_SHADOW_ANALYSIS": "일정 수집 완료 · 그림자 분석 대기",
-                    "WAITING_T24_ANALYSIS": "킥오프 24시간 전 분석 대기",
-                    "ANALYZED_SHADOW": "그림자 분석 완료",
-                    "FROZEN_SHADOW": "킥오프 30분 전 최종 픽 동결",
-                    "DEFERRED_DAILY_CAP": "오늘 분석 30경기 상한으로 다음 순번 대기",
-                    "DEFERRED_LEAGUE_CAP": "리그별 5경기 상한으로 다음 순번 대기",
-                    "MISSED_PREKICKOFF": "킥오프 전 분석 기회를 놓침",
-                    "ANALYSIS_ERROR": "분석 오류 · 수집기 로그 확인",
-                }.get(analysis_status, analysis_status.replace("_", " ") or "상태 확인 중")
+            status_label = {
+                "PENDING_SHADOW_ANALYSIS": "일정 수집 완료 · 분석 대기",
+                "WAITING_T24_ANALYSIS": "킥오프 24시간 전 분석 대기",
+                "ANALYZED_SHADOW": "분석 완료 · 공식 VIP 표본 미포함",
+                "FROZEN_SHADOW": "최종 픽 동결 · 공식 VIP 표본 미포함",
+                "DEFERRED_DAILY_CAP": "오늘 정밀분석 30경기 상한으로 다음 순번 대기",
+                "DEFERRED_LEAGUE_CAP": "리그별 정밀분석 상한으로 다음 순번 대기",
+                "MISSED_PREKICKOFF": "킥오프 전 분석 기회를 놓침",
+                "ANALYSIS_ERROR": "분석 오류 · 다시 확인 중",
+            }.get(analysis_status, analysis_status.replace("_", " ") or "상태 확인 중")
+            if visibility_status == "SHADOW":
                 world_status_html = (
                     "<div style='margin-top:14px; color:#F59E0B; font-weight:800;'>"
-                    f"🧪 SHADOW · {escape(status_label)}</div>"
+                    f"🧪 검증 중 · {escape(status_label)}</div>"
                 )
-                if selected_pick:
-                    selected_name = escape(str(
-                        selected_pick.get("display")
-                        or selected_pick.get("raw_pick")
-                        or "픽 계산 완료"
+            elif visibility_status == "PUBLIC":
+                world_status_html = (
+                    "<div style='margin-top:14px; color:#10B981; font-weight:800;'>"
+                    "✅ 공식 공개</div>"
+                )
+            if selected_pick:
+                selected_name = escape(str(
+                    selected_pick.get("display")
+                    or selected_pick.get("raw_pick")
+                    or "픽 계산 완료"
+                ))
+                selected_probability = float(selected_pick.get("probability") or 0) * 100
+                alternative_html = ""
+                if alternative_pick:
+                    alternative_name = escape(str(
+                        alternative_pick.get("display")
+                        or alternative_pick.get("raw_pick")
+                        or ""
                     ))
-                    selected_probability = float(selected_pick.get("probability") or 0) * 100
-                    alternative_html = ""
-                    if alternative_pick:
-                        alternative_name = escape(str(
-                            alternative_pick.get("display")
-                            or alternative_pick.get("raw_pick")
-                            or ""
-                        ))
-                        alternative_probability = float(
-                            alternative_pick.get("probability") or 0
-                        ) * 100
-                        alternative_tier = escape(str(
-                            alternative_pick.get("value_pick_tier") or "참고"
-                        ))
-                        alternative_html = (
-                            "<div style='border:1px solid #334155; border-radius:10px; "
-                            "padding:12px; background:#0B1220;'>"
-                            "<div style='color:#F59E0B; font-size:12px; font-weight:800;'>"
-                            "배당형 대안픽</div>"
-                            f"<div style='font-weight:900; margin-top:5px;'>{alternative_name}</div>"
-                            f"<div style='color:#94A3B8; font-size:12px;'>{alternative_probability:.1f}% · {alternative_tier}</div>"
-                            "</div>"
-                        )
-                    world_status_html += (
-                        "<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); "
-                        "gap:10px; margin-top:12px;'>"
-                        "<div style='border:1px solid #0EA5E9; border-radius:10px; padding:12px; background:#071522;'>"
-                        "<div style='color:#22D3EE; font-size:12px; font-weight:800;'>확률 높은 픽</div>"
-                        f"<div style='font-weight:900; margin-top:5px;'>{selected_name}</div>"
-                        f"<div style='color:#94A3B8; font-size:12px;'>{selected_probability:.1f}%</div>"
+                    alternative_probability = float(
+                        alternative_pick.get("probability") or 0
+                    ) * 100
+                    alternative_tier = escape(str(
+                        alternative_pick.get("value_pick_tier") or "참고"
+                    ))
+                    alternative_html = (
+                        "<div style='border:1px solid #334155; border-radius:10px; "
+                        "padding:12px; background:#0B1220;'>"
+                        "<div style='color:#F59E0B; font-size:12px; font-weight:800;'>"
+                        "배당형 대안픽</div>"
+                        f"<div style='font-weight:900; margin-top:5px;'>{alternative_name}</div>"
+                        f"<div style='color:#94A3B8; font-size:12px;'>{alternative_probability:.1f}% · {alternative_tier}</div>"
                         "</div>"
-                        f"{alternative_html}"
-                        "<div style='border:1px solid #334155; border-radius:10px; padding:12px; background:#0B1220;'>"
-                        "<div style='color:#A78BFA; font-size:12px; font-weight:800;'>검증 정보</div>"
-                        f"<div style='font-weight:900; margin-top:5px;'>데이터 {quality_score}/100 · {quality_grade}</div>"
-                        f"<div style='color:#94A3B8; font-size:12px;'>{stage_text}</div>"
-                        "</div></div>"
                     )
+                world_status_html += (
+                    "<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); "
+                    "gap:10px; margin-top:12px;'>"
+                    "<div style='border:1px solid #0EA5E9; border-radius:10px; padding:12px; background:#071522;'>"
+                    "<div style='color:#22D3EE; font-size:12px; font-weight:800;'>확률 높은 픽</div>"
+                    f"<div style='font-weight:900; margin-top:5px;'>{selected_name}</div>"
+                    f"<div style='color:#94A3B8; font-size:12px;'>{selected_probability:.1f}%</div>"
+                    "</div>"
+                    f"{alternative_html}"
+                    "<div style='border:1px solid #334155; border-radius:10px; padding:12px; background:#0B1220;'>"
+                    "<div style='color:#A78BFA; font-size:12px; font-weight:800;'>검증 정보</div>"
+                    f"<div style='font-weight:900; margin-top:5px;'>데이터 {quality_score}/100 · {quality_grade}</div>"
+                    f"<div style='color:#94A3B8; font-size:12px;'>{stage_text}</div>"
+                    "</div></div>"
+                )
             st.markdown(
                 f"""
                 <div class='match-card'>
@@ -3105,14 +3116,12 @@ with main_tab4:
                 "</span></div>",
                 unsafe_allow_html=True,
             )
-            if is_world_admin and world_analysis:
+            if world_analysis:
                 missing_data = world_analysis.get("missing_data") or []
-                expander_title = f"{world_home} vs {world_away} 그림자 분석 근거"
-                with st.expander(expander_title):
+                with st.expander(f"{world_home} vs {world_away} 분석 근거"):
                     if missing_data:
                         st.warning("확보하지 못한 자료: " + ", ".join(map(str, missing_data)))
                     st.write(world_analysis.get("report") or "상세 분석문을 준비 중입니다.")
-        
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 실제 데이터 채점 기록</h4>", unsafe_allow_html=True)
         
         history_data = stats['history']
