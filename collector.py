@@ -2466,6 +2466,25 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
         except (TypeError, ValueError):
             return None
 
+    def is_fulltime_market(bet_name, base_names):
+        """Reject half/team/corner props that reuse over-under or handicap words."""
+        name = str(bet_name or "").strip().casefold()
+        non_fulltime_markers = (
+            "first half", "1st half", "first-half", "1st-half",
+            "second half", "2nd half", "second-half", "2nd-half",
+            "half time", "halftime", "half-time",
+            "home team", "away team", "team total",
+            "corner", "booking", "card", "throw-in", "offside",
+        )
+        if any(marker in name for marker in non_fulltime_markers):
+            return False
+        return any(
+            name == base
+            or name.startswith(f"{base} ")
+            or name.startswith(f"{base} -")
+            for base in base_names
+        )
+
     for odds_row in odds_rows or []:
         for bookmaker in (odds_row or {}).get("bookmakers", []) or []:
             bookmaker_ids.add(str(bookmaker.get("id") or bookmaker.get("name") or len(bookmaker_ids)))
@@ -2491,7 +2510,10 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
                             wdl_samples[side].append(odd)
                     continue
 
-                if "over/under" in bet_name or "goals over" in bet_name or "total goals" in bet_name:
+                if is_fulltime_market(
+                    bet_name,
+                    ("goals over/under", "goals over under", "total goals"),
+                ):
                     found_by_line = {}
                     for value in values:
                         label = str(value.get("value") or "").strip().casefold()
@@ -2510,7 +2532,10 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
                             target["over"].append(found["over"])
                     continue
 
-                if not any(key in bet_name for key in ("handicap result", "3 way handicap", "european handicap")):
+                if not is_fulltime_market(
+                    bet_name,
+                    ("handicap result", "3 way handicap", "european handicap"),
+                ):
                     continue
                 # ``3 Way Handicap``의 3은 시장 종류(3방향)이지 실제 기준선이 아니다.
                 # 시장명에서 이 고정 문구를 먼저 지워 +3.0 가짜 선으로 해석하지 않는다.
@@ -2642,9 +2667,9 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
     if fixture_id <= 0:
         return None
     ttl_h = 4.0 if diff_hours > 3 else (0.5 if diff_hours > 1 else 0.2)
-    # v1에는 ``3 Way Handicap``의 숫자 3을 +3.0 선으로 오인한 결과가
-    # 저장될 수 있다. 파서 변경 뒤에는 새 세대 키로 실제 배당을 다시 받는다.
-    cache_key = f"world_market_v2_{fixture_id}"
+    # v1은 3 Way 숫자 오인, v2는 전반전 총득점 시장이 섞일 수 있었다.
+    # 정규시간 시장 범위를 고친 뒤 새 세대 키로 실제 배당을 다시 받는다.
+    cache_key = f"world_market_v3_{fixture_id}"
     cached = get_db_cache(cache_key, ttl_h)
     if isinstance(cached, dict):
         return cached
