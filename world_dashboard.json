@@ -1,9 +1,9 @@
 {
-  "schema_version": "world-shadow.v2",
+  "schema_version": "world-schedule.v1",
   "source_type": "WORLD",
-  "stage": "SHADOW_ANALYSIS",
+  "stage": "COLLECTION_ONLY",
   "default_visibility_status": "SHADOW",
-  "generated_at": "2026-09-04T09:13:59.142399+09:00",
+  "generated_at": "2026-09-04T15:15:49.749825+09:00",
   "scheduled_dates": [
     "2026-09-04",
     "2026-09-05"
@@ -5242,6 +5242,16 @@
       "api_fixture_id": 1490436,
       "final_match_time": "26.09.05 (토) 08:30",
       "timestamp": 1788564600.0,
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T12:16:11.623441+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false,
       "analysis": {
         "analysis_version": "V7.3.8-world-grading-market-movement",
         "analysis_stage": "T-24-initial",
@@ -5853,17 +5863,7 @@
           "vip_promoted": false
         },
         "report": "[종합 경기 흐름] 예상 정규시간 득점은 New York City FC 0.78골, Nashville SC 1.35골입니다. Nashville SC가 역습과 전환 과정에서 더 위협적인 장면을 만들 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Nashville SC 승 · 모델 42.8% · 시장 공정확률 36.2%, 차이 +6.6%p.\n\n[핸디캡 분석] New York City FC -1.0 적용 후 패 · 모델 70.5% · 시장 공정확률 59.7%, 차이 +10.8%p.\n\n[언더오버 분석] 언더 (U/O 2.75) · 모델 59.5% · 시장 공정확률 52.4%, 차이 +7.1%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 0.40/2.40, 홈·원정: 홈 6승/17경기, 원정 7승/17경기, 상대 전적: 3승-3무-4승, 선수 결장: 결장 10명/2명, 휴식일: 6일/5일, 팀 신원·경기 연결: 팀ID 1604/9569, 경기ID 1490436, 시장 배당: 1x2, totals, handicap · 12개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 New York City FC -1.0 적용 후 패 · 모델 70.5% · 시장 공정확률 59.7%, 차이 +10.8%p입니다. 배당형 대안픽은 언더 (U/O 2.75) · 모델 59.5% · 시장 공정확률 52.4%, 차이 +7.1%p이며, 보수적 가치 기준도 통과했습니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 70.5%이며, 베팅업체 마진 제거 공정확률은 59.7%이고 모델과의 차이는 +10.8%p입니다. 예상 오차범위는 62.1%~78.9%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
-      },
-      "analysis_version": "V7.3.8-world-grading-market-movement",
-      "analysis_stage": "T-24-initial",
-      "analyzed_at": "2026-09-04T12:16:11.623441+09:00",
-      "frozen_at": null,
-      "data_quality_score": 90,
-      "data_quality_grade": "정상",
-      "missing_data": [
-        "확정 선발명단"
-      ],
-      "lineup_confirmed": false
+      }
     },
     {
       "source_type": "WORLD",
@@ -6455,7 +6455,7 @@
     {
       "reason_code": "UNSUPPORTED_LEAGUE",
       "reason": "1단계 허용 리그 아님",
-      "count": 1558
+      "count": 1540
     }
   ],
   "rejected_samples": [
@@ -6731,9 +6731,9 @@
     }
   ],
   "source_meta": {
-    "raw_fixture_count": 1589,
+    "raw_fixture_count": 1571,
     "eligible_shadow_count": 29,
-    "rejected_count": 1560,
+    "rejected_count": 1542,
     "league_counts": {
       "프랑스 리그 1": 2,
       "네덜란드 에레디비시": 2,
@@ -6760,31 +6760,23 @@
       292
     ],
     "schedule_days": 2,
-    "analysis_started": true,
+    "analysis_started": false,
     "public_count": 0,
     "api_usage": {
       "usage_day": "2026-09-04",
       "reset_timezone": "UTC",
-      "local_calls": 1820,
-      "provider_remaining": 5670,
+      "local_calls": 2078,
+      "provider_remaining": 5405,
       "analysis_soft_limit": 6900,
       "daily_limit": 7500,
       "live_reserve": 600,
       "world_calls": 37,
-      "analysis_calls": 1739,
-      "live_calls": 40,
-      "scoring_calls": 4,
+      "analysis_calls": 1938,
+      "live_calls": 96,
+      "scoring_calls": 7,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
       "quota_exhausted": false
-    },
-    "analysis_day": "2026-09-04",
-    "analysis_daily_limit": 30,
-    "analysis_per_league_limit": 5,
-    "analyzed_shadow_count": 9,
-    "frozen_shadow_count": 0,
-    "analysis_error_count": 0,
-    "quota_paused": false
-  },
-  "last_analysis_at": "2026-09-04T12:16:11.672669+09:00"
+    }
+  }
 }
