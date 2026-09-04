@@ -2657,6 +2657,27 @@ with main_tab6:
         item for item in raw_world_matches
         if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
     ]
+    # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
+    world_actual_analyzed = sum(
+        1 for item in eligible_world_matches
+        if item.get("analysis")
+        or str(item.get("analysis_status") or "").upper() in {
+            "ANALYZED_SHADOW", "FROZEN_SHADOW"
+        }
+    )
+    world_actual_frozen = sum(
+        1 for item in eligible_world_matches
+        if item.get("frozen_at")
+        or str(item.get("analysis_status") or "").upper() == "FROZEN_SHADOW"
+    )
+    world_actual_errors = sum(
+        1 for item in eligible_world_matches
+        if str(item.get("analysis_status") or "").upper() == "ANALYSIS_ERROR"
+    )
+    world_actual_public = sum(
+        1 for item in eligible_world_matches
+        if str(item.get("visibility_status") or "").upper() == "PUBLIC"
+    )
     world_matches = (
         eligible_world_matches
         if has_full_access
@@ -2675,11 +2696,11 @@ with main_tab6:
         st.caption(
             "관리자 세계경기 관제 · "
             f"원본 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
-            f"그림자 후보 {int(world_source_meta.get('eligible_shadow_count') or len(world_matches))}경기 · "
-            f"분석 {int(world_source_meta.get('analyzed_shadow_count') or 0)}경기 · "
-            f"최종동결 {int(world_source_meta.get('frozen_shadow_count') or 0)}경기 · "
-            f"오류 {int(world_source_meta.get('analysis_error_count') or 0)}경기 · "
-            f"공개 {int(world_source_meta.get('public_count') or 0)}경기 · "
+            f"분석대상 {len(eligible_world_matches)}경기 · "
+            f"분석 {world_actual_analyzed}경기 · "
+            f"최종동결 {world_actual_frozen}경기 · "
+            f"오류 {world_actual_errors}경기 · "
+            f"공개 {world_actual_public}경기 · "
             f"WORLD API {int((world_source_meta.get('api_usage') or {}).get('world_calls') or 0)}회"
         )
         if rejected_text:
@@ -2707,9 +2728,35 @@ with main_tab6:
                 st.warning("4번째 세계 경기부터는 후원회원에게 제공됩니다.")
                 break
             world_match = world_item.get("match", world_item)
-            world_league = escape(str(world_match.get("league", "세계 축구")))
-            world_home = escape(str(world_match.get("home", "홈팀")))
-            world_away = escape(str(world_match.get("away", "원정팀")))
+            world_league = escape(str(
+                world_match.get("league_name_ko")
+                or world_match.get("league")
+                or "세계 축구"
+            ))
+            world_home_raw = str(world_match.get("home", "홈팀"))
+            world_away_raw = str(world_match.get("away", "원정팀"))
+            world_home_display = str(
+                world_match.get("home_name_ko") or world_home_raw
+            )
+            world_away_display = str(
+                world_match.get("away_name_ko") or world_away_raw
+            )
+            world_home = escape(world_home_display)
+            world_away = escape(world_away_display)
+            world_home_logo = render_logo_html(
+                world_match.get("home_logo") or world_item.get("home_logo")
+            )
+            world_away_logo = render_logo_html(
+                world_match.get("away_logo") or world_item.get("away_logo")
+            )
+
+            def localized_world_pick(value):
+                label = str(value or "")
+                if world_home_raw and world_home_display:
+                    label = label.replace(world_home_raw, world_home_display)
+                if world_away_raw and world_away_display:
+                    label = label.replace(world_away_raw, world_away_display)
+                return escape(label)
             world_time = escape(str(
                 world_item.get("final_match_time")
                 or world_match.get("match_time")
@@ -2758,19 +2805,19 @@ with main_tab6:
                     "✅ 공식 공개</div>"
                 )
             if selected_pick:
-                selected_name = escape(str(
+                selected_name = localized_world_pick(
                     selected_pick.get("display")
                     or selected_pick.get("raw_pick")
                     or "픽 계산 완료"
-                ))
+                )
                 selected_probability = float(selected_pick.get("probability") or 0) * 100
                 alternative_html = ""
                 if alternative_pick:
-                    alternative_name = escape(str(
+                    alternative_name = localized_world_pick(
                         alternative_pick.get("display")
                         or alternative_pick.get("raw_pick")
                         or ""
-                    ))
+                    )
                     alternative_probability = float(
                         alternative_pick.get("probability") or 0
                     ) * 100
@@ -2806,9 +2853,9 @@ with main_tab6:
                 <div class='match-card'>
                     <div class='league-title'>{world_league}</div>
                     <div class='vs-row'>
-                        <div class='team-box home'><div class='team-name-text'>{world_home}</div></div>
+                        <div class='team-box home'>{world_home_logo}<div class='team-name-text'>{world_home}</div></div>
                         <div class='center-time-box'><span class='match-time-text'>{world_time}</span></div>
-                        <div class='team-box away'><div class='team-name-text'>{world_away}</div></div>
+                        <div class='team-box away'>{world_away_logo}<div class='team-name-text'>{world_away}</div></div>
                     </div>
                     {world_status_html}
                 </div>
@@ -2995,15 +3042,19 @@ with main_tab4:
                 df_finished['is_toto14'].fillna(0).astype(int) == 1
             ]
             if current_version:
-                df_proto = df_proto_all[
+                df_proto_current = df_proto_all[
                     df_proto_all['analysis_version'].fillna('').astype(str) == current_version
                 ]
-                df_toto = df_toto_all[
+                df_toto_current = df_toto_all[
                     df_toto_all['analysis_version'].fillna('').astype(str) == current_version
                 ]
             else:
-                df_proto = df_proto_all
-                df_toto = df_toto_all
+                df_proto_current = df_proto_all
+                df_toto_current = df_toto_all
+            # 프로그램 배포와 무관하게 공식 성적은 과거 동결 픽부터 누적한다.
+            # 각 경기의 analysis_version 값은 그대로 보존해 버전별 재검증도 가능하다.
+            df_proto = df_proto_all
+            df_toto = df_toto_all
             
             proto_total = len(df_proto)
             proto_prob_hit = int(pd.to_numeric(df_proto['is_correct_prob'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
@@ -3046,7 +3097,8 @@ with main_tab4:
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "ev_total": proto_ev_total, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
                 "current_version": current_version,
-                "legacy_count": max(0, len(df_proto_all) - len(df_proto)) + max(0, len(df_toto_all) - len(df_toto)),
+                "current_model_count": len(df_proto_current) + len(df_toto_current),
+                "legacy_count": max(0, len(df_proto_all) - len(df_proto_current)) + max(0, len(df_toto_all) - len(df_toto_current)),
                 "today_finished_count": len(today_finished),
                 "today_hit_count": today_hit_count,
                 "today_versions": today_versions,
@@ -3070,12 +3122,12 @@ with main_tab4:
         honey_value = f"{p_stats['ev_acc']}%" if p_stats['ev_total'] else "채점 대기"
         honey_note = f"({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)" if p_stats['ev_total'] else "배당형 대안픽 결과를 기다리는 중"
         toto_value = f"{t_stats['acc']}%" if t_stats['total'] else "채점 대기"
-        toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "현재 버전의 종료 경기 없음"
+        toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "종료 경기 없음"
         
         st.markdown(f"""
         <div class='grade-summary-grid'>
             <div class='grade-summary-card'>
-                <span class='grade-summary-title'>📊 현재 버전 승부식 채점 (총 {p_stats['total']}경기)</span>
+                <span class='grade-summary-title'>📊 누적 승부식 채점 (총 {p_stats['total']}경기)</span>
                 <div class='grade-dual-row'>
                     <div class='grade-metric'>
                         <span class='grade-metric-label'>안전제일 확률픽</span>
@@ -3097,7 +3149,7 @@ with main_tab4:
             </div>
         </div>
         <div style='color:#64748B;font-size:12px;margin:-3px 0 20px 2px;'>
-            집계 기준: {current_version_label} · 현재 버전으로 킥오프 전에 동결된 경기만 위 적중률에 포함 · 이전 버전 {stats['legacy_count']}건은 아래 기록에서 확인
+            누적 집계 · 경기 전 동결 당시의 픽과 분석 버전을 그대로 보존 · 현재 분석모델 {current_version_label} 표본 {stats['current_model_count']}건 · 과거 모델 표본 {stats['legacy_count']}건
         </div>
         """, unsafe_allow_html=True)
 

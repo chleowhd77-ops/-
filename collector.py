@@ -111,6 +111,18 @@ WORLD_SCHEDULE_REFRESH_HOURS = max(
 WORLD_ANALYSIS_INTERVAL_MINUTES = max(
     10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
 )
+# PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
+# 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
+WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v1"
+WORLD_TEAM_NAME_KO_OVERRIDES = {
+    "Lyon": "올랭피크 리옹",
+    "Auxerre": "AJ오세르",
+    "Sparta Rotterdam": "스파르타 로테르담",
+    "PEC Zwolle": "PEC즈볼러",
+    "VfB Stuttgart": "VfB 슈투트가르트",
+    "1. FC Köln": "쾰른",
+    "FC Koln": "쾰른",
+}
 WORLD_REJECTION_LABELS = {
     "UNSUPPORTED_LEAGUE": "1단계 허용 리그 아님",
     "INVALID_FIXTURE_ID": "공식 경기 ID 없음",
@@ -124,6 +136,78 @@ WORLD_REJECTION_LABELS = {
     "DUPLICATE_FIXTURE": "중복 경기 ID",
     "SCHEDULE_CAP": "세계 일정 안전 상한 초과",
 }
+
+
+def _world_team_display_name(api_name, team_id=0):
+    """Return a verified Korean-first label without changing API identity."""
+    api_name = str(api_name or "").strip()
+    team_id = int(team_id or 0)
+    if api_name in WORLD_TEAM_NAME_KO_OVERRIDES:
+        return WORLD_TEAM_NAME_KO_OVERRIDES[api_name]
+
+    def normalized(value):
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+    def has_hangul(value):
+        return bool(re.search(r"[가-힣]", str(value or "")))
+
+    target = normalized(api_name)
+    candidates = []
+    for korean_name, english_name in {**TEAM_NAME_MAP, **MANUAL_TEAM_MAP}.items():
+        if target and normalized(english_name) == target and has_hangul(korean_name):
+            candidates.append((1, str(korean_name).strip()))
+    if team_id > 0:
+        for korean_name, info in DIRECT_TEAM_INFO.items():
+            if (
+                isinstance(info, dict)
+                and int(info.get("id") or 0) == team_id
+                and has_hangul(korean_name)
+            ):
+                candidates.append((2, str(korean_name).strip()))
+    if not candidates:
+        return api_name
+    # 검증된 ID 이름을 우선하고, 축약명보다 설명력이 높은 전체 이름을 쓴다.
+    return max(candidates, key=lambda row: (row[0], len(row[1])))[1]
+
+
+def _refresh_world_source_meta(payload):
+    """Rebuild counters from matches so schedule refresh cannot reset them."""
+    if not isinstance(payload, dict):
+        return payload
+    matches = [item for item in payload.get("matches", []) or [] if isinstance(item, dict)]
+    eligible = [
+        item for item in matches
+        if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
+    ]
+    analyzed = [
+        item for item in eligible
+        if item.get("analysis")
+        or str(item.get("analysis_status") or "").upper() in {
+            "ANALYZED_SHADOW", "FROZEN_SHADOW"
+        }
+    ]
+    source_meta = payload.setdefault("source_meta", {})
+    source_meta.update({
+        "eligible_shadow_count": len(eligible),
+        "analyzed_shadow_count": len(analyzed),
+        "frozen_shadow_count": sum(
+            1 for item in eligible
+            if item.get("frozen_at")
+            or str(item.get("analysis_status") or "").upper() == "FROZEN_SHADOW"
+        ),
+        "analysis_error_count": sum(
+            1 for item in eligible
+            if str(item.get("analysis_status") or "").upper() == "ANALYSIS_ERROR"
+        ),
+        "public_count": sum(
+            1 for item in eligible
+            if str(item.get("visibility_status") or "").upper() == "PUBLIC"
+        ),
+        "analysis_started": bool(analyzed),
+        "analysis_version": WORLD_ANALYSIS_VERSION,
+        "system_version": SYSTEM_VERSION,
+    })
+    return payload
 
 
 def _local_path(path):
@@ -762,7 +846,8 @@ def _unavailable_toto14_item(match):
     }
 
 
-def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id, analysis_stage="regular", confidence=0.0):
+def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, match_time, is_toto14, fixture_id, analysis_stage="regular", confidence=0.0, analysis_version=None):
+    target_analysis_version = str(analysis_version or ANALYSIS_VERSION)
     conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
     conn.execute("PRAGMA busy_timeout = 30000")
     cursor = conn.cursor()
@@ -797,7 +882,7 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
             """, (
                 m_id, league, home_team, away_team, prob_pick, prob_val,
                 ev_pick, ev_val, odd_h, odd_d, odd_a, match_time,
-                is_toto14, fixture_id, ANALYSIS_VERSION,
+                is_toto14, fixture_id, target_analysis_version,
             ))
         else:
             existing_fix_id, actual_result, stored_match_time, stored_home, stored_away = row
@@ -844,13 +929,13 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 WHERE match_id = ?
             """, (
                 final_fix_id, match_time, league, prob_pick, prob_val,
-                ev_pick, ev_val, ANALYSIS_VERSION, m_id,
+                ev_pick, ev_val, target_analysis_version, m_id,
             ))
 
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
             round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2),
-            ANALYSIS_VERSION,
+            target_analysis_version,
         )
         previous_normalized = None
         if previous:
@@ -867,7 +952,7 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                     odd_h, odd_d, odd_a, api_fixture_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                str(m_id), ANALYSIS_VERSION, analysis_stage, float(confidence or 0),
+                str(m_id), target_analysis_version, analysis_stage, float(confidence or 0),
                 prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a, int(fixture_id or 0)
             ))
         conn.commit()
@@ -1799,6 +1884,7 @@ def _ensure_prediction_analysis_tables(conn):
 def save_prediction_analysis(
     match_id, pick, confidence, evidence, candidates, report,
     categories=None, analysis_stage="regular", odds_source="",
+    analysis_version=None,
 ):
     """Freeze every market candidate and the exact pre-kickoff decision path."""
     if not pick or str(analysis_stage or "").startswith("locked"):
@@ -1820,6 +1906,7 @@ def save_prediction_analysis(
             ):
                 return False
 
+        target_analysis_version = str(analysis_version or ANALYSIS_VERSION)
         interval = pick.get("probability_interval") or {}
         candidate_rows, compact_categories, decision = build_pick_selection_audit(
             candidates, categories or {"high_probability": pick}, confidence
@@ -1833,7 +1920,7 @@ def save_prediction_analysis(
         )
         decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
         fingerprint_payload = "|".join((
-            str(ANALYSIS_VERSION), str(analysis_stage), str(odds_source or ""),
+            target_analysis_version, str(analysis_stage), str(odds_source or ""),
             evidence_json, candidates_json, categories_json, decision_json,
         ))
         fingerprint = hashlib.sha256(
@@ -1851,7 +1938,7 @@ def save_prediction_analysis(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
-                str(match_id), ANALYSIS_VERSION, str(analysis_stage),
+                str(match_id), target_analysis_version, str(analysis_stage),
                 str(odds_source or ""), infer_pick_market(pick),
                 pick.get("raw_pick"), pick.get("prob"), pick.get("fair_prob"),
                 pick.get("edge"), confidence, pick.get("error_margin"),
@@ -1869,7 +1956,7 @@ def save_prediction_analysis(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(match_id), ANALYSIS_VERSION, str(analysis_stage),
+                str(match_id), target_analysis_version, str(analysis_stage),
                 str(odds_source or ""), float(confidence or 0),
                 infer_pick_market(pick), str(pick.get("raw_pick") or ""),
                 len(candidate_rows), evidence_json, candidates_json,
@@ -2299,6 +2386,8 @@ def _world_fixture_candidate(fixture_data, now=None):
     weekday = "월화수목금토일"[kickoff.weekday()]
     match_time = kickoff.strftime(f"%y.%m.%d ({weekday}) %H:%M")
     league_config = WORLD_LEAGUES[league_id]
+    fixture_meta = fixture_data.get("fixture", {}) or {}
+    venue = fixture_meta.get("venue", {}) or {}
     match = {
         "id": f"WORLD_{fixture_id}",
         "fixture_id": fixture_id,
@@ -2310,10 +2399,14 @@ def _world_fixture_candidate(fixture_data, now=None):
         "round": str(league.get("round") or ""),
         "home": home_name,
         "away": away_name,
+        "home_name_ko": _world_team_display_name(home_name, home_id),
+        "away_name_ko": _world_team_display_name(away_name, away_id),
         "home_team_id": home_id,
         "away_team_id": away_id,
         "home_logo": str(home.get("logo") or ""),
         "away_logo": str(away.get("logo") or ""),
+        "city": str(venue.get("city") or ""),
+        "referee": str(fixture_meta.get("referee") or ""),
         "match_time": match_time,
         "kickoff_at": kickoff.isoformat(),
         "status": status_short,
@@ -2383,7 +2476,7 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
     rejected_counts = {
         key: value for key, value in rejected_counts.items() if int(value or 0) > 0
     }
-    return {
+    payload = {
         "schema_version": "world-schedule.v1",
         "source_type": "WORLD",
         "stage": "COLLECTION_ONLY",
@@ -2412,6 +2505,7 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
             "api_usage": get_api_usage_status(),
         },
     }
+    return _refresh_world_source_meta(payload)
 
 
 def collect_world_schedule():
@@ -2441,7 +2535,7 @@ def collect_world_schedule():
 
 
 WORLD_ANALYSIS_FIELDS = (
-    "analysis_status", "pick_status", "analysis_version", "analysis_stage",
+    "analysis_status", "pick_status", "analysis_version", "system_version", "analysis_stage",
     "analyzed_at", "frozen_at", "data_quality_score", "data_quality_grade",
     "missing_data", "lineup_confirmed", "lineup_attempts", "analysis",
 )
@@ -2469,6 +2563,7 @@ def _carry_world_shadow_analyses(payload, previous_payload):
         for field in WORLD_ANALYSIS_FIELDS:
             if field in previous:
                 item[field] = previous[field]
+    _refresh_world_source_meta(payload)
     return payload
 
 
@@ -2777,20 +2872,35 @@ def _movement_market_probabilities(market_name, market):
     return dict(zip(sides, probabilities)), odds
 
 
-def _detect_odds_movement(previous, current):
-    """Compare bookmaker medians from two real collection times.
+def _detect_odds_movement(
+    previous, current, opening=None, elapsed_hours=None,
+    opening_elapsed_hours=None, analysis_stage="",
+):
+    """Audit broad bookmaker movement without inventing betting-volume data.
 
-    A move is accepted only when both snapshots contain at least three complete
-    bookmaker quotes.  This makes the signal a broad market move rather than a
-    single bookmaker's temporary price.
+    Price direction, bookmaker breadth, persistence from the first captured
+    quote, speed and cross-market agreement are evaluated from already cached
+    snapshots.  True reverse-line movement still requires public betting-share
+    data, so it is never claimed from prices alone.
     """
     previous = previous if isinstance(previous, dict) else {}
     current = current if isinstance(current, dict) else {}
+    opening = opening if isinstance(opening, dict) else {}
     result = {
         "has_history": bool(previous),
+        "has_opening": bool(opening),
         "qualified": False,
         "summary": "",
         "signals": [],
+        "line_movements": [],
+        "cross_market_agreement": False,
+        "agreement_sides": [],
+        "underdog_move": False,
+        "movement_speed_available": bool(elapsed_hours and elapsed_hours > 0),
+        "analysis_stage": str(analysis_stage or ""),
+        "timing": "late" if str(analysis_stage or "") in {"T-60-lineup", "T-30-final"} else "regular",
+        "reverse_line_movement_confirmed": False,
+        "reverse_line_reason": "공개 베팅 비중 자료가 없어 배당 움직임만으로 역행배당을 단정하지 않음",
         "home_bonus": 0.0,
         "away_bonus": 0.0,
     }
@@ -2805,12 +2915,46 @@ def _detect_odds_movement(previous, current):
         ("handicap", "away"): "핸디패",
     }
     summaries = []
+    directional_markets = {"home": set(), "away": set()}
+    opening_wdl = opening.get("1x2") or previous.get("1x2") or {}
+    try:
+        underdog_side = (
+            "home" if float(opening_wdl.get("home") or 0) > float(opening_wdl.get("away") or 0)
+            else ("away" if float(opening_wdl.get("away") or 0) > float(opening_wdl.get("home") or 0) else "")
+        )
+    except (TypeError, ValueError):
+        underdog_side = ""
     for market_name in ("1x2", "totals", "handicap"):
         old_market = previous.get(market_name) or {}
         new_market = current.get(market_name) or {}
         if market_name in {"totals", "handicap"}:
             try:
-                if abs(float(old_market.get("line")) - float(new_market.get("line"))) > 1e-9:
+                old_line = float(old_market.get("line"))
+                new_line = float(new_market.get("line"))
+                line_shift = new_line - old_line
+                if abs(line_shift) > 1e-9:
+                    old_count = int(old_market.get("sample_count") or previous.get("bookmaker_count") or 0)
+                    new_count = int(new_market.get("sample_count") or current.get("bookmaker_count") or 0)
+                    if min(old_count, new_count) >= 3 and abs(line_shift) >= 0.25:
+                        if market_name == "totals":
+                            line_side = "over" if line_shift > 0 else "under"
+                            line_label = "오버" if line_shift > 0 else "언더"
+                        else:
+                            line_side = "home" if line_shift < 0 else "away"
+                            line_label = "홈 방향" if line_shift < 0 else "원정 방향"
+                            directional_markets[line_side].add("handicap_line")
+                        line_signal = {
+                            "market": market_name,
+                            "side": line_side,
+                            "previous_line": old_line,
+                            "current_line": new_line,
+                            "bookmaker_sample_count": min(old_count, new_count),
+                        }
+                        result["line_movements"].append(line_signal)
+                        summaries.append(
+                            f"{line_label} 기준선 {old_line:g}→{new_line:g} "
+                            f"({line_signal['bookmaker_sample_count']}개 업체)"
+                        )
                     continue
             except (TypeError, ValueError):
                 continue
@@ -2822,6 +2966,10 @@ def _detect_odds_movement(previous, current):
         new_probs, new_odds = _movement_market_probabilities(market_name, new_market)
         if not old_probs or not new_probs:
             continue
+        opening_market = opening.get(market_name) or {}
+        opening_probs, opening_odds = _movement_market_probabilities(
+            market_name, opening_market
+        )
         for index, side in enumerate(old_probs):
             probability_shift = float(new_probs[side]) - float(old_probs[side])
             odds_drop = float(old_odds[index]) - float(new_odds[index])
@@ -2830,6 +2978,17 @@ def _detect_odds_movement(previous, current):
             # routine rounding noise is ignored.
             if probability_shift < 0.018 or odds_drop < 0.10:
                 continue
+            persistent = False
+            opening_shift = None
+            if opening_probs and side in opening_probs:
+                opening_index = list(opening_probs).index(side)
+                opening_shift = float(new_probs[side]) - float(opening_probs[side])
+                opening_drop = float(opening_odds[opening_index]) - float(new_odds[index])
+                persistent = opening_shift >= 0.018 and opening_drop >= 0.10
+            speed_pph = (
+                probability_shift / float(elapsed_hours)
+                if elapsed_hours and float(elapsed_hours) > 0 else None
+            )
             strength = "강한" if probability_shift >= 0.04 else "유의미한"
             signal = {
                 "market": market_name,
@@ -2840,18 +2999,56 @@ def _detect_odds_movement(previous, current):
                 "implied_probability_shift": round(probability_shift, 4),
                 "bookmaker_sample_count": min(old_count, new_count),
                 "strength": strength,
+                "persistent_from_opening": persistent,
+                "opening_probability_shift": (
+                    round(opening_shift, 4) if opening_shift is not None else None
+                ),
+                "probability_shift_per_hour": (
+                    round(speed_pph, 4) if speed_pph is not None else None
+                ),
             }
             result["signals"].append(signal)
+            if market_name in {"1x2", "handicap"} and side in {"home", "away"}:
+                directional_markets[side].add(market_name)
+            if market_name == "1x2" and side == underdog_side:
+                result["underdog_move"] = True
+            speed_text = (
+                f", 시간당 {speed_pph * 100:+.1f}%p"
+                if speed_pph is not None else ""
+            )
+            persistence_text = ", 시초 대비 지속" if persistent else ""
             summaries.append(
                 f"{signal['label']} {signal['previous_odd']:.2f}→{signal['current_odd']:.2f} "
-                f"({probability_shift * 100:+.1f}%p, {signal['bookmaker_sample_count']}개 업체 중앙값)"
+                f"({probability_shift * 100:+.1f}%p{speed_text}, "
+                f"{signal['bookmaker_sample_count']}개 업체 중앙값{persistence_text})"
             )
             if market_name == "1x2" and side in {"home", "away"}:
+                base_bonus = 0.015 + probability_shift * 0.4
+                if persistent:
+                    base_bonus += 0.005
+                if speed_pph is not None and speed_pph >= 0.01:
+                    base_bonus += 0.003
                 result[f"{side}_bonus"] = max(
-                    float(result[f"{side}_bonus"]),
-                    min(0.05, 0.02 + probability_shift * 0.5),
+                    float(result[f"{side}_bonus"]), min(0.05, base_bonus)
                 )
-    result["qualified"] = bool(result["signals"])
+
+    agreement_sides = [
+        side for side, markets in directional_markets.items()
+        if "1x2" in markets and ({"handicap", "handicap_line"} & markets)
+    ]
+    result["agreement_sides"] = agreement_sides
+    result["cross_market_agreement"] = bool(agreement_sides)
+    for side in agreement_sides:
+        result[f"{side}_bonus"] = min(0.05, float(result[f"{side}_bonus"]) + 0.005)
+    if agreement_sides:
+        summaries.append(
+            "승무패·핸디캡 같은 방향 확인(" + ", ".join(
+                "홈" if side == "home" else "원정" for side in agreement_sides
+            ) + ")"
+        )
+    if result["underdog_move"]:
+        summaries.append("초기 열세팀 배당 수축 확인")
+    result["qualified"] = bool(result["signals"] or result["line_movements"])
     result["summary"] = " · ".join(summaries)
     return result
 
@@ -2875,17 +3072,49 @@ def capture_odds_movement(fixture_id, source_type, analysis_stage, snapshot):
         _ensure_odds_movement_table(conn)
         previous_row = conn.execute(
             """
-            SELECT odds_json FROM odds_movement_snapshots
+            SELECT odds_json, captured_at FROM odds_movement_snapshots
             WHERE fixture_id = ? AND source_type = ? AND fingerprint != ?
             ORDER BY id DESC LIMIT 1
             """,
             (fixture_id, str(source_type), fingerprint),
         ).fetchone()
+        opening_row = conn.execute(
+            """
+            SELECT odds_json, captured_at FROM odds_movement_snapshots
+            WHERE fixture_id = ? AND source_type = ?
+            ORDER BY id ASC LIMIT 1
+            """,
+            (fixture_id, str(source_type)),
+        ).fetchone()
         try:
             previous = json.loads(previous_row[0]) if previous_row else {}
         except (TypeError, ValueError, json.JSONDecodeError):
             previous = {}
-        movement = _detect_odds_movement(previous, normalized)
+        try:
+            opening = json.loads(opening_row[0]) if opening_row else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            opening = {}
+
+        def elapsed_since(row):
+            if not row or not row[1]:
+                return None
+            try:
+                captured = datetime.fromisoformat(str(row[1]).replace("Z", "+00:00"))
+                if captured.tzinfo is None:
+                    captured = captured.replace(tzinfo=timezone.utc)
+                return max(
+                    1.0 / 60.0,
+                    (datetime.now(timezone.utc) - captured.astimezone(timezone.utc)).total_seconds() / 3600.0,
+                )
+            except (TypeError, ValueError):
+                return None
+
+        movement = _detect_odds_movement(
+            previous, normalized, opening=opening,
+            elapsed_hours=elapsed_since(previous_row),
+            opening_elapsed_hours=elapsed_since(opening_row),
+            analysis_stage=analysis_stage,
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO odds_movement_snapshots (
@@ -3124,6 +3353,7 @@ def _world_analysis_usage():
 
 
 def _save_world_analysis_snapshot(match, analysis):
+    analysis_version = str(analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION)
     payload_parts = {
         "odds": analysis.get("odds_snapshot") or {},
         "inputs": analysis.get("inputs_snapshot") or {},
@@ -3137,7 +3367,7 @@ def _save_world_analysis_snapshot(match, analysis):
     }
     fingerprint = hashlib.sha256(
         "|".join((
-            ANALYSIS_VERSION, str(analysis.get("analysis_stage") or ""),
+            analysis_version, str(analysis.get("analysis_stage") or ""),
             encoded["odds"], encoded["inputs"], encoded["candidates"],
             encoded["categories"], encoded["decision"],
         )).encode("utf-8")
@@ -3157,7 +3387,7 @@ def _save_world_analysis_snapshot(match, analysis):
             """,
             (
                 int(match.get("fixture_id") or 0), str(match.get("id") or ""),
-                int(match.get("league_id") or 0), match.get("season"), ANALYSIS_VERSION,
+                int(match.get("league_id") or 0), match.get("season"), analysis_version,
                 str(analysis.get("analysis_stage") or ""),
                 datetime.now(KST).strftime("%Y-%m-%d"), str(match.get("kickoff_at") or ""),
                 str(analysis.get("analyzed_at") or ""), analysis.get("frozen_at"),
@@ -3250,6 +3480,7 @@ def _save_world_learning_record(match, analysis):
         int(match.get("fixture_id") or 0),
         str(analysis.get("analysis_stage") or "regular"),
         confidence,
+        analysis_version=str(analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION),
     )
     if not prediction_saved:
         return False
@@ -3259,17 +3490,20 @@ def _save_world_learning_record(match, analysis):
         str(analysis.get("report") or ""), categories=categories,
         analysis_stage=str(analysis.get("analysis_stage") or "regular"),
         odds_source="world_bookmaker_median",
+        analysis_version=str(analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION),
     )
 
 
 def _analyze_world_match(item, now, market_performance):
-    """Analyze one verified fixture across 1X2, totals and handicap markets."""
+    """Analyze WORLD with the same full-context inputs and common selector."""
     match = dict((item or {}).get("match") or {})
     fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
     home_id = int(match.get("home_team_id") or 0)
     away_id = int(match.get("away_team_id") or 0)
-    home = str(match.get("home") or "홈팀")
-    away = str(match.get("away") or "원정팀")
+    raw_home = str(match.get("home") or "홈팀")
+    raw_away = str(match.get("away") or "원정팀")
+    home = str(match.get("home_name_ko") or _world_team_display_name(raw_home, home_id) or raw_home)
+    away = str(match.get("away_name_ko") or _world_team_display_name(raw_away, away_id) or raw_away)
     league_id = int(match.get("league_id") or 0)
     season = match.get("season")
     kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
@@ -3289,17 +3523,20 @@ def _analyze_world_match(item, now, market_performance):
     )
     h_market_bonus = float(odds_movement.get("home_bonus") or 0)
     a_market_bonus = float(odds_movement.get("away_bonus") or 0)
-    h_recent_fixtures = fetch_team_recent_fixtures_api(home_id, heavy_ttl)
-    a_recent_fixtures = fetch_team_recent_fixtures_api(away_id, heavy_ttl)
     h_long = fetch_team_long_term_stats_api(home_id, heavy_ttl)
     a_long = fetch_team_long_term_stats_api(away_id, heavy_ttl)
     h_recent = fetch_team_recent_form_metrics(home_id, heavy_ttl)
     a_recent = fetch_team_recent_form_metrics(away_id, heavy_ttl)
+    h_stats = fetch_recent_team_stats_api(home_id, heavy_ttl)
+    a_stats = fetch_recent_team_stats_api(away_id, heavy_ttl)
     h_stand = fetch_team_standing_api(home_id, heavy_ttl)
     a_stand = fetch_team_standing_api(away_id, heavy_ttl)
     h_survival = calculate_survival_motivation(h_stand)
     a_survival = calculate_survival_motivation(a_stand)
     h2h = fetch_fixture_details_api(home_id, away_id, heavy_ttl)
+    h_manager = fetch_new_manager_status(home_id, heavy_ttl)
+    a_manager = fetch_new_manager_status(away_id, heavy_ttl)
+    is_derby = check_derby_match(raw_home, raw_away)
     injury_map = fetch_world_injuries_snapshot(
         fixture_id, home_id, away_id, league_id, season, injury_ttl
     )
@@ -3309,6 +3546,8 @@ def _analyze_world_match(item, now, market_performance):
     lineup_data = {"confirmed": False}
     h_missing = []
     a_missing = []
+    h_unexpected = []
+    a_unexpected = []
     if diff_hours <= 1.0:
         lineup_data = fetch_lineups_api(fixture_id, 0.2)
         if lineup_data.get("confirmed"):
@@ -3322,19 +3561,45 @@ def _analyze_world_match(item, now, market_performance):
                 sorted(set(a_core + list(a_inj.get("ace_names") or []))),
                 lineup_data.get(str(away_id), []),
             )
+            h_injury_names = {
+                _normalize_player_name(name) for name in h_inj.get("ace_names", [])
+            }
+            a_injury_names = {
+                _normalize_player_name(name) for name in a_inj.get("ace_names", [])
+            }
+            h_unexpected = [
+                name for name in h_missing
+                if _normalize_player_name(name) not in h_injury_names
+            ]
+            a_unexpected = [
+                name for name in a_missing
+                if _normalize_player_name(name) not in a_injury_names
+            ]
     lineup_confirmed = bool(lineup_data.get("confirmed"))
 
     h_last = fetch_team_last_match_date_api(home_id, heavy_ttl)
     a_last = fetch_team_last_match_date_api(away_id, heavy_ttl)
     h_rest = calculate_rest_days(h_last.get("date"), match.get("match_time"))
     a_rest = calculate_rest_days(a_last.get("date"), match.get("match_time"))
+    h_next = fetch_team_next_fixture_api(home_id, heavy_ttl)
+    a_next = fetch_team_next_fixture_api(away_id, heavy_ttl)
+    referee = str(match.get("referee") or "").strip() or None
+    city = str(match.get("city") or "").strip()
+    weather_condition = fetch_weather_api(city, heavy_ttl) if city else None
 
     injuries_for_quality = {"home": h_inj, "away": a_inj}
     quality_score, quality_grade, missing_data = _world_data_quality(
         match, odds, h_recent, a_recent, h_long, a_long,
         h_stand, a_stand, injuries_for_quality, lineup_confirmed,
     )
-    confidence = round(max(0.35, min(0.95, quality_score / 100.0)), 3)
+    confidence = calculate_data_confidence(
+        {"id": home_id}, {"id": away_id}, fixture_id,
+        h_stand, a_stand, h_long, a_long, h_recent, a_recent,
+        h_stats, a_stats, h_inj, a_inj, diff_hours, lineup_confirmed,
+    )
+    confidence = round(
+        max(0.35, min(float(confidence), max(0.35, quality_score / 100.0))), 3
+    )
 
     league_name = str(match.get("league_name_ko") or match.get("league") or "")
     avg_h_gf, avg_a_gf = get_league_averages(league_name)
@@ -3355,8 +3620,35 @@ def _analyze_world_match(item, now, market_performance):
         (float(a_long.get("away_ga") or 0) / float(a_long.get("away_total") or 1)) / avg_a_ga
         if int(a_long.get("away_total") or 0) > 0 else 1.0
     )
-    math_exp_h = has * ads * avg_h_gf * 1.08 * (1.0 + float(h_recent.get("strength") or 0))
-    math_exp_a = aas * hds * avg_a_gf * (1.0 + float(a_recent.get("strength") or 0))
+    h_rank = int(h_stand.get("rank") or 99)
+    a_rank = int(a_stand.get("rank") or 99)
+    home_advantage = 1.12 if 99 not in (h_rank, a_rank) and abs(h_rank - a_rank) <= 3 else 1.08
+    weather_multiplier = 0.8 if weather_condition in {"Rain", "Snow"} else 1.0
+    math_exp_h = (
+        has * ads * avg_h_gf * home_advantage * weather_multiplier
+        * (1.0 + float(h_recent.get("strength") or 0))
+    )
+    math_exp_a = (
+        aas * hds * avg_a_gf * weather_multiplier
+        * (1.0 + float(a_recent.get("strength") or 0))
+    )
+
+    def recent_strength_multiplier(stats):
+        stats = stats if isinstance(stats, dict) else {}
+        actual_xg = stats.get("xg")
+        xg_component = (
+            (float(actual_xg) - 1.35) * 0.06 if actual_xg is not None else 0.0
+        )
+        return max(0.82, min(1.22,
+            1.0 + xg_component
+            + ((float(stats.get("possession") or 50) - 50) * 0.008)
+            + ((float(stats.get("shots_on_goal") or 4.0) - 4.0) * 0.05)
+            + ((float(stats.get("corners") or 4.5) - 4.5) * 0.012)
+            - ((float(stats.get("yellow_cards") or 1.5) - 1.5) * 0.015)
+        ))
+
+    h_strength_multiplier = recent_strength_multiplier(h_stats)
+    a_strength_multiplier = recent_strength_multiplier(a_stats)
 
     wdl_odds = odds.get("1x2") or {}
     valid_wdl_odds = all(float(wdl_odds.get(side) or 0) > 1.0 for side in ("home", "draw", "away"))
@@ -3366,42 +3658,75 @@ def _analyze_world_match(item, now, market_performance):
             1.0 / float(wdl_odds["draw"]),
             1.0 / float(wdl_odds["away"]),
         ])
-        math_exp_h = math_exp_h * 0.85 + (implied[0] * 2.8) * 0.15
-        math_exp_a = math_exp_a * 0.85 + (implied[2] * 2.8) * 0.15
+        base_exp_h = math_exp_h * h_strength_multiplier * 0.85 + (implied[0] * 2.8) * 0.15
+        base_exp_a = math_exp_a * a_strength_multiplier * 0.85 + (implied[2] * 2.8) * 0.15
+    else:
+        base_exp_h = math_exp_h * h_strength_multiplier
+        base_exp_a = math_exp_a * a_strength_multiplier
 
-    h_absence = min(
-        0.28,
-        (int(h_inj.get("count") or 0) * 0.015)
-        + (len(h_inj.get("ace_names") or []) * 0.07)
-        + (len(h_missing) * 0.08),
+    h_war_pct, h_war_details, _ = calculate_war_penalty(
+        home, h_inj.get("ace_names") or [], int(h_inj.get("count") or 0), home_id
     )
-    a_absence = min(
-        0.28,
-        (int(a_inj.get("count") or 0) * 0.015)
-        + (len(a_inj.get("ace_names") or []) * 0.07)
-        + (len(a_missing) * 0.08),
+    a_war_pct, a_war_details, _ = calculate_war_penalty(
+        away, a_inj.get("ace_names") or [], int(a_inj.get("count") or 0), away_id
     )
-    h_rank = int(h_stand.get("rank") or 99)
-    a_rank = int(a_stand.get("rank") or 99)
-    h_rank_bonus = max(-0.16, min(0.16, (a_rank - h_rank) * 0.01)) if 99 not in (h_rank, a_rank) else 0.0
+    h_lineup_penalty = 0.12 if len(h_unexpected) == 1 else (0.20 if len(h_unexpected) >= 2 else 0.0)
+    a_lineup_penalty = 0.12 if len(a_unexpected) == 1 else (0.20 if len(a_unexpected) >= 2 else 0.0)
+    h_fatigue = (0.15 if h_last.get("is_extreme_fatigue") else 0.08) if h_rest <= 3 else 0.0
+    a_fatigue = (0.15 if a_last.get("is_extreme_fatigue") else 0.08) if a_rest <= 3 else 0.0
+    h_rotation = 0.10 if h_next.get("is_important") and int(h_next.get("days_until_next") or 99) <= 4 else 0.0
+    a_rotation = 0.10 if a_next.get("is_important") and int(a_next.get("days_until_next") or 99) <= 4 else 0.0
+    h_team_goals = float(h_stand.get("team_goals") or 0)
+    a_team_goals = float(a_stand.get("team_goals") or 0)
+    h_one_player = 0.15 if h_team_goals > 0 and float(h_inj.get("missing_goals") or 0) / h_team_goals >= 0.25 else 0.0
+    a_one_player = 0.15 if a_team_goals > 0 and float(a_inj.get("missing_goals") or 0) / a_team_goals >= 0.25 else 0.0
+    h_total_teams = int(h_stand.get("total_teams") or 20)
+    a_total_teams = int(a_stand.get("total_teams") or 20)
+    h_played = int(h_stand.get("played") or 0)
+    a_played = int(a_stand.get("played") or 0)
+    h_late_season = h_played > 0 and h_played / max(1, (h_total_teams - 1) * 2) >= 0.75
+    a_late_season = a_played > 0 and a_played / max(1, (a_total_teams - 1) * 2) >= 0.75
+    h_vacation = 0.08 if h_late_season and 6 <= h_rank <= max(10, h_total_teams - 4) else 0.0
+    a_vacation = 0.08 if a_late_season and 6 <= a_rank <= max(10, a_total_teams - 4) else 0.0
+    h_depth = calculate_squad_depth_factor(h_stand)
+    a_depth = calculate_squad_depth_factor(a_stand)
+    h_penalties = sorted(
+        [h_war_pct, h_fatigue, h_rotation, h_lineup_penalty, h_vacation, h_one_player],
+        reverse=True,
+    )
+    a_penalties = sorted(
+        [a_war_pct, a_fatigue, a_rotation, a_lineup_penalty, a_vacation, a_one_player],
+        reverse=True,
+    )
+    h_total_penalty = min(0.30, sum(h_penalties[:2]) * h_depth)
+    a_total_penalty = min(0.30, sum(a_penalties[:2]) * a_depth)
+    h_rank_bonus = max(-0.18, min(0.18, (a_rank - h_rank) * 0.012)) if 99 not in (h_rank, a_rank) else 0.0
     a_rank_bonus = -h_rank_bonus
     h2h_total = int(h2h.get("total") or 0)
     h_h2h = (
-        max(-0.08, min(0.08, ((int(h2h.get("h_wins") or 0) - int(h2h.get("a_wins") or 0)) / h2h_total) * 0.10))
+        max(-0.10, min(0.10, ((int(h2h.get("h_wins") or 0) - int(h2h.get("a_wins") or 0)) / h2h_total) * 0.12))
         if h2h_total else 0.0
     )
     a_h2h = -h_h2h
+    h_matchup = 0.04 if h2h_total >= 3 and int(h2h.get("h_wins") or 0) / h2h_total >= 0.65 else 0.0
+    a_matchup = 0.04 if h2h_total >= 3 and int(h2h.get("a_wins") or 0) / h2h_total >= 0.65 else 0.0
+    h_title = 0.06 if 1 <= h_rank <= 3 else 0.0
+    a_title = 0.06 if 1 <= a_rank <= 3 else 0.0
+    h_manager_buff = 0.08 if h_manager.get("is_new_manager") else 0.0
+    a_manager_buff = 0.08 if a_manager.get("is_new_manager") else 0.0
     exp_h = round(max(0.3, min(3.2,
-        math_exp_h * (1.0 - h_absence) + a_absence * 0.35 + h_rank_bonus + h_h2h
+        base_exp_h * (1.0 - h_total_penalty) + a_total_penalty * 0.4
+        + h_rank_bonus + h_h2h + h_matchup
         + float(h_survival.get("attack_boost") or 0)
         + float(a_survival.get("opponent_risk_boost") or 0)
-        + h_market_bonus
+        + h_title + h_manager_buff + h_market_bonus
     )), 2)
     exp_a = round(max(0.3, min(3.2,
-        math_exp_a * (1.0 - a_absence) + h_absence * 0.35 + a_rank_bonus + a_h2h
+        base_exp_a * (1.0 - a_total_penalty) + h_total_penalty * 0.4
+        + a_rank_bonus + a_h2h + a_matchup
         + float(a_survival.get("attack_boost") or 0)
         + float(h_survival.get("opponent_risk_boost") or 0)
-        + a_market_bonus
+        + a_title + a_manager_buff + a_market_bonus
     )), 2)
 
     totals_odds = odds.get("totals") or {}
@@ -3460,15 +3785,15 @@ def _analyze_world_match(item, now, market_performance):
         else ("away" if float(wdl_odds.get("away") or 0) > float(wdl_odds.get("home") or 0) else "")
     ) if valid_wdl_odds else ""
     attach_underdog_signals(candidates, home, away, {
-        "home_absence": h_absence, "away_absence": a_absence,
+        "home_absence": h_total_penalty, "away_absence": a_total_penalty,
         "home_market_bonus": h_market_bonus, "away_market_bonus": a_market_bonus,
-        "home_tactical": max(0.0, h_h2h), "away_tactical": max(0.0, a_h2h),
+        "home_tactical": h_matchup, "away_tactical": a_matchup,
         "home_recent": float(h_recent.get("strength") or 0),
         "away_recent": float(a_recent.get("strength") or 0),
         "home_rest": h_rest if h_rest < 90 else 0,
         "away_rest": a_rest if a_rest < 90 else 0,
-        "home_lineup": min(0.24, len(h_missing) * 0.08),
-        "away_lineup": min(0.24, len(a_missing) * 0.08),
+        "home_lineup": h_lineup_penalty,
+        "away_lineup": a_lineup_penalty,
         "underdog_side": underdog_side,
     })
     annotate_pick_metrics(candidates, confidence)
@@ -3478,18 +3803,27 @@ def _analyze_world_match(item, now, market_performance):
     if quality_score < 90:
         categories["vip_underdog"] = None
     selected = categories.get("high_probability")
+    tactical_parts = []
+    if h_matchup:
+        tactical_parts.append(f"{home} 천적 상성")
+    if a_matchup:
+        tactical_parts.append(f"{away} 천적 상성")
+    if is_derby:
+        tactical_parts.append("로컬 더비 변동성")
+    if h_survival.get("active"):
+        tactical_parts.append(f"{home} 강등권 생존 동기")
+    if a_survival.get("active"):
+        tactical_parts.append(f"{away} 강등권 생존 동기")
     evidence, coverage = build_analysis_evidence({
         "h_recent": h_recent, "a_recent": a_recent,
-        "h_stats": {}, "a_stats": {}, "h_long": h_long, "a_long": a_long,
+        "h_stats": h_stats, "a_stats": a_stats, "h_long": h_long, "a_long": a_long,
         "h_inj": h_inj, "a_inj": a_inj,
         "h2h_total": h2h_total, "h_wins": int(h2h.get("h_wins") or 0),
         "draws": int(h2h.get("draws") or 0), "a_wins": int(h2h.get("a_wins") or 0),
         "h_rest_days": h_rest, "a_rest_days": a_rest,
-        "weather": None, "referee": None,
-        "tactical_text": ", ".join(filter(None, (
-            f"{home} 강등권 생존 동기" if h_survival.get("active") else "",
-            f"{away} 강등권 생존 동기" if a_survival.get("active") else "",
-        ))),
+        "weather": weather_condition,
+        "referee": referee,
+        "tactical_text": ", ".join(tactical_parts),
         "movement_text": odds_movement.get("summary") or None,
         "home_id": home_id, "away_id": away_id, "fixture_id": fixture_id,
     })
@@ -3507,7 +3841,10 @@ def _analyze_world_match(item, now, market_performance):
     )
     report = build_detailed_report(
         selected, evidence, confidence, candidates, categories,
-        {"home": home, "away": away, "exp_h": exp_h, "exp_a": exp_a, "weather": None},
+        {
+            "home": home, "away": away, "exp_h": exp_h, "exp_a": exp_a,
+            "weather": weather_condition,
+        },
     )
     analyzed_at = datetime.now(KST).isoformat()
     frozen_at = analyzed_at if analysis_stage == "T-30-final" else None
@@ -3521,6 +3858,7 @@ def _analyze_world_match(item, now, market_performance):
         "league_id": league_id, "season": season, "fixture_id": fixture_id,
         "kickoff_at": kickoff.isoformat(), "expected_goals": {"home": exp_h, "away": exp_a},
         "recent": {"home": h_recent, "away": a_recent},
+        "recent_match_stats": {"home": h_stats, "away": a_stats},
         "long_term": {"home": h_long, "away": a_long},
         "standings": {"home": h_stand, "away": a_stand},
         "survival_motivation": {"home": h_survival, "away": a_survival},
@@ -3530,11 +3868,26 @@ def _analyze_world_match(item, now, market_performance):
             "home_missing_core": h_missing, "away_missing_core": a_missing,
         },
         "rest_days": {"home": h_rest, "away": a_rest},
+        "next_fixture": {"home": h_next, "away": a_next},
+        "manager": {"home": h_manager, "away": a_manager},
+        "environment": {
+            "city": city, "weather": weather_condition, "referee": referee,
+            "derby": is_derby,
+        },
+        "adjustments": {
+            "home_penalty": h_total_penalty, "away_penalty": a_total_penalty,
+            "home_rank": h_rank_bonus, "away_rank": a_rank_bonus,
+            "home_title": h_title, "away_title": a_title,
+            "home_manager": h_manager_buff, "away_manager": a_manager_buff,
+            "home_market": h_market_bonus, "away_market": a_market_bonus,
+            "home_war": h_war_details, "away_war": a_war_details,
+        },
         "h2h": h2h, "evidence_coverage": coverage,
         "odds_movement": odds_movement,
     }
     return {
-        "analysis_version": ANALYSIS_VERSION,
+        "analysis_version": WORLD_ANALYSIS_VERSION,
+        "system_version": SYSTEM_VERSION,
         "analysis_stage": analysis_stage,
         "analyzed_at": analyzed_at,
         "frozen_at": frozen_at,
@@ -3609,7 +3962,7 @@ def analyze_world_schedule():
             or (item.get("analysis") or {}).get("analysis_version")
             or ""
         )
-        if previous_stage == stage and previous_version == ANALYSIS_VERSION:
+        if previous_stage == stage and previous_version == WORLD_ANALYSIS_VERSION:
             if not (
                 stage == "T-60-lineup"
                 and not item.get("lineup_confirmed")
@@ -3655,7 +4008,12 @@ def analyze_world_schedule():
                 if not _save_world_learning_record(match, analysis):
                     raise RuntimeError("세계경기 통합 채점 기록 저장 실패")
                 item["analysis"] = analysis
-                item["analysis_version"] = ANALYSIS_VERSION
+                item["analysis_version"] = str(
+                    analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION
+                )
+                item["system_version"] = str(
+                    analysis.get("system_version") or SYSTEM_VERSION
+                )
                 item["analysis_stage"] = analysis["analysis_stage"]
                 item["analyzed_at"] = analysis["analyzed_at"]
                 item["frozen_at"] = analysis.get("frozen_at")
@@ -3691,22 +4049,22 @@ def analyze_world_schedule():
                 changed = True
                 print(f"⚠️ 세계경기 분석 실패({fixture_id}): {type(error).__name__}: {error}")
 
-    matches = payload.get("matches", [])
+    previous_source_meta = json.dumps(
+        payload.get("source_meta", {}), ensure_ascii=False, sort_keys=True
+    )
+    _refresh_world_source_meta(payload)
     source_meta = payload.setdefault("source_meta", {})
     source_meta.update({
-        "analysis_started": True,
         "analysis_day": day_key,
         "analysis_daily_limit": WORLD_MAX_DEEP_ANALYSES_DAILY,
         "analysis_per_league_limit": WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE,
-        "analyzed_shadow_count": sum(
-            1 for item in matches if item.get("analysis_status") in {"ANALYZED_SHADOW", "FROZEN_SHADOW"}
-        ),
-        "frozen_shadow_count": sum(1 for item in matches if item.get("analysis_status") == "FROZEN_SHADOW"),
-        "analysis_error_count": sum(1 for item in matches if item.get("analysis_status") == "ANALYSIS_ERROR"),
         "quota_paused": quota_paused,
         "api_usage": get_api_usage_status(),
     })
-    if changed:
+    metadata_changed = previous_source_meta != json.dumps(
+        source_meta, ensure_ascii=False, sort_keys=True
+    )
+    if changed or metadata_changed:
         payload["schema_version"] = "world-shadow.v2"
         payload["stage"] = "SHADOW_ANALYSIS"
         payload["last_analysis_at"] = datetime.now(KST).isoformat()
@@ -3716,7 +4074,7 @@ def analyze_world_schedule():
         f"✅ 세계경기 2단계 종료: 이번 분석 {analyzed_now}경기 / 오류 {errors_now} / "
         f"WORLD API {max(0, world_calls_after - world_calls_before)}회"
     )
-    return True, changed
+    return True, bool(changed or metadata_changed)
 
 
 def calculate_survival_motivation(standing):
@@ -5034,6 +5392,7 @@ def build_dashboard_data():
         "top3": top_3_picks,
         "source_meta": {
             "analysis_version": ANALYSIS_VERSION,
+            "system_version": SYSTEM_VERSION,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "raw_betman_proto_count": len(raw_proto_matches),
             "rejected_placeholder_count": rejected_proto_count,

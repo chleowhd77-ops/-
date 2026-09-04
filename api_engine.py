@@ -33,6 +33,9 @@ headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
 ANALYSIS_VERSION = "V7.3.8-world-grading-market-movement"
+# 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
+# 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
+SYSTEM_VERSION = "R7.3.8.1-world-quality-and-history"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
