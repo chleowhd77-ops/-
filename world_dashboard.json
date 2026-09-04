@@ -1,7 +1,7 @@
 {
-  "schema_version": "world-schedule.v1",
+  "schema_version": "world-shadow.v2",
   "source_type": "WORLD",
-  "stage": "COLLECTION_ONLY",
+  "stage": "SHADOW_ANALYSIS",
   "default_visibility_status": "SHADOW",
   "generated_at": "2026-09-04T15:15:49.749825+09:00",
   "scheduled_dates": [
@@ -5868,8 +5868,8 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1507052",
@@ -5892,13 +5892,634 @@
       },
       "api_fixture_id": 1507052,
       "final_match_time": "26.09.05 (토) 19:00",
-      "timestamp": 1788602400.0
+      "timestamp": 1788602400.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T19:00:56.635391+09:00",
+        "frozen_at": null,
+        "data_quality_score": 90,
+        "data_quality_grade": "정상",
+        "missing_data": [
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1507052,
+          "fetched_at": "2026-09-04T19:00:56.229956+09:00",
+          "bookmaker_count": 12,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 4.0,
+            "draw": 3.5,
+            "away": 1.85,
+            "sample_count": 12
+          },
+          "totals": {
+            "line": 2.5,
+            "under": 1.84,
+            "over": 1.92,
+            "sample_count": 10,
+            "market_balance": 0.0213,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": 1.0,
+            "home": 1.9,
+            "draw": 3.48,
+            "away": 3.28,
+            "sample_count": 5,
+            "market_balance": 0.2136,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 2745,
+          "away_team_id": 2750,
+          "league_id": 292,
+          "season": 2026,
+          "fixture_id": 1507052,
+          "kickoff_at": "2026-09-05T19:00:00+09:00",
+          "expected_goals": {
+            "home": 1.17,
+            "away": 1.29
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 1.6,
+              "gf_pg": 1.4,
+              "ga_pg": 0.8,
+              "strength": 0.0345
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 1.8,
+              "gf_pg": 2.2,
+              "ga_pg": 2.0,
+              "strength": 0.0305
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 8,
+              "home_total": 21,
+              "home_gf": 25,
+              "home_ga": 18,
+              "away_wins": 8,
+              "away_total": 19,
+              "away_gf": 22,
+              "away_ga": 20
+            },
+            "away": {
+              "home_wins": 7,
+              "home_total": 18,
+              "home_gf": 24,
+              "home_ga": 18,
+              "away_wins": 9,
+              "away_total": 22,
+              "away_gf": 37,
+              "away_ga": 29
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 10,
+              "points": 31,
+              "played": 26,
+              "league_id": 292,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 28,
+              "description": "K League 1 (Relegation Group)",
+              "relegation_start_rank": 10,
+              "safety_rank": 9,
+              "safety_points": null,
+              "relegation_cut_points": 31,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "official_description"
+            },
+            "away": {
+              "rank": 6,
+              "points": 0,
+              "played": 0,
+              "league_id": 17,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 0,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 10,
+              "relegation_start_rank": 10,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "official_description",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 6,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 6,
+            "away": 5
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 5,
+            "draws": 1,
+            "a_wins": 4,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 1.60/1.80"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 8승/21경기, 원정 9승/22경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "5승-1무-4승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 0명/0명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "6일/5일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 2745/2750, 경기ID 1507052"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 12개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "90/100 (정상)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Bucheon FC 1995 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.294557,
+            "raw_model_probability": 0.29458,
+            "fair_probability": 0.232287,
+            "odd": 4.0,
+            "edge": 0.0623,
+            "robust_probability": 0.269357,
+            "robust_edge": 0.03707,
+            "robust_ev": 1.077428,
+            "balanced_score": 0.147875,
+            "safe_score": 0.2651,
+            "recommendation_score": 0.4263,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.210557,
+              "high": 0.378557
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": true,
+            "support_signals": [
+              "상대 전적·전술 상성 우위"
+            ],
+            "independent_support_count": 1,
+            "selection_rank": 6,
+            "market_rank": 3,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.299773,
+            "raw_model_probability": 0.299786,
+            "fair_probability": 0.265471,
+            "odd": 3.5,
+            "edge": 0.0343,
+            "robust_probability": 0.274573,
+            "robust_edge": 0.009102,
+            "robust_ev": 0.961006,
+            "balanced_score": 0.150686,
+            "safe_score": 0.2698,
+            "recommendation_score": 0.4147,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.215773,
+              "high": 0.383773
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 5위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Daejeon Citizen 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.40567,
+            "raw_model_probability": 0.405634,
+            "fair_probability": 0.502242,
+            "odd": 1.85,
+            "edge": -0.0966,
+            "robust_probability": 0.38047,
+            "robust_edge": -0.121772,
+            "robust_ev": 0.70387,
+            "balanced_score": 0.261095,
+            "safe_score": 0.3651,
+            "recommendation_score": 0.4721,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.32167,
+              "high": 0.48967
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 4위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] Bucheon FC 1995 핸디승",
+            "selection_side": "home",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.556945,
+            "raw_model_probability": 0.556913,
+            "fair_probability": 0.470534,
+            "odd": 1.9,
+            "edge": 0.0864,
+            "robust_probability": 0.531745,
+            "robust_edge": 0.061211,
+            "robust_ev": 1.010315,
+            "balanced_score": 0.432357,
+            "safe_score": 0.5013,
+            "recommendation_score": 0.6285,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.472945,
+              "high": 0.640945
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.226197,
+            "raw_model_probability": 0.226209,
+            "fair_probability": 0.256901,
+            "odd": 3.48,
+            "edge": -0.0307,
+            "robust_probability": 0.200997,
+            "robust_edge": -0.055904,
+            "robust_ev": 0.69947,
+            "balanced_score": 0.068162,
+            "safe_score": 0.2036,
+            "recommendation_score": 0.3429,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.142197,
+              "high": 0.310197
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 7,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] Bucheon FC 1995 핸디패",
+            "selection_side": "away",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.216857,
+            "raw_model_probability": 0.216878,
+            "fair_probability": 0.272565,
+            "odd": 3.28,
+            "edge": -0.0557,
+            "robust_probability": 0.191657,
+            "robust_edge": -0.080908,
+            "robust_ev": 0.628635,
+            "balanced_score": 0.058122,
+            "safe_score": 0.1952,
+            "recommendation_score": 0.3361,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.132857,
+              "high": 0.300857
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 8위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 2.5)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.537161,
+            "raw_model_probability": 0.537131,
+            "fair_probability": 0.510638,
+            "odd": 1.84,
+            "edge": 0.0265,
+            "robust_probability": 0.511961,
+            "robust_edge": 0.001323,
+            "robust_ev": 0.942008,
+            "balanced_score": 0.324104,
+            "safe_score": 0.4834,
+            "recommendation_score": 0.5813,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.453161,
+              "high": 0.621161
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 2.5)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.462839,
+            "raw_model_probability": 0.462869,
+            "fair_probability": 0.489362,
+            "odd": 1.92,
+            "edge": -0.0265,
+            "robust_probability": 0.437639,
+            "robust_edge": -0.051723,
+            "robust_ev": 0.840267,
+            "balanced_score": 0.228549,
+            "safe_score": 0.4166,
+            "recommendation_score": 0.5132,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.378839,
+              "high": 0.546839
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "[+1.0] Bucheon FC 1995 핸디승",
+            "market_key": "handicap",
+            "probability": 0.556945,
+            "odd": 1.9,
+            "fair_probability": 0.470534,
+            "robust_edge": 0.061211,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "Bucheon FC 1995 승",
+            "market_key": "1x2",
+            "probability": 0.294557,
+            "odd": 4.0,
+            "fair_probability": 0.232287,
+            "robust_edge": 0.03707,
+            "value_pick_tier": "qualified",
+            "independent_support_count": 1
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "[+1.0] Bucheon FC 1995 핸디승",
+          "market_key": "handicap",
+          "probability": 0.556945,
+          "odd": 1.9,
+          "fair_probability": 0.470534,
+          "robust_edge": 0.061211,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "Bucheon FC 1995 +1.0 적용 후 승"
+        },
+        "alternative": {
+          "raw_pick": "Bucheon FC 1995 승",
+          "market_key": "1x2",
+          "probability": 0.294557,
+          "odd": 4.0,
+          "fair_probability": 0.232287,
+          "robust_edge": 0.03707,
+          "value_pick_tier": "qualified",
+          "independent_support_count": 1,
+          "display": "Bucheon FC 1995 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.9,
+          "selected_pick": "[+1.0] Bucheon FC 1995 핸디승",
+          "selected_market": "handicap",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 Bucheon FC 1995 1.17골, Daejeon Citizen 1.29골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Daejeon Citizen 승 · 모델 40.6% · 시장 공정확률 50.2%, 차이 -9.7%p.\n\n[핸디캡 분석] Bucheon FC 1995 +1.0 적용 후 승 · 모델 55.7% · 시장 공정확률 47.1%, 차이 +8.6%p.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 53.7% · 시장 공정확률 51.1%, 차이 +2.6%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 1.60/1.80, 홈·원정: 홈 8승/21경기, 원정 9승/22경기, 상대 전적: 5승-1무-4승, 선수 결장: 결장 0명/0명, 휴식일: 6일/5일, 팀 신원·경기 연결: 팀ID 2745/2750, 경기ID 1507052, 시장 배당: 1x2, totals, handicap · 12개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 Bucheon FC 1995 +1.0 적용 후 승 · 모델 55.7% · 시장 공정확률 47.1%, 차이 +8.6%p입니다. 배당형 대안픽은 Bucheon FC 1995 승 · 모델 29.5% · 시장 공정확률 23.2%, 차이 +6.2%p이며, 보수적 가치 기준도 통과했습니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 55.7%이며, 베팅업체 마진 제거 공정확률은 47.1%이고 모델과의 차이는 +8.6%p입니다. 예상 오차범위는 47.3%~64.1%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T19:00:56.635391+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1507053",
@@ -5921,13 +6542,632 @@
       },
       "api_fixture_id": 1507053,
       "final_match_time": "26.09.05 (토) 19:00",
-      "timestamp": 1788602400.0
+      "timestamp": 1788602400.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T19:00:57.291760+09:00",
+        "frozen_at": null,
+        "data_quality_score": 90,
+        "data_quality_grade": "정상",
+        "missing_data": [
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1507053,
+          "fetched_at": "2026-09-04T19:00:57.008618+09:00",
+          "bookmaker_count": 12,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 3.0,
+            "draw": 3.42,
+            "away": 2.25,
+            "sample_count": 12
+          },
+          "totals": {
+            "line": 2.5,
+            "under": 1.98,
+            "over": 1.8,
+            "sample_count": 10,
+            "market_balance": 0.0476,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": 1.0,
+            "home": 1.61,
+            "draw": 3.94,
+            "away": 4.2,
+            "sample_count": 5,
+            "market_balance": 0.3441,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 2761,
+          "away_team_id": 2767,
+          "league_id": 292,
+          "season": 2026,
+          "fixture_id": 1507053,
+          "kickoff_at": "2026-09-05T19:00:00+09:00",
+          "expected_goals": {
+            "home": 1.37,
+            "away": 1.25
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 1.4,
+              "gf_pg": 1.4,
+              "ga_pg": 1.0,
+              "strength": 0.0175
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 1.2,
+              "gf_pg": 1.6,
+              "ga_pg": 1.4,
+              "strength": 0.0005
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 7,
+              "home_total": 23,
+              "home_gf": 30,
+              "home_ga": 31,
+              "away_wins": 8,
+              "away_total": 17,
+              "away_gf": 19,
+              "away_ga": 18
+            },
+            "away": {
+              "home_wins": 9,
+              "home_total": 20,
+              "home_gf": 29,
+              "home_ga": 27,
+              "away_wins": 6,
+              "away_total": 20,
+              "away_gf": 22,
+              "away_ga": 28
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 4,
+              "points": 38,
+              "played": 26,
+              "league_id": 292,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 31,
+              "description": "Promotion - K League 1 (Championship Group)",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            },
+            "away": {
+              "rank": 2,
+              "points": 40,
+              "played": 26,
+              "league_id": 292,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 41,
+              "description": "Promotion - K League 1 (Championship Group)",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 4,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 2,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 5,
+            "away": 6
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 4,
+            "draws": 2,
+            "a_wins": 4,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 1.40/1.20"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 7승/23경기, 원정 6승/20경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "4승-2무-4승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 0명/0명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "5일/6일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 2761/2767, 경기ID 1507053"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 12개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "90/100 (정상)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Jeju United FC 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.353751,
+            "raw_model_probability": 0.353766,
+            "fair_probability": 0.311475,
+            "odd": 3.0,
+            "edge": 0.0423,
+            "robust_probability": 0.328551,
+            "robust_edge": 0.017076,
+            "robust_ev": 0.985653,
+            "balanced_score": 0.20951,
+            "safe_score": 0.3184,
+            "recommendation_score": 0.458,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.269751,
+              "high": 0.437751
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 1,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.295049,
+            "raw_model_probability": 0.295057,
+            "fair_probability": 0.273224,
+            "odd": 3.42,
+            "edge": 0.0218,
+            "robust_probability": 0.269849,
+            "robust_edge": -0.003375,
+            "robust_ev": 0.922884,
+            "balanced_score": 0.14436,
+            "safe_score": 0.2655,
+            "recommendation_score": 0.4044,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.211049,
+              "high": 0.379049
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 6,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 6위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Ulsan Hyundai FC 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.3512,
+            "raw_model_probability": 0.351176,
+            "fair_probability": 0.415301,
+            "odd": 2.25,
+            "edge": -0.0641,
+            "robust_probability": 0.326,
+            "robust_edge": -0.089301,
+            "robust_ev": 0.7335,
+            "balanced_score": 0.20254,
+            "safe_score": 0.3161,
+            "recommendation_score": 0.4329,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.2672,
+              "high": 0.4352
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 5위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] Jeju United FC 핸디승",
+            "selection_side": "home",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.613147,
+            "raw_model_probability": 0.613127,
+            "fair_probability": 0.558047,
+            "odd": 1.61,
+            "edge": 0.0551,
+            "robust_probability": 0.587947,
+            "robust_edge": 0.0299,
+            "robust_ev": 0.946595,
+            "balanced_score": 0.489643,
+            "safe_score": 0.5518,
+            "recommendation_score": 0.6518,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.529147,
+              "high": 0.697147
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.206438,
+            "raw_model_probability": 0.206446,
+            "fair_probability": 0.228035,
+            "odd": 3.94,
+            "edge": -0.0216,
+            "robust_probability": 0.181238,
+            "robust_edge": -0.046797,
+            "robust_ev": 0.714078,
+            "balanced_score": 0.046921,
+            "safe_score": 0.1858,
+            "recommendation_score": 0.3286,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.122438,
+              "high": 0.290438
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 7,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[+1.0] Jeju United FC 핸디패",
+            "selection_side": "away",
+            "handicap_base": 1.0,
+            "sort_id": 2,
+            "model_probability": 0.180415,
+            "raw_model_probability": 0.180427,
+            "fair_probability": 0.213918,
+            "odd": 4.2,
+            "edge": -0.0335,
+            "robust_probability": 0.155215,
+            "robust_edge": -0.058703,
+            "robust_ev": 0.651903,
+            "balanced_score": 0.018946,
+            "safe_score": 0.1624,
+            "recommendation_score": 0.3099,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.096415,
+              "high": 0.264415
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 8위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 2.5)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.501695,
+            "raw_model_probability": 0.501666,
+            "fair_probability": 0.47619,
+            "odd": 1.98,
+            "edge": 0.0255,
+            "robust_probability": 0.476495,
+            "robust_edge": 0.000305,
+            "robust_ev": 0.94346,
+            "balanced_score": 0.279669,
+            "safe_score": 0.4515,
+            "recommendation_score": 0.5552,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.417695,
+              "high": 0.585695
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 2.5)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.498305,
+            "raw_model_probability": 0.498334,
+            "fair_probability": 0.52381,
+            "odd": 1.8,
+            "edge": -0.0255,
+            "robust_probability": 0.473105,
+            "robust_edge": -0.050705,
+            "robust_ev": 0.851589,
+            "balanced_score": 0.272881,
+            "safe_score": 0.4485,
+            "recommendation_score": 0.5388,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.414305,
+              "high": 0.582305
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "[+1.0] Jeju United FC 핸디승",
+            "market_key": "handicap",
+            "probability": 0.613147,
+            "odd": 1.61,
+            "fair_probability": 0.558047,
+            "robust_edge": 0.0299,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "Jeju United FC 승",
+            "market_key": "1x2",
+            "probability": 0.353751,
+            "odd": 3.0,
+            "fair_probability": 0.311475,
+            "robust_edge": 0.017076,
+            "value_pick_tier": "alternative",
+            "independent_support_count": 0
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "[+1.0] Jeju United FC 핸디승",
+          "market_key": "handicap",
+          "probability": 0.613147,
+          "odd": 1.61,
+          "fair_probability": 0.558047,
+          "robust_edge": 0.0299,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "Jeju United FC +1.0 적용 후 승"
+        },
+        "alternative": {
+          "raw_pick": "Jeju United FC 승",
+          "market_key": "1x2",
+          "probability": 0.353751,
+          "odd": 3.0,
+          "fair_probability": 0.311475,
+          "robust_edge": 0.017076,
+          "value_pick_tier": "alternative",
+          "independent_support_count": 0,
+          "display": "Jeju United FC 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.9,
+          "selected_pick": "[+1.0] Jeju United FC 핸디승",
+          "selected_market": "handicap",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 Jeju United FC 1.37골, Ulsan Hyundai FC 1.25골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Jeju United FC 승 · 모델 35.4% · 시장 공정확률 31.1%, 차이 +4.2%p.\n\n[핸디캡 분석] Jeju United FC +1.0 적용 후 승 · 모델 61.3% · 시장 공정확률 55.8%, 차이 +5.5%p.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 50.2% · 시장 공정확률 47.6%, 차이 +2.5%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 1.40/1.20, 홈·원정: 홈 7승/23경기, 원정 6승/20경기, 상대 전적: 4승-2무-4승, 선수 결장: 결장 0명/0명, 휴식일: 5일/6일, 팀 신원·경기 연결: 팀ID 2761/2767, 경기ID 1507053, 시장 배당: 1x2, totals, handicap · 12개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 Jeju United FC +1.0 적용 후 승 · 모델 61.3% · 시장 공정확률 55.8%, 차이 +5.5%p입니다. 배당형 대안픽은 Jeju United FC 승 · 모델 35.4% · 시장 공정확률 31.1%, 차이 +4.2%p이며, 주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 61.3%이며, 베팅업체 마진 제거 공정확률은 55.8%이고 모델과의 차이는 +5.5%p입니다. 예상 오차범위는 52.9%~69.7%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T19:00:57.291760+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1507054",
@@ -5950,13 +7190,634 @@
       },
       "api_fixture_id": 1507054,
       "final_match_time": "26.09.05 (토) 19:00",
-      "timestamp": 1788602400.0
+      "timestamp": 1788602400.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T19:00:57.939331+09:00",
+        "frozen_at": null,
+        "data_quality_score": 90,
+        "data_quality_grade": "정상",
+        "missing_data": [
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1507054,
+          "fetched_at": "2026-09-04T19:00:57.624262+09:00",
+          "bookmaker_count": 12,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 1.83,
+            "draw": 3.4,
+            "away": 4.315,
+            "sample_count": 12
+          },
+          "totals": {
+            "line": 2.25,
+            "under": 1.96,
+            "over": 1.815,
+            "sample_count": 6,
+            "market_balance": 0.0384,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": -1.0,
+            "home": 3.3,
+            "draw": 3.4,
+            "away": 1.91,
+            "sample_count": 5,
+            "market_balance": 0.2047,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 2762,
+          "away_team_id": 2764,
+          "league_id": 292,
+          "season": 2026,
+          "fixture_id": 1507054,
+          "kickoff_at": "2026-09-05T19:00:00+09:00",
+          "expected_goals": {
+            "home": 1.62,
+            "away": 1.04
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 1.2,
+              "gf_pg": 1.2,
+              "ga_pg": 1.2,
+              "strength": -0.0065
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 2.0,
+              "gf_pg": 1.4,
+              "ga_pg": 1.2,
+              "strength": 0.0405
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 10,
+              "home_total": 18,
+              "home_gf": 31,
+              "home_ga": 21,
+              "away_wins": 5,
+              "away_total": 21,
+              "away_gf": 19,
+              "away_ga": 16
+            },
+            "away": {
+              "home_wins": 5,
+              "home_total": 18,
+              "home_gf": 12,
+              "home_ga": 16,
+              "away_wins": 10,
+              "away_total": 22,
+              "away_gf": 25,
+              "away_ga": 26
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 5,
+              "points": 0,
+              "played": 0,
+              "league_id": 17,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 0,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            },
+            "away": {
+              "rank": 7,
+              "points": 0,
+              "played": 0,
+              "league_id": 17,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 0,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 5,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 7,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 5,
+            "away": 5
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 5,
+            "draws": 1,
+            "a_wins": 4,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 1.20/2.00"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 10승/18경기, 원정 10승/22경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "5승-1무-4승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 0명/0명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "5일/5일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 2762/2764, 경기ID 1507054"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 12개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "90/100 (정상)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Jeonbuk Motors 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.476591,
+            "raw_model_probability": 0.476579,
+            "fair_probability": 0.509596,
+            "odd": 1.83,
+            "edge": -0.033,
+            "robust_probability": 0.451391,
+            "robust_edge": -0.058205,
+            "robust_ev": 0.826046,
+            "balanced_score": 0.337335,
+            "safe_score": 0.4289,
+            "recommendation_score": 0.5231,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.392591,
+              "high": 0.560591
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 4위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.286624,
+            "raw_model_probability": 0.286628,
+            "fair_probability": 0.274283,
+            "odd": 3.4,
+            "edge": 0.0123,
+            "robust_probability": 0.261424,
+            "robust_edge": -0.012859,
+            "robust_ev": 0.888842,
+            "balanced_score": 0.134355,
+            "safe_score": 0.258,
+            "recommendation_score": 0.3932,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.202624,
+              "high": 0.370624
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 5위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Pohang Steelers 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.236785,
+            "raw_model_probability": 0.236793,
+            "fair_probability": 0.216121,
+            "odd": 4.315,
+            "edge": 0.0207,
+            "robust_probability": 0.211585,
+            "robust_edge": -0.004536,
+            "robust_ev": 0.912989,
+            "balanced_score": 0.081611,
+            "safe_score": 0.2131,
+            "recommendation_score": 0.3619,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.152785,
+              "high": 0.320785
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [
+              "최근 경기력 지표 우위"
+            ],
+            "independent_support_count": 1,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Jeonbuk Motors 핸디승",
+            "selection_side": "home",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.276848,
+            "raw_model_probability": 0.276846,
+            "fair_probability": 0.270392,
+            "odd": 3.3,
+            "edge": 0.0065,
+            "robust_probability": 0.251648,
+            "robust_edge": -0.018744,
+            "robust_ev": 0.830438,
+            "balanced_score": 0.123258,
+            "safe_score": 0.2492,
+            "recommendation_score": 0.3829,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.192848,
+              "high": 0.360848
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 6,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 6위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.237382,
+            "raw_model_probability": 0.237392,
+            "fair_probability": 0.262439,
+            "odd": 3.4,
+            "edge": -0.0251,
+            "robust_probability": 0.212182,
+            "robust_edge": -0.050257,
+            "robust_ev": 0.721419,
+            "balanced_score": 0.080186,
+            "safe_score": 0.2136,
+            "recommendation_score": 0.3509,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.153382,
+              "high": 0.321382
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 7,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Jeonbuk Motors 핸디패",
+            "selection_side": "away",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.485769,
+            "raw_model_probability": 0.485762,
+            "fair_probability": 0.467169,
+            "odd": 1.91,
+            "edge": 0.0186,
+            "robust_probability": 0.460569,
+            "robust_edge": -0.0066,
+            "robust_ev": 0.879687,
+            "balanced_score": 0.349062,
+            "safe_score": 0.4372,
+            "recommendation_score": 0.54,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.401769,
+              "high": 0.569769
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 2.25)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.495717,
+            "raw_model_probability": 0.495701,
+            "fair_probability": 0.480795,
+            "odd": 1.96,
+            "edge": 0.0149,
+            "robust_probability": 0.470517,
+            "robust_edge": -0.010278,
+            "robust_ev": 0.922213,
+            "balanced_score": 0.271139,
+            "safe_score": 0.4461,
+            "recommendation_score": 0.5451,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.411717,
+              "high": 0.579717
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 2.25)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.504283,
+            "raw_model_probability": 0.504299,
+            "fair_probability": 0.519205,
+            "odd": 1.815,
+            "edge": -0.0149,
+            "robust_probability": 0.479083,
+            "robust_edge": -0.040122,
+            "robust_ev": 0.869536,
+            "balanced_score": 0.280353,
+            "safe_score": 0.4539,
+            "recommendation_score": 0.5431,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.420283,
+              "high": 0.588283
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "오버 (U/O 2.25)",
+            "market_key": "totals",
+            "probability": 0.504283,
+            "odd": 1.815,
+            "fair_probability": 0.519205,
+            "robust_edge": -0.040122,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "Pohang Steelers 승",
+            "market_key": "1x2",
+            "probability": 0.236785,
+            "odd": 4.315,
+            "fair_probability": 0.216121,
+            "robust_edge": -0.004536,
+            "value_pick_tier": "alternative",
+            "independent_support_count": 1
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "오버 (U/O 2.25)",
+          "market_key": "totals",
+          "probability": 0.504283,
+          "odd": 1.815,
+          "fair_probability": 0.519205,
+          "robust_edge": -0.040122,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "오버 (U/O 2.25)"
+        },
+        "alternative": {
+          "raw_pick": "Pohang Steelers 승",
+          "market_key": "1x2",
+          "probability": 0.236785,
+          "odd": 4.315,
+          "fair_probability": 0.216121,
+          "robust_edge": -0.004536,
+          "value_pick_tier": "alternative",
+          "independent_support_count": 1,
+          "display": "Pohang Steelers 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.9,
+          "selected_pick": "오버 (U/O 2.25)",
+          "selected_market": "totals",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 Jeonbuk Motors 1.62골, Pohang Steelers 1.04골입니다. Jeonbuk Motors가 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Jeonbuk Motors 승 · 모델 47.7% · 시장 공정확률 51.0%, 차이 -3.3%p.\n\n[핸디캡 분석] Jeonbuk Motors -1.0 적용 후 패 · 모델 48.6% · 시장 공정확률 46.7%, 차이 +1.9%p.\n\n[언더오버 분석] 오버 (U/O 2.25) · 모델 50.4% · 시장 공정확률 51.9%, 차이 -1.5%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 1.20/2.00, 홈·원정: 홈 10승/18경기, 원정 10승/22경기, 상대 전적: 5승-1무-4승, 선수 결장: 결장 0명/0명, 휴식일: 5일/5일, 팀 신원·경기 연결: 팀ID 2762/2764, 경기ID 1507054, 시장 배당: 1x2, totals, handicap · 12개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 오버 (U/O 2.25) · 모델 50.4% · 시장 공정확률 51.9%, 차이 -1.5%p입니다. 배당형 대안픽은 Pohang Steelers 승 · 모델 23.7% · 시장 공정확률 21.6%, 차이 +2.1%p이며, 주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 50.4%이며, 베팅업체 마진 제거 공정확률은 51.9%이고 모델과의 차이는 -1.5%p입니다. 예상 오차범위는 42.0%~58.8%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T19:00:57.939331+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1507055",
@@ -5979,13 +7840,636 @@
       },
       "api_fixture_id": 1507055,
       "final_match_time": "26.09.05 (토) 19:00",
-      "timestamp": 1788602400.0
+      "timestamp": 1788602400.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T19:00:58.507508+09:00",
+        "frozen_at": null,
+        "data_quality_score": 75,
+        "data_quality_grade": "주의",
+        "missing_data": [
+          "순위·홈원정 공격수비",
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1507055,
+          "fetched_at": "2026-09-04T19:00:58.233879+09:00",
+          "bookmaker_count": 12,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 1.87,
+            "draw": 3.45,
+            "away": 4.02,
+            "sample_count": 12
+          },
+          "totals": {
+            "line": 2.5,
+            "under": 1.8,
+            "over": 1.975,
+            "sample_count": 10,
+            "market_balance": 0.0464,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": -1.0,
+            "home": 3.4,
+            "draw": 3.56,
+            "away": 1.8,
+            "sample_count": 5,
+            "market_balance": 0.2429,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 2766,
+          "away_team_id": 2763,
+          "league_id": 292,
+          "season": 2026,
+          "fixture_id": 1507055,
+          "kickoff_at": "2026-09-05T19:00:00+09:00",
+          "expected_goals": {
+            "home": 1.63,
+            "away": 1.05
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 2.6,
+              "gf_pg": 3.4,
+              "ga_pg": 0.8,
+              "strength": 0.12
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 1.2,
+              "gf_pg": 1.4,
+              "ga_pg": 1.4,
+              "strength": -0.0065
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 8,
+              "home_total": 19,
+              "home_gf": 30,
+              "home_ga": 21,
+              "away_wins": 10,
+              "away_total": 21,
+              "away_gf": 32,
+              "away_ga": 23
+            },
+            "away": {
+              "home_wins": 5,
+              "home_total": 19,
+              "home_gf": 19,
+              "home_ga": 19,
+              "away_wins": 7,
+              "away_total": 20,
+              "away_gf": 24,
+              "away_ga": 24
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 99,
+              "points": 0,
+              "played": 0,
+              "league_id": null,
+              "season": null,
+              "total_teams": 0,
+              "team_goals": 0,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            },
+            "away": {
+              "rank": 8,
+              "points": 34,
+              "played": 25,
+              "league_id": 292,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 32,
+              "description": "K League 1 (Relegation Group)",
+              "relegation_start_rank": 8,
+              "safety_rank": 7,
+              "safety_points": null,
+              "relegation_cut_points": 34,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "official_description"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 99,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 8,
+              "relegation_start_rank": 8,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "official_description",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 10,
+            "away": 5
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 3,
+            "draws": 2,
+            "a_wins": 5,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 2.60/1.20"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 8승/19경기, 원정 7승/20경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "3승-2무-5승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 0명/0명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "10일/5일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 2766/2763, 경기ID 1507055"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 12개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "75/100 (주의)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "FC Seoul 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.46925,
+            "raw_model_probability": 0.469239,
+            "fair_probability": 0.498206,
+            "odd": 1.87,
+            "edge": -0.029,
+            "robust_probability": 0.43775,
+            "robust_edge": -0.060456,
+            "robust_ev": 0.818592,
+            "balanced_score": 0.329444,
+            "safe_score": 0.3519,
+            "recommendation_score": 0.4879,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.36425,
+              "high": 0.57425
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 4위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.286019,
+            "raw_model_probability": 0.286025,
+            "fair_probability": 0.270042,
+            "odd": 3.45,
+            "edge": 0.016,
+            "robust_probability": 0.254519,
+            "robust_edge": -0.015523,
+            "robust_ev": 0.878091,
+            "balanced_score": 0.134068,
+            "safe_score": 0.2145,
+            "recommendation_score": 0.3647,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.181019,
+              "high": 0.391019
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 5위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Incheon United 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.244731,
+            "raw_model_probability": 0.244736,
+            "fair_probability": 0.231752,
+            "odd": 4.02,
+            "edge": 0.013,
+            "robust_probability": 0.213231,
+            "robust_edge": -0.018521,
+            "robust_ev": 0.857189,
+            "balanced_score": 0.089384,
+            "safe_score": 0.1835,
+            "recommendation_score": 0.3333,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.139731,
+              "high": 0.349731
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [
+              "상대 전적·전술 상성 우위"
+            ],
+            "independent_support_count": 1,
+            "selection_rank": 7,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] FC Seoul 핸디승",
+            "selection_side": "home",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.276331,
+            "raw_model_probability": 0.276325,
+            "fair_probability": 0.260149,
+            "odd": 3.4,
+            "edge": 0.0162,
+            "robust_probability": 0.244831,
+            "robust_edge": -0.015318,
+            "robust_ev": 0.832425,
+            "balanced_score": 0.123674,
+            "safe_score": 0.2072,
+            "recommendation_score": 0.3579,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.171331,
+              "high": 0.381331
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 6,
+            "market_rank": 2,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.237418,
+            "raw_model_probability": 0.237423,
+            "fair_probability": 0.248457,
+            "odd": 3.56,
+            "edge": -0.011,
+            "robust_probability": 0.205918,
+            "robust_edge": -0.042539,
+            "robust_ev": 0.733068,
+            "balanced_score": 0.080225,
+            "safe_score": 0.1781,
+            "recommendation_score": 0.3209,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.132418,
+              "high": 0.342418
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 8위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] FC Seoul 핸디패",
+            "selection_side": "away",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.486251,
+            "raw_model_probability": 0.486253,
+            "fair_probability": 0.491393,
+            "odd": 1.8,
+            "edge": -0.0051,
+            "robust_probability": 0.454751,
+            "robust_edge": -0.036642,
+            "robust_ev": 0.818552,
+            "balanced_score": 0.34772,
+            "safe_score": 0.3647,
+            "recommendation_score": 0.5001,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.381251,
+              "high": 0.591251
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 2.5)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.505329,
+            "raw_model_probability": 0.505349,
+            "fair_probability": 0.523179,
+            "odd": 1.8,
+            "edge": -0.0178,
+            "robust_probability": 0.473829,
+            "robust_edge": -0.04935,
+            "robust_ev": 0.852892,
+            "balanced_score": 0.281661,
+            "safe_score": 0.379,
+            "recommendation_score": 0.5138,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.400329,
+              "high": 0.610329
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 2.5)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.494671,
+            "raw_model_probability": 0.494651,
+            "fair_probability": 0.476821,
+            "odd": 1.975,
+            "edge": 0.0178,
+            "robust_probability": 0.463171,
+            "robust_edge": -0.01365,
+            "robust_ev": 0.914763,
+            "balanced_score": 0.270124,
+            "safe_score": 0.371,
+            "recommendation_score": 0.516,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.75,
+            "error_margin": 0.105,
+            "probability_interval": {
+              "low": 0.389671,
+              "high": 0.599671
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "언더 (U/O 2.5)",
+            "market_key": "totals",
+            "probability": 0.505329,
+            "odd": 1.8,
+            "fair_probability": 0.523179,
+            "robust_edge": -0.04935,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "[-1.0] FC Seoul 핸디승",
+            "market_key": "handicap",
+            "probability": 0.276331,
+            "odd": 3.4,
+            "fair_probability": 0.260149,
+            "robust_edge": -0.015318,
+            "value_pick_tier": "alternative",
+            "independent_support_count": 0
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "언더 (U/O 2.5)",
+          "market_key": "totals",
+          "probability": 0.505329,
+          "odd": 1.8,
+          "fair_probability": 0.523179,
+          "robust_edge": -0.04935,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "언더 (U/O 2.5)"
+        },
+        "alternative": {
+          "raw_pick": "[-1.0] FC Seoul 핸디승",
+          "market_key": "handicap",
+          "probability": 0.276331,
+          "odd": 3.4,
+          "fair_probability": 0.260149,
+          "robust_edge": -0.015318,
+          "value_pick_tier": "alternative",
+          "independent_support_count": 0,
+          "display": "FC Seoul -1.0 적용 후 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.75,
+          "selected_pick": "언더 (U/O 2.5)",
+          "selected_market": "totals",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 FC Seoul 1.63골, Incheon United 1.05골입니다. FC Seoul가 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다.\n\n[일반 승무패 분석] FC Seoul 승 · 모델 46.9% · 시장 공정확률 49.8%, 차이 -2.9%p.\n\n[핸디캡 분석] FC Seoul -1.0 적용 후 패 · 모델 48.6% · 시장 공정확률 49.1%, 차이 -0.5%p.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 50.5% · 시장 공정확률 52.3%, 차이 -1.8%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 2.60/1.20, 홈·원정: 홈 8승/19경기, 원정 7승/20경기, 상대 전적: 3승-2무-5승, 선수 결장: 결장 0명/0명, 휴식일: 10일/5일, 팀 신원·경기 연결: 팀ID 2766/2763, 경기ID 1507055, 시장 배당: 1x2, totals, handicap · 12개 업체 중앙값, 데이터 품질: 75/100 (주의). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 언더 (U/O 2.5) · 모델 50.5% · 시장 공정확률 52.3%, 차이 -1.8%p입니다. 배당형 대안픽은 FC Seoul -1.0 적용 후 승 · 모델 27.6% · 시장 공정확률 26.0%, 차이 +1.6%p이며, 주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 50.5%이며, 베팅업체 마진 제거 공정확률은 52.3%이고 모델과의 차이는 -1.8%p입니다. 예상 오차범위는 40.0%~61.0%, 데이터 신뢰도는 75.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T19:00:58.507508+09:00",
+      "frozen_at": null,
+      "data_quality_score": 75,
+      "data_quality_grade": "주의",
+      "missing_data": [
+        "순위·홈원정 공격수비",
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1556051",
@@ -6008,13 +8492,634 @@
       },
       "api_fixture_id": 1556051,
       "final_match_time": "26.09.05 (토) 19:00",
-      "timestamp": 1788602400.0
+      "timestamp": 1788602400.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T19:00:59.107720+09:00",
+        "frozen_at": null,
+        "data_quality_score": 90,
+        "data_quality_grade": "정상",
+        "missing_data": [
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1556051,
+          "fetched_at": "2026-09-04T19:00:58.824892+09:00",
+          "bookmaker_count": 11,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 2.0,
+            "draw": 3.35,
+            "away": 3.75,
+            "sample_count": 11
+          },
+          "totals": {
+            "line": 2.25,
+            "under": 2.0,
+            "over": 1.79,
+            "sample_count": 7,
+            "market_balance": 0.0554,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": -1.0,
+            "home": 3.75,
+            "draw": 3.56,
+            "away": 1.77,
+            "sample_count": 5,
+            "market_balance": 0.2681,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 316,
+          "away_team_id": 305,
+          "league_id": 98,
+          "season": 2027,
+          "fixture_id": 1556051,
+          "kickoff_at": "2026-09-05T19:00:00+09:00",
+          "expected_goals": {
+            "home": 1.9,
+            "away": 1.34
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 0.8,
+              "gf_pg": 1.6,
+              "ga_pg": 1.6,
+              "strength": -0.0265
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 1.6,
+              "gf_pg": 1.8,
+              "ga_pg": 1.4,
+              "strength": 0.0275
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 12,
+              "home_total": 23,
+              "home_gf": 34,
+              "home_ga": 34,
+              "away_wins": 4,
+              "away_total": 16,
+              "away_gf": 17,
+              "away_ga": 22
+            },
+            "away": {
+              "home_wins": 7,
+              "home_total": 20,
+              "home_gf": 23,
+              "home_ga": 28,
+              "away_wins": 6,
+              "away_total": 20,
+              "away_gf": 24,
+              "away_ga": 36
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 10,
+              "points": 21,
+              "played": 18,
+              "league_id": 98,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 21,
+              "description": "Promotion - J1 League (Placement Play Offs: 19th place)",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            },
+            "away": {
+              "rank": 9,
+              "points": 18,
+              "played": 18,
+              "league_id": 98,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 23,
+              "description": "Promotion - J1 League (Placement Play Offs: 17th place)",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 10,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 9,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 0,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 3,
+            "away": 3
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 3,
+            "draws": 5,
+            "a_wins": 2,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 0.80/1.60"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 12승/23경기, 원정 6승/20경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "3승-5무-2승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 0명/0명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "3일/3일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 316/305, 경기ID 1556051"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 11개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "90/100 (정상)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Avispa Fukuoka 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.466384,
+            "raw_model_probability": 0.466383,
+            "fair_probability": 0.469407,
+            "odd": 2.0,
+            "edge": -0.003,
+            "robust_probability": 0.441184,
+            "robust_edge": -0.028223,
+            "robust_ev": 0.882368,
+            "balanced_score": 0.326363,
+            "safe_score": 0.4197,
+            "recommendation_score": 0.5158,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.382384,
+              "high": 0.550384
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.268955,
+            "raw_model_probability": 0.268951,
+            "fair_probability": 0.280243,
+            "odd": 3.35,
+            "edge": -0.0113,
+            "robust_probability": 0.243755,
+            "robust_edge": -0.036488,
+            "robust_ev": 0.816579,
+            "balanced_score": 0.114127,
+            "safe_score": 0.2421,
+            "recommendation_score": 0.3736,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.184955,
+              "high": 0.352955
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 6,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 6위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Mito Hollyhock 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.264661,
+            "raw_model_probability": 0.264666,
+            "fair_probability": 0.25035,
+            "odd": 3.75,
+            "edge": 0.0143,
+            "robust_probability": 0.239461,
+            "robust_edge": -0.010889,
+            "robust_ev": 0.897979,
+            "balanced_score": 0.110941,
+            "safe_score": 0.2382,
+            "recommendation_score": 0.3784,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.180661,
+              "high": 0.348661
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [
+              "최근 경기력 지표 우위"
+            ],
+            "independent_support_count": 1,
+            "selection_rank": 7,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Avispa Fukuoka 핸디승",
+            "selection_side": "home",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.278973,
+            "raw_model_probability": 0.278958,
+            "fair_probability": 0.239692,
+            "odd": 3.75,
+            "edge": 0.0393,
+            "robust_probability": 0.253773,
+            "robust_edge": 0.014081,
+            "robust_ev": 0.951649,
+            "balanced_score": 0.128824,
+            "safe_score": 0.2511,
+            "recommendation_score": 0.4025,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.194973,
+              "high": 0.362973
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.224849,
+            "raw_model_probability": 0.22486,
+            "fair_probability": 0.252485,
+            "odd": 3.56,
+            "edge": -0.0276,
+            "robust_probability": 0.199649,
+            "robust_edge": -0.052836,
+            "robust_ev": 0.71075,
+            "balanced_score": 0.066713,
+            "safe_score": 0.2024,
+            "recommendation_score": 0.3419,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.140849,
+              "high": 0.308849
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 8위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Avispa Fukuoka 핸디패",
+            "selection_side": "away",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.496178,
+            "raw_model_probability": 0.496182,
+            "fair_probability": 0.507823,
+            "odd": 1.77,
+            "edge": -0.0116,
+            "robust_probability": 0.470978,
+            "robust_edge": -0.036845,
+            "robust_ev": 0.833631,
+            "balanced_score": 0.358391,
+            "safe_score": 0.4466,
+            "recommendation_score": 0.5372,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.412178,
+              "high": 0.580178
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 2.25)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.41022,
+            "raw_model_probability": 0.410289,
+            "fair_probability": 0.472296,
+            "odd": 2.0,
+            "edge": -0.0621,
+            "robust_probability": 0.38502,
+            "robust_edge": -0.087276,
+            "robust_ev": 0.77004,
+            "balanced_score": 0.162775,
+            "safe_score": 0.3692,
+            "recommendation_score": 0.4754,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.32622,
+              "high": 0.49422
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 4위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 2.25)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.58978,
+            "raw_model_probability": 0.589711,
+            "fair_probability": 0.527704,
+            "odd": 1.79,
+            "edge": 0.0621,
+            "robust_probability": 0.56458,
+            "robust_edge": 0.036876,
+            "robust_ev": 1.010598,
+            "balanced_score": 0.393432,
+            "safe_score": 0.5308,
+            "recommendation_score": 0.6388,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.50578,
+              "high": 0.67378
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "오버 (U/O 2.25)",
+            "market_key": "totals",
+            "probability": 0.58978,
+            "odd": 1.79,
+            "fair_probability": 0.527704,
+            "robust_edge": 0.036876,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "[-1.0] Avispa Fukuoka 핸디승",
+            "market_key": "handicap",
+            "probability": 0.278973,
+            "odd": 3.75,
+            "fair_probability": 0.239692,
+            "robust_edge": 0.014081,
+            "value_pick_tier": "alternative",
+            "independent_support_count": 0
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "오버 (U/O 2.25)",
+          "market_key": "totals",
+          "probability": 0.58978,
+          "odd": 1.79,
+          "fair_probability": 0.527704,
+          "robust_edge": 0.036876,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "오버 (U/O 2.25)"
+        },
+        "alternative": {
+          "raw_pick": "[-1.0] Avispa Fukuoka 핸디승",
+          "market_key": "handicap",
+          "probability": 0.278973,
+          "odd": 3.75,
+          "fair_probability": 0.239692,
+          "robust_edge": 0.014081,
+          "value_pick_tier": "alternative",
+          "independent_support_count": 0,
+          "display": "Avispa Fukuoka -1.0 적용 후 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.9,
+          "selected_pick": "오버 (U/O 2.25)",
+          "selected_market": "totals",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 Avispa Fukuoka 1.90골, Mito Hollyhock 1.34골입니다. Avispa Fukuoka가 공격 주도권을 더 오래 가져갈 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Avispa Fukuoka 승 · 모델 46.6% · 시장 공정확률 46.9%, 차이 -0.3%p.\n\n[핸디캡 분석] Avispa Fukuoka -1.0 적용 후 패 · 모델 49.6% · 시장 공정확률 50.8%, 차이 -1.2%p.\n\n[언더오버 분석] 오버 (U/O 2.25) · 모델 59.0% · 시장 공정확률 52.8%, 차이 +6.2%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 0.80/1.60, 홈·원정: 홈 12승/23경기, 원정 6승/20경기, 상대 전적: 3승-5무-2승, 선수 결장: 결장 0명/0명, 휴식일: 3일/3일, 팀 신원·경기 연결: 팀ID 316/305, 경기ID 1556051, 시장 배당: 1x2, totals, handicap · 11개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 오버 (U/O 2.25) · 모델 59.0% · 시장 공정확률 52.8%, 차이 +6.2%p입니다. 배당형 대안픽은 Avispa Fukuoka -1.0 적용 후 승 · 모델 27.9% · 시장 공정확률 24.0%, 차이 +3.9%p이며, 주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 59.0%이며, 베팅업체 마진 제거 공정확률은 52.8%이고 모델과의 차이는 +6.2%p입니다. 예상 오차범위는 50.6%~67.4%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T19:00:59.107720+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
-      "pick_status": "NOT_ANALYZED",
+      "analysis_status": "ANALYZED_SHADOW",
+      "pick_status": "SHADOW_PICK_READY",
       "identity_verified": true,
       "match": {
         "id": "WORLD_1557395",
@@ -6037,7 +9142,626 @@
       },
       "api_fixture_id": 1557395,
       "final_match_time": "26.09.05 (토) 20:30",
-      "timestamp": 1788607800.0
+      "timestamp": 1788607800.0,
+      "analysis": {
+        "analysis_version": "V7.3.8-world-grading-market-movement",
+        "analysis_stage": "T-24-initial",
+        "analyzed_at": "2026-09-04T20:30:58.124277+09:00",
+        "frozen_at": null,
+        "data_quality_score": 90,
+        "data_quality_grade": "정상",
+        "missing_data": [
+          "확정 선발명단"
+        ],
+        "lineup_confirmed": false,
+        "odds_snapshot": {
+          "fixture_id": 1557395,
+          "fetched_at": "2026-09-04T20:30:57.852844+09:00",
+          "bookmaker_count": 13,
+          "odds_source": "api_football_bookmaker_median",
+          "1x2": {
+            "home": 2.13,
+            "draw": 3.65,
+            "away": 3.25,
+            "sample_count": 13
+          },
+          "totals": {
+            "line": 3.0,
+            "under": 1.87,
+            "over": 1.91,
+            "sample_count": 7,
+            "market_balance": 0.0106,
+            "selection_method": "balanced_mainline"
+          },
+          "handicap": {
+            "line": -1.0,
+            "home": 3.7,
+            "draw": 4.0,
+            "away": 1.715,
+            "sample_count": 6,
+            "market_balance": 0.3019,
+            "selection_method": "balanced_mainline"
+          },
+          "available_markets": [
+            "1x2",
+            "totals",
+            "handicap"
+          ]
+        },
+        "odds_movement": {
+          "has_history": false,
+          "qualified": false,
+          "summary": "",
+          "signals": [],
+          "home_bonus": 0.0,
+          "away_bonus": 0.0
+        },
+        "inputs_snapshot": {
+          "home_team_id": 34,
+          "away_team_id": 35,
+          "league_id": 39,
+          "season": 2026,
+          "fixture_id": 1557395,
+          "kickoff_at": "2026-09-05T20:30:00+09:00",
+          "expected_goals": {
+            "home": 2.05,
+            "away": 1.88
+          },
+          "recent": {
+            "home": {
+              "matches": 5,
+              "ppg": 1.6,
+              "gf_pg": 1.8,
+              "ga_pg": 1.4,
+              "strength": 0.0275
+            },
+            "away": {
+              "matches": 5,
+              "ppg": 1.0,
+              "gf_pg": 3.0,
+              "ga_pg": 1.6,
+              "strength": 0.0325
+            }
+          },
+          "long_term": {
+            "home": {
+              "home_wins": 10,
+              "home_total": 22,
+              "home_gf": 41,
+              "home_ga": 38,
+              "away_wins": 6,
+              "away_total": 18,
+              "away_gf": 26,
+              "away_ga": 32
+            },
+            "away": {
+              "home_wins": 7,
+              "home_total": 19,
+              "home_gf": 41,
+              "home_ga": 22,
+              "away_wins": 6,
+              "away_total": 21,
+              "away_gf": 35,
+              "away_ga": 38
+            }
+          },
+          "standings": {
+            "home": {
+              "rank": 6,
+              "points": 4,
+              "played": 2,
+              "league_id": 39,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 4,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            },
+            "away": {
+              "rank": 6,
+              "points": 0,
+              "played": 0,
+              "league_id": 3,
+              "season": 2026,
+              "total_teams": 1,
+              "team_goals": 0,
+              "description": "",
+              "relegation_start_rank": null,
+              "safety_rank": null,
+              "safety_points": null,
+              "relegation_cut_points": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "relegation_zone_source": "none"
+            }
+          },
+          "survival_motivation": {
+            "home": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 6,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            },
+            "away": {
+              "active": false,
+              "state": "NOT_APPLICABLE",
+              "attack_boost": 0.0,
+              "opponent_risk_boost": 0.0,
+              "season_progress": 0.0,
+              "rank": 6,
+              "relegation_start_rank": null,
+              "points_to_safety": null,
+              "points_above_zone": null,
+              "source": "none",
+              "reason": "강등선 자료 없음"
+            }
+          },
+          "injuries": {
+            "home": {
+              "count": 5,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            },
+            "away": {
+              "count": 4,
+              "ace_missing": false,
+              "ace_names": [],
+              "missing_goals": 0,
+              "available": true,
+              "source": "target_fixture"
+            }
+          },
+          "lineups": {
+            "confirmed": false,
+            "home_missing_core": [],
+            "away_missing_core": []
+          },
+          "rest_days": {
+            "home": 6,
+            "away": 6
+          },
+          "h2h": {
+            "match_time": null,
+            "last_h2h_date": "-",
+            "h_wins": 3,
+            "draws": 6,
+            "a_wins": 1,
+            "total": 10
+          },
+          "evidence_coverage": 0.58,
+          "odds_movement": {
+            "has_history": false,
+            "qualified": false,
+            "summary": "",
+            "signals": [],
+            "home_bonus": 0.0,
+            "away_bonus": 0.0
+          }
+        },
+        "evidence": [
+          {
+            "name": "최근 성적",
+            "weight": 0.13,
+            "value": "최근 5/5경기, PPG 1.60/1.00"
+          },
+          {
+            "name": "홈·원정",
+            "weight": 0.1,
+            "value": "홈 10승/22경기, 원정 6승/21경기"
+          },
+          {
+            "name": "상대 전적",
+            "weight": 0.08,
+            "value": "3승-6무-1승"
+          },
+          {
+            "name": "선수 결장",
+            "weight": 0.11,
+            "value": "결장 5명/4명"
+          },
+          {
+            "name": "휴식일",
+            "weight": 0.06,
+            "value": "6일/6일"
+          },
+          {
+            "name": "팀 신원·경기 연결",
+            "weight": 0.1,
+            "value": "팀ID 34/35, 경기ID 1557395"
+          },
+          {
+            "name": "시장 배당",
+            "weight": 0.25,
+            "value": "1x2, totals, handicap · 13개 업체 중앙값"
+          },
+          {
+            "name": "데이터 품질",
+            "weight": 0.0,
+            "value": "90/100 (정상)"
+          }
+        ],
+        "candidates": [
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Newcastle 승",
+            "selection_side": "home",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.417564,
+            "raw_model_probability": 0.417553,
+            "fair_probability": 0.446639,
+            "odd": 2.13,
+            "edge": -0.0291,
+            "robust_probability": 0.392364,
+            "robust_edge": -0.054275,
+            "robust_ev": 0.835735,
+            "balanced_score": 0.273882,
+            "safe_score": 0.3758,
+            "recommendation_score": 0.4806,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.333564,
+              "high": 0.501564
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 3,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 3위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "무승부",
+            "selection_side": "draw",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.248245,
+            "raw_model_probability": 0.248241,
+            "fair_probability": 0.260641,
+            "odd": 3.65,
+            "edge": -0.0124,
+            "robust_probability": 0.223045,
+            "robust_edge": -0.037596,
+            "robust_ev": 0.814114,
+            "balanced_score": 0.091864,
+            "safe_score": 0.2234,
+            "recommendation_score": 0.3587,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.164245,
+              "high": 0.332245
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 7,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 7위"
+          },
+          {
+            "market_key": "1x2",
+            "label": "일반 승무패 예측",
+            "raw_pick": "Bournemouth 승",
+            "selection_side": "away",
+            "handicap_base": null,
+            "sort_id": 3,
+            "model_probability": 0.33419,
+            "raw_model_probability": 0.334206,
+            "fair_probability": 0.29272,
+            "odd": 3.25,
+            "edge": 0.0415,
+            "robust_probability": 0.30899,
+            "robust_edge": 0.01627,
+            "robust_ev": 1.004217,
+            "balanced_score": 0.188402,
+            "safe_score": 0.3008,
+            "recommendation_score": 0.4434,
+            "market_hit_rate": 0.4545,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.25019,
+              "high": 0.41819
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 5,
+            "market_rank": 2,
+            "selected_as": [
+              "honey"
+            ],
+            "selection_reason": "승무패·핸디캡 중 배당가치 대안 선정"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Newcastle 핸디승",
+            "selection_side": "home",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.25196,
+            "raw_model_probability": 0.251958,
+            "fair_probability": 0.244952,
+            "odd": 3.7,
+            "edge": 0.007,
+            "robust_probability": 0.22676,
+            "robust_edge": -0.018192,
+            "robust_ev": 0.839012,
+            "balanced_score": 0.096558,
+            "safe_score": 0.2268,
+            "recommendation_score": 0.3653,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.16796,
+              "high": 0.33596
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 6,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 6위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] 핸디무",
+            "selection_side": "draw",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.202658,
+            "raw_model_probability": 0.202667,
+            "fair_probability": 0.22658,
+            "odd": 4.0,
+            "edge": -0.0239,
+            "robust_probability": 0.177458,
+            "robust_edge": -0.049122,
+            "robust_ev": 0.709832,
+            "balanced_score": 0.042857,
+            "safe_score": 0.1824,
+            "recommendation_score": 0.3259,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.118658,
+              "high": 0.286658
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 8,
+            "market_rank": 3,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 8위"
+          },
+          {
+            "market_key": "handicap",
+            "label": "핸디캡 예측",
+            "raw_pick": "[-1.0] Newcastle 핸디패",
+            "selection_side": "away",
+            "handicap_base": -1.0,
+            "sort_id": 2,
+            "model_probability": 0.545381,
+            "raw_model_probability": 0.545375,
+            "fair_probability": 0.528468,
+            "odd": 1.715,
+            "edge": 0.0169,
+            "robust_probability": 0.520181,
+            "robust_edge": -0.008287,
+            "robust_ev": 0.89211,
+            "balanced_score": 0.412976,
+            "safe_score": 0.4908,
+            "recommendation_score": 0.582,
+            "market_hit_rate": 0.5455,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.461381,
+              "high": 0.629381
+            },
+            "is_true_underdog": true,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 2,
+            "market_rank": 1,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 2위"
+          },
+          {
+            "market_key": "totals",
+            "label": "언더 예측",
+            "raw_pick": "언더 (U/O 3)",
+            "selection_side": "under",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.339973,
+            "raw_model_probability": 0.340157,
+            "fair_probability": 0.505291,
+            "odd": 1.87,
+            "edge": -0.1653,
+            "robust_probability": 0.314773,
+            "robust_edge": -0.190518,
+            "robust_ev": 0.588626,
+            "balanced_score": 0.074966,
+            "safe_score": 0.306,
+            "recommendation_score": 0.4248,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.255973,
+              "high": 0.423973
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 4,
+            "market_rank": 2,
+            "selected_as": [],
+            "selection_reason": "전체 시장 보정 선택점수 4위"
+          },
+          {
+            "market_key": "totals",
+            "label": "오버 예측",
+            "raw_pick": "오버 (U/O 3)",
+            "selection_side": "over",
+            "handicap_base": null,
+            "sort_id": 1,
+            "model_probability": 0.660027,
+            "raw_model_probability": 0.659843,
+            "fair_probability": 0.494709,
+            "odd": 1.91,
+            "edge": 0.1653,
+            "robust_probability": 0.634827,
+            "robust_edge": 0.140118,
+            "robust_ev": 1.21252,
+            "balanced_score": 0.491566,
+            "safe_score": 0.594,
+            "recommendation_score": 0.7377,
+            "market_hit_rate": 0.6364,
+            "market_history_samples": 3,
+            "data_confidence": 0.9,
+            "error_margin": 0.084,
+            "probability_interval": {
+              "low": 0.576027,
+              "high": 0.744027
+            },
+            "is_true_underdog": false,
+            "is_qualified_underdog": false,
+            "support_signals": [],
+            "independent_support_count": 0,
+            "selection_rank": 1,
+            "market_rank": 1,
+            "selected_as": [
+              "high_probability"
+            ],
+            "selection_reason": "전체 시장의 보정 선택점수 1위"
+          }
+        ],
+        "categories": {
+          "high_probability": {
+            "raw_pick": "오버 (U/O 3)",
+            "market_key": "totals",
+            "probability": 0.660027,
+            "odd": 1.91,
+            "fair_probability": 0.494709,
+            "robust_edge": 0.140118,
+            "value_pick_tier": "",
+            "independent_support_count": 0
+          },
+          "honey": {
+            "raw_pick": "Bournemouth 승",
+            "market_key": "1x2",
+            "probability": 0.33419,
+            "odd": 3.25,
+            "fair_probability": 0.29272,
+            "robust_edge": 0.01627,
+            "value_pick_tier": "alternative",
+            "independent_support_count": 0
+          },
+          "vip_underdog": null
+        },
+        "selected": {
+          "raw_pick": "오버 (U/O 3)",
+          "market_key": "totals",
+          "probability": 0.660027,
+          "odd": 1.91,
+          "fair_probability": 0.494709,
+          "robust_edge": 0.140118,
+          "value_pick_tier": "",
+          "independent_support_count": 0,
+          "display": "오버 (U/O 3)"
+        },
+        "alternative": {
+          "raw_pick": "Bournemouth 승",
+          "market_key": "1x2",
+          "probability": 0.33419,
+          "odd": 3.25,
+          "fair_probability": 0.29272,
+          "robust_edge": 0.01627,
+          "value_pick_tier": "alternative",
+          "independent_support_count": 0,
+          "display": "Bournemouth 승"
+        },
+        "decision": {
+          "schema_version": "pick-audit.v1",
+          "analysis_version": "V7.3.8-world-grading-market-movement",
+          "selector": "all-markets-probability-first-v2",
+          "score_order": [
+            "model_probability",
+            "balanced_score",
+            "safe_score",
+            "recommendation_score"
+          ],
+          "candidate_count": 8,
+          "market_candidate_counts": {
+            "1x2": 3,
+            "handicap": 3,
+            "totals": 2
+          },
+          "missing_markets": [],
+          "data_confidence": 0.9,
+          "selected_pick": "오버 (U/O 3)",
+          "selected_market": "totals",
+          "selection_reason": "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 비교해 보정확률이 가장 높은 방향을 확률픽으로 확정",
+          "vip_promoted": false
+        },
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 Newcastle 2.05골, Bournemouth 1.88골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] Newcastle 승 · 모델 41.8% · 시장 공정확률 44.7%, 차이 -2.9%p.\n\n[핸디캡 분석] Newcastle -1.0 적용 후 패 · 모델 54.5% · 시장 공정확률 52.8%, 차이 +1.7%p.\n\n[언더오버 분석] 오버 (U/O 3) · 모델 66.0% · 시장 공정확률 49.5%, 차이 +16.5%p.\n\n[실제 사용 근거] 최근 성적: 최근 5/5경기, PPG 1.60/1.00, 홈·원정: 홈 10승/22경기, 원정 6승/21경기, 상대 전적: 3승-6무-1승, 선수 결장: 결장 5명/4명, 휴식일: 6일/6일, 팀 신원·경기 연결: 팀ID 34/35, 경기ID 1557395, 시장 배당: 1x2, totals, handicap · 13개 업체 중앙값, 데이터 품질: 90/100 (정상). 확보하지 못한 항목(xG, 슈팅 품질, 날씨, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다.\n\n[최종 선택과 신뢰도] 확률 높은 픽은 오버 (U/O 3) · 모델 66.0% · 시장 공정확률 49.5%, 차이 +16.5%p입니다. 배당형 대안픽은 Bournemouth 승 · 모델 33.4% · 시장 공정확률 29.3%, 차이 +4.2%p이며, 주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다. VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다. 선택된 확률픽의 보정 확률은 66.0%이며, 베팅업체 마진 제거 공정확률은 49.5%이고 모델과의 차이는 +16.5%p입니다. 예상 오차범위는 57.6%~74.4%, 데이터 신뢰도는 90.0%입니다. 이 수치는 적중을 보장하지 않습니다."
+      },
+      "analysis_version": "V7.3.8-world-grading-market-movement",
+      "analysis_stage": "T-24-initial",
+      "analyzed_at": "2026-09-04T20:30:58.124277+09:00",
+      "frozen_at": null,
+      "data_quality_score": 90,
+      "data_quality_grade": "정상",
+      "missing_data": [
+        "확정 선발명단"
+      ],
+      "lineup_confirmed": false
     },
     {
       "source_type": "WORLD",
@@ -6760,23 +10484,31 @@
       292
     ],
     "schedule_days": 2,
-    "analysis_started": false,
+    "analysis_started": true,
     "public_count": 0,
     "api_usage": {
       "usage_day": "2026-09-04",
       "reset_timezone": "UTC",
-      "local_calls": 2078,
-      "provider_remaining": 5405,
+      "local_calls": 2482,
+      "provider_remaining": 5001,
       "analysis_soft_limit": 6900,
       "daily_limit": 7500,
       "live_reserve": 600,
-      "world_calls": 37,
-      "analysis_calls": 1938,
-      "live_calls": 96,
-      "scoring_calls": 7,
+      "world_calls": 49,
+      "analysis_calls": 2165,
+      "live_calls": 249,
+      "scoring_calls": 19,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
       "quota_exhausted": false
-    }
-  }
+    },
+    "analysis_day": "2026-09-04",
+    "analysis_daily_limit": 30,
+    "analysis_per_league_limit": 5,
+    "analyzed_shadow_count": 15,
+    "frozen_shadow_count": 0,
+    "analysis_error_count": 0,
+    "quota_paused": false
+  },
+  "last_analysis_at": "2026-09-04T20:30:58.139049+09:00"
 }
