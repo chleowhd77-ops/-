@@ -78,8 +78,8 @@ TERMINAL_STATUSES = {'FT', 'AET', 'PEN'}
 CANCELED_STATUSES = {'CANC', 'ABD', 'AWD', 'WO'}
 POSTPONED_STATUSES = {'PST', 'PSTP'}
 
-# 전 세계 경기 1단계는 검증된 11개 1부 리그의 일정만 그림자 상태로 모은다.
-# league_id를 신원으로 사용하므로 번역된 리그명 변화로 다른 대회가 섞이지 않는다.
+# 이 목록은 번역·리그 평균값을 위한 우선 리그 표이지 분석 허용 목록이 아니다.
+# 전체경기 대상은 아래 표에 없는 리그라도 실제 정규시간 배당이 있으면 포함한다.
 WORLD_LEAGUES = {
     39: {"name": "잉글랜드 프리미어리그", "tier": 1},
     140: {"name": "스페인 라리가", "tier": 1},
@@ -112,6 +112,9 @@ WORLD_SCHEDULE_REFRESH_HOURS = max(
 WORLD_ANALYSIS_INTERVAL_MINUTES = max(
     10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
 )
+WORLD_ODDS_MAX_PAGES_PER_DAY = max(
+    10, min(100, int(os.getenv("WORLD_ODDS_MAX_PAGES_PER_DAY", "100")))
+)
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
 WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v2"
@@ -125,7 +128,8 @@ WORLD_TEAM_NAME_KO_OVERRIDES = {
     "FC Koln": "쾰른",
 }
 WORLD_REJECTION_LABELS = {
-    "UNSUPPORTED_LEAGUE": "1단계 허용 리그 아님",
+    "INVALID_LEAGUE_ID": "공식 리그 ID 없음",
+    "NO_VALID_MARKET": "사설 배팅용 정규시간 배당 없음",
     "INVALID_FIXTURE_ID": "공식 경기 ID 없음",
     "INVALID_TEAM_ID": "홈·원정 팀 ID 확인 실패",
     "DUPLICATE_TEAM_ID": "홈·원정 팀 ID가 동일함",
@@ -2321,8 +2325,8 @@ def _world_fixture_candidate(fixture_data, now=None):
         league_id = int(league.get("id") or 0)
     except (TypeError, ValueError):
         league_id = 0
-    if league_id not in WORLD_LEAGUES:
-        return None, "UNSUPPORTED_LEAGUE"
+    if league_id <= 0:
+        return None, "INVALID_LEAGUE_ID"
 
     try:
         fixture_id = int(fixture.get("id") or 0)
@@ -2363,7 +2367,10 @@ def _world_fixture_candidate(fixture_data, now=None):
 
     weekday = "월화수목금토일"[kickoff.weekday()]
     match_time = kickoff.strftime(f"%y.%m.%d ({weekday}) %H:%M")
-    league_config = WORLD_LEAGUES[league_id]
+    league_config = WORLD_LEAGUES.get(league_id, {})
+    league_display_name = str(
+        league_config.get("name") or league.get("name") or "세계 축구"
+    )
     fixture_meta = fixture_data.get("fixture", {}) or {}
     venue = fixture_meta.get("venue", {}) or {}
     match = {
@@ -2371,8 +2378,8 @@ def _world_fixture_candidate(fixture_data, now=None):
         "fixture_id": fixture_id,
         "league_id": league_id,
         "season": league.get("season"),
-        "league": str(league.get("name") or league_config["name"]),
-        "league_name_ko": league_config["name"],
+        "league": str(league.get("name") or league_display_name),
+        "league_name_ko": league_display_name,
         "country": str(league.get("country") or ""),
         "round": str(league.get("round") or ""),
         "home": home_name,
@@ -2402,9 +2409,21 @@ def _world_fixture_candidate(fixture_data, now=None):
     }, None
 
 
-def build_world_schedule_payload(fixtures_by_date, now=None):
-    """Build the isolated stage-6.1 schedule with explicit rejection accounting."""
+def _has_valid_world_market(snapshot):
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    return bool(
+        int(snapshot.get("bookmaker_count") or 0) > 0
+        and any(snapshot.get(key) for key in ("1x2", "totals", "handicap"))
+    )
+
+
+def build_world_schedule_payload(
+    fixtures_by_date, now=None, market_snapshots_by_fixture=None
+):
+    """Build the isolated schedule; production targets only bettable fixtures."""
     now = (now or datetime.now(KST)).astimezone(KST)
+    market_filter_enabled = market_snapshots_by_fixture is not None
+    market_snapshots_by_fixture = market_snapshots_by_fixture or {}
     matches = []
     seen_fixture_ids = set()
     rejected_counts = {key: 0 for key in WORLD_REJECTION_LABELS}
@@ -2417,11 +2436,20 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
             item, reason = _world_fixture_candidate(fixture_data, now=now)
             if item is not None:
                 fixture_id = int(item.get("api_fixture_id") or 0)
-                if fixture_id in seen_fixture_ids:
+                market_snapshot = (
+                    market_snapshots_by_fixture.get(fixture_id)
+                    or market_snapshots_by_fixture.get(str(fixture_id))
+                )
+                if market_filter_enabled and not _has_valid_world_market(market_snapshot):
+                    reason = "NO_VALID_MARKET"
+                    item = None
+                elif fixture_id in seen_fixture_ids:
                     reason = "DUPLICATE_FIXTURE"
                     item = None
                 else:
                     seen_fixture_ids.add(fixture_id)
+                    if _has_valid_world_market(market_snapshot):
+                        item["market_snapshot"] = dict(market_snapshot)
             if item is not None:
                 matches.append(item)
                 continue
@@ -2476,7 +2504,10 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
             "eligible_shadow_count": len(matches),
             "rejected_count": sum(rejected_counts.values()),
             "league_counts": league_counts,
-            "allowed_league_ids": sorted(WORLD_LEAGUES),
+            "selection_rule": "valid_fulltime_bookmaker_market",
+            "market_filter_enabled": market_filter_enabled,
+            "bettable_fixture_count": len(matches),
+            "preferred_league_ids": sorted(WORLD_LEAGUES),
             "schedule_days": WORLD_SCHEDULE_DAYS,
             "analysis_started": False,
             "public_count": 0,
@@ -2487,10 +2518,11 @@ def build_world_schedule_payload(fixtures_by_date, now=None):
 
 
 def collect_world_schedule():
-    """Fetch today/tomorrow once and preserve the last good file on any failure."""
+    """Fetch fixtures plus batched odds and preserve the last good file on failure."""
     now = datetime.now(KST)
     previous_payload = _read_json(WORLD_DASHBOARD_FILE, {})
     fixtures_by_date = {}
+    market_snapshots_by_fixture = {}
     for day_offset in range(WORLD_SCHEDULE_DAYS):
         date_key = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         fixtures = _fetch_date_fixtures_api(date_key, ttl_h=2, purpose="world")
@@ -2498,15 +2530,27 @@ def collect_world_schedule():
             print(f"❌ 세계경기 일정 수집 실패({date_key}) - 마지막 정상본을 유지합니다.")
             return False
         fixtures_by_date[date_key] = fixtures
+        date_markets = _fetch_world_market_snapshots_by_date(date_key)
+        if date_markets is None:
+            print(
+                f"❌ 세계경기 배당 목록 수집 실패({date_key}) - "
+                "마지막 정상본을 유지합니다."
+            )
+            return False
+        market_snapshots_by_fixture.update(date_markets)
 
-    payload = build_world_schedule_payload(fixtures_by_date, now=now)
+    payload = build_world_schedule_payload(
+        fixtures_by_date,
+        now=now,
+        market_snapshots_by_fixture=market_snapshots_by_fixture,
+    )
     _carry_world_shadow_analyses(payload, previous_payload)
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})
     print(
         "🌍 세계경기 1단계 수집 완료: "
-        f"전체 {source_meta.get('raw_fixture_count', 0)} / "
-        f"그림자 후보 {source_meta.get('eligible_shadow_count', 0)} / "
+        f"수집 목록 {source_meta.get('raw_fixture_count', 0)} / "
+        f"배당 확인 {source_meta.get('eligible_shadow_count', 0)} / "
         f"제외 {source_meta.get('rejected_count', 0)}"
     )
     return True
@@ -2780,6 +2824,96 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
     return result
 
 
+def _world_market_map_from_batch_cache(payload):
+    snapshots = (payload or {}).get("snapshots") if isinstance(payload, dict) else None
+    if not isinstance(snapshots, dict):
+        return None
+    normalized = {}
+    for fixture_id, snapshot in snapshots.items():
+        try:
+            fixture_key = int(fixture_id)
+        except (TypeError, ValueError):
+            continue
+        if fixture_key > 0 and _has_valid_world_market(snapshot):
+            normalized[fixture_key] = dict(snapshot)
+    return normalized
+
+
+def _fetch_world_market_snapshots_by_date(date_key):
+    """Fetch bookmaker-covered fixtures by date, page once, and cache as a batch."""
+    date_key = str(date_key or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_key):
+        return None
+    cache_key = f"world_odds_by_date_v1_{date_key}"
+    cached_payload = get_db_cache(cache_key, 2)
+    cached = _world_market_map_from_batch_cache(cached_payload)
+    if cached is not None:
+        return cached
+    stale_payload = get_db_cache(cache_key, 24)
+    stale = _world_market_map_from_batch_cache(stale_payload)
+    grouped_rows = {}
+    page = 1
+    try:
+        while page <= WORLD_ODDS_MAX_PAGES_PER_DAY:
+            response = api_get(
+                "/odds",
+                params={
+                    "date": date_key,
+                    "timezone": "Asia/Seoul",
+                    "page": page,
+                },
+                timeout=15,
+                purpose="world",
+            )
+            payload = response.json() if response.status_code == 200 else {}
+            if response.status_code != 200 or payload.get("errors"):
+                raise RuntimeError(
+                    f"odds HTTP {response.status_code}: {payload.get('errors')}"
+                )
+            for odds_row in payload.get("response", []) or []:
+                try:
+                    fixture_id = int(
+                        ((odds_row or {}).get("fixture") or {}).get("id") or 0
+                    )
+                except (TypeError, ValueError):
+                    fixture_id = 0
+                if fixture_id > 0:
+                    grouped_rows.setdefault(fixture_id, []).append(odds_row)
+
+            paging = payload.get("paging") or {}
+            current_page = int(paging.get("current") or page)
+            total_pages = int(paging.get("total") or current_page)
+            if current_page >= total_pages:
+                break
+            if page >= WORLD_ODDS_MAX_PAGES_PER_DAY:
+                raise RuntimeError(
+                    f"odds paging safety cap {WORLD_ODDS_MAX_PAGES_PER_DAY}/{total_pages}"
+                )
+            page = current_page + 1
+
+        fetched_at = datetime.now(KST).isoformat()
+        snapshots = {}
+        for fixture_id, odds_rows in grouped_rows.items():
+            snapshot = _world_market_snapshot_from_response(
+                odds_rows, fixture_id=fixture_id, fetched_at=fetched_at
+            )
+            if _has_valid_world_market(snapshot):
+                snapshots[fixture_id] = snapshot
+        set_db_cache(
+            cache_key,
+            {
+                "date": date_key,
+                "fetched_at": fetched_at,
+                "pages": page,
+                "snapshots": {str(key): value for key, value in snapshots.items()},
+            },
+        )
+        return snapshots
+    except Exception as error:
+        print(f"⚠️ 세계경기 날짜별 배당 조회 실패({date_key}): {error}")
+        return stale
+
+
 def fetch_world_market_snapshot(fixture_id, diff_hours):
     fixture_id = int(fixture_id or 0)
     if fixture_id <= 0:
@@ -2809,6 +2943,28 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
             preserved["stale"] = True
             return preserved
         return None
+
+
+def _world_market_snapshot_for_analysis(item, fixture_id, diff_hours, now=None):
+    """Reuse the batch quote while fresh; later stages still refresh movement."""
+    now = (now or datetime.now(KST)).astimezone(KST)
+    ttl_h = 4.0 if diff_hours > 3 else (0.5 if diff_hours > 1 else 0.2)
+    preloaded = (item or {}).get("market_snapshot")
+    if _has_valid_world_market(preloaded):
+        try:
+            fetched_at = datetime.fromisoformat(
+                str(preloaded.get("fetched_at") or "").replace("Z", "+00:00")
+            )
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=KST)
+            age_hours = (
+                now - fetched_at.astimezone(KST)
+            ).total_seconds() / 3600.0
+        except (TypeError, ValueError):
+            age_hours = ttl_h + 1.0
+        if age_hours <= ttl_h:
+            return dict(preloaded)
+    return fetch_world_market_snapshot(fixture_id, diff_hours) or {}
 
 
 def _ensure_odds_movement_table(conn):
@@ -3262,7 +3418,7 @@ def _world_data_quality(match, odds, h_recent, a_recent, h_long, a_long,
         score += 10
     else:
         missing.append("확정 선발명단")
-    # 허용 리그의 정상 fixture_id는 종료 후 결과·사건 조회 대상으로 사용할 수 있다.
+    # 검증된 fixture_id는 종료 후 결과·사건 조회 대상으로 사용할 수 있다.
     if int(match.get("fixture_id") or 0) > 0:
         score += 5
     else:
@@ -3497,7 +3653,9 @@ def _analyze_world_match(item, now, market_performance):
 
     heavy_ttl = 24
     injury_ttl = 0.5 if diff_hours <= 3 else 12
-    odds = fetch_world_market_snapshot(fixture_id, diff_hours) or {}
+    odds = _world_market_snapshot_for_analysis(
+        item, fixture_id, diff_hours, now=now
+    )
     odds_movement = capture_odds_movement(
         fixture_id, "WORLD", analysis_stage, odds
     )

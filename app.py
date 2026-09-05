@@ -2714,8 +2714,8 @@ with main_tab6:
         )
         st.caption(
             "관리자 세계경기 관제 · "
-            f"원본 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
-            f"분석대상 {len(eligible_world_matches)}경기 · "
+            f"수집 목록 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
+            f"배당확인 대상 {len(eligible_world_matches)}경기 · "
             f"분석 {world_actual_analyzed}경기 · "
             f"최종동결 {world_actual_frozen}경기 · "
             f"오류 {world_actual_errors}경기 · "

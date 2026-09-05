@@ -35,7 +35,7 @@ STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "
 ANALYSIS_VERSION = "V7.3.9-unified-final-learning"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.3.9.1-unified-world-lineup-foundation"
+SYSTEM_VERSION = "R7.3.9.2-bettable-world-db-lock-guard"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -51,6 +51,28 @@ _API_PROVIDER_DAY = None
 _API_QUOTA_NOTICE_SHOWN = False
 _API_LAST_REQUEST_AT = 0.0
 _API_PURPOSE_OVERRIDE = None
+
+SQLITE_BUSY_TIMEOUT_MS = max(
+    5000, min(60000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000")))
+)
+SQLITE_BUSY_RETRY_DELAYS = (0.2, 0.5, 1.0)
+
+
+def _sqlite_connect(path="ai_predictions.db", timeout=None):
+    """Open the shared database with one consistent multi-worker wait policy."""
+    timeout_seconds = (
+        float(timeout)
+        if timeout is not None
+        else SQLITE_BUSY_TIMEOUT_MS / 1000.0
+    )
+    conn = sqlite3.connect(path, timeout=max(1.0, timeout_seconds))
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    return conn
+
+
+def _is_sqlite_busy(error):
+    message = str(error or "").casefold()
+    return "database is locked" in message or "database is busy" in message
 
 
 class ApiQuotaUnavailable(RuntimeError):
@@ -118,7 +140,7 @@ def _api_provider_day_key():
 def _api_usage_today():
     day_key = _api_provider_day_key()
     try:
-        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        conn = _sqlite_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_daily (
@@ -142,7 +164,7 @@ def _api_usage_today():
 
 def _api_purpose_usage_today(day_key, purpose):
     try:
-        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        conn = _sqlite_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
@@ -167,7 +189,7 @@ def _api_purpose_usage_today(day_key, purpose):
 
 def _record_api_usage(day_key, provider_remaining=None, purpose="analysis"):
     try:
-        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        conn = _sqlite_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_daily (
@@ -210,7 +232,7 @@ def _record_api_usage(day_key, provider_remaining=None, purpose="analysis"):
 def _mark_api_quota_exhausted(day_key):
     """재시작 뒤에도 같은 날 소진된 API를 반복 호출하지 않게 기록한다."""
     try:
-        conn = sqlite3.connect("ai_predictions.db", timeout=10)
+        conn = _sqlite_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_daily (
@@ -657,7 +679,11 @@ DIRECT_TEAM_INFO.update({
 
 def init_cache_db():
     try:
-        conn = sqlite3.connect("ai_predictions.db")
+        conn = _sqlite_connect()
+        # WAL lets the isolated LIVE/score/master/world workers read while one
+        # short write is committing. Existing data and table contents are kept.
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE IF NOT EXISTS db_meta (version INTEGER)")
         cursor.execute("SELECT version FROM db_meta")
@@ -789,31 +815,70 @@ def init_cache_db():
     except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
 
 def get_db_cache(key, ttl_hours):
-    try:
-        conn = sqlite3.connect("ai_predictions.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?", (key,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            val, updated_at = row
-            updated_time = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - updated_time < timedelta(hours=ttl_hours):
-                return json.loads(val)
-    except Exception as e: 
-        print(f"⚠️ [관제 봇 떡밥] DB 캐시 읽기 실패 ({key}): {e}")
+    for attempt in range(len(SQLITE_BUSY_RETRY_DELAYS) + 1):
+        conn = None
+        try:
+            conn = _sqlite_connect()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?",
+                (key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                val, updated_at = row
+                updated_time = datetime.strptime(
+                    updated_at, "%Y-%m-%d %H:%M:%S"
+                ).replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - updated_time < timedelta(hours=ttl_hours):
+                    return json.loads(val)
+            return None
+        except sqlite3.OperationalError as error:
+            if _is_sqlite_busy(error) and attempt < len(SQLITE_BUSY_RETRY_DELAYS):
+                time.sleep(SQLITE_BUSY_RETRY_DELAYS[attempt])
+                continue
+            print(f"⚠️ [관제 봇 떡밥] DB 캐시 읽기 실패 ({key}): {error}")
+            return None
+        except Exception as error:
+            print(f"⚠️ [관제 봇 떡밥] DB 캐시 읽기 실패 ({key}): {error}")
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
     return None
 
+
 def set_db_cache(key, value):
-    try:
-        conn = sqlite3.connect("ai_predictions.db")
-        cursor = conn.cursor()
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("INSERT OR REPLACE INTO api_cache (cache_key, cache_value, updated_at) VALUES (?, ?, ?)", (key, json.dumps(value), now_str))
-        conn.commit()
-        conn.close()
-    except Exception as e: 
-        print(f"⚠️ [관제 봇 떡밥] DB 캐시 쓰기 실패 ({key}): {e}")
+    encoded = json.dumps(value, ensure_ascii=False)
+    for attempt in range(len(SQLITE_BUSY_RETRY_DELAYS) + 1):
+        conn = None
+        try:
+            conn = _sqlite_connect()
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                "INSERT OR REPLACE INTO api_cache "
+                "(cache_key, cache_value, updated_at) VALUES (?, ?, ?)",
+                (key, encoded, now_str),
+            )
+            conn.commit()
+            return True
+        except sqlite3.OperationalError as error:
+            if conn is not None:
+                conn.rollback()
+            if _is_sqlite_busy(error) and attempt < len(SQLITE_BUSY_RETRY_DELAYS):
+                time.sleep(SQLITE_BUSY_RETRY_DELAYS[attempt])
+                continue
+            print(f"⚠️ [관제 봇 떡밥] DB 캐시 쓰기 실패 ({key}): {error}")
+            return False
+        except Exception as error:
+            if conn is not None:
+                conn.rollback()
+            print(f"⚠️ [관제 봇 떡밥] DB 캐시 쓰기 실패 ({key}): {error}")
+            return False
+        finally:
+            if conn is not None:
+                conn.close()
+    return False
 
 # ==============================================================
 # 🔥 [V4 엔진 업그레이드] 탐지 함수 및 메커니즘 영역
