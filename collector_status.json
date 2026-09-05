@@ -54,19 +54,19 @@
     },
     "world": {
       "child_pid": 305384,
-      "state": "running",
-      "heartbeat_at": "2026-09-05T10:51:28+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-05T10:51:32+00:00",
       "pid": 305384,
       "last_started_at": "2026-09-05T10:51:26+00:00",
       "elapsed_seconds": 0.0,
       "overlap_skips": 0,
-      "duration_seconds": 26.0,
+      "duration_seconds": 4.65,
       "last_success_at": "2026-09-04T23:46:15+00:00",
-      "last_failure_at": "2026-09-05T10:37:15+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-05T10:51:32+00:00",
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-05T10:51:31+00:00",
+  "updated_at": "2026-09-05T10:51:32+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -79,17 +79,22 @@
         "purpose": "scoring",
         "endpoint": "/fixtures",
         "calls": 1
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures",
+        "calls": 1
       }
     ],
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-05",
     "reset_timezone": "UTC",
-    "local_calls": 5528,
-    "provider_remaining": 7497,
+    "local_calls": 5529,
+    "provider_remaining": 7496,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 108,
+    "world_calls": 109,
     "analysis_calls": 5256,
     "live_calls": 143,
     "scoring_calls": 21,
