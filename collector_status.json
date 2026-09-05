@@ -3,39 +3,38 @@
     "scheduler": {
       "supervisor_pid": 305379,
       "state": "running",
-      "heartbeat_at": "2026-09-05T23:16:46+00:00",
+      "heartbeat_at": "2026-09-05T23:17:16+00:00",
       "pid": 305379,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "live": 312871,
         "score": 312872
       }
     },
     "live": {
       "child_pid": 312871,
       "state": "failed",
-      "heartbeat_at": "2026-09-05T23:16:50+00:00",
-      "pid": 312871,
+      "heartbeat_at": "2026-09-05T23:16:52+00:00",
+      "pid": 305379,
       "last_started_at": "2026-09-05T23:16:46+00:00",
       "elapsed_seconds": 0.0,
       "overlap_skips": 0,
-      "duration_seconds": 3.39,
-      "last_failure_at": "2026-09-05T23:16:50+00:00",
+      "duration_seconds": 6.0,
+      "last_failure_at": "2026-09-05T23:16:52+00:00",
       "last_success_at": "2026-09-05T07:01:48+00:00",
-      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
+      "last_error": "worker exited with code 1"
     },
     "score": {
       "child_pid": 312872,
-      "state": "running",
-      "heartbeat_at": "2026-09-05T23:16:46+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-05T23:17:16+00:00",
       "pid": 312872,
       "last_started_at": "2026-09-05T23:16:46+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 48.0,
+      "duration_seconds": 30.05,
       "last_success_at": "2026-09-04T16:56:26+00:00",
-      "last_failure_at": "2026-09-05T23:12:34+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-05T23:17:16+00:00",
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 312859,
@@ -64,7 +63,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-05T23:16:50+00:00",
+  "updated_at": "2026-09-05T23:17:16+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -81,7 +80,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures",
-        "calls": 116
+        "calls": 120
       },
       {
         "purpose": "analysis",
@@ -102,15 +101,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-05",
     "reset_timezone": "UTC",
-    "local_calls": 6254,
-    "provider_remaining": 6771,
+    "local_calls": 6258,
+    "provider_remaining": 6767,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 111,
     "analysis_calls": 5715,
     "live_calls": 292,
-    "scoring_calls": 136,
+    "scoring_calls": 140,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
     "quota_exhausted": false
