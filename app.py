@@ -775,7 +775,7 @@ st.markdown("""
         background: rgba(6, 9, 18, 0.62) !important;
         border-color: var(--dj-line) !important;
     }
-    .pred-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px !important; }
+    .pred-grid { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px !important; }
     .pred-box {
         min-height: 122px;
         padding: 15px 12px !important;
@@ -1797,15 +1797,8 @@ def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
     try:
         now = datetime.now(timezone(timedelta(hours=9)))
-        match = re.search(r'(\d{2})\.(\d{2}).*?(\d{2}):(\d{2})', match_time_str)
-        if match:
-            mo, d, h, m = map(int, match.groups())
-            # 연말/연초에도 가장 가까운 실제 날짜를 선택한다.
-            candidates = [
-                datetime(year, mo, d, h, m, tzinfo=timezone(timedelta(hours=9)))
-                for year in (now.year - 1, now.year, now.year + 1)
-            ]
-            m_dt = min(candidates, key=lambda value: abs((value - now).total_seconds()))
+        m_dt = _ui_match_datetime(match_time_str)
+        if m_dt:
             d_dt = m_dt - timedelta(minutes=10)
             dead_match = re.search(r'(\d{2}):(\d{2})', deadline_str)
             if dead_match:
@@ -1849,6 +1842,88 @@ def _ui_match_datetime(match_time_str):
         return min(candidates, key=lambda value: abs((value - now).total_seconds()))
     except (TypeError, ValueError):
         return None
+
+
+def _item_api_fixture_id(item):
+    """Return the verified provider fixture ID without guessing from team names."""
+    if not isinstance(item, dict):
+        return 0
+    match = item.get("match") if isinstance(item.get("match"), dict) else {}
+    for value in (
+        item.get("api_fixture_id"), item.get("fixture_id"),
+        match.get("api_fixture_id"), match.get("fixture_id"),
+    ):
+        try:
+            fixture_id = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if fixture_id > 0:
+            return fixture_id
+    return 0
+
+
+def _prefer_canonical_grading_rows(rows):
+    """Hide stored WORLD shadows when the same official Proto fixture exists."""
+    rows = [dict(row) for row in (rows or [])]
+    canonical_fixture_ids = {
+        _item_api_fixture_id(row)
+        for row in rows
+        if _item_api_fixture_id(row) > 0
+        and int(row.get("is_toto14") or 0) == 0
+        and not str(row.get("match_id") or "").startswith("WORLD_")
+    }
+    return [
+        row for row in rows
+        if not (
+            str(row.get("match_id") or "").startswith("WORLD_")
+            and _item_api_fixture_id(row) in canonical_fixture_ids
+        )
+    ]
+
+
+def _item_kickoff_datetime(item):
+    if not isinstance(item, dict):
+        return None
+    match = item.get("match") if isinstance(item.get("match"), dict) else {}
+    kickoff_at = match.get("kickoff_at") or item.get("kickoff_at")
+    if kickoff_at:
+        try:
+            parsed = datetime.fromisoformat(str(kickoff_at).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=9)))
+            return parsed.astimezone(timezone(timedelta(hours=9)))
+        except (TypeError, ValueError):
+            pass
+    return _ui_match_datetime(
+        item.get("final_match_time")
+        or match.get("match_time")
+        or match.get("time")
+        or match.get("date")
+    )
+
+
+def _recommendation_is_upcoming(item, now=None):
+    """Recommendation pages contain only fixtures that have not kicked off."""
+    if not isinstance(item, dict):
+        return False
+    match = item.get("match") if isinstance(item.get("match"), dict) else {}
+    match_id = str(match.get("id") or item.get("id") or "")
+    live_info = live_scores_data.get(match_id, {}) if "live_scores_data" in globals() else {}
+    status = (
+        _status_value(live_info) or _status_value(item) or _status_value(match)
+    ).upper()
+    if _is_final_status(status) or status in {
+        "LIVE", "1H", "HT", "2H", "ET", "BT", "P", "INT", "BREAK",
+        "CANC", "PST", "ABD", "AWD", "WO", "SUSP",
+    }:
+        return False
+    kickoff = _item_kickoff_datetime(item)
+    if kickoff is None:
+        return False
+    current = now or datetime.now(timezone(timedelta(hours=9)))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone(timedelta(hours=9)))
+    return current.astimezone(timezone(timedelta(hours=9))) < kickoff
 
 
 def _toto14_round_has_started(items, now=None):
@@ -2346,6 +2421,70 @@ def _world_korean_name(api_name, team_id=0):
     return max(candidates, key=lambda row: (row[0], len(row[1])))[1] if candidates else api_name
 
 
+def _proto_fixture_index(items):
+    """Index only verified official IDs; team-name guessing can join wrong games."""
+    result = {}
+    for item in items or []:
+        fixture_id = _item_api_fixture_id(item)
+        if fixture_id and fixture_id not in result:
+            result[fixture_id] = item
+    return result
+
+
+def _world_analysis_for_display(world_item, proto_by_fixture):
+    """Use the Proto decision as the single public answer for an identical fixture."""
+    base = dict((world_item or {}).get("analysis") or {})
+    canonical = (proto_by_fixture or {}).get(_item_api_fixture_id(world_item))
+    if not isinstance(canonical, dict):
+        return base, None
+    categories = _pick_categories(canonical)
+    selected = categories.get("high_probability") if isinstance(categories, dict) else None
+    if not isinstance(selected, dict):
+        candidates = [row for row in canonical.get("ev_sorted_picks", []) if isinstance(row, dict)]
+        selected = max(candidates, key=lambda row: float(row.get("prob") or 0)) if candidates else None
+    if not isinstance(selected, dict) or not str(selected.get("raw_pick") or "").strip():
+        return base, None
+
+    raw_pick = str(selected.get("raw_pick") or "")
+    badges = []
+    if str((categories.get("honey") or {}).get("raw_pick") or "") == raw_pick:
+        badges.append("배당가치 우수")
+    if str((categories.get("vip_underdog") or {}).get("raw_pick") or "") == raw_pick:
+        badges.append("VIP 검증 등급")
+    try:
+        coverage_score = int(round(float(canonical.get("data_coverage") or 0) * 100))
+    except (TypeError, ValueError):
+        coverage_score = 0
+    quality_score = coverage_score or int(base.get("data_quality_score") or 0)
+    quality_grade = "정상" if quality_score >= 80 else ("주의" if quality_score >= 60 else "보조 분석")
+    report = str(
+        canonical.get("detailed_report")
+        or canonical.get("analysis_detail")
+        or canonical.get("story")
+        or base.get("report")
+        or ""
+    )
+    base.update({
+        "selected": {
+            **selected,
+            "raw_pick": raw_pick,
+            "display": _human_pick_label(raw_pick, (canonical.get("match") or {}).get("home", "")),
+            "probability": float(selected.get("prob") or selected.get("probability") or 0),
+            "badges": badges,
+        },
+        "categories": categories,
+        "analysis_version": str(canonical.get("analysis_version") or base.get("analysis_version") or ""),
+        "analysis_stage": str(canonical.get("analysis_stage") or base.get("analysis_stage") or "regular"),
+        "data_quality_score": quality_score,
+        "data_quality_grade": quality_grade,
+        "lineup_confirmed": bool(canonical.get("lineup_confirmed")),
+        "report": report,
+        "canonical_source": "PROTO",
+        "canonical_match_id": str((canonical.get("match") or {}).get("id") or ""),
+    })
+    return base, canonical
+
+
 def _top3_strategy_html(item):
     """Show the decision and risk summary without making users open the long report."""
     categories = _pick_categories(item)
@@ -2397,7 +2536,53 @@ def _top3_strategy_html(item):
     )
 
 
-def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None, home_team=""):
+def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
+    item = item if isinstance(item, dict) else {}
+    coverage = item.get("data_coverage")
+    confidence = item.get("analysis_confidence")
+    try:
+        coverage_text = f"데이터 {float(coverage) * 100:.0f}/100" if coverage is not None else "데이터 확인 중"
+    except (TypeError, ValueError):
+        coverage_text = "데이터 확인 중"
+    try:
+        confidence_text = f"신뢰도 {float(confidence) * 100:.0f}%" if confidence is not None else "신뢰도 계산 중"
+    except (TypeError, ValueError):
+        confidence_text = "신뢰도 계산 중"
+    lineup_text = "확정 선발 반영" if item.get("lineup_confirmed") else "선발 미확인 감점"
+    stage_text = escape(str(item.get("analysis_stage") or "분석 단계 확인 중"))
+    source_text = {
+        "betman": "베트맨 배당 반영",
+        "overseas_fallback": "해외배당 임시 반영",
+        "model_only": "팀 데이터 우선 분석",
+        "world_bookmaker_median": "해외 다중 배당 중앙값",
+    }.get(str(item.get("odds_source") or ""), "배당 출처 확인 중")
+    grade_parts = []
+    if value_badge:
+        grade_parts.append("🍯 배당가치 통과")
+    if vip_badge:
+        grade_parts.append("💎 VIP 엄격기준 통과")
+    grade_text = " · ".join(grade_parts) if grade_parts else "일반 최종픽 검증"
+    fair_text = ""
+    if isinstance(pick, dict) and pick.get("fair_prob") is not None:
+        try:
+            fair_text = f" · 시장 공정확률 {float(pick['fair_prob']) * 100:.1f}%"
+        except (TypeError, ValueError):
+            pass
+    return (
+        "<div class='pred-box' style='border-color:#334155;background:#0B1220;'>"
+        "<div class='pred-label' style='color:#A78BFA;'>검증 정보</div>"
+        f"<span class='pred-value' style='font-size:15px;'>{coverage_text} · {confidence_text}</span>"
+        f"<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:7px;'>{escape(lineup_text)} · {stage_text}</span>"
+        f"<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>{escape(source_text)}{fair_text}</span>"
+        f"<span style='display:block;color:#F59E0B;font-size:11px;font-weight:900;margin-top:7px;'>{grade_text}</span>"
+        "</div>"
+    )
+
+
+def generate_pred_boxes(
+    picks, is_top3_tab=False, pick_categories=None, grading=None,
+    home_team="", analysis_item=None,
+):
     """Show one official pick; value and VIP are badges on the same answer."""
     picks = picks or []
     categories = {
@@ -2465,13 +2650,16 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             )
     prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
     raw_pick = escape(_human_pick_label(same_raw, home_team))
-    return (
+    pick_html = (
         "<div class='pred-box' style='background:rgba(0,242,254,.05);border-color:#00F2FE;'>"
         "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
         f"<span class='pred-value'>{raw_pick}</span>"
         f"<span style='display:block;font-size:11px;margin-top:6px;'>{badge_text}</span>"
         f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{' · '.join(meta_parts)}</span>"
         f"{grade_html}<span class='pred-prob'>{prob_pct}%</span></div>"
+    )
+    return pick_html + _final_pick_validation_html(
+        analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
 
 # -----------------------------------------------------------------------------
@@ -2573,6 +2761,7 @@ with main_tab1:
                     pick_categories=_pick_categories(item),
                     grading=db_result if is_final_now else None,
                     home_team=m.get('home', ''),
+                    analysis_item=item,
                 )
 
                 odds_source = str(
@@ -2672,9 +2861,11 @@ with main_tab6:
     raw_world_matches = world_dashboard_data.get("matches", []) or legacy_world_matches
     world_source_meta = world_dashboard_data.get("source_meta", {}) or {}
     is_world_admin = st.session_state.get('role') == ROLE_ADMIN
+    proto_by_fixture = _proto_fixture_index(dashboard_data.get("proto", []))
     eligible_world_matches = [
         item for item in raw_world_matches
         if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
+        and _recommendation_is_upcoming(item)
     ]
     # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
     world_actual_analyzed = sum(
@@ -2702,7 +2893,7 @@ with main_tab6:
         if has_full_access
         else [
             item for item in eligible_world_matches
-            if ((item.get("analysis") or {}).get("selected") or {}).get("raw_pick")
+            if (_world_analysis_for_display(item, proto_by_fixture)[0].get("selected") or {}).get("raw_pick")
         ]
     )
     if is_world_admin:
@@ -2788,7 +2979,9 @@ with main_tab6:
             ))
             visibility_status = str(world_item.get("visibility_status") or "PUBLIC").upper()
             analysis_status = str(world_item.get("analysis_status") or "").upper()
-            world_analysis = world_item.get("analysis") or {}
+            world_analysis, canonical_proto = _world_analysis_for_display(
+                world_item, proto_by_fixture
+            )
             selected_pick = world_analysis.get("selected") or {}
             world_categories = world_analysis.get("categories") or {}
             quality_score = int(
@@ -2862,6 +3055,11 @@ with main_tab6:
                     f"<div style='color:#94A3B8; font-size:12px;'>{stage_text}</div>"
                     "</div></div>"
                 )
+                if canonical_proto is not None:
+                    world_status_html += (
+                        "<div style='margin-top:8px;color:#38BDF8;font-size:11px;font-weight:800;'>"
+                        "🔗 프로토 LIVE와 같은 공식 경기 ID · 동일 최종픽 사용</div>"
+                    )
             st.markdown(
                 f"""
                 <div class='match-card'>
@@ -2876,6 +3074,27 @@ with main_tab6:
                 """,
                 unsafe_allow_html=True,
             )
+            report_text = str(world_analysis.get("report") or "").strip()
+            if report_text:
+                report_text = report_text.replace(world_home_raw, world_home_display)
+                report_text = report_text.replace(world_away_raw, world_away_display)
+                with st.expander(f"상세 분석 보기 · {world_home_display} vs {world_away_display}"):
+                    st.markdown(report_text, unsafe_allow_html=True)
+                    missing_data = world_analysis.get("missing_data") or []
+                    if missing_data:
+                        st.warning("확보하지 못한 자료: " + ", ".join(map(str, missing_data)))
+                    lineup_learning = (
+                        (world_analysis.get("inputs_snapshot") or {}).get("lineup_learning")
+                        or {}
+                    )
+                    home_core = list(lineup_learning.get("home_predicted_core") or [])
+                    away_core = list(lineup_learning.get("away_predicted_core") or [])
+                    if home_core or away_core:
+                        st.caption("선발 학습 1단계 · 공식 선발 11명을 단정하지 않고 확인된 핵심 후보만 저장")
+                        if home_core:
+                            st.write(f"{world_home_display} 예상 핵심 후보: {', '.join(home_core)}")
+                        if away_core:
+                            st.write(f"{world_away_display} 예상 핵심 후보: {', '.join(away_core)}")
 
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
@@ -2961,7 +3180,10 @@ with main_tab3:
         <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
     </div>
     """, unsafe_allow_html=True)
-    top3_list = dashboard_data.get("top3", [])
+    top3_list = [
+        item for item in dashboard_data.get("top3", [])
+        if _recommendation_is_upcoming(item)
+    ]
     if top3_list:
         displayed_top3 = 0
         for idx, item in enumerate(top3_list, 1):
@@ -2977,6 +3199,7 @@ with main_tab3:
                 is_top3_tab=True,
                 pick_categories=_pick_categories(item),
                 home_team=m.get('home', ''),
+                analysis_item=item,
             )
             top3_odds_source = str(
                 item.get("odds_source") or m.get("odds_source") or "betman"
@@ -3026,6 +3249,18 @@ with main_tab4:
                     ).fetchall()
                 ]
                 conn.close()
+
+            canonical_rows = _prefer_canonical_grading_rows(
+                finished_rows + pending_rows
+            )
+            finished_rows = [
+                row for row in canonical_rows
+                if str(row.get("actual_result") or "") == "FINISHED"
+            ]
+            pending_rows = [
+                row for row in canonical_rows
+                if str(row.get("actual_result") or "") == "PENDING"
+            ]
 
             def newest_first(row):
                 parsed = _ui_match_datetime(row.get("match_time", ""))
@@ -3182,30 +3417,6 @@ with main_tab4:
                 "</span></div>",
                 unsafe_allow_html=True,
             )
-            report_text = str(world_analysis.get("report") or "").strip()
-            if report_text:
-                report_text = report_text.replace(world_home_raw, world_home_display)
-                report_text = report_text.replace(world_away_raw, world_away_display)
-                with st.expander(f"상세 분석 보기 · {world_home_display} vs {world_away_display}"):
-                    st.markdown(report_text)
-                    lineup_learning = (
-                        (world_analysis.get("inputs_snapshot") or {}).get("lineup_learning")
-                        or {}
-                    )
-                    home_core = list(lineup_learning.get("home_predicted_core") or [])
-                    away_core = list(lineup_learning.get("away_predicted_core") or [])
-                    if home_core or away_core:
-                        st.caption("선발 학습 1단계 · 공식 선발 11명을 단정하지 않고 확인된 핵심 후보만 저장")
-                        if home_core:
-                            st.write(f"{world_home_display} 예상 핵심 후보: {', '.join(home_core)}")
-                        if away_core:
-                            st.write(f"{world_away_display} 예상 핵심 후보: {', '.join(away_core)}")
-            if world_analysis:
-                missing_data = world_analysis.get("missing_data") or []
-                with st.expander(f"{world_home} vs {world_away} 분석 근거"):
-                    if missing_data:
-                        st.warning("확보하지 못한 자료: " + ", ".join(map(str, missing_data)))
-                    st.write(world_analysis.get("report") or "상세 분석문을 준비 중입니다.")
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 실제 데이터 채점 기록</h4>", unsafe_allow_html=True)
         
         history_data = stats['history']

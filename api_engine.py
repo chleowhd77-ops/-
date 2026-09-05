@@ -35,7 +35,7 @@ STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "
 ANALYSIS_VERSION = "V7.3.9-unified-final-learning"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.3.9.2-bettable-world-db-lock-guard"
+SYSTEM_VERSION = "R7.3.9.3-canonical-fixture-ui-status"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.

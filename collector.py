@@ -1188,6 +1188,16 @@ def load_market_performance(league_name=None):
                         LEFT JOIN predictions AS prediction
                           ON prediction.match_id = result.match_id
                         WHERE result.market_rank = 1
+                          AND NOT (
+                              prediction.match_id LIKE 'WORLD_%'
+                              AND COALESCE(prediction.api_fixture_id, 0) > 0
+                              AND EXISTS (
+                                  SELECT 1 FROM predictions AS canonical
+                                  WHERE canonical.api_fixture_id = prediction.api_fixture_id
+                                    AND canonical.is_toto14 = 0
+                                    AND canonical.match_id NOT LIKE 'WORLD_%'
+                              )
+                          )
                         ORDER BY result.id DESC LIMIT 1800
                         """
                     ).fetchall()
@@ -1213,8 +1223,18 @@ def load_market_performance(league_name=None):
             conn.execute(
                 """
                 SELECT prob_pick, is_correct_prob, ev_pick, is_correct_ev
-                FROM predictions
+                FROM predictions AS prediction
                 WHERE actual_result = 'FINISHED'
+                  AND NOT (
+                      prediction.match_id LIKE 'WORLD_%'
+                      AND COALESCE(prediction.api_fixture_id, 0) > 0
+                      AND EXISTS (
+                          SELECT 1 FROM predictions AS canonical
+                          WHERE canonical.api_fixture_id = prediction.api_fixture_id
+                            AND canonical.is_toto14 = 0
+                            AND canonical.match_id NOT LIKE 'WORLD_%'
+                      )
+                  )
                 ORDER BY match_time DESC LIMIT 300
                 """
             ).fetchall()
@@ -2200,6 +2220,32 @@ def _is_placeholder_match(match):
     )
 
 
+def _prefer_canonical_prediction_rows(rows):
+    """Keep WORLD shadow rows stored, but count one official fixture only once."""
+    rows = [dict(row) for row in (rows or [])]
+
+    def fixture_id(row):
+        try:
+            return int(row.get("api_fixture_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    canonical_fixture_ids = {
+        fixture_id(row)
+        for row in rows
+        if fixture_id(row) > 0
+        and int(row.get("is_toto14") or 0) == 0
+        and not str(row.get("match_id") or "").startswith("WORLD_")
+    }
+    return [
+        row for row in rows
+        if not (
+            str(row.get("match_id") or "").startswith("WORLD_")
+            and fixture_id(row) in canonical_fixture_ids
+        )
+    ]
+
+
 def _build_grading_snapshot():
     """Publish lightweight grading rows so the web never downloads the full DB."""
     conn = None
@@ -2209,15 +2255,16 @@ def _build_grading_snapshot():
         columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)")]
         if "ev_pick" not in columns:
             return {"finished": [], "pending": [], "generated_at": _utc_iso()}
-        finished = [
+        all_rows = [
             dict(row) for row in conn.execute(
-                "SELECT * FROM predictions WHERE actual_result = 'FINISHED'"
+                "SELECT * FROM predictions WHERE actual_result IN ('FINISHED', 'PENDING')"
             ).fetchall()
         ]
+        all_rows = _prefer_canonical_prediction_rows(all_rows)
+        finished = [row for row in all_rows if row.get("actual_result") == "FINISHED"]
         pending = [
-            dict(row) for row in conn.execute(
-                "SELECT * FROM predictions WHERE actual_result = 'PENDING' AND is_toto14 = 0"
-            ).fetchall()
+            row for row in all_rows
+            if row.get("actual_result") == "PENDING" and int(row.get("is_toto14") or 0) == 0
         ]
         snapshot_versions = {
             str(row["match_id"]): str(row["analysis_version"] or "")
@@ -3571,8 +3618,145 @@ def _world_learning_candidate(row):
     }
 
 
+def _canonical_proto_prediction_match_id(fixture_id):
+    """Find the non-WORLD official row for the same verified provider fixture."""
+    try:
+        fixture_id = int(fixture_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if fixture_id <= 0:
+        return ""
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=15)
+        conn.execute("PRAGMA busy_timeout = 15000")
+        row = conn.execute(
+            """
+            SELECT match_id
+            FROM predictions
+            WHERE api_fixture_id = ? AND is_toto14 = 0
+              AND match_id NOT LIKE 'WORLD_%'
+            ORDER BY CASE WHEN actual_result = 'PENDING' THEN 0 ELSE 1 END, id DESC
+            LIMIT 1
+            """,
+            (fixture_id,),
+        ).fetchone()
+        return str(row[0]) if row else ""
+    except Exception:
+        return ""
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _dashboard_proto_by_fixture():
+    dashboard = _read_json("dashboard_data.json", {})
+    result = {}
+    for item in dashboard.get("proto", []) if isinstance(dashboard, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            fixture_id = int(
+                item.get("api_fixture_id")
+                or (item.get("match") or {}).get("api_fixture_id")
+                or (item.get("match") or {}).get("fixture_id")
+                or 0
+            )
+        except (TypeError, ValueError):
+            fixture_id = 0
+        if fixture_id > 0 and fixture_id not in result:
+            result[fixture_id] = item
+    return result
+
+
+def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
+    """Mirror one canonical Proto answer into WORLD without a second API analysis."""
+    previous = dict(previous_analysis or {})
+    categories = dict(proto_item.get("pick_categories") or {})
+    selected = categories.get("high_probability")
+    if not isinstance(selected, dict):
+        candidates = [
+            row for row in proto_item.get("ev_sorted_picks", [])
+            if isinstance(row, dict)
+        ]
+        selected = max(
+            candidates, key=lambda row: float(row.get("prob") or 0)
+        ) if candidates else None
+    if not isinstance(selected, dict) or not str(selected.get("raw_pick") or "").strip():
+        return None
+    selected = dict(selected)
+    raw_pick = str(selected.get("raw_pick") or "")
+    selected["display"] = _human_pick_label(
+        raw_pick, (proto_item.get("match") or {}).get("home", "")
+    )
+    selected["probability"] = float(
+        selected.get("prob") or selected.get("probability") or 0
+    )
+    selected["badges"] = [
+        label for key, label in (
+            ("honey", "배당가치 우수"),
+            ("vip_underdog", "VIP 검증 등급"),
+        )
+        if str((categories.get(key) or {}).get("raw_pick") or "") == raw_pick
+    ]
+    try:
+        quality_score = int(round(float(proto_item.get("data_coverage") or 0) * 100))
+    except (TypeError, ValueError):
+        quality_score = 0
+    quality_score = quality_score or int(previous.get("data_quality_score") or 0)
+    quality_grade = "정상" if quality_score >= 80 else ("주의" if quality_score >= 60 else "보조 분석")
+    previous.update({
+        "analysis_version": str(proto_item.get("analysis_version") or ANALYSIS_VERSION),
+        "system_version": SYSTEM_VERSION,
+        "analysis_stage": str(proto_item.get("analysis_stage") or "regular"),
+        "analyzed_at": str(previous.get("analyzed_at") or _utc_iso()),
+        "data_quality_score": quality_score,
+        "data_quality_grade": quality_grade,
+        "lineup_confirmed": bool(proto_item.get("lineup_confirmed")),
+        "categories": categories,
+        "selected": selected,
+        "report": str(
+            proto_item.get("detailed_report")
+            or proto_item.get("analysis_detail")
+            or proto_item.get("story")
+            or previous.get("report")
+            or ""
+        ),
+        "canonical_source": "PROTO",
+        "canonical_match_id": str((proto_item.get("match") or {}).get("id") or ""),
+    })
+    return previous
+
+
+def _sync_world_item_from_proto(item, proto_item):
+    analysis = _world_analysis_from_proto_item(proto_item, item.get("analysis"))
+    if not analysis:
+        return False
+    before = json.dumps(item, ensure_ascii=False, sort_keys=True)
+    item["analysis"] = analysis
+    item["analysis_version"] = analysis["analysis_version"]
+    item["system_version"] = SYSTEM_VERSION
+    item["analysis_stage"] = analysis["analysis_stage"]
+    item["analyzed_at"] = analysis["analyzed_at"]
+    item["data_quality_score"] = analysis["data_quality_score"]
+    item["data_quality_grade"] = analysis["data_quality_grade"]
+    item["lineup_confirmed"] = analysis["lineup_confirmed"]
+    item["analysis_status"] = "ANALYZED_SHADOW"
+    item["pick_status"] = "CANONICAL_PROTO_PICK"
+    item["canonical_match_id"] = analysis["canonical_match_id"]
+    return before != json.dumps(item, ensure_ascii=False, sort_keys=True)
+
+
 def _save_world_learning_record(match, analysis):
     """Feed WORLD forecasts into the same immutable grading/learning pipeline."""
+    fixture_id = int(match.get("fixture_id") or 0)
+    canonical_match_id = _canonical_proto_prediction_match_id(fixture_id)
+    if canonical_match_id:
+        print(
+            f"동일 경기 공식픽 재사용: fixture {fixture_id} -> {canonical_match_id} "
+            "(WORLD 중복 채점 저장 생략)"
+        )
+        return True
     candidates = [
         _world_learning_candidate(row)
         for row in (analysis.get("candidates") or [])
@@ -4077,6 +4261,7 @@ def analyze_world_schedule():
     now = datetime.now(KST)
     day_key, today_ids, all_ids, league_counts = _world_analysis_usage()
     market_performance_cache = {}
+    canonical_proto_by_fixture = _dashboard_proto_by_fixture()
     changed = False
     analyzed_now = 0
     errors_now = 0
@@ -4101,6 +4286,15 @@ def analyze_world_schedule():
         if away_ko and match.get("away_name_ko") != away_ko:
             match["away_name_ko"] = away_ko
             changed = True
+        try:
+            fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+        except (TypeError, ValueError):
+            fixture_id = 0
+        canonical_proto = canonical_proto_by_fixture.get(fixture_id)
+        if canonical_proto:
+            if _sync_world_item_from_proto(item, canonical_proto):
+                changed = True
+            continue
         try:
             kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
             if kickoff.tzinfo is None:
@@ -5068,6 +5262,7 @@ def build_dashboard_data():
          
         dashboard_proto.append({
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
+            "api_fixture_id": int(api_fixture_id or 0),
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks,
             "pick_categories": pick_categories,
