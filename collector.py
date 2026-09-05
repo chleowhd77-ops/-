@@ -47,6 +47,7 @@ from grading_postmortem import (
     build_postmortem,
     events_from_note,
     postmortem_json,
+    postmortem_text,
     stats_from_note,
 )
 
@@ -113,7 +114,7 @@ WORLD_ANALYSIS_INTERVAL_MINUTES = max(
 )
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
-WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v1"
+WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v2"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Lyon": "올랭피크 리옹",
     "Auxerre": "AJ오세르",
@@ -1329,6 +1330,8 @@ def calibrate_market_candidates(picks, market_performance, confidence):
             pick["edge"] = round(edge, 6)
             pick["market_hit_rate"] = round(hit_rate, 4)
             pick["market_history_samples"] = samples
+            pick["market_history_scope"] = str(history.get("scope") or "global")
+            pick["learning_weight"] = round(history_weight, 4)
             pick["data_confidence"] = round(confidence, 4)
             pick["error_margin"] = round(error_margin, 4)
             pick["probability_interval"] = {
@@ -1569,30 +1572,17 @@ def build_detailed_report(
 
     honey = categories.get("honey")
     vip = categories.get("vip_underdog")
-    final_parts = [f"확률 높은 픽은 {_report_pick_line(selected_pick, home)}입니다."]
-    if honey and vip and honey.get("raw_pick") == vip.get("raw_pick"):
+    final_parts = [f"최종 추천픽은 {_report_pick_line(selected_pick, home)}입니다."]
+    if vip:
         signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
         final_parts.append(
-            f"배당형 대안픽 {_report_pick_line(honey, home)}은 엄격 기준까지 통과해 VIP 역배 등급으로 승격됐으며, "
-            f"독립 근거는 {signals}입니다."
+            f"이 최종픽은 보수적 가치와 독립 근거 기준을 모두 통과해 VIP 검증 등급이며, "
+            f"독립 근거는 {signals}입니다. 별도의 반대 픽을 함께 제시하지 않습니다."
         )
     elif honey:
-        if honey.get("value_pick_tier") == "qualified":
-            tier_note = "보수적 가치 기준도 통과했습니다"
-        elif honey.get("value_pick_tier") == "unpriced_reference":
-            tier_note = (
-                "주력과 함께 적중 가능한 다른 시장 방향이지만 실제 배당을 "
-                "확인하지 못한 참고픽입니다"
-            )
-        else:
-            tier_note = "주력과 함께 적중 가능한 다른 시장의 대안이지만 참고 등급입니다"
-        final_parts.append(
-            f"배당형 대안픽은 {_report_pick_line(honey, home)}이며, {tier_note}."
-        )
+        final_parts.append("이 최종픽은 실제 배당과 보수적 우위까지 확인되어 배당가치 우수 등급입니다.")
     else:
-        final_parts.append("주력과 함께 적중 가능한 별도 시장 대안을 계산하지 못했습니다.")
-    if honey and not vip:
-        final_parts.append("VIP 역배픽은 보수적 가치와 독립 근거 3개 이상을 동시에 충족하지 않아 표시하지 않습니다.")
+        final_parts.append("세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다.")
     missing_text = (
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
         if missing_names else "요구된 핵심 데이터 항목이 모두 연결되어 있습니다."
@@ -1607,7 +1597,7 @@ def build_detailed_report(
         f"[언더오버 분석] {_report_pick_line(market_best.get('totals'), home)}.",
         f"[실제 사용 근거] {evidence_text}. {missing_text}",
         (
-            f"[최종 선택과 신뢰도] {' '.join(final_parts)} 선택된 확률픽의 보정 확률은 "
+            f"[최종 선택과 신뢰도] {' '.join(final_parts)} 선택된 최종픽의 보정 확률은 "
             f"{probability * 100:.1f}%이며, {fair_text} 예상 오차범위는 "
             f"{float(interval.get('low', 0)) * 100:.1f}%~{float(interval.get('high', 1)) * 100:.1f}%, "
             f"데이터 신뢰도는 {confidence * 100:.1f}%입니다. 이 수치는 적중을 보장하지 않습니다."
@@ -1651,6 +1641,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "fair_probability": _audit_number(selected.get("fair_prob")),
             "robust_edge": _audit_number(selected.get("robust_edge"), 0.0),
             "value_pick_tier": str(selected.get("value_pick_tier") or ""),
+            "final_pick_grade": str(selected.get("final_pick_grade") or "standard"),
+            "learning_robot": dict(selected.get("learning_robot") or {}),
             "independent_support_count": int(
                 selected.get("independent_support_count", 0) or 0
             ),
@@ -1717,6 +1709,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "market_history_samples": int(
                 item.get("market_history_samples", 0) or 0
             ),
+            "market_history_scope": str(item.get("market_history_scope") or "global"),
+            "learning_weight": _audit_number(item.get("learning_weight"), 0.0),
             "data_confidence": _audit_number(
                 item.get("data_confidence"), confidence
             ),
@@ -1739,12 +1733,12 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "market_rank": market_rank_by_identity.get((market_key, raw_pick)),
             "selected_as": selected_as,
             "selection_reason": (
-                "전체 시장의 보정 선택점수 1위"
+                "세 시장 통합 최종 추천픽"
                 if "high_probability" in selected_as
                 else (
-                    "승무패·핸디캡 중 배당가치 대안 선정"
+                    "최종 추천픽의 배당가치 등급"
                     if "honey" in selected_as
-                    else f"전체 시장 보정 선택점수 {rank}위"
+                    else f"통합 비교 순위 {rank}위"
                 )
             ),
         })
@@ -1757,10 +1751,10 @@ def build_pick_selection_audit(candidates, categories, confidence):
     decision = {
         "schema_version": PICK_AUDIT_SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
-        "selector": "all-markets-probability-first-v2",
+        "selector": "unified-accuracy-value-learning-v1",
         "score_order": [
-            "model_probability", "balanced_score", "safe_score",
-            "recommendation_score",
+            "value_eligibility", "robust_probability", "model_probability",
+            "robust_edge", "robust_ev",
         ],
         "candidate_count": len(candidate_rows),
         "market_candidate_counts": market_counts,
@@ -1771,10 +1765,16 @@ def build_pick_selection_audit(candidates, categories, confidence):
         "selected_pick": selected_high.get("raw_pick", ""),
         "selected_market": selected_high.get("market_key", ""),
         "selection_reason": (
-            "확인된 승무패·언더오버·핸디캡 후보를 같은 보정 기준으로 "
-            "비교해 보정확률이 가장 높은 방향을 확률픽으로 확정"
+            "승무패·언더오버·핸디캡을 함께 비교하고, 검증된 가치 후보 안에서 "
+            "보수확률이 가장 높은 한 방향만 최종 추천픽으로 확정"
         ),
+        "final_pick_grade": str(selected_high.get("final_pick_grade") or "standard"),
+        "value_badge": compact_categories.get("honey") is not None,
         "vip_promoted": compact_categories.get("vip_underdog") is not None,
+        "learning_robot": dict(selected_high.get("learning_robot") or {
+            "mode": "controlled_adviser", "influence_cap": 0.18,
+            "history_rewrite": False, "self_modifying": False,
+        }),
     }
     return candidate_rows, compact_categories, decision
 
@@ -2010,9 +2010,9 @@ def annotate_pick_metrics(picks, confidence):
 
 
 PICK_CATEGORY_LABELS = {
-    "high_probability": "확률 높은 픽",
-    "honey": "배당형 대안픽",
-    "vip_underdog": "VIP 역배 픽",
+    "high_probability": "최종 추천픽",
+    "honey": "배당가치 우수",
+    "vip_underdog": "VIP 검증 등급",
 }
 
 
@@ -2083,7 +2083,7 @@ def picks_can_coexist(primary, alternative):
 
 
 def select_pick_categories(picks, confidence):
-    """Select a primary and a compatible cross-market alternative."""
+    """Select exactly one official pick; value/VIP are badges on that pick."""
     categories = {
         "high_probability": None,
         "honey": None,
@@ -2093,103 +2093,81 @@ def select_pick_categories(picks, confidence):
         return categories, []
 
     confidence = float(confidence or 0)
+    available = [pick for pick in picks if float(pick.get("prob", 0) or 0) > 0]
+    if not available:
+        return categories, []
+
+    # 실제 가격과 보수적 우위가 검증된 후보가 있으면 그 집합 안에서
+    # 적중 가능성(보수확률)을 먼저 비교한다. 배당은 확률을 대신하지 않고,
+    # 같은 수준의 후보에서만 우선순위를 가르는 자격조건/동점 기준이다.
+    value_edge_floor = 0.01 + max(0.0, 0.65 - confidence) * 0.05
+    value_candidates = [
+        pick for pick in available
+        if pick.get("fair_prob") is not None
+        and 1.20 <= float(pick.get("odd", 0) or 0) <= 5.00
+        and float(pick.get("robust_edge", 0) or 0) >= value_edge_floor
+        and float(pick.get("robust_ev", 0) or 0) >= 1.01
+        and confidence >= 0.50
+    ]
+    selection_pool = value_candidates or available
     high_source = max(
-        picks,
+        selection_pool,
         key=lambda pick: (
+            float(pick.get("robust_probability", pick.get("prob", 0)) or 0),
             float(pick.get("prob", 0) or 0),
+            float(pick.get("robust_edge", 0) or 0),
+            float(pick.get("robust_ev", 0) or 0),
             float(pick.get("balanced_score", 0) or 0),
-            float(pick.get("safe_score", 0) or 0),
-            float(pick.get("recommendation_score", 0) or 0),
         ),
     )
+    high_source = dict(high_source)
+    value_qualified = any(
+        str(pick.get("raw_pick") or "") == str(high_source.get("raw_pick") or "")
+        and infer_pick_market(pick) == infer_pick_market(high_source)
+        for pick in value_candidates
+    )
+    high_source["value_pick_tier"] = "qualified" if value_qualified else "not_qualified"
+    high_source["odds_verified"] = bool(
+        high_source.get("fair_prob") is not None
+        and float(high_source.get("odd", 0) or 0) > 1.0
+    )
+    high_source["official_final_pick"] = True
+    high_source["learning_robot"] = {
+        "mode": "controlled_adviser",
+        "market": infer_pick_market(high_source),
+        "samples": int(high_source.get("market_history_samples", 0) or 0),
+        "hit_rate": round(float(high_source.get("market_hit_rate", 0.5) or 0.5), 4),
+        "scope": str(high_source.get("market_history_scope") or "global"),
+        "influence_weight": round(float(high_source.get("learning_weight", 0) or 0), 4),
+        "influence_cap": 0.18,
+        "history_rewrite": False,
+        "self_modifying": False,
+    }
 
-    # 두 번째 칸은 주력과 동시에 적중할 수 있는 다른 시장에서 고른다.
-    # 같은 핸디캡의 승/패처럼 서로 반대인 결과를 양쪽에 추천하지 않는다.
-    honey_edge_floor = 0.015 + max(0.0, 0.65 - confidence) * 0.05
-    alternative_pool = [
-        pick for pick in picks
-        if float(pick.get("prob", 0) or 0) > 0
-        and str(pick.get("raw_pick") or "") != str(high_source.get("raw_pick") or "")
-        and picks_can_coexist(high_source, pick)
-    ]
-    priced_candidates = [
-        pick for pick in alternative_pool
-        if 1.65 <= float(pick.get("odd", 0) or 0) <= 4.50
-        and float(pick.get("prob", 0) or 0) >= 0.18
-        and pick.get("fair_prob") is not None
-    ]
-    if priced_candidates:
-        honey_source = max(
-            priced_candidates,
-            key=lambda pick: (
-                float(pick.get("robust_edge", 0) or 0) > 0,
-                float(pick.get("robust_edge", 0) or 0),
-                float(pick.get("robust_ev", 0) or 0),
-                float(pick.get("recommendation_score", 0) or 0),
-                float(pick.get("prob", 0) or 0),
-            ),
-        )
-    else:
-        # When no verified price is available, choose the strongest compatible
-        # cross-market direction and label it honestly as an unpriced reference.
-        # It can never be promoted to value-qualified or VIP status.
-        honey_source = max(
-            alternative_pool,
-            key=lambda pick: (
-                pick.get("fair_prob") is not None,
-                float(pick.get("balanced_score", 0) or 0),
-                float(pick.get("prob", 0) or 0),
-                float(pick.get("recommendation_score", 0) or 0),
-            ),
-            default=None,
-        )
-    if honey_source:
-        # 선택 등급은 화면용 메타데이터이므로 원본 시장 후보를 변형하지 않는다.
-        honey_source = dict(honey_source)
-        value_qualified = bool(
-            float(honey_source.get("robust_edge", 0) or 0) >= honey_edge_floor
-            and float(honey_source.get("robust_ev", 0) or 0) >= 1.02
-            and confidence >= 0.55
-        )
-        if honey_source.get("fair_prob") is None or float(
-            honey_source.get("odd", 0) or 0
-        ) <= 1.0:
-            value_pick_tier = "unpriced_reference"
-        else:
-            value_pick_tier = "qualified" if value_qualified else "alternative"
-        honey_source["value_pick_tier"] = value_pick_tier
-        honey_source["odds_verified"] = value_pick_tier != "unpriced_reference"
-        honey_source["value_pick_always_provided"] = True
-
-    # VIP는 별도 세 번째 예측이 아니라, 선택된 대안픽 하나가 더 엄격한
-    # 가치·신뢰도·복수 독립근거 기준을 모두 통과했을 때의 승격 등급입니다.
+    # 꿀픽과 VIP는 다른 예측이 아니다. 최종 추천픽 하나가 각 기준을
+    # 통과했을 때만 동일한 raw_pick에 등급 배지를 붙인다.
+    honey_source = high_source if value_qualified else None
     vip_source = None
-    if honey_source:
-        fair_probability = honey_source.get("fair_prob")
+    if value_qualified:
         vip_passed = bool(
-            honey_source.get("value_pick_tier") == "qualified"
-            and honey_source.get("is_true_underdog")
-            and float(honey_source.get("robust_edge", 0) or 0) >= 0.03
-            and float(honey_source.get("robust_ev", 0) or 0) >= 1.08
+            high_source.get("is_true_underdog")
+            and float(high_source.get("robust_edge", 0) or 0) >= 0.03
+            and float(high_source.get("robust_ev", 0) or 0) >= 1.08
             and confidence >= 0.68
-            and int(honey_source.get("independent_support_count", 0) or 0) >= 3
-            and 2.20 <= float(honey_source.get("odd", 0) or 0) <= 4.50
-            and fair_probability is not None
+            and int(high_source.get("independent_support_count", 0) or 0) >= 3
+            and 2.20 <= float(high_source.get("odd", 0) or 0) <= 4.50
         )
         if vip_passed:
-            vip_source = honey_source
+            vip_source = high_source
+
+    high_source["final_pick_grade"] = (
+        "vip" if vip_source else "value" if value_qualified else "standard"
+    )
 
     categories["high_probability"] = _tag_pick_category(high_source, "high_probability")
     categories["honey"] = _tag_pick_category(honey_source, "honey")
     categories["vip_underdog"] = _tag_pick_category(vip_source, "vip_underdog")
-    display_picks = []
-    seen = set()
-    for pick in (categories["high_probability"], categories["honey"], categories["vip_underdog"]):
-        pick_key = str((pick or {}).get("raw_pick") or "")
-        if pick and pick_key not in seen:
-            seen.add(pick_key)
-            display_picks.append(pick)
-    return categories, display_picks
+    return categories, [categories["high_probability"]]
 
 
 _PLACEHOLDER_TEAM_NAMES = {
@@ -3425,6 +3403,8 @@ def _world_learning_candidate(row):
         "recommendation_score": float(row.get("recommendation_score") or 0),
         "market_hit_rate": float(row.get("market_hit_rate") or 0.5),
         "market_history_samples": int(row.get("market_history_samples") or 0),
+        "market_history_scope": str(row.get("market_history_scope") or "global"),
+        "learning_weight": float(row.get("learning_weight") or 0),
         "data_confidence": float(row.get("data_confidence") or 0.35),
         "error_margin": float(row.get("error_margin") or 0),
         "probability_interval": dict(row.get("probability_interval") or {}),
@@ -3449,14 +3429,14 @@ def _save_world_learning_record(match, analysis):
     categories = {}
     for key in ("high_probability", "honey", "vip_underdog"):
         summary = (analysis.get("categories") or {}).get(key) or {}
-        categories[key] = by_pick.get((
+        source = by_pick.get((
             str(summary.get("market_key") or ""),
             str(summary.get("raw_pick") or ""),
         ))
+        categories[key] = ({**source, **summary} if source else None)
     selected = categories.get("high_probability")
     if not selected:
         return False
-    alternative = categories.get("honey")
     confidence = float(
         selected.get("data_confidence")
         or (float(analysis.get("data_quality_score") or 35) / 100.0)
@@ -3470,8 +3450,8 @@ def _save_world_learning_record(match, analysis):
         str(match.get("away") or "원정팀"),
         str(selected.get("raw_pick") or ""),
         round(float(selected.get("prob") or 0) * 100, 1),
-        str((alternative or {}).get("raw_pick") or ""),
-        round(float((alternative or {}).get("prob") or 0) * 100, 1),
+        "",
+        0.0,
         float(wdl.get("home") or 0),
         float(wdl.get("draw") or 0),
         float(wdl.get("away") or 0),
@@ -3543,6 +3523,11 @@ def _analyze_world_match(item, now, market_performance):
     h_inj = injury_map.get(str(home_id), {})
     a_inj = injury_map.get(str(away_id), {})
 
+    # 선발 예측의 첫 단계: 공식 명단을 지어내지 않고, 실제 스쿼드/출전
+    # 기록에서 확인된 핵심 후보만 동결 저장한다. 공식 선발이 발표되면 같은
+    # 스냅샷에서 일치/누락을 비교해 다음 분석의 학습 자료로 사용한다.
+    h_core = get_expected_core_players(home_id, league_id, season) if diff_hours <= 3.0 else []
+    a_core = get_expected_core_players(away_id, league_id, season) if diff_hours <= 3.0 else []
     lineup_data = {"confirmed": False}
     h_missing = []
     a_missing = []
@@ -3551,8 +3536,6 @@ def _analyze_world_match(item, now, market_performance):
     if diff_hours <= 1.0:
         lineup_data = fetch_lineups_api(fixture_id, 0.2)
         if lineup_data.get("confirmed"):
-            h_core = get_expected_core_players(home_id, league_id, season)
-            a_core = get_expected_core_players(away_id, league_id, season)
             h_missing = find_missing_core_players(
                 sorted(set(h_core + list(h_inj.get("ace_names") or []))),
                 lineup_data.get(str(home_id), []),
@@ -3802,6 +3785,10 @@ def _analyze_world_match(item, now, market_performance):
     # bypass the separately agreed 90/100 input-quality gate.
     if quality_score < 90:
         categories["vip_underdog"] = None
+        downgraded_grade = "value" if categories.get("honey") else "standard"
+        for category_key in ("high_probability", "honey"):
+            if categories.get(category_key):
+                categories[category_key]["final_pick_grade"] = downgraded_grade
     selected = categories.get("high_probability")
     tactical_parts = []
     if h_matchup:
@@ -3850,9 +3837,11 @@ def _analyze_world_match(item, now, market_performance):
     frozen_at = analyzed_at if analysis_stage == "T-30-final" else None
     selected_summary = dict(compact_categories.get("high_probability") or {})
     selected_summary["display"] = _human_pick_label(selected_summary.get("raw_pick"), home)
-    honey_summary = dict(compact_categories.get("honey") or {})
-    if honey_summary:
-        honey_summary["display"] = _human_pick_label(honey_summary.get("raw_pick"), home)
+    selected_summary["badges"] = [
+        label for key, label in (
+            ("honey", "배당가치 우수"), ("vip_underdog", "VIP 검증 등급")
+        ) if compact_categories.get(key)
+    ]
     inputs_snapshot = {
         "home_team_id": home_id, "away_team_id": away_id,
         "league_id": league_id, "season": season, "fixture_id": fixture_id,
@@ -3866,6 +3855,18 @@ def _analyze_world_match(item, now, market_performance):
         "lineups": {
             "confirmed": lineup_confirmed,
             "home_missing_core": h_missing, "away_missing_core": a_missing,
+        },
+        "lineup_learning": {
+            "mode": "expected_core_foundation",
+            "not_full_starting_xi": True,
+            "home_predicted_core": list(h_core),
+            "away_predicted_core": list(a_core),
+            "home_official_starters": list(lineup_data.get(str(home_id), []) or []),
+            "away_official_starters": list(lineup_data.get(str(away_id), []) or []),
+            "home_confirmed_core": [name for name in h_core if name not in h_missing]
+            if lineup_confirmed else [],
+            "away_confirmed_core": [name for name in a_core if name not in a_missing]
+            if lineup_confirmed else [],
         },
         "rest_days": {"home": h_rest, "away": a_rest},
         "next_fixture": {"home": h_next, "away": a_next},
@@ -3902,7 +3903,8 @@ def _analyze_world_match(item, now, market_performance):
         "candidates": candidate_rows,
         "categories": compact_categories,
         "selected": selected_summary,
-        "alternative": honey_summary,
+        "alternative": {},
+        "learning_robot": dict(decision.get("learning_robot") or {}),
         "decision": decision,
         "report": report,
     }
@@ -3929,6 +3931,18 @@ def analyze_world_schedule():
 
     for item in payload.get("matches", []):
         match = item.get("match") or {}
+        home_ko = _world_team_display_name(
+            match.get("home"), match.get("home_team_id")
+        )
+        away_ko = _world_team_display_name(
+            match.get("away"), match.get("away_team_id")
+        )
+        if home_ko and match.get("home_name_ko") != home_ko:
+            match["home_name_ko"] = home_ko
+            changed = True
+        if away_ko and match.get("away_name_ko") != away_ko:
+            match["away_name_ko"] = away_ko
+            changed = True
         try:
             kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
             if kickoff.tzinfo is None:
@@ -4754,9 +4768,9 @@ def build_dashboard_data():
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
 
-        # 채점 대상은 확률픽과 배당형 대안픽 두 개뿐입니다. VIP는 대안픽의 승격 표시이므로
-        # 별도의 세 번째 예측으로 저장하거나 채점하지 않습니다.
-        highest_ev_pick = honey_pick
+        # 공식 예측과 채점은 한 경기당 최종 추천픽 하나뿐이다. 꿀픽/VIP는
+        # 그 동일 픽의 등급이므로 별도 예측 칸에 복제 저장하지 않는다.
+        highest_ev_pick = None
         detailed_report = build_detailed_report(
             highest_prob_pick,
             evidence,
@@ -4773,9 +4787,9 @@ def build_dashboard_data():
         )
 
         badge_templates = {
-            "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>📈 확률 높은 픽</span>",
-            "honey": "<span style='background:#F59E0B;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🍯 배당형 대안픽</span>",
-            "vip_underdog": "<span style='background:linear-gradient(to right,#FFD700,#F59E0B);color:#000;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:900;margin-right:4px;box-shadow:0 0 5px rgba(255,215,0,.5);'>💎 VIP 역배 픽</span>",
+            "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span>",
+            "honey": "<span style='background:#F59E0B;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🍯 배당가치 우수</span>",
+            "vip_underdog": "<span style='background:linear-gradient(to right,#FFD700,#F59E0B);color:#000;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:900;margin-right:4px;box-shadow:0 0 5px rgba(255,215,0,.5);'>💎 VIP 검증 등급</span>",
         }
         for pick in valid_all_picks:
             matching_categories = [
@@ -4850,9 +4864,8 @@ def build_dashboard_data():
         elif analysis_odds_source == "model_only":
             story = (
                 "📊 <b>[팀 데이터 모델 선픽]</b> 베트맨과 해외배당이 모두 준비되지 "
-                "않아 최근 경기·득실·홈원정·선수 정보를 중심으로 확률픽과 "
-                "배당 미확인 참고 대안픽을 먼저 계산했습니다. 실제 배당이 들어오면 "
-                "가치 여부를 자동으로 다시 검증합니다."
+                "않아 최근 경기·득실·홈원정·선수 정보를 중심으로 최종 추천픽 하나를 "
+                "먼저 계산했습니다. 실제 배당이 들어오면 같은 픽의 가치 등급을 자동으로 다시 검증합니다."
                 "<br><br>" + story
             )
         
@@ -5580,6 +5593,101 @@ def _backfill_finished_postmortems(conn):
     return len(updates)
 
 
+def _repair_finished_handicap_grades(conn):
+    """Repair only derived handicap grades; frozen forecasts stay immutable."""
+    _ensure_postmortem_column(conn)
+    rows = conn.execute(
+        """
+        SELECT match_id, home_team, away_team, prob_pick, ev_pick,
+               actual_score, is_correct_prob, is_correct_ev, ai_note
+        FROM predictions
+        WHERE actual_result = 'FINISHED'
+          AND (
+              prob_pick LIKE '%핸디%' OR ev_pick LIKE '%핸디%'
+              OR prob_pick LIKE '%적용 후%' OR ev_pick LIKE '%적용 후%'
+          )
+        """
+    ).fetchall()
+    repaired_predictions = 0
+    for row in rows:
+        score_match = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(row[5] or ""))
+        if not score_match:
+            continue
+        goals_h, goals_a = int(score_match.group(1)), int(score_match.group(2))
+        prob_hit = int(evaluate_single_pick(row[3], row[1], row[2], goals_h, goals_a))
+        has_ev_pick = bool(str(row[4] or "").strip())
+        ev_hit = int(evaluate_single_pick(row[4], row[1], row[2], goals_h, goals_a))
+        if prob_hit == int(row[6] or 0) and ev_hit == int(row[7] or 0):
+            continue
+        official_stats = stats_from_note(row[8])
+        events = events_from_note(row[8]) or _load_stored_event_timeline(row[0], limit=8)
+        payload = build_postmortem(
+            home_team=row[1], away_team=row[2], prob_pick=row[3], ev_pick=row[4],
+            goals_h=goals_h, goals_a=goals_a,
+            is_correct_prob=prob_hit, is_correct_ev=ev_hit,
+            has_ev_pick=has_ev_pick, official_stats=official_stats,
+            event_timeline=events,
+        )
+        result_parts = [f"최종 추천픽 {'적중' if prob_hit else '미적중'}"]
+        if has_ev_pick:
+            result_parts.append(
+                f"기존 배당형 대안픽 {'적중' if ev_hit else '미적중'}"
+            )
+        note_parts = [
+            f"[채점 결과] {' · '.join(result_parts)}.",
+            f"[최종 점수] {goals_h}:{goals_a}.",
+        ]
+        stats_text = official_stats_text(official_stats)
+        if stats_text:
+            note_parts.append(f"[공식 경기 통계] {stats_text}.")
+        review_text = postmortem_text(payload)
+        if review_text:
+            note_parts.append(review_text)
+        if events:
+            note_parts.append("🎬 주요 사건 기록(최대 8건)\n" + "\n".join(events[-8:]))
+        conn.execute(
+            """
+            UPDATE predictions
+            SET is_correct_prob = ?, is_correct_ev = ?, ai_note = ?,
+                postmortem_json = ?
+            WHERE match_id = ? AND actual_result = 'FINISHED'
+            """,
+            (prob_hit, ev_hit, "\n\n".join(note_parts), postmortem_json(payload), row[0]),
+        )
+        repaired_predictions += 1
+
+    repaired_candidates = 0
+    _ensure_prediction_analysis_tables(conn)
+    candidate_rows = conn.execute(
+        """
+        SELECT result.id, result.raw_pick, result.is_correct,
+               prediction.home_team, prediction.away_team, prediction.actual_score
+        FROM prediction_candidate_results AS result
+        JOIN predictions AS prediction ON prediction.match_id = result.match_id
+        WHERE prediction.actual_result = 'FINISHED'
+          AND (result.raw_pick LIKE '%핸디%' OR result.raw_pick LIKE '%적용 후%')
+        """
+    ).fetchall()
+    for result_id, raw_pick, old_hit, home_team, away_team, score in candidate_rows:
+        score_match = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(score or ""))
+        if not score_match:
+            continue
+        new_hit = int(evaluate_single_pick(
+            raw_pick, home_team, away_team,
+            int(score_match.group(1)), int(score_match.group(2)),
+        ))
+        if new_hit != int(old_hit or 0):
+            conn.execute(
+                "UPDATE prediction_candidate_results SET is_correct = ?, "
+                "graded_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_hit, int(result_id)),
+            )
+            repaired_candidates += 1
+    if repaired_predictions or repaired_candidates:
+        conn.commit()
+    return repaired_predictions, repaired_candidates
+
+
 def _grade_prediction_candidates(
     conn, match_id, home_team, away_team, goals_h, goals_a
 ):
@@ -5725,6 +5833,13 @@ def auto_score_matches():
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
+        repaired_predictions, repaired_candidates = _repair_finished_handicap_grades(conn)
+        if repaired_predictions or repaired_candidates:
+            print(
+                "✅ 핸디캡 결과 재판정 완료: "
+                f"공식픽 {repaired_predictions}건 / 시장후보 {repaired_candidates}건 "
+                "(예측·확률·버전은 보존)"
+            )
         backfilled_count = _backfill_finished_postmortems(conn)
         if backfilled_count:
             print(f"✅ 기존 오답노트 학습 태그 보강: {backfilled_count}건")

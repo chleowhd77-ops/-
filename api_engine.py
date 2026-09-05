@@ -32,10 +32,10 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.8-world-grading-market-movement"
+ANALYSIS_VERSION = "V7.3.9-unified-final-learning"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.3.8.1-world-quality-and-history"
+SYSTEM_VERSION = "R7.3.9.1-unified-world-lineup-foundation"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
@@ -2325,28 +2325,49 @@ def generate_match_story(best_prob_pick, best_ev_pick, math_exp_h, math_exp_a, p
     return " ".join(story_parts)
 
 def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
-    pick_str = str(pick_str).upper()
+    pick_str = str(pick_str or "").upper()
+    h_team = str(h_team or "").upper()
+    a_team = str(a_team or "").upper()
     picks = [p.strip() for p in pick_str.split(",")]
     
     for pick in picks:
-        if ("승" in pick or "WIN" in pick) and "핸디" not in pick:
-            if goals_h > goals_a and (h_team in pick or pick == "승"): return 1
-            if goals_h < goals_a and (a_team in pick or pick == "패"): return 1
-        if ("무승부" in pick or pick == "무" or "DRAW" in pick) and "핸디" not in pick:
-            if goals_h == goals_a: return 1
-        if pick == "패" and "핸디" not in pick:
-            if goals_h < goals_a: return 1
-
-        if "핸디" in pick:
-            m_handi = re.search(r'\[([+-]?\d+\.\d+)\]', pick)
+        if "핸디" in pick or "적용 후" in pick:
+            # 핸디캡은 팀명이 들어 있는지만 보면 안 된다. 예를 들어
+            # "[+1.0] 파주 핸디패"는 홈팀 이름을 포함하지만, +1 적용 뒤
+            # 홈팀이 앞서면 명백한 미적중이다. 문구에 선언된 승/무/패와
+            # 실제 조정 점수를 직접 비교한다.
+            m_handi = re.search(r'\[\s*([+-]?\d+(?:\.\d+)?)\s*\]', pick)
+            if not m_handi:
+                m_handi = re.search(
+                    r'([+-]?\d+(?:\.\d+)?)\s*(?:적용\s*후|HANDICAP)', pick
+                )
             if m_handi:
                 h_base = float(m_handi.group(1))
-                if goals_h + h_base > goals_a and h_team in pick: return 1
-                if goals_h + h_base < goals_a and ("패" in pick or a_team in pick): return 1
-                if goals_h + h_base == goals_a and "무" in pick: return 1
+                adjusted_home = float(goals_h) + h_base
+                actual = (
+                    "승" if adjusted_home > float(goals_a)
+                    else "패" if adjusted_home < float(goals_a)
+                    else "무"
+                )
+                expected_match = re.search(
+                    r'(?:핸디|적용\s*후)\s*(승|무|패)', pick
+                )
+                if expected_match and expected_match.group(1) == actual:
+                    return 1
+            continue
+
+        if ("무승부" in pick or pick == "무" or "DRAW" in pick):
+            if goals_h == goals_a: return 1
+        if "승" in pick or "WIN" in pick:
+            if a_team and a_team in pick:
+                if goals_h < goals_a: return 1
+            elif goals_h > goals_a and (not h_team or h_team in pick or pick == "승"):
+                return 1
+        if pick == "패" and goals_h < goals_a:
+            return 1
                 
         if "언더" in pick or "오버" in pick:
-            m_uo = re.search(r'(\d+\.\d+)', pick) 
+            m_uo = re.search(r'(\d+(?:\.\d+)?)', pick)
             if m_uo:
                 uo_base = float(m_uo.group(1))
                 if "언더" in pick and (goals_h + goals_a) < uo_base: return 1
@@ -2369,10 +2390,10 @@ def generate_real_ai_note(
         normalized_stats = []
 
     result_parts = [
-        f"확률픽 {'적중' if is_correct_prob == 1 else '미적중'}",
+        f"최종 추천픽 {'적중' if is_correct_prob == 1 else '미적중'}",
         (
-            f"배당형 대안픽 {'적중' if is_correct_ev == 1 else '미적중'}"
-            if has_ev_pick else "배당형 대안픽 미선정"
+            f"기존 배당형 대안픽 {'적중' if is_correct_ev == 1 else '미적중'}"
+            if has_ev_pick else "공식 예측은 최종 추천픽 1개"
         ),
     ]
     payload = build_postmortem(

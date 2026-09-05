@@ -55,6 +55,11 @@ from member_system import (
 )
 
 try:
+    from config import DIRECT_TEAM_INFO, MANUAL_TEAM_MAP, TEAM_NAME_MAP
+except Exception:
+    DIRECT_TEAM_INFO, MANUAL_TEAM_MAP, TEAM_NAME_MAP = {}, {}, {}
+
+try:
     from streamlit_autorefresh import st_autorefresh
 except ImportError:
     st_autorefresh = None
@@ -2304,11 +2309,49 @@ def _human_pick_label(raw_pick, home_team=""):
     return f"{team_name} {handicap} 적용 후 {result}"
 
 
+_WORLD_KO_OVERRIDES = {
+    "Lyon": "올랭피크 리옹", "Auxerre": "AJ오세르",
+    "Sparta Rotterdam": "스파르타 로테르담", "PEC Zwolle": "PEC즈볼러",
+    "VfB Stuttgart": "VfB 슈투트가르트", "1. FC Köln": "쾰른",
+    "FC Koln": "쾰른",
+}
+
+
+def _world_korean_name(api_name, team_id=0):
+    """Localize old WORLD rows too, while preserving their API identity."""
+    api_name = str(api_name or "").strip()
+    if api_name in _WORLD_KO_OVERRIDES:
+        return _WORLD_KO_OVERRIDES[api_name]
+
+    def normalized(value):
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+    target = normalized(api_name)
+    candidates = []
+    for korean_name, english_name in {**TEAM_NAME_MAP, **MANUAL_TEAM_MAP}.items():
+        if target and normalized(english_name) == target and re.search(r"[가-힣]", str(korean_name)):
+            candidates.append((1, str(korean_name).strip()))
+    try:
+        target_id = int(team_id or 0)
+    except (TypeError, ValueError):
+        target_id = 0
+    if target_id:
+        for korean_name, info in DIRECT_TEAM_INFO.items():
+            if (
+                isinstance(info, dict)
+                and int(info.get("id") or 0) == target_id
+                and re.search(r"[가-힣]", str(korean_name))
+            ):
+                candidates.append((2, str(korean_name).strip()))
+    return max(candidates, key=lambda row: (row[0], len(row[1])))[1] if candidates else api_name
+
+
 def _top3_strategy_html(item):
     """Show the decision and risk summary without making users open the long report."""
     categories = _pick_categories(item)
     high = categories.get("high_probability") if isinstance(categories, dict) else None
     honey = categories.get("honey") if isinstance(categories, dict) else None
+    vip = categories.get("vip_underdog") if isinstance(categories, dict) else None
     if not isinstance(high, dict):
         return ""
 
@@ -2333,21 +2376,19 @@ def _top3_strategy_html(item):
         f"시장 공정확률 {float(fair_probability) * 100:.1f}%와 비교"
         if fair_probability is not None else "시장 비교값 없음"
     )
-    if isinstance(honey, dict):
-        honey_text = escape(_human_pick_label(honey.get("raw_pick"), home_team))
-        if str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
-            support_text = f"가치 분석도 같은 방향인 {honey_text}을 가리킵니다."
-        else:
-            support_text = f"함께 적중 가능한 다른 시장 대안은 {honey_text}입니다."
+    if isinstance(vip, dict) and str(vip.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
+        support_text = "같은 최종픽이 배당가치와 VIP 엄격 기준까지 통과했습니다."
+    elif isinstance(honey, dict) and str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
+        support_text = "같은 최종픽이 보수적 배당가치 기준도 통과했습니다."
     else:
-        support_text = "함께 적중 가능한 별도 시장 대안을 계산할 수 없습니다."
+        support_text = "별도 반대 픽 없이 세 시장 중 이 한 방향만 추천합니다."
 
     return (
         "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"
         "border:1px solid rgba(0,242,254,.18);border-radius:10px;"
         "background:rgba(0,242,254,.035);line-height:1.65;color:#CBD5E1;'>"
         "<div style='font-weight:900;color:#00F2FE;margin-bottom:5px;'>추천 전략 한눈에 보기</div>"
-        f"<div><b style='color:#F8FAFC;'>우선 방향</b> · {high_text} "
+        f"<div><b style='color:#F8FAFC;'>최종 추천</b> · {high_text} "
         f"(모델 {high_probability:.1f}%, {fair_text})</div>"
         f"<div><b style='color:#F8FAFC;'>가치 확인</b> · {support_text}</div>"
         f"<div><b style='color:#F8FAFC;'>주의점</b> · {risk_text} "
@@ -2357,7 +2398,7 @@ def _top3_strategy_html(item):
 
 
 def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=None, home_team=""):
-    """확률픽, 배당형 대안픽, 대안픽의 VIP 승격 상태를 세 칸에 표시한다."""
+    """Show one official pick; value and VIP are badges on the same answer."""
     picks = picks or []
     categories = {
         "high_probability": None,
@@ -2381,79 +2422,57 @@ def generate_pred_boxes(picks, is_top3_tab=False, pick_categories=None, grading=
             picks, key=lambda item: float(item.get("prob", 0) or 0)
         )
 
-    slot_specs = [
-        ("high_probability", "📈 확률 높은 픽", "분석 가능한 선택지가 없습니다.", "#00F2FE"),
-        ("honey", "🍯 배당형 대안픽", "분석 가능한 별도 대안이 없습니다.", "#F59E0B"),
-        ("vip_underdog", "💎 VIP 검증 등급", "대안픽 중 엄격 기준 통과 없음", "#FFD54A"),
-    ]
-    html = ""
-    for key, label, empty_text, color in slot_specs:
-        pick = categories[key]
-        if not pick:
-            html += (
-                "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
-                f"<div class='pred-label' style='color:{color};'>{label}</div>"
-                f"<span class='pred-value' style='color:#94A3B8;'>{empty_text}</span>"
-                "<span class='pred-prob' style='background:#1E293B;color:#94A3B8;'>기준 미달</span>"
-                "</div>"
-            )
-            continue
-
-        prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
-        raw_pick = escape(_human_pick_label(pick.get("raw_pick", ""), home_team))
-        pick_label = escape(str(pick.get("label", "")))
-        honey_tier = str(pick.get("value_pick_tier") or "")
-        detail = {
-            "high_probability": "항상 표시",
-            "honey": (
-                "보수적 가치 기준 통과"
-                if honey_tier == "qualified"
-                else (
-                    "항상 제공 · 배당 미확인 참고픽"
-                    if honey_tier == "unpriced_reference"
-                    else "항상 제공 · 참고 등급"
-                )
-            ),
-            "vip_underdog": "별도 픽 아님 · 대안픽 엄격 검증 통과",
-        }[key]
-        meta_parts = [detail]
-        if pick.get("fair_prob") is not None:
-            meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
-        if key == "honey" and pick.get("fair_prob") is not None:
-            meta_parts.append(f"보수적 가치차 {float(pick.get('robust_edge', 0) or 0) * 100:+.1f}%p")
-        if key == "vip_underdog" and pick.get("support_signals"):
-            meta_parts.append(f"독립근거 {len(pick['support_signals'])}개")
-        detail = " · ".join(meta_parts)
-        grade_html = ""
-        if isinstance(grading, dict) and grading.get("actual_result") == "FINISHED":
-            grade_value = None
-            if str(pick.get("raw_pick") or "") == str(grading.get("prob_pick") or ""):
-                grade_value = int(grading.get("is_correct_prob") or 0)
-            elif str(pick.get("raw_pick") or "") == str(grading.get("ev_pick") or ""):
-                grade_value = int(grading.get("is_correct_ev") or 0)
-            if grade_value is not None:
-                grade_label = "적중" if grade_value == 1 else "미적중"
-                grade_color = "#10B981" if grade_value == 1 else "#EF4444"
-                grade_html = (
-                    f"<span style='display:inline-block;margin-top:7px;padding:3px 8px;"
-                    f"border:1px solid {grade_color};border-radius:999px;color:{grade_color};"
-                    f"font-size:11px;font-weight:900;'>채점 {grade_label}</span>"
-                )
-        bg_style = (
-            "background:rgba(0,242,254,.05);border-color:#00F2FE;"
-            if key == "high_probability"
-            else ""
-        )
-        html += (
-            f"<div class='pred-box' style='{bg_style}'>"
-            f"<div class='pred-label' style='color:{color};'>{label}</div>"
-            f"<span class='pred-value'>{raw_pick}</span>"
-            f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{pick_label} · {detail}</span>"
-            f"{grade_html}"
-            f"<span class='pred-prob'>{prob_pct}%</span>"
+    pick = categories["high_probability"]
+    if not pick:
+        return (
+            "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
+            "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
+            "<span class='pred-value' style='color:#94A3B8;'>분석 가능한 선택지가 없습니다.</span>"
             "</div>"
         )
-    return html
+
+    same_raw = str(pick.get("raw_pick") or "")
+    value_badge = isinstance(categories.get("honey"), dict) and str(
+        categories["honey"].get("raw_pick") or ""
+    ) == same_raw
+    vip_badge = isinstance(categories.get("vip_underdog"), dict) and str(
+        categories["vip_underdog"].get("raw_pick") or ""
+    ) == same_raw
+    badges = []
+    if value_badge:
+        badges.append("<span style='color:#F59E0B;font-weight:900;'>🍯 배당가치 우수</span>")
+    if vip_badge:
+        badges.append("<span style='color:#FFD54A;font-weight:900;'>💎 VIP 검증 등급</span>")
+    badge_text = " · ".join(badges) if badges else "일반 최종픽"
+    meta_parts = [escape(str(pick.get("label") or "통합 시장 분석"))]
+    if pick.get("fair_prob") is not None:
+        meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
+    if value_badge:
+        meta_parts.append(f"보수적 가치차 {float(pick.get('robust_edge', 0) or 0) * 100:+.1f}%p")
+    samples = int(pick.get("market_history_samples", 0) or 0)
+    if samples:
+        meta_parts.append(f"학습표본 {samples}건")
+    grade_html = ""
+    if isinstance(grading, dict) and grading.get("actual_result") == "FINISHED":
+        if same_raw == str(grading.get("prob_pick") or ""):
+            grade_value = int(grading.get("is_correct_prob") or 0)
+            grade_label = "적중" if grade_value == 1 else "미적중"
+            grade_color = "#10B981" if grade_value == 1 else "#EF4444"
+            grade_html = (
+                f"<span style='display:inline-block;margin-top:7px;padding:3px 8px;"
+                f"border:1px solid {grade_color};border-radius:999px;color:{grade_color};"
+                f"font-size:11px;font-weight:900;'>채점 {grade_label}</span>"
+            )
+    prob_pct = round(float(pick.get("prob", 0) or 0) * 100, 1)
+    raw_pick = escape(_human_pick_label(same_raw, home_team))
+    return (
+        "<div class='pred-box' style='background:rgba(0,242,254,.05);border-color:#00F2FE;'>"
+        "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
+        f"<span class='pred-value'>{raw_pick}</span>"
+        f"<span style='display:block;font-size:11px;margin-top:6px;'>{badge_text}</span>"
+        f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{' · '.join(meta_parts)}</span>"
+        f"{grade_html}<span class='pred-prob'>{prob_pct}%</span></div>"
+    )
 
 # -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
@@ -2736,10 +2755,14 @@ with main_tab6:
             world_home_raw = str(world_match.get("home", "홈팀"))
             world_away_raw = str(world_match.get("away", "원정팀"))
             world_home_display = str(
-                world_match.get("home_name_ko") or world_home_raw
+                world_match.get("home_name_ko")
+                or _world_korean_name(world_home_raw, world_match.get("home_team_id"))
+                or world_home_raw
             )
             world_away_display = str(
-                world_match.get("away_name_ko") or world_away_raw
+                world_match.get("away_name_ko")
+                or _world_korean_name(world_away_raw, world_match.get("away_team_id"))
+                or world_away_raw
             )
             world_home = escape(world_home_display)
             world_away = escape(world_away_display)
@@ -2767,7 +2790,7 @@ with main_tab6:
             analysis_status = str(world_item.get("analysis_status") or "").upper()
             world_analysis = world_item.get("analysis") or {}
             selected_pick = world_analysis.get("selected") or {}
-            alternative_pick = world_analysis.get("alternative") or {}
+            world_categories = world_analysis.get("categories") or {}
             quality_score = int(
                 world_analysis.get("data_quality_score")
                 or world_item.get("data_quality_score")
@@ -2811,37 +2834,28 @@ with main_tab6:
                     or "픽 계산 완료"
                 )
                 selected_probability = float(selected_pick.get("probability") or 0) * 100
-                alternative_html = ""
-                if alternative_pick:
-                    alternative_name = localized_world_pick(
-                        alternative_pick.get("display")
-                        or alternative_pick.get("raw_pick")
-                        or ""
-                    )
-                    alternative_probability = float(
-                        alternative_pick.get("probability") or 0
-                    ) * 100
-                    alternative_tier = escape(str(
-                        alternative_pick.get("value_pick_tier") or "참고"
-                    ))
-                    alternative_html = (
-                        "<div style='border:1px solid #334155; border-radius:10px; "
-                        "padding:12px; background:#0B1220;'>"
-                        "<div style='color:#F59E0B; font-size:12px; font-weight:800;'>"
-                        "배당형 대안픽</div>"
-                        f"<div style='font-weight:900; margin-top:5px;'>{alternative_name}</div>"
-                        f"<div style='color:#94A3B8; font-size:12px;'>{alternative_probability:.1f}% · {alternative_tier}</div>"
-                        "</div>"
-                    )
+                selected_raw = str(selected_pick.get("raw_pick") or "")
+                badges = list(selected_pick.get("badges") or [])
+                if not badges:
+                    if str((world_categories.get("honey") or {}).get("raw_pick") or "") == selected_raw:
+                        badges.append("배당가치 우수")
+                    if str((world_categories.get("vip_underdog") or {}).get("raw_pick") or "") == selected_raw:
+                        badges.append("VIP 검증 등급")
+                badge_html = "".join(
+                    "<span style='display:inline-block; margin:6px 6px 0 0; "
+                    "padding:3px 8px; border-radius:999px; background:#F59E0B; "
+                    f"color:#08111F; font-size:11px; font-weight:900;'>{escape(str(badge))}</span>"
+                    for badge in badges
+                )
                 world_status_html += (
                     "<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); "
                     "gap:10px; margin-top:12px;'>"
                     "<div style='border:1px solid #0EA5E9; border-radius:10px; padding:12px; background:#071522;'>"
-                    "<div style='color:#22D3EE; font-size:12px; font-weight:800;'>확률 높은 픽</div>"
+                    "<div style='color:#22D3EE; font-size:12px; font-weight:800;'>최종 추천픽</div>"
                     f"<div style='font-weight:900; margin-top:5px;'>{selected_name}</div>"
                     f"<div style='color:#94A3B8; font-size:12px;'>{selected_probability:.1f}%</div>"
+                    f"{badge_html}"
                     "</div>"
-                    f"{alternative_html}"
                     "<div style='border:1px solid #334155; border-radius:10px; padding:12px; background:#0B1220;'>"
                     "<div style='color:#A78BFA; font-size:12px; font-weight:800;'>검증 정보</div>"
                     f"<div style='font-weight:900; margin-top:5px;'>데이터 {quality_score}/100 · {quality_grade}</div>"
@@ -3168,6 +3182,24 @@ with main_tab4:
                 "</span></div>",
                 unsafe_allow_html=True,
             )
+            report_text = str(world_analysis.get("report") or "").strip()
+            if report_text:
+                report_text = report_text.replace(world_home_raw, world_home_display)
+                report_text = report_text.replace(world_away_raw, world_away_display)
+                with st.expander(f"상세 분석 보기 · {world_home_display} vs {world_away_display}"):
+                    st.markdown(report_text)
+                    lineup_learning = (
+                        (world_analysis.get("inputs_snapshot") or {}).get("lineup_learning")
+                        or {}
+                    )
+                    home_core = list(lineup_learning.get("home_predicted_core") or [])
+                    away_core = list(lineup_learning.get("away_predicted_core") or [])
+                    if home_core or away_core:
+                        st.caption("선발 학습 1단계 · 공식 선발 11명을 단정하지 않고 확인된 핵심 후보만 저장")
+                        if home_core:
+                            st.write(f"{world_home_display} 예상 핵심 후보: {', '.join(home_core)}")
+                        if away_core:
+                            st.write(f"{world_away_display} 예상 핵심 후보: {', '.join(away_core)}")
             if world_analysis:
                 missing_data = world_analysis.get("missing_data") or []
                 with st.expander(f"{world_home} vs {world_away} 분석 근거"):

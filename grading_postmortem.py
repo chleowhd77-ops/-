@@ -131,12 +131,16 @@ def _miss_reason(
             "facts": {"goal_total": total, "line": line},
         }
 
-    handicap = re.search(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*\]", raw)
-    if "핸디" in raw and handicap:
+    handicap = (
+        re.search(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*\]", raw)
+        or re.search(r"([+-]?\d+(?:\.\d+)?)\s*적용\s*후", raw)
+    )
+    if ("핸디" in raw or "적용 후" in raw) and handicap:
         line = float(handicap.group(1))
         adjusted_home = goals_h + line
         actual = "핸디승" if adjusted_home > goals_a else "핸디패" if adjusted_home < goals_a else "핸디무"
-        expected = "핸디승" if "핸디승" in raw else "핸디패" if "핸디패" in raw else "핸디무" if "핸디무" in raw else "선택 조건"
+        declared = re.search(r"(?:핸디|적용\s*후)\s*(승|무|패)", raw)
+        expected = f"핸디{declared.group(1)}" if declared else "선택 조건"
         return {
             "pick_type": "handicap",
             "code": "HANDICAP_RESULT_MISMATCH",
@@ -267,9 +271,9 @@ def build_postmortem(
     events = [str(line).strip() for line in (event_timeline or []) if str(line).strip()]
     misses = []
     if int(is_correct_prob or 0) != 1:
-        misses.append({"slot": "probability", "label": "확률픽", "pick": str(prob_pick or ""), **_miss_reason(prob_pick, home_team, away_team, int(goals_h), int(goals_a))})
+        misses.append({"slot": "probability", "label": "최종 추천픽", "pick": str(prob_pick or ""), **_miss_reason(prob_pick, home_team, away_team, int(goals_h), int(goals_a))})
     if has_ev_pick and int(is_correct_ev or 0) != 1:
-        misses.append({"slot": "alternative", "label": "배당형 대안픽", "pick": str(ev_pick or ""), **_miss_reason(ev_pick, home_team, away_team, int(goals_h), int(goals_a))})
+        misses.append({"slot": "alternative", "label": "기존 배당형 대안픽", "pick": str(ev_pick or ""), **_miss_reason(ev_pick, home_team, away_team, int(goals_h), int(goals_a))})
 
     observations = _verified_observations(misses, stats, events)
     limitations = []
