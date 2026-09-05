@@ -119,6 +119,15 @@ WORLD_ODDS_MAX_PAGES_PER_DAY = max(
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
 WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v2"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
+    "Bucheon FC 1995": "부천 FC 1995",
+    "Daejeon Citizen": "대전 하나시티즌",
+    "Jeju United FC": "제주 SK FC",
+    "Ulsan Hyundai FC": "울산 HD FC",
+    "Jeonbuk Motors": "전북 현대 모터스",
+    "Pohang Steelers": "포항 스틸러스",
+    "Newcastle": "뉴캐슬 유나이티드",
+    "Bournemouth": "본머스",
+
     "Lyon": "올랭피크 리옹",
     "Auxerre": "AJ오세르",
     "Sparta Rotterdam": "스파르타 로테르담",
@@ -386,6 +395,11 @@ def _update_collector_status(job_name, state, **details):
         jobs[job_name] = entry
         status["updated_at"] = entry["heartbeat_at"]
         status["version"] = 1
+        if state in {"success", "failed"}:
+            try:
+                status["api_usage"] = get_api_usage_status()
+            except Exception:
+                status["api_accounting_error"] = "사용량 원장 읽기 실패 · 새 API 호출 차단"
         _atomic_write_json(STATUS_FILE, status, indent=2)
         return True
     except Exception as error:
@@ -450,9 +464,13 @@ def _validate_sqlite_file(path):
 
 
 def download_latest_db_from_github():
-    print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 기존 기록 보호를 위해 GitHub에서 최신 DB를 가져옵니다...")
+    print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 기존 DB를 확인합니다 (정상 로컬 기록 우선)...")
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
     final_path = _local_path("ai_predictions.db")
+    # EC2 is authoritative; failed uploads leave GitHub behind.
+    if _validate_sqlite_file(final_path):
+        print("✅ 로컬 정상 DB 보존 (원격본으로 과거 기록을 덮어쓰지 않음)")
+        return True
     temp_path = final_path.with_name(f".{final_path.name}.{os.getpid()}.download")
     backup_path = final_path.with_name(f"{final_path.name}.last_good")
     try:
@@ -875,7 +893,10 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
         row = cursor.fetchone()
         if not row:
             # A first prediction created after kickoff is hindsight, not a forecast.
-            if analysis_stage == "locked":
+            if analysis_stage == "locked" or (
+                _parse_kst_match_time(match_time) is not None
+                and datetime.now(KST) >= _parse_kst_match_time(match_time)
+            ):
                 print(f"⚠️ 킥오프 후 신규 예측 저장 차단: {home_team} vs {away_team}")
                 return False
             cursor.execute("""
@@ -1471,8 +1492,20 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
 
         if metrics[f"{opponent}_absence"] - metrics[f"{side}_absence"] >= 0.05:
             add_signal("squad", "상대 핵심 결장·선발 누수")
-        if metrics[f"{side}_market_bonus"] > 0:
-            add_signal("market", "해외 배당 하락·시장 지지")
+        movement = metrics.get("movement") or {}
+        confirmed = bool(
+            movement.get("comparable_bookmakers")
+            and side in (movement.get("agreement_sides") or [])
+            and any(
+                signal.get("side") == side and signal.get("market") == "1x2"
+                and signal.get("persistent_from_opening")
+                and int(signal.get("bookmaker_sample_count") or 0) >= 3
+                for signal in movement.get("signals") or []
+            )
+        )
+        pick["market_movement_confirmed"] = confirmed
+        if confirmed:
+            add_signal("market", "다중 업체 배당 지속 하락·승무패/핸디캡 동방향")
         if metrics[f"{side}_tactical"] > 0:
             add_signal("matchup", "상대 전적·전술 상성 우위")
         if metrics[f"{side}_recent"] - metrics[f"{opponent}_recent"] >= 0.035:
@@ -1596,7 +1629,12 @@ def build_detailed_report(
 
     honey = categories.get("honey")
     vip = categories.get("vip_underdog")
-    final_parts = [f"최종 추천픽은 {_report_pick_line(selected_pick, home)}입니다."]
+    withheld = selected_pick.get("recommendation_status") == "WITHHELD"
+    final_parts = (
+        ["추천 보류: " + selected_pick.get("selection_reason", "가치 기준 미충족") + "."]
+        if withheld else [f"최종 추천픽은 {_report_pick_line(selected_pick, home)}입니다.",
+                          str(selected_pick.get("selection_reason") or "")]
+    )
     if vip:
         signals = ", ".join(vip.get("support_signals") or []) or "복수 지표 동시 지지"
         final_parts.append(
@@ -1605,7 +1643,7 @@ def build_detailed_report(
         )
     elif honey:
         final_parts.append("이 최종픽은 실제 배당과 보수적 우위까지 확인되어 배당가치 우수 등급입니다.")
-    else:
+    elif not withheld:
         final_parts.append("세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다.")
     missing_text = (
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
@@ -1621,10 +1659,13 @@ def build_detailed_report(
         f"[언더오버 분석] {_report_pick_line(market_best.get('totals'), home)}.",
         f"[실제 사용 근거] {evidence_text}. {missing_text}",
         (
+            ("[최종 선택과 신뢰도] " + " ".join(final_parts) +
+             " 내부 후보만 기록·학습하며 공식 추천 적중률에는 포함하지 않습니다."
+             if withheld else
             f"[최종 선택과 신뢰도] {' '.join(final_parts)} 선택된 최종픽의 보정 확률은 "
             f"{probability * 100:.1f}%이며, {fair_text} 예상 오차범위는 "
             f"{float(interval.get('low', 0)) * 100:.1f}%~{float(interval.get('high', 1)) * 100:.1f}%, "
-            f"데이터 신뢰도는 {confidence * 100:.1f}%입니다. 이 수치는 적중을 보장하지 않습니다."
+            f"데이터 신뢰도는 {confidence * 100:.1f}%입니다. 이 수치는 적중을 보장하지 않습니다.")
         ),
     ])
 
@@ -1667,6 +1708,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "value_pick_tier": str(selected.get("value_pick_tier") or ""),
             "final_pick_grade": str(selected.get("final_pick_grade") or "standard"),
             "learning_robot": dict(selected.get("learning_robot") or {}),
+            "recommendation_status": selected.get("recommendation_status", "SELECTED"),
+            "selection_reason": selected.get("selection_reason", ""),
             "independent_support_count": int(
                 selected.get("independent_support_count", 0) or 0
             ),
@@ -1775,9 +1818,9 @@ def build_pick_selection_audit(candidates, categories, confidence):
     decision = {
         "schema_version": PICK_AUDIT_SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
-        "selector": "unified-accuracy-value-learning-v1",
+        "selector": "1x2-first-qualified-value-v2",
         "score_order": [
-            "value_eligibility", "robust_probability", "model_probability",
+            "value_eligibility", "1x2_priority", "robust_probability", "model_probability",
             "robust_edge", "robust_ev",
         ],
         "candidate_count": len(candidate_rows),
@@ -1789,8 +1832,7 @@ def build_pick_selection_audit(candidates, categories, confidence):
         "selected_pick": selected_high.get("raw_pick", ""),
         "selected_market": selected_high.get("market_key", ""),
         "selection_reason": (
-            "승무패·언더오버·핸디캡을 함께 비교하고, 검증된 가치 후보 안에서 "
-            "보수확률이 가장 높은 한 방향만 최종 추천픽으로 확정"
+            selected_high.get("selection_reason") or "경기 전 저장된 선택 기준 유지"
         ),
         "final_pick_grade": str(selected_high.get("final_pick_grade") or "standard"),
         "value_badge": compact_categories.get("honey") is not None,
@@ -2133,7 +2175,21 @@ def select_pick_categories(picks, confidence):
         and float(pick.get("robust_ev", 0) or 0) >= 1.01
         and confidence >= 0.50
     ]
-    selection_pool = value_candidates or available
+    value_candidates = [
+        pick for pick in value_candidates
+        if float(pick.get("prob") or 0) >= (
+            0.40 if infer_pick_market(pick) == "1x2" else 0.50
+        ) or bool(pick.get("is_qualified_underdog"))
+    ]
+    primary = [pick for pick in value_candidates if infer_pick_market(pick) == "1x2"]
+    selection_pool = primary or value_candidates
+    if not selection_pool:
+        categories["high_probability"] = {
+            "raw_pick": "", "prob": 0.0, "official_final_pick": False,
+            "recommendation_status": "WITHHELD",
+            "selection_reason": "세 시장 모두 확률·실제 배당·보수적 가치 기준 미충족",
+        }
+        return categories, []
     high_source = max(
         selection_pool,
         key=lambda pick: (
@@ -2156,6 +2212,11 @@ def select_pick_categories(picks, confidence):
         and float(high_source.get("odd", 0) or 0) > 1.0
     )
     high_source["official_final_pick"] = True
+    high_source["recommendation_status"] = "SELECTED"
+    high_source["selection_reason"] = (
+        "승무패가 확률·배당가치 기준을 통과하여 우선 선택"
+        if primary else "승무패 가치 부족: 언더오버·핸디캡 적격 후보에서 선택"
+    )
     high_source["learning_robot"] = {
         "mode": "controlled_adviser",
         "market": infer_pick_market(high_source),
@@ -2175,6 +2236,7 @@ def select_pick_categories(picks, confidence):
     if value_qualified:
         vip_passed = bool(
             high_source.get("is_true_underdog")
+            and high_source.get("market_movement_confirmed")
             and float(high_source.get("robust_edge", 0) or 0) >= 0.03
             and float(high_source.get("robust_ev", 0) or 0) >= 1.08
             and confidence >= 0.68
@@ -2261,7 +2323,7 @@ def _build_grading_snapshot():
             ).fetchall()
         ]
         all_rows = _prefer_canonical_prediction_rows(all_rows)
-        finished = [row for row in all_rows if row.get("actual_result") == "FINISHED"]
+        finished = [row for row in all_rows if row.get("actual_result") == "FINISHED" and str(row.get("prob_pick") or "").strip()]
         pending = [
             row for row in all_rows
             if row.get("actual_result") == "PENDING" and int(row.get("is_toto14") or 0) == 0
@@ -2280,6 +2342,10 @@ def _build_grading_snapshot():
                 """
             ).fetchall()
         }
+        queue_exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='scoring_queue'").fetchone()
+        reasons = {r[0]:r[1] for r in conn.execute("SELECT match_id,reason FROM scoring_queue")} if queue_exists else {}
+        for row in pending:
+            row["grading_wait_reason"] = reasons.get(str(row.get("match_id")),"경기 종료/결과 확인 대기")
         for row in finished + pending:
             stored_version = str(row.get("analysis_version") or "").strip()
             row["analysis_version"] = stored_version or snapshot_versions.get(
@@ -2293,6 +2359,8 @@ def _build_grading_snapshot():
         finished.sort(key=sort_timestamp, reverse=True)
         pending.sort(key=sort_timestamp, reverse=True)
         return {
+            "analysis_version": ANALYSIS_VERSION,
+            "system_version": SYSTEM_VERSION,
             "finished": finished,
             "pending": pending,
             "generated_at": _utc_iso(),
@@ -2632,6 +2700,20 @@ def _carry_world_shadow_analyses(payload, previous_payload):
         for field in WORLD_ANALYSIS_FIELDS:
             if field in previous:
                 item[field] = previous[field]
+    # A schedule refresh drops kicked-off fixtures; retain their frozen cards
+    # until an authoritative terminal state reaches LIVE/grading.
+    present = {int(item.get("api_fixture_id") or 0) for item in payload.get("matches",[])}
+    live = _read_json("live_scores.json",{}) or {}
+    now = datetime.now(KST)
+    for fixture_id, item in previous_by_fixture.items():
+        kickoff = _parse_kst_match_time(item.get("final_match_time") or (item.get("match") or {}).get("match_time"))
+        if fixture_id in present or not item.get("analysis") or not kickoff:
+            continue
+        states = [row for row in live.values() if isinstance(row,dict) and int(row.get("fixture_id") or 0)==fixture_id]
+        if any(row.get("final") or str(row.get("status")) in TERMINAL_STATUSES|CANCELED_STATUSES for row in states):
+            continue
+        if kickoff <= now <= kickoff+timedelta(hours=24):
+            payload.setdefault("matches",[]).append(dict(item))
     _refresh_world_source_meta(payload)
     return payload
 
@@ -2783,6 +2865,7 @@ def _world_market_snapshot_from_response(odds_rows, fixture_id=0, fetched_at=Non
         "fixture_id": int(fixture_id or 0),
         "fetched_at": fetched_at or datetime.now(KST).isoformat(),
         "bookmaker_count": len(bookmaker_ids),
+        "bookmaker_ids": sorted(bookmaker_ids),
         "odds_source": "api_football_bookmaker_median",
         "1x2": None,
         "totals": None,
@@ -3078,6 +3161,10 @@ def _detect_odds_movement(
         "agreement_sides": [],
         "underdog_move": False,
         "movement_speed_available": bool(elapsed_hours and elapsed_hours > 0),
+        "comparable_bookmakers": bool(
+            len(set(previous.get("bookmaker_ids") or [])) >= 3
+            and set(previous.get("bookmaker_ids") or []) == set(current.get("bookmaker_ids") or [])
+        ),
         "analysis_stage": str(analysis_stage or ""),
         "timing": "late" if str(analysis_stage or "") in {"T-60-lineup", "T-30-final"} else "regular",
         "reverse_line_movement_confirmed": False,
@@ -3229,7 +3316,11 @@ def _detect_odds_movement(
         )
     if result["underdog_move"]:
         summaries.append("초기 열세팀 배당 수축 확인")
-    result["qualified"] = bool(result["signals"] or result["line_movements"])
+    result["qualified"] = bool(result["signals"] or result["line_movements"]) and result["comparable_bookmakers"]
+    if not result["comparable_bookmakers"]:
+        result["home_bonus"] = result["away_bonus"] = 0.0
+        if summaries:
+            summaries.append("동일 업체 집합 미확인 · 배당 변화는 참고만 제공")
     result["summary"] = " · ".join(summaries)
     return result
 
@@ -3242,7 +3333,7 @@ def capture_odds_movement(fixture_id, source_type, analysis_stage, snapshot):
         return _detect_odds_movement({}, snapshot)
     normalized = {
         key: snapshot.get(key)
-        for key in ("bookmaker_count", "1x2", "totals", "handicap")
+        for key in ("bookmaker_count", "bookmaker_ids", "1x2", "totals", "handicap")
         if snapshot.get(key) is not None
     }
     encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -3775,6 +3866,9 @@ def _save_world_learning_record(match, analysis):
         ))
         categories[key] = ({**source, **summary} if source else None)
     selected = categories.get("high_probability")
+    if not selected and (analysis.get("selected") or {}).get("recommendation_status") == "WITHHELD":
+        selected = dict(analysis["selected"], prob=0.0, raw_pick="")
+        categories["high_probability"] = selected
     if not selected:
         return False
     confidence = float(
@@ -4120,6 +4214,7 @@ def _analyze_world_match(item, now, market_performance):
         "home_lineup": h_lineup_penalty,
         "away_lineup": a_lineup_penalty,
         "underdog_side": underdog_side,
+        "movement": odds_movement,
     })
     annotate_pick_metrics(candidates, confidence)
     categories, _ = select_pick_categories(candidates, confidence)
@@ -4186,6 +4281,7 @@ def _analyze_world_match(item, now, market_performance):
     ]
     inputs_snapshot = {
         "home_team_id": home_id, "away_team_id": away_id,
+        "match_identity": dict(match),
         "league_id": league_id, "season": season, "fixture_id": fixture_id,
         "kickoff_at": kickoff.isoformat(), "expected_goals": {"home": exp_h, "away": exp_a},
         "recent": {"home": h_recent, "away": a_recent},
@@ -4369,6 +4465,11 @@ def analyze_world_schedule():
                 analysis = _analyze_world_match(
                     item, now, market_performance_cache[league_name]
                 )
+                completed_at = datetime.now(KST)
+                if completed_at >= _parse_kst_match_time(match.get("match_time")):
+                    item["analysis_status"] = "MISSED_PREKICKOFF"
+                    continue  # Do not label a late computation as a frozen forecast.
+                analysis["analyzed_at"] = completed_at.isoformat()
                 if not _save_world_analysis_snapshot(match, analysis):
                     raise RuntimeError("세계경기 분석 스냅샷 저장 실패")
                 if not _save_world_learning_record(match, analysis):
@@ -4584,6 +4685,51 @@ def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
     )
 
 
+def _locked_proto_item(match, previous=None):
+    """Read the stored forecast, never regenerate it with post-kickoff inputs."""
+    conn = sqlite3.connect(str(_local_path("ai_predictions.db")),timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM predictions WHERE match_id=?",(str(match.get("id") or ""),)).fetchone()
+        if row is None:
+            return dict(match=dict(match),final_match_time=match.get("match_time"),
+                        ev_sorted_picks=[],pick_categories={},analysis_stage="locked",
+                        detailed_report="경기 전 저장된 예측을 찾지 못했습니다. 사후 픽은 만들지 않으며 결과 연결 상태를 확인합니다.")
+        row = dict(row)
+        if row.get("home_team") != match.get("home") or row.get("away_team") != match.get("away"):
+            return None
+        item = dict(previous or {})
+        saved = conn.execute("SELECT * FROM prediction_analysis WHERE match_id=?",(str(row["match_id"]),)).fetchone()
+        selected = {
+            "raw_pick":row.get("prob_pick") or "", "prob":float(row.get("prob_pick_prob") or 0)/100,
+            "official_final_pick":bool(row.get("prob_pick")), "recommendation_status":"SELECTED" if row.get("prob_pick") else "WITHHELD",
+        }
+        categories = {"high_probability":selected,"honey":None,"vip_underdog":None}
+        report = "경기 전 저장한 최종픽을 그대로 유지합니다. 상세 분석 원본은 보관 자료 확인 중입니다."
+        if saved is not None and str(saved["selected_pick"] or "") == selected["raw_pick"]:
+            saved = dict(saved)
+            kickoff = _parse_kst_match_time(row.get("match_time"))
+            saved_at = datetime.fromisoformat(str(saved.get("updated_at"))).replace(tzinfo=timezone.utc)
+            if kickoff and saved_at <= kickoff:
+                stored_categories = json.loads(saved.get("categories_json") or "{}")
+                high = stored_categories.get("high_probability") or {}
+                selected.update(high,prob=float(row.get("prob_pick_prob") or 0)/100)
+                for key in categories:
+                    value = stored_categories.get(key)
+                    if value and value.get("raw_pick") == selected["raw_pick"]:
+                        categories[key] = dict(selected,**{k:v for k,v in value.items() if k!="prob"})
+                categories["high_probability"] = selected
+                report = str(saved.get("report_text") or report)
+        item.update(match=dict(match),api_fixture_id=int(row.get("api_fixture_id") or 0),
+                    final_match_time=row.get("match_time"),analysis_stage="locked",
+                    analysis_version=row.get("analysis_version"),
+                    pick_categories=categories,ev_sorted_picks=[selected] if selected["raw_pick"] else [],
+                    detailed_report=report,story="",prediction_frozen=True)
+        return item
+    finally:
+        conn.close()
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -4642,6 +4788,12 @@ def build_dashboard_data():
         home_team, away_team = m["home"], m["away"]
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         m_dt = parse_match_time(final_match_time)
+        scheduled = _parse_kst_match_time(final_match_time)
+        if scheduled is not None and datetime.now(KST) >= scheduled:
+            frozen_item = _locked_proto_item(m,previous_proto.get(str(m.get("id",""))))
+            if frozen_item:
+                dashboard_proto.append(frozen_item)
+            continue  # No odds/injuries/lineups/form API calls after kickoff.
         home_info, away_info, _ = resolve_match_team_pair(
             home_team, away_team, final_match_time, ttl_h=2
         )
@@ -4721,32 +4873,21 @@ def build_dashboard_data():
         lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
         os_data = preloaded_os_data or fetch_overseas_odds_and_fixture_api(
-            home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time
+            home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time,
+            include_odds=0 < diff_hours <= 24,
         )
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
         proto_movement = _detect_odds_movement({}, {})
-        overseas_three_way = [
-            (os_data or {}).get("odd_h"),
-            (os_data or {}).get("odd_d"),
-            (os_data or {}).get("odd_a"),
-        ]
-        if api_fixture_id and _valid_three_way_odds(overseas_three_way):
-            bookmaker_count = int((os_data or {}).get("bookmaker_count") or 0)
+        # Reuse the single overseas quote already fetched by the fixture helper.
+        # Capture all markets and bookmaker IDs, never issue a diagnostic request.
+        raw_quotes = (os_data or {}).get("odds_response") or []
+        if api_fixture_id and raw_quotes:
+            quote_snapshot = _world_market_snapshot_from_response(raw_quotes, api_fixture_id)
+            set_db_cache(f"world_market_v3_{api_fixture_id}", quote_snapshot)
             proto_movement = capture_odds_movement(
-                api_fixture_id,
-                "PROTO",
-                prediction_stage(diff_hours, False),
-                {
-                    "bookmaker_count": bookmaker_count,
-                    "1x2": {
-                        "home": float(overseas_three_way[0]),
-                        "draw": float(overseas_three_way[1]),
-                        "away": float(overseas_three_way[2]),
-                        "sample_count": bookmaker_count,
-                    },
-                },
+                api_fixture_id, "PROTO", prediction_stage(diff_hours, False), quote_snapshot
             )
         weather_condition = fetch_weather_api(city, odds_ttl)
          
@@ -5110,6 +5251,7 @@ def build_dashboard_data():
                 "home_lineup": h_lineup_penalty,
                 "away_lineup": a_lineup_penalty,
                 "underdog_side": underdog_side,
+                "movement": proto_movement,
             },
         )
         annotate_pick_metrics(all_market_picks, analysis_confidence)
@@ -5260,6 +5402,12 @@ def build_dashboard_data():
         if a_matchup_msg: a_inj_html += f"<div class='injury-badge' style='background: rgba(59, 130, 246, 0.2); border-color: #3B82F6; color: #3B82F6;'>{a_matchup_msg}</div>"
         if is_derby: a_inj_html += f"<div class='injury-badge' style='background: rgba(239, 68, 68, 0.2); border-color: #EF4444; color: #EF4444;'>⚔️ 치열한 로컬 더비 매치</div>"
          
+        # A long analysis can cross kickoff even if it started beforehand.
+        if datetime.now(KST) >= m_dt:
+            frozen_item = _locked_proto_item(m, previous_proto.get(str(m.get("id", ""))))
+            if frozen_item:
+                dashboard_proto.append(frozen_item)
+            continue
         dashboard_proto.append({
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
             "api_fixture_id": int(api_fixture_id or 0),
@@ -5831,6 +5979,8 @@ def _recover_due_fixture_ids(rows, conn):
         date_key = match_dt.strftime("%Y-%m-%d")
         if date_key in boards:
             continue
+        if len(boards) >= 3:
+            break  # Bounded identity recovery; remaining dates rotate next run.
         try:
             boards[date_key] = _cached_fixture_identity_board(
                 date_key, purpose="scoring"
@@ -6046,14 +6196,19 @@ def _grade_prediction_candidates(
 ):
     """Grade the last frozen full-market audit without changing its forecast."""
     _ensure_prediction_analysis_tables(conn)
+    forecast = conn.execute("SELECT match_time FROM predictions WHERE match_id=?",(str(match_id),)).fetchone()
+    cutoff = _parse_kst_match_time(forecast[0]) if forecast else None
+    if cutoff is None:
+        return None  # No timestamp proof: do not teach the robot from hindsight.
+    cutoff_utc = cutoff.astimezone(timezone.utc).isoformat()
     snapshot = conn.execute(
         """
         SELECT id, analysis_version, stage, candidates_json, evidence_json
         FROM prediction_analysis_snapshots
-        WHERE match_id = ?
+        WHERE match_id = ? AND julianday(created_at) <= julianday(?)
         ORDER BY id DESC LIMIT 1
         """,
-        (str(match_id),),
+        (str(match_id),cutoff_utc),
     ).fetchone()
     if not snapshot:
         return None
@@ -6179,6 +6334,53 @@ def _candidate_review_text(review):
     )
 
 
+def _ensure_scoring_queue(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scoring_queue (
+            match_id TEXT PRIMARY KEY, reason TEXT, last_attempt REAL DEFAULT 0,
+            retry_at REAL DEFAULT 0, attempts INTEGER DEFAULT 0)
+    """)
+    conn.commit()
+
+
+def _scoring_reason(conn, match_id, reason, delay=1800):
+    conn.execute("""
+        INSERT INTO scoring_queue(match_id,reason,last_attempt,retry_at,attempts)
+        VALUES (?,?,?,?,1) ON CONFLICT(match_id) DO UPDATE SET
+        reason=excluded.reason,last_attempt=excluded.last_attempt,
+        retry_at=excluded.retry_at,attempts=attempts+1
+    """, (str(match_id),str(reason),time.time(),time.time()+delay))
+    conn.commit()
+
+
+def _select_scoring_due(rows, conn, now):
+    """Reserve a bounded backlog share; old rows never silently age out."""
+    _ensure_scoring_queue(conn)
+    queue = {r[0]:r[1:] for r in conn.execute("SELECT match_id,last_attempt,retry_at FROM scoring_queue")}
+    recent, backlog = [], []
+    now_ts = now.timestamp()
+    for row in rows:
+        kickoff = _parse_kst_match_time(row[5])
+        if kickoff is None:
+            if str(row[0]) not in queue:
+                _scoring_reason(conn,row[0],"경기 시간 확인 필요",86400)
+            continue
+        # Avoid polling each newly-started game: LIVE worker handles its status.
+        if now < kickoff + timedelta(minutes=105):
+            continue
+        last, retry_at = queue.get(str(row[0]),(0,0))
+        if retry_at > now_ts:
+            continue
+        bucket = backlog if now-kickoff > timedelta(days=7) else recent
+        bucket.append((last,kickoff.timestamp(),row))
+    recent.sort(key=lambda item:(item[0],-item[1]))
+    backlog.sort(key=lambda item:(item[0],item[1]))
+    chosen = [entry[2] for entry in recent[:30]] + [entry[2] for entry in backlog[:10]]
+    for row in chosen:
+        _scoring_reason(conn,row[0],"결과 확인 대기",1800)
+    return chosen
+
+
 def auto_score_matches():
     print(f"\n[🤖 {time.strftime('%Y-%m-%d %H:%M:%S')}] 🔥 불도저 채점 엔진 가동 (정밀 API 고유 ID 추적)...")
     scoring_calls_before = int(get_api_usage_status().get("scoring_calls") or 0)
@@ -6193,7 +6395,9 @@ def auto_score_matches():
                 f"공식픽 {repaired_predictions}건 / 시장후보 {repaired_candidates}건 "
                 "(예측·확률·버전은 보존)"
             )
+        conn.commit()  # Repairs must survive even when no due batches run.
         backfilled_count = _backfill_finished_postmortems(conn)
+        conn.commit()  # Release writes before network/cache operations.
         if backfilled_count:
             print(f"✅ 기존 오답노트 학습 태그 보강: {backfilled_count}건")
         cursor = conn.cursor()
@@ -6206,17 +6410,15 @@ def auto_score_matches():
         pending_matches = cursor.fetchall()
         api_call_count = 0
         now = datetime.now(KST)
-        due_matches = []
-        max_age = timedelta(days=max(2, int(os.getenv("SCORE_LOOKBACK_DAYS", "7"))))
-        for row in pending_matches:
-            match_dt = _parse_kst_match_time(row[5])
-            if match_dt is None or now < match_dt or now - match_dt > max_age:
-                continue
-            due_matches.append(row)
+        due_matches = _select_scoring_due(pending_matches,conn,now)
 
         due_matches, recovered_count = _recover_due_fixture_ids(due_matches, conn)
         if recovered_count:
             print(f"✅ 종료 경기 fixture ID 복구: {recovered_count}건")
+
+        for row in due_matches:
+            if not int(row[6] or 0):
+                _scoring_reason(conn,row[0],"경기 ID 미연결 · 날짜/양 팀 확인 필요",7200)
 
         # One failed batch must not roll back completed batches or stop later runs.
         linked_matches = [row for row in due_matches if int(row[6] or 0)]
@@ -6246,6 +6448,7 @@ def auto_score_matches():
                     match_id, h_team, a_team, prob_pick, ev_pick, _, fixture_id = row
                     match_info = fixture_map.get(int(fixture_id))
                     if not match_info:
+                        _scoring_reason(conn,row[0],"공급사 경기 데이터 미수신",3600)
                         continue
                     if not _scoring_row_matches_fixture(row, match_info):
                         # Never grade a fixture ID that points to another match.
@@ -6256,6 +6459,7 @@ def auto_score_matches():
                             "WHERE match_id = ? AND actual_result = 'PENDING'",
                             (match_id,),
                         )
+                        _scoring_reason(conn,match_id,"경기 ID 불일치 · 재연결 대기",1800)
                         print(f"⚠️ 잘못 연결된 fixture ID 해제: {h_team} vs {a_team}")
                         continue
                     status = match_info.get('fixture', {}).get('status', {}).get('short', '')
@@ -6264,23 +6468,24 @@ def auto_score_matches():
                         final_h = match_info.get('goals', {}).get('home')
                         final_a = match_info.get('goals', {}).get('away')
                         if final_h is None or final_a is None:
+                            _scoring_reason(conn,match_id,"종료 점수 미수신",1800)
                             print(f"⚠️ 종료 상태지만 점수가 비어 있어 채점 보류: {h_team} vs {a_team}")
                             continue
                         final_h, final_a = int(final_h), int(final_a)
                         regulation = match_info.get("score", {}).get("fulltime", {}) or {}
                         eval_h = regulation.get("home")
                         eval_a = regulation.get("away")
+                        if status in {"AET","PEN"} and (eval_h is None or eval_a is None):
+                            _scoring_reason(conn,match_id,"정규시간 점수 미수신 · 연장 결과로 대신 채점하지 않음",3600)
+                            continue
                         eval_h = final_h if eval_h is None else int(eval_h)
                         eval_a = final_a if eval_a is None else int(eval_a)
-                        score_str = f"{final_h}:{final_a}"
+                        score_str = f"{eval_h}:{eval_a}"  # All saved markets settle on regulation time.
                         is_corr_prob = evaluate_single_pick(prob_pick, h_team, a_team, eval_h, eval_a)
                         is_corr_ev = evaluate_single_pick(ev_pick, h_team, a_team, eval_h, eval_a)
-                        candidate_review = _grade_prediction_candidates(
-                            conn, match_id, h_team, a_team, eval_h, eval_a
-                        )
                         event_timeline = _load_stored_event_timeline(match_id, limit=8)
                         ai_note, postmortem_data = generate_real_ai_note(
-                            fixture_id, final_h, final_a, is_corr_prob, is_corr_ev,
+                            fixture_id, eval_h, eval_a, is_corr_prob, is_corr_ev,
                             has_ev_pick=bool(str(ev_pick or "").strip()),
                             home_team=h_team,
                             away_team=a_team,
@@ -6288,6 +6493,9 @@ def auto_score_matches():
                             ev_pick=ev_pick,
                             event_timeline=event_timeline,
                             return_postmortem=True,
+                        )
+                        candidate_review = _grade_prediction_candidates(
+                            conn, match_id, h_team, a_team, eval_h, eval_a
                         )
                         if candidate_review:
                             try:
@@ -6315,6 +6523,7 @@ def auto_score_matches():
                             score_str, is_corr_prob, is_corr_ev, ai_note,
                             postmortem_data, match_id,
                         ))
+                        _scoring_reason(conn,match_id,"채점 완료",86400)
                         print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
                     elif status in CANCELED_STATUSES:
                         cursor.execute("""
@@ -6323,12 +6532,17 @@ def auto_score_matches():
                                 ai_note = '💡 경기 취소/중단/몰수로 인한 무효 처리'
                             WHERE match_id = ? AND actual_result = 'PENDING'
                         """, (match_id,))
+                        _scoring_reason(conn,match_id,"무효 처리",86400)
                         print(f"  ⚠️ [경기 무효 처리] {h_team} vs {a_team}")
                     elif status in POSTPONED_STATUSES:
+                        _scoring_reason(conn,match_id,"경기 연기 · 결과 대기",14400)
                         print(f"  ⏸️ [경기 연기 - 추후 재확인] {h_team} vs {a_team}")
                 conn.commit()
             except Exception as batch_error:
                 conn.rollback()
+                for failed_row in batch:
+                    _scoring_reason(conn,failed_row[0],
+                                    "API 예산/연결 확인 필요" if isinstance(batch_error,ApiQuotaUnavailable) else "채점 처리 오류 · 재시도 대기",3600)
                 print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
 
         scoring_calls_after = int(get_api_usage_status().get("scoring_calls") or 0)
@@ -6535,10 +6749,22 @@ def update_live_scores():
             WHERE actual_result IN ('PENDING', 'FINISHED')
         """)
         all_rows = cursor.fetchall()
+        # World schedule must be live-trackable even before a recommendation is saved.
+        known_ids = {str(row[0]) for row in all_rows}
+        for item in (_read_json(WORLD_DASHBOARD_FILE,{}) or {}).get("matches",[]):
+            match = item.get("match") or {}
+            match_id = str(match.get("id") or "")
+            fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+            if match_id and match_id not in known_ids and fixture_id:
+                all_rows.append((match_id,fixture_id,match.get("home",""),match.get("away",""),
+                                 match.get("match_time",""),"PENDING","-:-"))
+                known_ids.add(match_id)
 
         now_kst = datetime.now(KST)
         relevant_rows = []
         for row in all_rows:
+            if str(row[5]) == "FINISHED":
+                continue
             match_dt = _parse_kst_match_time(row[4])
             if match_dt is None:
                 if str(row[0]) in previous:
@@ -6563,9 +6789,12 @@ def update_live_scores():
             if fixture_id:
                 fixture_candidates[fixture_id] = item
 
-        tracked_ids = set(rows_by_fixture)
+        tracked_ids = {
+            fixture_id for fixture_id, rows in rows_by_fixture.items()
+            if any((_parse_kst_match_time(row[4]) or now_kst) <= now_kst+timedelta(minutes=5) for row in rows)
+        }
         for value in previous.values():
-            if isinstance(value, dict) and int(value.get("fixture_id") or 0):
+            if isinstance(value, dict) and not value.get("final") and _entry_not_expired(value,now_kst) and int(value.get("fixture_id") or 0):
                 tracked_ids.add(int(value.get("fixture_id")))
         missing_ids = sorted(tracked_ids - set(fixture_candidates))
         for offset in range(0, len(missing_ids), 20):
@@ -6662,11 +6891,15 @@ def update_live_scores():
                     prior_history.extend(entry.get("events", []))
                 if not prior_event and entry.get("event"):
                     prior_event = str(entry.get("event"))
-            event_history, event_str = _merge_event_history(prior_history, [])
+            embedded_events = match_info.get("events")
+            event_history, event_str = _merge_event_history(
+                prior_history,embedded_events if isinstance(embedded_events,list) else []
+            )
             event_str = event_str or prior_event
 
             should_fetch_events = (
         os.getenv("ENABLE_LIVE_EVENTS", "1") == "1"
+                and not isinstance(embedded_events,list)
                 and (status in LIVE_STATUSES or status in TERMINAL_STATUSES)
                 and not (status in TERMINAL_STATUSES and any(entry.get("final") for entry in prior_for_fixture))
             )
@@ -6722,7 +6955,7 @@ def update_live_scores():
 
         if score_updates:
             cursor.executemany(
-                "UPDATE predictions SET actual_score = ? WHERE match_id = ?",
+                "UPDATE predictions SET actual_score = ? WHERE match_id = ? AND actual_result = 'PENDING'",
                 score_updates,
             )
         if fixture_updates:

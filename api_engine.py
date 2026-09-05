@@ -32,15 +32,15 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.3.9-unified-final-learning"
+ANALYSIS_VERSION = "V7.4.0-1x2-first-value"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.3.9.3-canonical-fixture-ui-status"
+SYSTEM_VERSION = "R7.4.0-shared-live-quota-ledger"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
-# 기본값은 7,500회 요금제에서 라이브/채점용 600회를 남기는 구성이다.
+# 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
 API_DAILY_TOTAL_LIMIT = max(100, int(os.getenv("API_DAILY_TOTAL_LIMIT", "7500")))
-API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "600")))
+API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "1500")))
 API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
 API_WORLD_DAILY_LIMIT = max(10, int(os.getenv("API_WORLD_DAILY_LIMIT", "1500")))
 API_WORLD_MIN_REMAINING = max(100, int(os.getenv("API_WORLD_MIN_REMAINING", "1000")))
@@ -137,10 +137,134 @@ def _api_provider_day_key():
     return f"utc:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
 
+API_RUNTIME_DB = "api_runtime.db"  # Local only: never upload or restore from GitHub.
+
+
+def _runtime_connect():
+    conn = sqlite3.connect(API_RUNTIME_DB, timeout=5)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS api_usage_daily (
+            usage_day TEXT PRIMARY KEY, calls INTEGER DEFAULT 0,
+            provider_remaining INTEGER, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
+            usage_day TEXT, purpose TEXT, calls INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(usage_day,purpose));
+        CREATE TABLE IF NOT EXISTS api_endpoint_daily (
+            usage_day TEXT,purpose TEXT,endpoint TEXT,calls INTEGER DEFAULT 0,
+            PRIMARY KEY(usage_day,purpose,endpoint));
+        CREATE TABLE IF NOT EXISTS request_cache (
+            key TEXT PRIMARY KEY, body TEXT, expires REAL DEFAULT 0, lease REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS runtime_meta (key TEXT PRIMARY KEY);
+    """)
+    if not conn.execute("SELECT 1 FROM runtime_meta WHERE key='migrated'").fetchone():
+        legacy = None
+        try:
+            if os.path.exists("ai_predictions.db"):
+                legacy = sqlite3.connect("file:ai_predictions.db?mode=ro", uri=True, timeout=1)
+                tables = {r[0] for r in legacy.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                for table in ("api_usage_daily","api_usage_purpose_daily"):
+                    if table in tables:
+                        conn.executemany(f"INSERT OR IGNORE INTO {table} VALUES (?,?,?,?)",
+                                         legacy.execute(f"SELECT * FROM {table}").fetchall())
+            conn.execute("INSERT OR IGNORE INTO runtime_meta VALUES ('migrated')")
+            conn.commit()
+        except Exception as error:
+            conn.close()
+            raise ApiQuotaUnavailable("Cannot initialize usage ledger; no request sent") from error
+        finally:
+            if legacy is not None:
+                legacy.close()
+    return conn
+
+
+def _reserve_api_request(day, purpose, path):
+    """Atomically count BEFORE sending, including timed out/retried requests."""
+    conn = None
+    try:
+        conn = _runtime_connect()
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT calls,provider_remaining FROM api_usage_daily WHERE usage_day=?",(day,)).fetchone()
+        calls, remaining = (int(row[0]),row[1]) if row else (0,None)
+        row = conn.execute("SELECT calls FROM api_usage_purpose_daily WHERE usage_day=? AND purpose=?",(day,purpose)).fetchone()
+        used = int(row[0]) if row else 0
+        reserve = 50 if purpose in {"live","scoring"} else API_LIVE_RESERVE
+        if purpose == "world":
+            reserve = max(reserve,API_WORLD_MIN_REMAINING)
+        if calls >= API_DAILY_TOTAL_LIMIT-reserve or (remaining is not None and remaining <= reserve):
+            raise ApiQuotaUnavailable("Daily reserve protected")
+        if purpose == "world" and used >= API_WORLD_DAILY_LIMIT:
+            raise ApiQuotaUnavailable("World-football API safety budget reached")
+        conn.execute("""
+            INSERT INTO api_usage_daily VALUES (?,1,NULL,CURRENT_TIMESTAMP)
+            ON CONFLICT(usage_day) DO UPDATE SET calls=calls+1,
+            provider_remaining=CASE WHEN provider_remaining IS NULL THEN NULL ELSE MAX(0,provider_remaining-1) END,
+            updated_at=CURRENT_TIMESTAMP
+        """,(day,))
+        conn.execute("""
+            INSERT INTO api_usage_purpose_daily VALUES (?,?,1,CURRENT_TIMESTAMP)
+            ON CONFLICT(usage_day,purpose) DO UPDATE SET calls=calls+1,updated_at=CURRENT_TIMESTAMP
+        """,(day,purpose))
+        conn.execute("""
+            INSERT INTO api_endpoint_daily VALUES (?,?,?,1)
+            ON CONFLICT(usage_day,purpose,endpoint) DO UPDATE SET calls=calls+1
+        """,(day,purpose,path))
+        conn.commit()
+    except ApiQuotaUnavailable:
+        raise
+    except Exception as error:
+        raise ApiQuotaUnavailable("Usage ledger unavailable; no request sent") from error
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _request_cache_ttl(path, params):
+    if path in {"/fixtures/statistics","/players/squads","/coachs","/teams"}:
+        return 86400
+    if path == "/standings" or (path == "/fixtures" and params.get("last")):
+        return 21600
+    if path == "/fixtures" and params.get("next"):
+        return 3600
+    return 240  # Scores/events/lineups/odds remain fresh within the 5-minute job.
+
+
+def _claim_request_cache(key):
+    conn = _runtime_connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT body,expires,lease FROM request_cache WHERE key=?",(key,)).fetchone()
+        if row and row[0] is not None and row[1] > time.time():
+            res = requests.Response()
+            res.status_code, res._content, res.encoding = 200,row[0].encode("utf-8"),"utf-8"
+            res.headers["X-DJ-Cache"] = "hit"
+            return res
+        if row and row[2] > time.time():
+            raise ApiRateLimited("Identical request pending/cooling down; reuse saved data")
+        conn.execute("INSERT INTO request_cache(key,lease) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET lease=excluded.lease",
+                     (key,time.time()+300))
+        conn.commit()
+        return None
+    finally:
+        conn.close()
+
+
+def _finish_request_cache(key, payload=None, ttl=0):
+    conn = _runtime_connect()
+    try:
+        if payload is not None:
+            conn.execute("UPDATE request_cache SET body=?,expires=?,lease=0 WHERE key=?",
+                         (json.dumps(payload,ensure_ascii=False),time.time()+ttl,key))
+        else:
+            conn.execute("UPDATE request_cache SET lease=? WHERE key=?",(time.time()+60,key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _api_usage_today():
     day_key = _api_provider_day_key()
     try:
-        conn = _sqlite_connect()
+        conn = _runtime_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_daily (
@@ -159,12 +283,12 @@ def _api_usage_today():
         conn.close()
         return day_key, int(row[0] or 0) if row else 0, (row[1] if row else None)
     except Exception:
-        return day_key, 0, None
+        raise ApiQuotaUnavailable("Usage ledger unavailable; no request sent")
 
 
 def _api_purpose_usage_today(day_key, purpose):
     try:
-        conn = _sqlite_connect()
+        conn = _runtime_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
@@ -184,55 +308,29 @@ def _api_purpose_usage_today(day_key, purpose):
         conn.close()
         return int(row[0] or 0) if row else 0
     except Exception:
-        return 0
+        raise ApiQuotaUnavailable("Purpose ledger unavailable; no request sent")
 
 
 def _record_api_usage(day_key, provider_remaining=None, purpose="analysis"):
+    # Preflight reservation already counted this request; only reconcile headers.
+    if provider_remaining is None:
+        return
+    conn = _runtime_connect()
     try:
-        conn = _sqlite_connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_usage_daily (
-                usage_day TEXT PRIMARY KEY,
-                calls INTEGER NOT NULL DEFAULT 0,
-                provider_remaining INTEGER,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            INSERT INTO api_usage_daily (usage_day, calls, provider_remaining, updated_at)
-            VALUES (?, 1, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(usage_day) DO UPDATE SET
-                calls = api_usage_daily.calls + 1,
-                provider_remaining = COALESCE(excluded.provider_remaining, api_usage_daily.provider_remaining),
-                updated_at = CURRENT_TIMESTAMP
-        """, (day_key, provider_remaining))
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_usage_purpose_daily (
-                usage_day TEXT NOT NULL,
-                purpose TEXT NOT NULL,
-                calls INTEGER NOT NULL DEFAULT 0,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (usage_day, purpose)
-            )
-        """)
-        cursor.execute("""
-            INSERT INTO api_usage_purpose_daily (usage_day, purpose, calls, updated_at)
-            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT(usage_day, purpose) DO UPDATE SET
-                calls = api_usage_purpose_daily.calls + 1,
-                updated_at = CURRENT_TIMESTAMP
-        """, (day_key, str(purpose or "analysis")))
+        conn.execute("""
+            UPDATE api_usage_daily SET provider_remaining=
+            CASE WHEN provider_remaining IS NULL THEN ? ELSE MIN(provider_remaining,?) END,
+            updated_at=CURRENT_TIMESTAMP WHERE usage_day=?
+        """,(provider_remaining,provider_remaining,day_key))
         conn.commit()
+    finally:
         conn.close()
-    except Exception:
-        pass
 
 
 def _mark_api_quota_exhausted(day_key):
     """재시작 뒤에도 같은 날 소진된 API를 반복 호출하지 않게 기록한다."""
     try:
-        conn = _sqlite_connect()
+        conn = _runtime_connect()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_usage_daily (
@@ -281,91 +379,55 @@ def api_purpose_context(purpose):
 
 
 def api_get(path, params=None, timeout=7, purpose=None):
-    """API-Football 호출을 한곳에서 집계하고 분석/라이브 예산을 분리한다."""
-    global _API_PROVIDER_REMAINING, _API_PROVIDER_DAY, _API_QUOTA_NOTICE_SHOWN
-    current_day = _api_provider_day_key()
-    if _API_PROVIDER_DAY != current_day:
-        _API_PROVIDER_DAY = current_day
-        _API_PROVIDER_REMAINING = None
-        _API_QUOTA_NOTICE_SHOWN = False
-
-    # 한 프로세스 안에서 이미 소진을 확인했다면 SQLite 조회조차 반복하지 않는다.
-    if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
-        _show_api_quota_notice("공급사 일일 사용량 소진")
-        raise ApiQuotaUnavailable("API daily quota exhausted")
-
-    day_key, local_calls, stored_remaining = _api_usage_today()
+    """Shared cache, single-flight and persistent atomic daily protection."""
+    global _API_PROVIDER_DAY, _API_PROVIDER_REMAINING, _API_QUOTA_NOTICE_SHOWN
+    path = "/" + str(path).lstrip("/")
+    params = params or {}
     purpose = str(purpose or _API_PURPOSE_OVERRIDE or "analysis").strip().lower()
-    world_calls = _api_purpose_usage_today(day_key, "world") if purpose == "world" else 0
-    _API_PROVIDER_DAY = day_key
-    if _API_PROVIDER_REMAINING is None and stored_remaining is not None:
-        # 이전 실행이 0을 저장했더라도 결제 갱신ㆍ플랜 변경이 있었을 수 있다.
-        # 새 프로세스에서는 첫 요청 한 번으로 공급사 상태를 다시 확인하고,
-        # 실제로 일일 잔여량이 0일 때만 그 실행 동안 차단한다.
-        if int(stored_remaining) > 0:
-            _API_PROVIDER_REMAINING = int(stored_remaining)
-        else:
-            print("[API] 저장된 소진 기록 재확인: 공급사 상태를 한 번 조회합니다.")
-
-    allowed_calls = API_DAILY_TOTAL_LIMIT - 50 if purpose in {"live", "scoring"} else API_ANALYSIS_SOFT_LIMIT
-    if purpose == "world":
-        if world_calls >= API_WORLD_DAILY_LIMIT:
-            _show_api_quota_notice(
-                f"세계경기 전용 예산 도달 {world_calls}/{API_WORLD_DAILY_LIMIT}"
-            )
-            raise ApiQuotaUnavailable("World-football API safety budget reached")
-        if (
-            _API_PROVIDER_REMAINING is not None
-            and int(_API_PROVIDER_REMAINING) <= API_WORLD_MIN_REMAINING
-        ):
-            _show_api_quota_notice(
-                f"세계경기 중단·기존 LIVE 보호 {int(_API_PROVIDER_REMAINING)}회 남음"
-            )
-            raise ApiQuotaUnavailable("World-football reserve protected")
-    if _API_PROVIDER_REMAINING is not None and _API_PROVIDER_REMAINING <= 0:
-        _show_api_quota_notice("공급사 일일 사용량 소진")
-        raise ApiQuotaUnavailable("API daily quota exhausted")
-    if local_calls >= allowed_calls:
-        _show_api_quota_notice(f"{purpose} 예산 도달 {local_calls}/{allowed_calls}")
-        raise ApiQuotaUnavailable("Local API safety budget reached")
-
-    response = None
-    for attempt in range(API_RATE_LIMIT_RETRIES + 1):
-        _pace_api_request()
-        response = requests.get(
-            f"https://{API_HOST}/{str(path).lstrip('/')}",
-            headers=headers,
-            params=params,
-            timeout=timeout,
-        )
-        error_text = _response_error_text(response)
-        daily_remaining = _header_int(response, "x-ratelimit-requests-remaining")
-        if daily_remaining is not None:
-            _API_PROVIDER_REMAINING = daily_remaining
-        _record_api_usage(day_key, _API_PROVIDER_REMAINING, purpose=purpose)
-
-        if _is_daily_quota_response(response, error_text):
-            _API_PROVIDER_REMAINING = 0
-            _mark_api_quota_exhausted(day_key)
-            _show_api_quota_notice("공급사 일일 사용량 소진")
+    day = _api_provider_day_key()
+    if _API_PROVIDER_DAY != day:
+        _API_PROVIDER_DAY, _API_PROVIDER_REMAINING = day,None
+        _API_QUOTA_NOTICE_SHOWN = False
+    key = json.dumps([path,params],sort_keys=True,ensure_ascii=True)
+    try:
+        cached = _claim_request_cache(key)
+    except ApiRateLimited:
+        raise
+    except Exception as error:
+        raise ApiQuotaUnavailable("Cache/ledger unavailable; no request sent") from error
+    if cached is not None:
+        return cached
+    saved = False
+    try:
+        for attempt in range(API_RATE_LIMIT_RETRIES+1):
+            _reserve_api_request(day,purpose,path)
+            _pace_api_request()
+            response = requests.get(f"https://{API_HOST}{path}",headers=headers,params=params,timeout=timeout)
+            error_text = _response_error_text(response)
+            remaining = _header_int(response,"x-ratelimit-requests-remaining")
+            if remaining is not None:
+                _API_PROVIDER_REMAINING = remaining
+            _record_api_usage(day,remaining,purpose=purpose)
+            if _is_daily_quota_response(response,error_text):
+                _mark_api_quota_exhausted(day)
+                _show_api_quota_notice("공급사 일일 사용량 소진")
+                return response
+            if response.status_code == 429 or "rate limit" in error_text:
+                if attempt >= API_RATE_LIMIT_RETRIES:
+                    raise ApiRateLimited("Temporary provider rate limit")
+                time.sleep(min(10*(attempt+1),30))
+                continue
+            payload = response.json()
+            if response.status_code == 200 and not payload.get("errors"):
+                _finish_request_cache(key,payload,_request_cache_ttl(path,params))
+                saved = True
             return response
-
-        transient_rate_limit = response.status_code == 429 or "rate limit" in error_text
-        if not transient_rate_limit:
-            return response
-        if attempt >= API_RATE_LIMIT_RETRIES:
-            raise ApiRateLimited("API temporary rate limit; retry on next collection cycle")
-
-        try:
-            retry_after = float(response.headers.get("Retry-After", "0") or 0)
-        except (TypeError, ValueError):
-            retry_after = 0
-        delay = retry_after if retry_after > 0 else 10 * (attempt + 1)
-        delay = max(1.0, min(60.0, delay))
-        print(f"⏳ API 분당 제한 감지: {delay:g}초 후 재시도 ({attempt + 1}/{API_RATE_LIMIT_RETRIES})")
-        time.sleep(delay)
-
-    return response
+    except ApiQuotaUnavailable:
+        _show_api_quota_notice("라이브·채점 예산 보호 또는 사용량 기록 확인 필요")
+        raise
+    finally:
+        if not saved:
+            _finish_request_cache(key)
 
 
 def get_api_usage_status():
@@ -373,12 +435,22 @@ def get_api_usage_status():
     day_key, local_calls, stored_remaining = _api_usage_today()
     remaining = stored_remaining
     if _API_PROVIDER_DAY == day_key and _API_PROVIDER_REMAINING is not None:
-        remaining = _API_PROVIDER_REMAINING
+        remaining = min(stored_remaining, _API_PROVIDER_REMAINING) if stored_remaining is not None else _API_PROVIDER_REMAINING
     analysis_calls = _api_purpose_usage_today(day_key, "analysis")
     live_calls = _api_purpose_usage_today(day_key, "live")
     scoring_calls = _api_purpose_usage_today(day_key, "scoring")
     world_calls = _api_purpose_usage_today(day_key, "world")
+    conn = _runtime_connect()
+    try:
+        endpoints = [
+            {"purpose":r[0],"endpoint":r[1],"calls":r[2]}
+            for r in conn.execute("SELECT purpose,endpoint,calls FROM api_endpoint_daily WHERE usage_day=? ORDER BY calls DESC LIMIT 12",(day_key,))
+        ]
+    finally:
+        conn.close()
     return {
+        "top_endpoints": endpoints,
+        "accounting": "local-preflight-reservation-v2",
         "usage_day": day_key.removeprefix("utc:"),
         "reset_timezone": "UTC",
         "local_calls": int(local_calls or 0),
@@ -1637,7 +1709,7 @@ def fetch_overseas_odds_and_fixture_api(
     m_dt = parse_match_time(match_time_str)
     date_str = m_dt.strftime('%Y-%m-%d')
     odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
-    cache_key = f"odds_fixture_v11_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
+    cache_key = f"odds_fixture_v12_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1685,6 +1757,7 @@ def fetch_overseas_odds_and_fixture_api(
                     odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
                     odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
                     odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
+                    res_val["odds_response"] = odds_data
                     extracted = _extract_match_winner_odds(odds_data)
                     if extracted:
                         res_val.update(extracted)

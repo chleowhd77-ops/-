@@ -1776,7 +1776,7 @@ if latest_notice:
 
 # TOP3, 베트맨 전용, 해외·사설용 경기를 서로 섞지 않는다.
 main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
-    "오늘의 TOP3", "프로토 LIVE", "전체 경기", "승무패 14", "채점 노트", "인증 게시판"
+    "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14", "채점 노트", "인증 게시판"
 ])
 
 if st.session_state.get('role') == ROLE_ADMIN:
@@ -1793,6 +1793,230 @@ if st.session_state.get('role') == ROLE_ADMIN:
         if api_usage.get("quota_exhausted"):
             st.warning("오늘 API 사용량이 소진되어 기존 정상 캐시로 분석 중입니다. 일일 한도 초기화 후 자동으로 최신 자료를 보강합니다.")
 
+def _live_info_for_item(item):
+    match = item.get("match", {}) if isinstance(item, dict) else {}
+    ids = [str(match.get("id") or ""), str(item.get("canonical_match_id") or "")]
+    direct = [live_scores_data[key] for key in ids if isinstance(live_scores_data.get(key), dict)]
+    fixture_id = _item_api_fixture_id(item)
+    if fixture_id:
+        direct += [row for row in live_scores_data.values() if isinstance(row,dict)
+                   and str(row.get("fixture_id") or "") == str(fixture_id)]
+    return max(direct,key=lambda row: str(row.get("updated_at") or ""),default={})
+
+
+def _result_for_item(item):
+    match = item.get("match", {}) if isinstance(item,dict) else {}
+    direct = prediction_results_data.get(str(match.get("id") or ""),{})
+    fixture_id = _item_api_fixture_id(item)
+    if direct.get("actual_result") == "FINISHED":
+        return direct
+    if fixture_id:
+        for row in prediction_results_data.values():
+            if isinstance(row,dict) and _item_api_fixture_id(row) == fixture_id and row.get("actual_result") == "FINISHED":
+                return row
+    return direct
+
+
+def _live_state(item):
+    live, result = _live_info_for_item(item), _result_for_item(item)
+    if _is_final_status(_status_value(result)):
+        return "FINISHED"
+    match = item.get("match",{})
+    status = (_status_value(live) or _status_value(item) or _status_value(match)).upper()
+    if _is_final_status(status) or status in {"CANC","ABD","AWD","WO","CANCELED"}:
+        return "FINISHED"
+    if live.get("is_live") is True or status in {"1H","HT","2H","ET","BT","P","LIVE","INT","SUSP"}:
+        return "LIVE"
+    if status == "PST":
+        return "POSTPONED"
+    kickoff = _item_kickoff_datetime(item)
+    if kickoff and kickoff <= datetime.now(timezone(timedelta(hours=9))):
+        return "AWAITING_STATUS"
+    return "UPCOMING"
+
+
+def _live_time_html(item):
+    live, result = _live_info_for_item(item), _result_for_item(item)
+    state = _live_state(item)
+    score = _score_value(live) or _score_value(result)
+    if score and not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*",score):
+        score = ""
+    match = item.get("match",{})
+    when = escape(str(item.get("final_match_time") or match.get("match_time") or "시간 확인 중"))
+    if state in {"LIVE","FINISHED"}:
+        label = {"HT":"하프타임","BT":"연장 휴식","INT":"일시 중단","SUSP":"일시 중단"}.get(str(live.get("status") or ""), "")
+        elapsed = live.get("elapsed")
+        if not label:
+            label = f"{elapsed}분" if elapsed is not None and elapsed != 0 else "진행시간 수신 대기"
+        if state == "FINISHED":
+            label = "종료 · 채점 연결"
+        stale = "<small>마지막 수신값 · 갱신 지연</small>" if live.get("stale") else ""
+        number = f"<span class='live-score' style='white-space:nowrap'>{escape(score)}</span>" if score else "<span style='font-size:13px;white-space:nowrap'>점수 수신 대기</span>"
+        return number + f"<span class='deadline-closed'>{'🔴 LIVE · ' if state=='LIVE' else ''}{escape(label)}</span>" + stale
+    if state == "AWAITING_STATUS":
+        return f"<span class='match-time-text'>{when}</span><span class='deadline-closed'>경기 상태 수신 대기</span>"
+    if state == "POSTPONED":
+        return f"<span class='match-time-text'>{when}</span><span class='deadline-closed'>연기 · 일정 재확인</span>"
+    return f"<span class='match-time-text'>{when}</span><span class='deadline-open'>경기 예정</span>"
+
+
+def _world_live_item(world_item, proto_by_fixture):
+    """Adapt WORLD to the exact same renderer, without recalculating a forecast."""
+    analysis, canonical = _world_analysis_for_display(world_item,proto_by_fixture)
+    if canonical is not None:
+        return canonical
+    match = dict(world_item.get("match",world_item))
+    inputs = analysis.get("inputs_snapshot") or {}
+    home_raw, away_raw = str(match.get("home") or ""),str(match.get("away") or "")
+    home = _world_korean_name(home_raw,match.get("home_team_id")) or home_raw
+    away = _world_korean_name(away_raw,match.get("away_team_id")) or away_raw
+    if re.search("[가-힣]",str(match.get("home_name_ko") or "")):
+        home = match["home_name_ko"]
+    if re.search("[가-힣]",str(match.get("away_name_ko") or "")):
+        away = match["away_name_ko"]
+    def localize(value):
+        text = str(value or "")
+        for old,new in sorted([(home_raw,home),(away_raw,away)],key=lambda pair:len(pair[0]),reverse=True):
+            if old:
+                text = text.replace(old,new)
+        return text
+    categories = {}
+    raw_categories = analysis.get("categories") or {}
+    for key in ("high_probability","honey","vip_underdog"):
+        raw = raw_categories.get(key) or (analysis.get("selected") if key=="high_probability" else None)
+        if isinstance(raw,dict):
+            categories[key] = dict(raw,raw_pick=localize(raw.get("raw_pick")),
+                                   prob=raw.get("prob",raw.get("probability",0)),
+                                   fair_prob=raw.get("fair_prob",raw.get("fair_probability")))
+        else:
+            categories[key] = None
+    selected = categories.get("high_probability") or {}
+    odds = analysis.get("odds_snapshot") or {}
+    for market, mapping in [
+        ("1x2",{"home":"odd_h","draw":"odd_d","away":"odd_a"}),
+        ("totals",{"under":"uo_under","over":"uo_over","line":"uo_base"}),
+        ("handicap",{"home":"handi_h","draw":"handi_d","away":"handi_a","line":"handi_base"}),
+    ]:
+        for source,target in mapping.items():
+            match[target] = (odds.get(market) or {}).get(source)
+    match.update(home=home,away=away,league=match.get("league_name_ko") or match.get("league") or "세계 축구")
+    report = localize(analysis.get("report") or "")
+    missing = analysis.get("missing_data") or []
+    if missing:
+        report += "\n\n[미확보 자료] " + ", ".join(map(str,missing))
+    lineup = inputs.get("lineup_learning") or {}
+    if lineup:
+        report += "\n\n[선발 학습·확인]"
+        for side,name in (("home",home),("away",away)):
+            core = lineup.get(side+"_predicted_core") or []
+            starters = lineup.get(side+"_official_starters") or []
+            report += f"\n{name}: 예상 핵심 후보 {', '.join(map(str,core)) or '자료 없음'} / 공식 선발 {', '.join(map(str,starters)) or '미수신'}"
+    item = dict(world_item,match=match,pick_categories=categories,
+                ev_sorted_picks=[selected] if selected.get("raw_pick") else [],
+                detailed_report=report,story="",
+                analysis_stage=analysis.get("analysis_stage"),
+                analysis_version=analysis.get("analysis_version"),
+                data_coverage=float(analysis.get("data_quality_score") or 0)/100,
+                analysis_confidence=(analysis.get("decision") or {}).get("data_confidence"),
+                lineup_confirmed=bool(analysis.get("lineup_confirmed")),
+                odds_source="world_bookmaker_median",
+                home_logo=match.get("home_logo"),away_logo=match.get("away_logo"))
+    for side,prefix in (("home","h"),("away","a")):
+        standing = (inputs.get("standings") or {}).get(side) or {}
+        recent = (inputs.get("recent") or {}).get(side) or {}
+        injury = (inputs.get("injuries") or {}).get(side) or {}
+        rest = (inputs.get("rest_days") or {}).get(side)
+        item[side+"_form"] = f"최근 {recent.get('matches',0)}경기 · 경기당 승점 {recent.get('ppg','미수신')}" if recent else "최근 성적 미수신"
+        rank = standing.get("rank")
+        item[prefix+"_rank_html"] = f"<div class='rank-badge'>순위 {escape(str(rank))}위</div>" if rank and rank!=99 else ""
+        if injury.get("available"):
+            injury_text = f"등록 결장 {int(injury.get('count') or 0)}명"
+            names = injury.get("ace_names") or []
+            if names:
+                injury_text += " · 핵심 " + ", ".join(map(str,names))
+        else:
+            injury_text = "부상자료 미수신"
+        missing_core = (inputs.get("lineups") or {}).get(side+"_missing_core") or []
+        lineup_text = ("선발 확인 · 핵심 제외 " + ", ".join(map(str,missing_core))) if missing_core else (
+            "선발 확인 · 핵심 제외 없음" if item["lineup_confirmed"] else "선발 발표 대기")
+        item[prefix+"_inj_html"] = f"<div class='injury-badge'>{escape(injury_text)}</div><div class='injury-badge'>{escape(lineup_text)}</div>"
+        item[prefix+"_rest_html"] = f"<div class='fatigue-badge'>휴식 {escape(str(rest))}일</div>" if rest is not None and rest<90 else ""
+    return item
+
+
+def _render_live_match_card(item):
+    """ONE component for Proto and World: score, events, pick, quality, full report."""
+    m = item.get("match",{})
+    live_info = _live_info_for_item(item)
+    db_result = _result_for_item(item)
+    time_display = _live_time_html(item)
+    event_html = _event_html(live_info,item,m)
+    if _live_state(item) == "LIVE" and not event_html:
+        event_html = "<div class='live-event-feed'>득점·카드·교체 상황: 사건 정보 수신 대기</div>"
+    boxes = generate_pred_boxes(item.get("ev_sorted_picks",[]),pick_categories=_pick_categories(item),
+                                home_team=m.get("home",""),analysis_item=item)
+    odds_source = str(
+        item.get("odds_source") or m.get("odds_source") or "betman"
+    )
+    has_three_way_odds = _has_display_odds(
+        m.get("odd_h"), m.get("odd_d"), m.get("odd_a")
+    )
+    has_handicap_odds = _has_display_odds(
+        m.get("handi_h"), m.get("handi_d"), m.get("handi_a")
+    )
+    has_totals_odds = _has_display_odds(
+        m.get("uo_under"), m.get("uo_over")
+    )
+
+    # 출처 표시가 누락된 데이터도 실제 1X2 배당이 없으면
+    # 0.0 숫자 대신 배당 대기 안내를 보여줍니다.
+    if odds_source == "model_only" or not has_three_way_odds:
+        odds_bar_html = (
+            "<div class='odd-bar'><span class='odd-item'>"
+            "📊 승무패 배당 미수신 · 검증 가능한 시장의 가치 확인"
+            "</span></div>"
+        )
+    elif odds_source == "overseas_fallback":
+        odds_bar_html = (
+            "<div class='odd-bar'>"
+            f"<span class='odd-item'>🌍 해외 임시배당 · 승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
+            "<span class='odd-item'>핸디캡·언오버는 베트맨 배당 대기</span>"
+            "</div>"
+        )
+    else:
+        handicap_html = (
+            f"핸디캡 <span class='odd-val'>{m.get('handi_h')} / {m.get('handi_d')} / {m.get('handi_a')}</span>"
+            if has_handicap_odds else "핸디캡 배당 대기"
+        )
+        totals_html = (
+            f"언오버 <span class='odd-val'>{m.get('uo_under')} / {m.get('uo_over')}</span>"
+            if has_totals_odds else "언오버 배당 대기"
+        )
+        odds_bar_html = (
+            "<div class='odd-bar'>"
+            f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
+            f"<span class='odd-item'>{handicap_html}</span>"
+            f"<span class='odd-item'>{totals_html}</span>"
+            "</div>"
+        )
+
+
+    detail_item = dict(item)
+    if not detail_item.get("detailed_report"):
+        detail_item["detailed_report"] = re.sub("<[^>]+>"," ",str(item.get("story") or ""))
+    return (
+        "<div class='match-card'>"
+        f"<div class='league-title'>{escape(str(m.get('league') or '축구'))}{_analysis_data_quality_html(item)}</div>"
+        "<div class='vs-row'>"
+        f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('home') or ''))}</div><div class='team-form-text'>{escape(str(item.get('home_form') or ''))}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}</div>{render_logo_html(item.get('home_logo'))}</div>"
+        f"<div class='center-time-box' style='min-width:140px'>{time_display}</div>"
+        f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
+        "</div>"
+        f"{event_html}<div class='pred-grid'>{boxes}</div>{odds_bar_html}{_detail_html(detail_item)}"
+        "</div>"
+    )
+
+
 def get_match_status(match_time_str, deadline_str):
     if not match_time_str or match_time_str == "시간 미정": return "TBD", False
     try:
@@ -1807,8 +2031,7 @@ def get_match_status(match_time_str, deadline_str):
                 if dh > m_dt.hour + 12: d_dt -= timedelta(days=1)
                 elif d_dt >= m_dt: d_dt = m_dt - timedelta(minutes=10)
             is_closed = now >= d_dt
-            if m_dt <= now <= m_dt + timedelta(hours=2): return "LIVE", is_closed
-            elif now > m_dt + timedelta(hours=2): return "FINISHED", is_closed
+            if m_dt <= now: return "AWAITING_STATUS", is_closed
             else: return "UPCOMING", is_closed
     except: pass
     return "UPCOMING", False
@@ -2276,25 +2499,7 @@ def _has_display_odds(*values):
 
 # 🔥 라이브 경기 판별 함수
 def check_is_live(item):
-    m = item.get('match', {})
-    match_id_str = str(m.get('id', ''))
-    live_info = live_scores_data.get(match_id_str, {})
-    db_result = prediction_results_data.get(match_id_str, {})
-    explicit_status = (
-        _status_value(db_result) or _status_value(live_info)
-        or _status_value(item) or _status_value(m)
-    )
-    if _is_final_status(explicit_status):
-        return False
-    if explicit_status.upper() in {"LIVE", "1H", "HT", "2H", "ET", "BT", "P", "INT", "BREAK"}:
-        return True
-    if live_info.get("is_live") is True:
-        return True
-    time_status, _ = get_match_status(
-        item.get("final_match_time", m.get("match_time", "")),
-        m.get("deadline_time", "23:00"),
-    )
-    return time_status == "LIVE"
+    return _live_state(item) == "LIVE"
 
 
 def _proto_terminal_datetime(item):
@@ -2316,46 +2521,13 @@ def _proto_terminal_datetime(item):
 
 
 def _proto_is_recent_or_active(item):
-    if check_is_live(item):
-        return True
-    match = item.get("match", {}) if isinstance(item, dict) else {}
-    match_id = str(match.get("id", ""))
-    live_info = live_scores_data.get(match_id, {})
-    db_result = prediction_results_data.get(match_id, {})
-    explicit_status = (
-        _status_value(db_result) or _status_value(live_info)
-        or _status_value(item) or _status_value(match)
-    )
-    time_status, _ = get_match_status(
-        item.get("final_match_time", match.get("match_time", "")),
-        match.get("deadline_time", "23:00"),
-    )
-    is_final = _is_final_status(explicit_status) or time_status == "FINISHED"
-    # 프로토 LIVE는 다음 픽을 보는 화면이므로 종료 확정 경기는 즉시 숨기고
-    # 결과와 사건 기록은 채점 노트에서만 보존합니다.
-    return not is_final
+    return _live_state(item) != "FINISHED"
 
 
 def _proto_live_sort_key(item):
-    match = item.get("match", {}) if isinstance(item, dict) else {}
-    kickoff = _ui_match_datetime(
-        item.get("final_match_time") or match.get("match_time")
-    )
-    kickoff_ts = kickoff.timestamp() if kickoff else float("inf")
-    if check_is_live(item):
-        return (0, kickoff_ts)
-    explicit_status = _status_value(
-        live_scores_data.get(str(match.get("id", "")), {})
-    ) or _status_value(item) or _status_value(match)
-    time_status, _ = get_match_status(
-        item.get("final_match_time", match.get("match_time", "")),
-        match.get("deadline_time", "23:00"),
-    )
-    if not (_is_final_status(explicit_status) or time_status == "FINISHED"):
-        return (1, kickoff_ts)
-    terminal_at = _proto_terminal_datetime(item)
-    terminal_ts = terminal_at.timestamp() if terminal_at else 0
-    return (2, -terminal_ts)
+    kickoff = _item_kickoff_datetime(item)
+    return (0 if check_is_live(item) else 1,kickoff.timestamp() if kickoff else float("inf"))
+
 
 def render_logo_html(logo_url):
     safe_logo = escape(str(logo_url or DEFAULT_TEAM_LOGO), quote=True)
@@ -2385,6 +2557,15 @@ def _human_pick_label(raw_pick, home_team=""):
 
 
 _WORLD_KO_OVERRIDES = {
+    "Bucheon FC 1995": "부천 FC 1995",
+    "Daejeon Citizen": "대전 하나시티즌",
+    "Jeju United FC": "제주 SK FC",
+    "Ulsan Hyundai FC": "울산 HD FC",
+    "Jeonbuk Motors": "전북 현대 모터스",
+    "Pohang Steelers": "포항 스틸러스",
+    "Newcastle": "뉴캐슬 유나이티드",
+    "Bournemouth": "본머스",
+
     "Lyon": "올랭피크 리옹", "Auxerre": "AJ오세르",
     "Sparta Rotterdam": "스파르타 로테르담", "PEC Zwolle": "PEC즈볼러",
     "VfB Stuttgart": "VfB 슈투트가르트", "1. FC Köln": "쾰른",
@@ -2442,7 +2623,7 @@ def _world_analysis_for_display(world_item, proto_by_fixture):
     if not isinstance(selected, dict):
         candidates = [row for row in canonical.get("ev_sorted_picks", []) if isinstance(row, dict)]
         selected = max(candidates, key=lambda row: float(row.get("prob") or 0)) if candidates else None
-    if not isinstance(selected, dict) or not str(selected.get("raw_pick") or "").strip():
+    if not isinstance(selected, dict):
         return base, None
 
     raw_pick = str(selected.get("raw_pick") or "")
@@ -2608,6 +2789,12 @@ def generate_pred_boxes(
         )
 
     pick = categories["high_probability"]
+    if isinstance(pick,dict) and pick.get("recommendation_status") == "WITHHELD":
+        return (
+            "<div class='pred-box'><div class='pred-label'>최종 추천픽</div>"
+            "<span class='pred-value'>추천 보류</span><small>확률·실제 배당가치 기준 미충족</small></div>"
+            + _final_pick_validation_html(analysis_item,pick)
+        )
     if not pick:
         return (
             "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
@@ -2702,134 +2889,11 @@ with main_tab1:
             paywall_shown = False
 
             for item in proto_list:
-                m = item['match']
-                logo_h_tag = render_logo_html(item.get("home_logo"))
-                logo_a_tag = render_logo_html(item.get("away_logo"))
-                raw_deadline = m.get("deadline_time", "23:00")
-                match_status, is_closed = get_match_status(item.get("final_match_time", ""), raw_deadline)
-                
-                match_id_str = str(m.get('id', ''))
-                is_live_now = check_is_live(item)
-                
                 displayed_count += 1
-
-                # 🔥 페이월(Paywall) 로직: 4번째 경기부터 잠금
-                if (
-                    visible_match_limit is not None
-                    and displayed_count > visible_match_limit
-                    and not has_full_access
-                ):
-                    if not paywall_shown:
-                        st.markdown("""
-                        <div class='match-card' style='text-align: center; padding: 50px 20px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); border: 1px solid #F59E0B;'>
-                            <h2 style='color: #F59E0B; font-weight: 900; letter-spacing: 1px;'>🔒 후원회원 전용 분석</h2>
-                            <p style='color: #94A3B8; font-weight: 700; font-size: 16px; margin-top: 15px;'>4번째 경기부터는 후원회원에게만 제공됩니다.<br>숨겨진 역배 분석과 전체 데이터를 확인할 수 있습니다.</p>
-                            <p style='color: #38BDF8; font-size: 14px; margin-top: 25px; background: rgba(56,189,248,0.1); display: inline-block; padding: 8px 15px; border-radius: 8px;'>좌측 회원 라운지에서 로그인 후 전환 확인을 요청해주세요.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        paywall_shown = True
-                    continue 
-
-                live_info = live_scores_data.get(match_id_str, {})
-                db_result = prediction_results_data.get(match_id_str, {})
-                explicit_status = _status_value(live_info) or _status_value(db_result) or _status_value(item) or _status_value(m)
-                score_text = _score_value(live_info) or _score_value(db_result) or _score_value(item) or _score_value(m)
-                event_html = _event_html(live_info, item, m)
-                is_final_now = match_status == "FINISHED" or _is_final_status(explicit_status)
-                if is_live_now:
-                    visible_score = escape(score_text) if score_text else "수집 대기"
-                    time_display = (
-                        f"<span class='live-score'>{visible_score}</span>"
-                        "<span class='deadline-closed' style='background:rgba(239, 68, 68, 0.1);"
-                        "border-color:#EF4444;color:#EF4444;'>🔴 LIVE</span>"
-                    )
-                elif is_final_now:
-                    if score_text:
-                        time_display = (
-                            f"<span class='live-score'>{escape(score_text)}</span>"
-                            "<span class='deadline-closed'>종료</span>"
-                        )
-                    else:
-                        time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span><span class='deadline-closed'>결과 확인 중</span>"
-                else:
-                    badge = f"<span class='deadline-closed'>픽 마감</span>" if is_closed else f"<span class='deadline-open'>{raw_deadline}</span>"
-                    time_display = f"<span class='match-time-text'>{item.get('final_match_time', '')}</span>{badge}"
-                
-                dynamic_pred_boxes = generate_pred_boxes(
-                    item.get('ev_sorted_picks', []),
-                    is_top3_tab=False,
-                    pick_categories=_pick_categories(item),
-                    grading=db_result if is_final_now else None,
-                    home_team=m.get('home', ''),
-                    analysis_item=item,
-                )
-
-                odds_source = str(
-                    item.get("odds_source") or m.get("odds_source") or "betman"
-                )
-                has_three_way_odds = _has_display_odds(
-                    m.get("odd_h"), m.get("odd_d"), m.get("odd_a")
-                )
-                has_handicap_odds = _has_display_odds(
-                    m.get("handi_h"), m.get("handi_d"), m.get("handi_a")
-                )
-                has_totals_odds = _has_display_odds(
-                    m.get("uo_under"), m.get("uo_over")
-                )
-
-                # 출처 표시가 누락된 데이터도 실제 1X2 배당이 없으면
-                # 0.0 숫자 대신 배당 대기 안내를 보여줍니다.
-                if odds_source == "model_only" or not has_three_way_odds:
-                    odds_bar_html = (
-                        "<div class='odd-bar'><span class='odd-item'>"
-                        "📊 승무패 배당 대기 · 팀 데이터 모델 선픽 제공 중"
-                        "</span></div>"
-                    )
-                elif odds_source == "overseas_fallback":
-                    odds_bar_html = (
-                        "<div class='odd-bar'>"
-                        f"<span class='odd-item'>🌍 해외 임시배당 · 승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
-                        "<span class='odd-item'>핸디캡·언오버는 베트맨 배당 대기</span>"
-                        "</div>"
-                    )
-                else:
-                    handicap_html = (
-                        f"핸디캡 <span class='odd-val'>{m.get('handi_h')} / {m.get('handi_d')} / {m.get('handi_a')}</span>"
-                        if has_handicap_odds else "핸디캡 배당 대기"
-                    )
-                    totals_html = (
-                        f"언오버 <span class='odd-val'>{m.get('uo_under')} / {m.get('uo_over')}</span>"
-                        if has_totals_odds else "언오버 배당 대기"
-                    )
-                    odds_bar_html = (
-                        "<div class='odd-bar'>"
-                        f"<span class='odd-item'>승 <span class='odd-val'>{m.get('odd_h','-')}</span> | 무 <span class='odd-val'>{m.get('odd_d','-')}</span> | 패 <span class='odd-val'>{m.get('odd_a','-')}</span></span>"
-                        f"<span class='odd-item'>{handicap_html}</span>"
-                        f"<span class='odd-item'>{totals_html}</span>"
-                        "</div>"
-                    )
-
-                upset_html = ""
-                if item.get('upset_warning'):
-                    upset_html = f"<div style='background-color: #3b1c1c; border-left: 4px solid #ff4d4d; padding: 12px 15px; font-size: 13px; color:#ffcccc; border-radius:4px; margin-bottom:15px; line-height:1.6;'><span style='background-color:#FFD700; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>후원회원 전용</span>🚨 <b>슈퍼 역배 주의보 포착!</b><br>{item.get('upset_reason', '역배 전조 증상이 포착되었습니다. 고배당 스나이핑 찬스!')}</div>"
-                
-                html_code = (
-                    f"<div class='match-card'>"
-                    f"<div class='league-title'>{m.get('league','축구')}{_analysis_data_quality_html(item)}</div>"
-                    f"<div class='vs-row'>"
-                    f"<div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}{item.get('h_rest_html','')}</div>{logo_h_tag}</div>"
-                    f"<div class='center-time-box'>{time_display}</div>"
-                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
-                    f"</div>"
-                    f"{event_html}"
-                    f"<div class='ai-story'>{item.get('story','')}</div>"
-                    f"{_detail_html(item)}"
-                    f"{upset_html}"
-                    f"{odds_bar_html}"
-                    f"<div class='pred-grid'>{dynamic_pred_boxes}</div>"
-                    f"</div>"
-                )
-                st.markdown(html_code, unsafe_allow_html=True)
+                if visible_match_limit is not None and displayed_count > visible_match_limit and not has_full_access:
+                    st.warning("4번째 경기부터는 후원회원에게 제공됩니다.")
+                    break
+                st.markdown(_render_live_match_card(item),unsafe_allow_html=True)
             if displayed_count == 0: st.info("조건에 맞는 경기가 없거나 모두 종료되었습니다.")
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
@@ -2842,7 +2906,7 @@ with main_tab6:
     st.markdown("""
     <div class='section-intro'>
         <div>
-            <h2>전체 경기</h2>
+            <h2>전체경기 LIVE</h2>
             <p>해외·사설 사이트 이용자를 위한 전 세계 축구 경기 분석 화면입니다.</p>
         </div>
     </div>
@@ -2865,7 +2929,7 @@ with main_tab6:
     eligible_world_matches = [
         item for item in raw_world_matches
         if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
-        and _recommendation_is_upcoming(item)
+        and _proto_is_recent_or_active(item)
     ]
     # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
     world_actual_analyzed = sum(
@@ -2932,169 +2996,14 @@ with main_tab6:
         """, unsafe_allow_html=True)
         st.caption(readiness_text)
     else:
+        world_matches.sort(key=_proto_live_sort_key)
         world_limit = None if has_full_access else 3
         for world_index, world_item in enumerate(world_matches):
             if world_limit is not None and world_index >= world_limit:
                 st.warning("4번째 세계 경기부터는 후원회원에게 제공됩니다.")
                 break
-            world_match = world_item.get("match", world_item)
-            world_league = escape(str(
-                world_match.get("league_name_ko")
-                or world_match.get("league")
-                or "세계 축구"
-            ))
-            world_home_raw = str(world_match.get("home", "홈팀"))
-            world_away_raw = str(world_match.get("away", "원정팀"))
-            world_home_display = str(
-                world_match.get("home_name_ko")
-                or _world_korean_name(world_home_raw, world_match.get("home_team_id"))
-                or world_home_raw
-            )
-            world_away_display = str(
-                world_match.get("away_name_ko")
-                or _world_korean_name(world_away_raw, world_match.get("away_team_id"))
-                or world_away_raw
-            )
-            world_home = escape(world_home_display)
-            world_away = escape(world_away_display)
-            world_home_logo = render_logo_html(
-                world_match.get("home_logo") or world_item.get("home_logo")
-            )
-            world_away_logo = render_logo_html(
-                world_match.get("away_logo") or world_item.get("away_logo")
-            )
-
-            def localized_world_pick(value):
-                label = str(value or "")
-                if world_home_raw and world_home_display:
-                    label = label.replace(world_home_raw, world_home_display)
-                if world_away_raw and world_away_display:
-                    label = label.replace(world_away_raw, world_away_display)
-                return escape(label)
-            world_time = escape(str(
-                world_item.get("final_match_time")
-                or world_match.get("match_time")
-                or world_match.get("date")
-                or "시간 확인 중"
-            ))
-            visibility_status = str(world_item.get("visibility_status") or "PUBLIC").upper()
-            analysis_status = str(world_item.get("analysis_status") or "").upper()
-            world_analysis, canonical_proto = _world_analysis_for_display(
-                world_item, proto_by_fixture
-            )
-            selected_pick = world_analysis.get("selected") or {}
-            world_categories = world_analysis.get("categories") or {}
-            quality_score = int(
-                world_analysis.get("data_quality_score")
-                or world_item.get("data_quality_score")
-                or 0
-            )
-            quality_grade = escape(str(
-                world_analysis.get("data_quality_grade")
-                or world_item.get("data_quality_grade")
-                or "분석 전"
-            ))
-            stage_text = escape(str(
-                world_analysis.get("analysis_stage")
-                or world_item.get("analysis_stage")
-                or "대기"
-            ))
-            world_status_html = ""
-            status_label = {
-                "PENDING_SHADOW_ANALYSIS": "일정 수집 완료 · 분석 대기",
-                "WAITING_T24_ANALYSIS": "킥오프 24시간 전 분석 대기",
-                "ANALYZED_SHADOW": "분석 완료 · 공식 VIP 표본 미포함",
-                "FROZEN_SHADOW": "최종 픽 동결 · 공식 VIP 표본 미포함",
-                "DEFERRED_DAILY_CAP": "오늘 정밀분석 30경기 상한으로 다음 순번 대기",
-                "DEFERRED_LEAGUE_CAP": "리그별 정밀분석 상한으로 다음 순번 대기",
-                "MISSED_PREKICKOFF": "킥오프 전 분석 기회를 놓침",
-                "ANALYSIS_ERROR": "분석 오류 · 다시 확인 중",
-            }.get(analysis_status, analysis_status.replace("_", " ") or "상태 확인 중")
-            if visibility_status == "SHADOW":
-                world_status_html = (
-                    "<div style='margin-top:14px; color:#F59E0B; font-weight:800;'>"
-                    f"🧪 검증 중 · {escape(status_label)}</div>"
-                )
-            elif visibility_status == "PUBLIC":
-                world_status_html = (
-                    "<div style='margin-top:14px; color:#10B981; font-weight:800;'>"
-                    "✅ 공식 공개</div>"
-                )
-            if selected_pick:
-                selected_name = localized_world_pick(
-                    selected_pick.get("display")
-                    or selected_pick.get("raw_pick")
-                    or "픽 계산 완료"
-                )
-                selected_probability = float(selected_pick.get("probability") or 0) * 100
-                selected_raw = str(selected_pick.get("raw_pick") or "")
-                badges = list(selected_pick.get("badges") or [])
-                if not badges:
-                    if str((world_categories.get("honey") or {}).get("raw_pick") or "") == selected_raw:
-                        badges.append("배당가치 우수")
-                    if str((world_categories.get("vip_underdog") or {}).get("raw_pick") or "") == selected_raw:
-                        badges.append("VIP 검증 등급")
-                badge_html = "".join(
-                    "<span style='display:inline-block; margin:6px 6px 0 0; "
-                    "padding:3px 8px; border-radius:999px; background:#F59E0B; "
-                    f"color:#08111F; font-size:11px; font-weight:900;'>{escape(str(badge))}</span>"
-                    for badge in badges
-                )
-                world_status_html += (
-                    "<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); "
-                    "gap:10px; margin-top:12px;'>"
-                    "<div style='border:1px solid #0EA5E9; border-radius:10px; padding:12px; background:#071522;'>"
-                    "<div style='color:#22D3EE; font-size:12px; font-weight:800;'>최종 추천픽</div>"
-                    f"<div style='font-weight:900; margin-top:5px;'>{selected_name}</div>"
-                    f"<div style='color:#94A3B8; font-size:12px;'>{selected_probability:.1f}%</div>"
-                    f"{badge_html}"
-                    "</div>"
-                    "<div style='border:1px solid #334155; border-radius:10px; padding:12px; background:#0B1220;'>"
-                    "<div style='color:#A78BFA; font-size:12px; font-weight:800;'>검증 정보</div>"
-                    f"<div style='font-weight:900; margin-top:5px;'>데이터 {quality_score}/100 · {quality_grade}</div>"
-                    f"<div style='color:#94A3B8; font-size:12px;'>{stage_text}</div>"
-                    "</div></div>"
-                )
-                if canonical_proto is not None:
-                    world_status_html += (
-                        "<div style='margin-top:8px;color:#38BDF8;font-size:11px;font-weight:800;'>"
-                        "🔗 프로토 LIVE와 같은 공식 경기 ID · 동일 최종픽 사용</div>"
-                    )
-            st.markdown(
-                f"""
-                <div class='match-card'>
-                    <div class='league-title'>{world_league}</div>
-                    <div class='vs-row'>
-                        <div class='team-box home'>{world_home_logo}<div class='team-name-text'>{world_home}</div></div>
-                        <div class='center-time-box'><span class='match-time-text'>{world_time}</span></div>
-                        <div class='team-box away'>{world_away_logo}<div class='team-name-text'>{world_away}</div></div>
-                    </div>
-                    {world_status_html}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            report_text = str(world_analysis.get("report") or "").strip()
-            if report_text:
-                report_text = report_text.replace(world_home_raw, world_home_display)
-                report_text = report_text.replace(world_away_raw, world_away_display)
-                with st.expander(f"상세 분석 보기 · {world_home_display} vs {world_away_display}"):
-                    st.markdown(report_text, unsafe_allow_html=True)
-                    missing_data = world_analysis.get("missing_data") or []
-                    if missing_data:
-                        st.warning("확보하지 못한 자료: " + ", ".join(map(str, missing_data)))
-                    lineup_learning = (
-                        (world_analysis.get("inputs_snapshot") or {}).get("lineup_learning")
-                        or {}
-                    )
-                    home_core = list(lineup_learning.get("home_predicted_core") or [])
-                    away_core = list(lineup_learning.get("away_predicted_core") or [])
-                    if home_core or away_core:
-                        st.caption("선발 학습 1단계 · 공식 선발 11명을 단정하지 않고 확인된 핵심 후보만 저장")
-                        if home_core:
-                            st.write(f"{world_home_display} 예상 핵심 후보: {', '.join(home_core)}")
-                        if away_core:
-                            st.write(f"{world_away_display} 예상 핵심 후보: {', '.join(away_core)}")
+            display_item = _world_live_item(world_item,proto_by_fixture)
+            st.markdown(_render_live_match_card(display_item),unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
@@ -3255,7 +3164,7 @@ with main_tab4:
             )
             finished_rows = [
                 row for row in canonical_rows
-                if str(row.get("actual_result") or "") == "FINISHED"
+                if str(row.get("actual_result") or "") == "FINISHED" and str(row.get("prob_pick") or "").strip()
             ]
             pending_rows = [
                 row for row in canonical_rows
@@ -3282,7 +3191,7 @@ with main_tab4:
                 if column not in df_pending.columns:
                     df_pending[column] = 0 if column.startswith("is_") else ""
             current_version = str(
-                dashboard_data.get("source_meta", {}).get("analysis_version") or ""
+                grading_snapshot.get("analysis_version") or dashboard_data.get("source_meta", {}).get("analysis_version") or ""
             ).strip()
             df_proto_all = df_finished[
                 df_finished['is_toto14'].fillna(0).astype(int) == 0
@@ -3510,7 +3419,7 @@ with main_tab4:
                     archived_row = dict(row)
                     archived_row['_archive_reason'] = (
                         '고유번호·버전 정보 없음'
-                        if missing_identity else '결과 연결 미완료'
+                        if missing_identity else row.get('grading_wait_reason','결과 연결 미완료')
                     )
                     archived_unresolved.append(archived_row)
                 else:
@@ -3536,7 +3445,7 @@ with main_tab4:
                 if now < m_dt:
                     badge_html = "<span class='pending-report-badge upcoming'>진행 예정</span>"
                 elif now < m_dt + timedelta(hours=2.5):
-                    badge_html = "<span class='pending-report-badge playing'>경기 진행중</span>"
+                    badge_html = "<span class='pending-report-badge playing'>진행 상태 확인 대기</span>"
                 else:
                     badge_html = "<span class='pending-report-badge grading'>채점 로봇 분석중</span>"
 
@@ -3556,7 +3465,8 @@ with main_tab4:
                         safe_event = escape(str(live_info.get("event") or ""))
                     if safe_event:
                         event_html = f"<div style='font-size:11px; color:#10B981; font-weight:900; margin-top:4px; overflow-wrap:anywhere;'>{safe_event}</div>"
-                    badge_html = "<span class='pending-report-badge live'>🔴 LIVE</span>"
+                    if live_info.get("is_live") and not live_info.get("final"):
+                        badge_html = "<span class='pending-report-badge live'>🔴 LIVE</span>"
 
                 safe_time = escape(str(m_time_str))
                 safe_home = escape(str(row.get('home_team', '')))
@@ -3572,7 +3482,7 @@ with main_tab4:
                     f"</div>"
                     f"<div class='pending-report-status'>"
                     f"<span class='pending-report-score'>{safe_score}</span>"
-                    f"{badge_html}"
+                    f"{badge_html}<small>{escape(str(row.get('grading_wait_reason') or ''))}</small>"
                     f"</div>"
                     f"</div>"
                 )
