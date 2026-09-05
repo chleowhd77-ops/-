@@ -3,12 +3,11 @@
     "scheduler": {
       "supervisor_pid": 305379,
       "state": "running",
-      "heartbeat_at": "2026-09-05T16:51:36+00:00",
+      "heartbeat_at": "2026-09-05T16:52:06+00:00",
       "pid": 305379,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 306070,
-        "world": 306071,
         "live": 306072,
         "score": 306073
       }
@@ -16,36 +15,36 @@
     "live": {
       "child_pid": 306072,
       "state": "running",
-      "heartbeat_at": "2026-09-05T16:51:37+00:00",
-      "pid": 306072,
-      "last_started_at": "2026-09-05T16:51:36+00:00",
-      "elapsed_seconds": 0.0,
+      "heartbeat_at": "2026-09-05T16:52:06+00:00",
+      "pid": 305379,
+      "last_started_at": "2026-09-05T16:52:06+00:00",
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
-      "duration_seconds": 6.0,
-      "last_failure_at": "2026-09-05T16:46:42+00:00",
+      "duration_seconds": 6.57,
+      "last_failure_at": "2026-09-05T16:51:44+00:00",
       "last_success_at": "2026-09-05T07:01:48+00:00",
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "child_pid": 306073,
-      "state": "running",
-      "heartbeat_at": "2026-09-05T16:51:37+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-05T16:52:08+00:00",
       "pid": 306073,
       "last_started_at": "2026-09-05T16:51:36+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
-      "duration_seconds": 26.0,
+      "duration_seconds": 30.2,
       "last_success_at": "2026-09-04T16:56:26+00:00",
-      "last_failure_at": "2026-09-05T16:47:02+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-05T16:52:08+00:00",
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 306070,
       "state": "running",
-      "heartbeat_at": "2026-09-05T16:51:37+00:00",
-      "pid": 306070,
+      "heartbeat_at": "2026-09-05T16:52:06+00:00",
+      "pid": 305379,
       "last_started_at": "2026-09-05T16:51:36+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
       "duration_seconds": 50.1,
       "last_failure_at": "2026-09-05T16:32:26+00:00",
@@ -55,18 +54,18 @@
     "world": {
       "child_pid": 306071,
       "state": "failed",
-      "heartbeat_at": "2026-09-05T16:51:40+00:00",
-      "pid": 306071,
+      "heartbeat_at": "2026-09-05T16:51:44+00:00",
+      "pid": 305379,
       "last_started_at": "2026-09-05T16:51:36+00:00",
       "elapsed_seconds": 0.0,
       "overlap_skips": 0,
-      "duration_seconds": 2.65,
+      "duration_seconds": 8.1,
       "last_success_at": "2026-09-04T23:46:15+00:00",
-      "last_failure_at": "2026-09-05T16:51:40+00:00",
-      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
+      "last_failure_at": "2026-09-05T16:51:44+00:00",
+      "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-05T16:51:40+00:00",
+  "updated_at": "2026-09-05T16:52:08+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -78,12 +77,12 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 72
+        "calls": 73
       },
       {
         "purpose": "scoring",
         "endpoint": "/fixtures",
-        "calls": 35
+        "calls": 37
       },
       {
         "purpose": "analysis",
@@ -104,15 +103,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-05",
     "reset_timezone": "UTC",
-    "local_calls": 6095,
-    "provider_remaining": 6930,
+    "local_calls": 6098,
+    "provider_remaining": 6927,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 111,
     "analysis_calls": 5715,
-    "live_calls": 214,
-    "scoring_calls": 55,
+    "live_calls": 215,
+    "scoring_calls": 57,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
     "quota_exhausted": false
