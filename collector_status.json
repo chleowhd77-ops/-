@@ -3,7 +3,7 @@
     "scheduler": {
       "supervisor_pid": 305379,
       "state": "running",
-      "heartbeat_at": "2026-09-06T01:31:50+00:00",
+      "heartbeat_at": "2026-09-06T01:32:20+00:00",
       "pid": 305379,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
@@ -14,36 +14,36 @@
     },
     "live": {
       "child_pid": 314652,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T01:31:51+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-06T01:32:24+00:00",
       "pid": 314652,
       "last_started_at": "2026-09-06T01:31:50+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 30.57,
+      "duration_seconds": 33.3,
       "last_failure_at": "2026-09-06T00:01:53+00:00",
-      "last_success_at": "2026-09-06T01:27:21+00:00"
+      "last_success_at": "2026-09-06T01:32:24+00:00"
     },
     "score": {
       "child_pid": 314653,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T01:31:51+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-06T01:32:22+00:00",
       "pid": 314653,
       "last_started_at": "2026-09-06T01:31:50+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 34.0,
+      "duration_seconds": 31.41,
       "last_success_at": "2026-09-04T16:56:26+00:00",
-      "last_failure_at": "2026-09-06T01:27:24+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-06T01:32:22+00:00",
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 314651,
       "state": "running",
-      "heartbeat_at": "2026-09-06T01:31:51+00:00",
-      "pid": 314651,
+      "heartbeat_at": "2026-09-06T01:32:20+00:00",
+      "pid": 305379,
       "last_started_at": "2026-09-06T01:31:50+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
       "duration_seconds": 68.1,
       "last_failure_at": "2026-09-06T01:12:57+00:00",
@@ -64,7 +64,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-06T01:31:51+00:00",
+  "updated_at": "2026-09-06T01:32:24+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -89,14 +89,14 @@
         "calls": 53
       },
       {
+        "purpose": "analysis",
+        "endpoint": "/odds",
+        "calls": 52
+      },
+      {
         "purpose": "scoring",
         "endpoint": "/fixtures/statistics",
         "calls": 51
-      },
-      {
-        "purpose": "analysis",
-        "endpoint": "/odds",
-        "calls": 50
       },
       {
         "purpose": "world",
@@ -109,6 +109,11 @@
         "calls": 46
       },
       {
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "calls": 45
+      },
+      {
         "purpose": "world",
         "endpoint": "/players/squads",
         "calls": 45
@@ -119,11 +124,6 @@
         "calls": 44
       },
       {
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "calls": 42
-      },
-      {
         "purpose": "world",
         "endpoint": "/injuries",
         "calls": 38
@@ -132,14 +132,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-06",
     "reset_timezone": "UTC",
-    "local_calls": 845,
-    "provider_remaining": 6655,
+    "local_calls": 855,
+    "provider_remaining": 6645,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 620,
-    "analysis_calls": 118,
-    "live_calls": 42,
+    "analysis_calls": 125,
+    "live_calls": 45,
     "scoring_calls": 65,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
