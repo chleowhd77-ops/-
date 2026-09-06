@@ -120,6 +120,24 @@ def load_world_dashboard_data():
         pass
     return {"matches": [], "source_meta": {}, "rejected_summary": []}
 
+def load_grading_snapshot(embedded):
+    """A score-owned feed is independent of slow analysis/DB publication."""
+    embedded = embedded if isinstance(embedded, dict) else {}
+    try:
+        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/grading_results.json?t={int(time.time())}"
+        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if (isinstance(data, dict) and data.get("schema_version") == "grading-results.v1"
+                    and not data.get("error") and isinstance(data.get("finished"), list)
+                    and isinstance(data.get("pending"), list)
+                    and str(data.get("generated_at") or "") >= str(embedded.get("generated_at") or "")):
+                return data
+    except Exception:
+        pass
+    return embedded
+
+
 def load_prediction_results(grading_snapshot=None):
     """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
     embedded_rows = []
@@ -128,6 +146,7 @@ def load_prediction_results(grading_snapshot=None):
     if embedded_rows:
         return {
             str(row.get("match_id")): {
+                "api_fixture_id": row.get("api_fixture_id"),
                 "actual_score": row.get("actual_score"),
                 "actual_result": row.get("actual_result"),
                 "ai_note": row.get("ai_note"),
@@ -906,18 +925,20 @@ st.markdown("""
         .stTabs [data-baseweb="tab-list"] { gap: 18px !important; overflow-x: auto !important; flex-wrap: nowrap !important; justify-content: flex-start !important; }
         .stTabs [data-baseweb="tab"] { flex: 0 0 auto !important; font-size: 11px !important; padding: 8px 0 10px !important; }
         .match-card { padding: 18px 14px !important; border-radius: 16px !important; }
-        .vs-row { align-items: flex-start !important; gap: 5px; }
-        .team-box { width: 40%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
+        .match-card, .match-card * { box-sizing: border-box; min-width: 0; max-width: 100%; }
+        .vs-row { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(64px, .7fr) minmax(0, 1fr); align-items: flex-start !important; gap: 5px; }
+        .team-box { width: 100%; flex: none !important; flex-direction: column !important; justify-content: flex-start !important; text-align: center !important; gap: 8px !important; }
         .team-box.home { flex-direction: column-reverse !important; }
         .team-box.away { flex-direction: column !important; }
         .team-box.home .team-info-wrapper, .team-box.away .team-info-wrapper { align-items: center !important; text-align: center !important; width: 100% !important; }
         .team-logo { width: 48px !important; height: 48px !important; margin: 0 auto; border-radius: 13px; }
-        .team-name-text { font-size: 14px !important; word-break: keep-all !important; white-space: normal !important; line-height: 1.3; margin-top: 5px; }
-        .center-time-box { width: 20%; margin-top: 5px; }
+        .team-name-text { font-size: 14px !important; overflow-wrap: anywhere; white-space: normal !important; line-height: 1.3; margin-top: 5px; }
+        .team-info-wrapper, .team-info-wrapper *, .league-title, .analysis-details, .pred-box, .odd-bar { overflow-wrap: anywhere; white-space: normal !important; }
+        .center-time-box { min-width: 0 !important; width: 100%; margin-top: 5px; overflow-wrap: anywhere; }
         .live-score { font-size: 20px !important; }
         .match-time-text { font-size: 11px !important; }
         .odd-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
-        .pred-grid { grid-template-columns: 1fr !important; }
+        .pred-grid { grid-template-columns: minmax(0, 1fr) !important; }
         .pred-box { min-height: 104px; }
         .section-intro { align-items: flex-start; flex-direction: column; gap: 5px; }
         .report-card { padding: 15px 13px !important; }
@@ -1627,7 +1648,7 @@ if isinstance(dashboard_data, dict):
             item for item in dashboard_data.get(collection_name, [])
             if _is_displayable_match_item(item)
         ]
-grading_snapshot = dashboard_data.get("grading", {})
+grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
 prediction_results_data = load_prediction_results(grading_snapshot)
 
 proto_total = len(dashboard_data.get("proto", []))
@@ -2012,7 +2033,7 @@ def _render_live_match_card(item):
         f"<div class='center-time-box' style='min-width:140px'>{time_display}</div>"
         f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
         "</div>"
-        f"{event_html}<div class='pred-grid'>{boxes}</div>{odds_bar_html}{_detail_html(detail_item, always_visible=True)}"
+        f"{event_html}{_detail_html(detail_item, always_visible=True)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
         "</div>"
     )
 

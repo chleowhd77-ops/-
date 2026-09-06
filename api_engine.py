@@ -32,10 +32,10 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.4.0-1x2-first-value"
+ANALYSIS_VERSION = "V7.4.1-probability-price-balance"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.4.0-shared-live-quota-ledger"
+SYSTEM_VERSION = "R7.4.1-result-first-shared-live"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -106,8 +106,6 @@ def _is_daily_quota_response(response, error_text=""):
     최근 전적ㆍ부상자ㆍLIVE 조회가 모두 중단될 수 있다.
     """
     daily_remaining = _header_int(response, "x-ratelimit-requests-remaining")
-    if daily_remaining is not None:
-        return daily_remaining <= 0
     daily_markers = (
         "daily quota",
         "daily request",
@@ -115,7 +113,9 @@ def _is_daily_quota_response(response, error_text=""):
         "request limit for the day",
         "quota for the day",
     )
-    return any(marker in error_text for marker in daily_markers)
+    return any(marker in error_text for marker in daily_markers) or (
+        daily_remaining is not None and daily_remaining <= 0
+    )
 
 
 def _pace_api_request():
@@ -2516,14 +2516,15 @@ def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
 def generate_real_ai_note(
     fixture_id, goals_h, goals_a, is_correct_prob, is_correct_ev, has_ev_pick=True,
     home_team="", away_team="", prob_pick="", ev_pick="", event_timeline=None,
-    return_postmortem=False,
+    return_postmortem=False, fetch_official_stats=True,
 ):
     """Record verified score, official facts, and deterministic miss reasons."""
     normalized_stats = []
     try:
-        stat_res = api_get("/fixtures/statistics", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
-        raw_stats = stat_res.json().get("response", []) if stat_res.status_code == 200 else []
-        normalized_stats = normalize_official_stats(raw_stats)
+        if fetch_official_stats:
+            stat_res = api_get("/fixtures/statistics", params={"fixture": fixture_id}, timeout=5, purpose="scoring")
+            raw_stats = stat_res.json().get("response", []) if stat_res.status_code == 200 else []
+            normalized_stats = normalize_official_stats(raw_stats)
     except Exception:
         normalized_stats = []
 

@@ -73,6 +73,9 @@ PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
 # 남아 있어도 8조합(8,000원)을 넘지 않도록 상한을 강제한다.
 TOTO14_MAX_COMBINATIONS = max(1, min(8, int(os.getenv("TOTO14_MAX_COMBINATIONS", "8"))))
 TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
+# Price policy is explicit and logged; until a new floor is agreed, preserve
+# the existing deployment value instead of silently inventing a threshold.
+FINAL_PICK_MIN_ODDS = max(1.01, float(os.getenv("FINAL_PICK_MIN_ODDS", "1.20")))
 LIVE_STATUSES = {'1H', 'HT', '2H', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'}
 TERMINAL_STATUSES = {'FT', 'AET', 'PEN'}
 CANCELED_STATUSES = {'CANC', 'ABD', 'AWD', 'WO'}
@@ -579,7 +582,12 @@ def upload_sqlite_to_github(db_path="ai_predictions.db"):
             source = sqlite3.connect(str(source_path), timeout=30)
             target = sqlite3.connect(str(temp_path), timeout=30)
             source.backup(target)
+            # API responses are disposable cache, not prediction history. Keep
+            # them in the server DB, but do not republish tens of MB each cycle.
+            if target.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_cache'").fetchone():
+                target.execute("DELETE FROM api_cache")
             target.commit()
+            target.execute("VACUUM")
         finally:
             if target is not None:
                 target.close()
@@ -1262,6 +1270,9 @@ def load_market_performance(league_name=None):
             if required_columns.issubset(prediction_columns)
             else []
         )
+        diagnostics = _candidate_learning_diagnostics(conn)
+        for market in summary:
+            summary[market].update(diagnostics.get(market, {}))
         conn.close()
     except Exception:
         return summary
@@ -1325,6 +1336,71 @@ def load_market_performance(league_name=None):
     return summary
 
 
+def _candidate_learning_diagnostics(conn):
+    """All frozen candidates, not only winners/selected picks. Read-only.
+
+    Binary markets only: Asian/integer totals need refund-aware settlement,
+    so legacy boolean results from those lines are not treated as ROI evidence.
+    One snapshot per fixture; no hindsight pick replacement.
+    """
+    diagnostics = {market: {"candidate_samples": 0, "brier_score": None,
+                           "unit_roi": None, "calibration_bins": {}, "odds_bands": {}}
+                   for market in MARKET_LABELS}
+    try:
+        rows = conn.execute("""
+            SELECT r.market_key,r.model_probability,r.odd,r.is_correct,r.raw_pick,
+                   r.analysis_version,r.analysis_snapshot_id,p.api_fixture_id,r.match_id
+            FROM prediction_candidate_results r JOIN predictions p ON p.match_id=r.match_id
+            WHERE p.actual_result='FINISHED' AND COALESCE(p.is_toto14,0)=0
+            ORDER BY r.analysis_snapshot_id DESC, r.id DESC LIMIT 8000
+        """).fetchall()
+    except sqlite3.Error:
+        return diagnostics
+    seen, chosen_snapshot, sums = set(), {}, {}
+    for market, probability, odd, hit, raw_pick, version, snapshot, fixture, match_id in rows:
+        if market not in diagnostics:
+            continue
+        if market == "totals":
+            line = re.search(r'(\d+(?:\.\d+)?)', str(raw_pick))
+            if not line or abs(float(line.group(1)) % 1 - 0.5) > 1e-6:
+                continue
+        if market == "handicap":
+            line = re.search(r'([+-]\d+(?:\.\d+)?)', str(raw_pick))
+            if line and abs(float(line.group(1)) * 2 - round(float(line.group(1)) * 2)) > 1e-6:
+                continue
+        key = (str(fixture) if fixture else str(match_id), str(version))
+        chosen_snapshot.setdefault(key, snapshot)
+        if chosen_snapshot[key] != snapshot or (key, market, raw_pick) in seen:
+            continue
+        seen.add((key, market, raw_pick))
+        p, price, y = float(probability or 0), float(odd or 0), int(hit or 0)
+        if not 0 < p < 1 or price <= 1 or y not in (0, 1):
+            continue
+        value = diagnostics[market]
+        value["candidate_samples"] += 1
+        totals = sums.setdefault(market, [0.0, 0.0])
+        totals[0] += (p-y) ** 2
+        totals[1] += y*price-1
+        # The bands are diagnostics, never new recommendation thresholds.
+        band = "below_2" if price < 2 else "2_to_3" if price < 3 else "3_plus"
+        bucket = value["odds_bands"].setdefault(band, {"samples": 0, "hits": 0, "profit": 0.0})
+        bucket["samples"] += 1
+        bucket["hits"] += y
+        bucket["profit"] = round(bucket["profit"] + y*price-1, 6)
+        # Changed model versions do not silently inherit old calibration errors.
+        if str(version) == ANALYSIS_VERSION:
+            bin_key = str(min(9, int(p*10)))
+            cohort = value["calibration_bins"].setdefault(bin_key, {"samples": 0, "error_sum": 0.0})
+            cohort["samples"] += 1
+            cohort["error_sum"] += y-p
+    for market, value in diagnostics.items():
+        n = value["candidate_samples"]
+        if n:
+            value["brier_score"] = round(sums[market][0]/n, 6)
+            value["unit_roi"] = round(sums[market][1]/n, 6)
+    return diagnostics
+
+
 def calibrate_market_candidates(picks, market_performance, confidence):
     """세 시장을 같은 척도로 보정하고 확률ㆍ공정확률ㆍ오차범위를 저장한다."""
     confidence = max(0.35, min(0.95, float(confidence or 0.35)))
@@ -1340,23 +1416,18 @@ def calibrate_market_candidates(picks, market_performance, confidence):
         history = market_performance.get(market, {})
         samples = int(history.get("samples") or 0)
         hit_rate = float(history.get("hit_rate") or 0.5)
-        history_weight = min(0.18, (samples / (samples + 30.0)) * 0.18)
         adjusted_values = []
         for pick in market_picks:
             raw_probability = max(0.001, min(0.999, float(pick.get("prob") or 0)))
             fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
             pick["raw_model_prob"] = round(raw_probability, 6)
-            if fair_probability > 0:
-                history_skill = 0.75 + (0.50 * hit_rate)
-                history_target = fair_probability + (
-                    (raw_probability - fair_probability) * history_skill
-                )
-                adjusted = (
-                    raw_probability * (1.0 - history_weight)
-                    + history_target * history_weight
-                )
-            else:
-                adjusted = raw_probability
+            cohort = history.get("calibration_bins", {}).get(str(min(9, int(raw_probability*10))), {})
+            cohort_n = int(cohort.get("samples") or 0)
+            history_weight = min(0.18, cohort_n / (cohort_n + 30.0) * 0.18)
+            correction = float(cohort.get("error_sum") or 0) / cohort_n if cohort_n else 0.0
+            adjusted = max(0.001, min(0.999, raw_probability + history_weight * correction))
+            pick["learning_weight"] = round(history_weight, 4)
+            pick["learning_cohort_samples"] = cohort_n
             adjusted_values.append(max(0.001, adjusted))
 
         normalized = normalize_probabilities(adjusted_values)
@@ -1376,7 +1447,8 @@ def calibrate_market_candidates(picks, market_performance, confidence):
             pick["market_hit_rate"] = round(hit_rate, 4)
             pick["market_history_samples"] = samples
             pick["market_history_scope"] = str(history.get("scope") or "global")
-            pick["learning_weight"] = round(history_weight, 4)
+            pick["learning_diagnostics"] = {key: history.get(key) for key in
+                                            ("candidate_samples", "brier_score", "unit_roi", "odds_bands")}
             pick["data_confidence"] = round(confidence, 4)
             pick["error_margin"] = round(error_margin, 4)
             pick["probability_interval"] = {
@@ -2170,7 +2242,7 @@ def select_pick_categories(picks, confidence):
     value_candidates = [
         pick for pick in available
         if pick.get("fair_prob") is not None
-        and 1.20 <= float(pick.get("odd", 0) or 0) <= 5.00
+        and FINAL_PICK_MIN_ODDS <= float(pick.get("odd", 0) or 0) <= 5.00
         and float(pick.get("robust_edge", 0) or 0) >= value_edge_floor
         and float(pick.get("robust_ev", 0) or 0) >= 1.01
         and confidence >= 0.50
@@ -2181,8 +2253,7 @@ def select_pick_categories(picks, confidence):
             0.40 if infer_pick_market(pick) == "1x2" else 0.50
         ) or bool(pick.get("is_qualified_underdog"))
     ]
-    primary = [pick for pick in value_candidates if infer_pick_market(pick) == "1x2"]
-    selection_pool = primary or value_candidates
+    selection_pool = value_candidates
     if not selection_pool:
         categories["high_probability"] = {
             "raw_pick": "", "prob": 0.0, "official_final_pick": False,
@@ -2214,9 +2285,14 @@ def select_pick_categories(picks, confidence):
     high_source["official_final_pick"] = True
     high_source["recommendation_status"] = "SELECTED"
     high_source["selection_reason"] = (
-        "승무패가 확률·배당가치 기준을 통과하여 우선 선택"
-        if primary else "승무패 가치 부족: 언더오버·핸디캡 적격 후보에서 선택"
+        f"승무패·언더오버·핸디캡 전체 {len(available)}개 후보 중 "
+        f"실제 배당 {FINAL_PICK_MIN_ODDS:.2f}배 이상·보수적 가치 기준을 통과한 "
+        f"{len(selection_pool)}개에서 보수확률이 가장 높은 방향 선택. "
+        f"선택 배당 {float(high_source.get('odd') or 0):.2f}배."
     )
+    high_source["selection_policy"] = {"minimum_odds": FINAL_PICK_MIN_ODDS,
+                                       "compare_all_markets": True,
+                                       "force_underdog": False}
     high_source["learning_robot"] = {
         "mode": "controlled_adviser",
         "market": infer_pick_market(high_source),
@@ -2227,27 +2303,36 @@ def select_pick_categories(picks, confidence):
         "influence_cap": 0.18,
         "history_rewrite": False,
         "self_modifying": False,
+        "objective": "probability_calibration_and_price_value",
+        "calibration_model_version": ANALYSIS_VERSION,
+        "calibration_cohort_samples": int(high_source.get("learning_cohort_samples") or 0),
+        "diagnostics": high_source.get("learning_diagnostics") or {},
     }
 
     # 꿀픽과 VIP는 다른 예측이 아니다. 최종 추천픽 하나가 각 기준을
     # 통과했을 때만 동일한 raw_pick에 등급 배지를 붙인다.
-    honey_source = high_source if value_qualified else None
+    # Reuse the existing stronger value thresholds, not a new odds-only grade.
+    strong_value = bool(value_qualified
+                        and float(high_source.get("robust_edge", 0) or 0) >= 0.03
+                        and float(high_source.get("robust_ev", 0) or 0) >= 1.08
+                        and confidence >= 0.68)
+    honey_source = high_source if strong_value else None
     vip_source = None
     if value_qualified:
         vip_passed = bool(
-            high_source.get("is_true_underdog")
+            strong_value
             and high_source.get("market_movement_confirmed")
             and float(high_source.get("robust_edge", 0) or 0) >= 0.03
             and float(high_source.get("robust_ev", 0) or 0) >= 1.08
             and confidence >= 0.68
             and int(high_source.get("independent_support_count", 0) or 0) >= 3
-            and 2.20 <= float(high_source.get("odd", 0) or 0) <= 4.50
+            and FINAL_PICK_MIN_ODDS <= float(high_source.get("odd", 0) or 0) <= 4.50
         )
         if vip_passed:
             vip_source = high_source
 
     high_source["final_pick_grade"] = (
-        "vip" if vip_source else "value" if value_qualified else "standard"
+        "vip" if vip_source else "value" if honey_source else "standard"
     )
 
     categories["high_probability"] = _tag_pick_category(high_source, "high_probability")
@@ -2367,7 +2452,7 @@ def _build_grading_snapshot():
         }
     except Exception as error:
         print(f"⚠️ 채점 스냅샷 생성 실패: {error}")
-        return {"finished": [], "pending": [], "generated_at": _utc_iso()}
+        return {"finished": [], "pending": [], "generated_at": _utc_iso(), "error": "grading_snapshot_failed"}
     finally:
         if conn is not None:
             conn.close()
@@ -2385,7 +2470,10 @@ def _refresh_dashboard_grading_snapshot():
     if not isinstance(dashboard, dict) or not dashboard:
         print("⚠️ 채점 화면 갱신 보류: 기존 대시보드 데이터가 없습니다.")
         return False
-    dashboard["grading"] = _build_grading_snapshot()
+    snapshot = _build_grading_snapshot()
+    if snapshot.get("error"):
+        return False
+    dashboard["grading"] = snapshot
     source_meta = dashboard.get("source_meta")
     if not isinstance(source_meta, dict):
         source_meta = {}
@@ -5464,10 +5552,6 @@ def build_dashboard_data():
         scheduled_dt = _parse_kst_match_time(match_time)
         m_dt = parse_match_time(match_time)
         diff_hours = (m_dt - now).total_seconds() / 3600.0
-        home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, match_time, ttl_h=2
-        )
-
         frozen_item = None
         frozen_record = frozen_toto14.get(match_id)
         if (
@@ -5519,22 +5603,12 @@ def build_dashboard_data():
                     frozen_item["analysis_stage"] = snapshot_item["frozen_from_stage"]
                 freeze_needs_persist = True
 
-        if frozen_item is None and kickoff_passed:
+        if frozen_item is None and (kickoff_passed or scheduled_dt is None):
             frozen_item = _unavailable_toto14_item(m)
-            freeze_needs_persist = True
+            freeze_needs_persist = kickoff_passed  # Unknown schedules may recover later.
 
-        # 예측 선택은 동결해도 잘못된 팀 ID와 로고는 동결하지 않는다.
-        # 실제 경기표에서 다시 확인한 표시·신원 정보만 매 수집 때 갱신한다.
-        if frozen_item is not None:
-            frozen_item = dict(frozen_item)
-            frozen_item["home_logo"] = home_info.get("logo")
-            frozen_item["away_logo"] = away_info.get("logo")
-            frozen_item["home_id"] = int(home_info.get("id") or 0)
-            frozen_item["away_id"] = int(away_info.get("id") or 0)
-            if identity_fixture:
-                frozen_item["api_fixture_id"] = int(
-                    identity_fixture.get("fixture", {}).get("id") or 0
-                )
+        # Frozen rounds need no new analysis/identity API calls. A missing ID is
+        # repaired by the bounded scoring queue, never by rewriting forecasts.
 
         if frozen_item is not None and freeze_needs_persist:
             stored_item = _freeze_toto14_prediction(
@@ -5572,6 +5646,14 @@ def build_dashboard_data():
             frozen_prediction_count += 1
             continue
 
+        home_info, away_info, identity_fixture = resolve_match_team_pair(
+            home_team, away_team, match_time, ttl_h=2
+        )
+        if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
+            unavailable = _unavailable_toto14_item(m)
+            unavailable['data_warning'] = '양 팀 신원 확인 대기 · 기본값으로 예측하지 않음'
+            dashboard_toto14.append(unavailable)
+            continue
         heavy_ttl = 24
         # 경기 직전에는 결장 정보가 자주 바뀌므로 짧게 갱신한다.
         inj_ttl = 0.5 if diff_hours <= 1.5 else 12
@@ -5818,13 +5900,8 @@ def build_dashboard_data():
             double_suppressed = False
             frozen_prediction_count += 1
         else:
-            prediction_saved = save_dual_predictions_to_local_db(
-                match_id, '승무패 14경기', home_team, away_team,
-                best_pick_display, first_pct, best_pick_display, first_pct,
-                0, 0, 0, match_time, 1, api_fixture_id,
-                analysis_stage, analysis_confidence,
-            )
             toto_item = {
+                "_pending_toto_save": True, "api_fixture_id": api_fixture_id,
                 "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
                 "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
                 "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
@@ -5835,18 +5912,6 @@ def build_dashboard_data():
                 "h_inj_html": h_inj_html, "a_inj_html": a_inj_html,
                 "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
             }
-        if (
-            not crossed_kickoff_during_analysis
-            and analysis_stage == "T-30-final"
-            and prediction_saved
-        ):
-            stored_item = _freeze_toto14_prediction(
-                match_id, home_team, away_team, match_time, toto_item
-            )
-            if stored_item:
-                toto_item = stored_item
-                toto_item["match"] = dict(m)
-                frozen_prediction_count += 1
         final_picks = _normalize_toto14_picks(
             toto_item.get("picks")
             or _toto14_picks_from_display(
@@ -5867,6 +5932,14 @@ def build_dashboard_data():
         if double_suppressed:
             suppressed_double_count += 1
         dashboard_toto14.append(toto_item)
+
+    dashboard_toto14 = _finalize_toto14_round(dashboard_toto14)
+    single_pick_count = sum(len(item.get('picks') or []) == 1 for item in dashboard_toto14)
+    double_pick_count = sum(len(item.get('picks') or []) == 2 for item in dashboard_toto14)
+    unavailable_pick_count = sum(not item.get('picks') for item in dashboard_toto14)
+    total_combinations = math.prod(max(1, len(item.get('picks') or [])) for item in dashboard_toto14)
+    suppressed_double_count = sum(bool(item.get('double_suppressed')) for item in dashboard_toto14)
+    frozen_prediction_count = sum(bool(item.get('prediction_frozen')) for item in dashboard_toto14)
 
     # 종료된 예전 경기가 TOP 3에 다시 등장하지 않도록 아직 시작하지 않은 경기만 선정한다.
     now_ts = datetime.now(timezone(timedelta(hours=9))).timestamp()
@@ -5963,9 +6036,31 @@ def _cached_fixture_identity_board(date_key, purpose="scoring"):
 
 def _recover_due_fixture_ids(rows, conn):
     """Recover unresolved fixtures from their scheduled date, including terminal games."""
+    # Reuse an already linked canonical/WORLD fixture before fetching another
+    # date board. Ordered teams + kickoff still have to match, and ambiguity
+    # never silently chooses the first row.
+    recovered_local = {}
+    known = conn.execute("SELECT home_team,away_team,match_time,api_fixture_id FROM predictions WHERE api_fixture_id > 0").fetchall()
+    for row in rows:
+        if int(row[6] or 0):
+            continue
+        match_dt = _parse_kst_match_time(row[5])
+        candidates = set()
+        for home, away, when, fixture in known:
+            known_dt = _parse_kst_match_time(when)
+            if (match_dt and known_dt and abs((match_dt-known_dt).total_seconds()) <= 3*3600
+                    and team_matches_api(row[1], home, 0) and team_matches_api(row[2], away, 0)):
+                candidates.add(int(fixture))
+        if len(candidates) == 1:
+            recovered_local[str(row[0])] = candidates.pop()
+    if recovered_local:
+        conn.executemany("UPDATE predictions SET api_fixture_id=? WHERE match_id=? AND COALESCE(api_fixture_id,0)=0",
+                         [(fixture, match_id) for match_id, fixture in recovered_local.items()])
+        conn.commit()
+        rows = [tuple(row[:6]) + (int(row[6] or 0) or recovered_local.get(str(row[0]), 0),) for row in rows]
     unresolved = [row for row in rows if not int(row[6] or 0)]
     if not unresolved:
-        return rows, 0
+        return rows, len(recovered_local)
 
     boards = {}
     now = datetime.now(KST)
@@ -6013,7 +6108,7 @@ def _recover_due_fixture_ids(rows, conn):
             continue
         candidates.sort(key=lambda value: value[0])
         fixture_id = int(candidates[0][1].get("fixture", {}).get("id") or 0)
-        if fixture_id:
+        if fixture_id and len({int(value[1].get('fixture', {}).get('id') or 0) for value in candidates}) == 1:
             recovered[str(match_id)] = fixture_id
 
     if recovered:
@@ -6027,7 +6122,7 @@ def _recover_due_fixture_ids(rows, conn):
     for row in rows:
         fixture_id = int(row[6] or 0) or recovered.get(str(row[0]), 0)
         updated.append(tuple(row[:6]) + (fixture_id,))
-    return updated, len(recovered)
+    return updated, len(recovered) + len(recovered_local)
 
 
 def _scoring_row_matches_fixture(row, match_info):
@@ -6052,6 +6147,36 @@ def _ensure_postmortem_column(conn):
     if "postmortem_json" not in columns:
         conn.execute("ALTER TABLE predictions ADD COLUMN postmortem_json TEXT DEFAULT '{}'")
         conn.commit()
+
+
+def _backfill_candidate_learning(conn, limit=40):
+    """Retry optional reviews without refetching results or forecasts."""
+    _ensure_prediction_analysis_tables(conn)
+    rows = conn.execute("""
+        SELECT p.match_id,p.home_team,p.away_team,p.actual_score,p.postmortem_json
+        FROM predictions p WHERE p.actual_result='FINISHED'
+        AND EXISTS(SELECT 1 FROM prediction_analysis_snapshots s
+                   WHERE s.match_id=p.match_id AND length(s.candidates_json)>2)
+        AND NOT EXISTS(SELECT 1 FROM prediction_candidate_results r WHERE r.match_id=p.match_id)
+        ORDER BY p.rowid DESC LIMIT ?
+    """, (limit,)).fetchall()
+    count = 0
+    for match_id, home, away, score, note in rows:
+        scores = re.fullmatch(r'(\d+):(\d+)', str(score))
+        if not scores:
+            continue
+        try:
+            review = _grade_prediction_candidates(conn, match_id, home, away, *map(int, scores.groups()))
+            if review:
+                payload = json.loads(note or '{}')
+                payload['candidate_review'] = review
+                conn.execute('UPDATE predictions SET postmortem_json=? WHERE match_id=?',
+                             (json.dumps(payload, ensure_ascii=False), match_id))
+                count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+    return count
 
 
 def _backfill_finished_postmortems(conn):
@@ -6343,6 +6468,67 @@ def _ensure_scoring_queue(conn):
     conn.commit()
 
 
+def _allocate_toto14_round(items, max_combinations=None):
+    """Allocate the existing double-mark budget round-wide, never row-order.
+
+    Only explicitly fresh, pre-kickoff analyses may change. Existing frozen
+    marks consume their existing budget and remain byte-for-byte unchanged.
+    """
+    cap = max_combinations or TOTO14_MAX_COMBINATIONS
+    combinations, candidates = 1, []
+    for item in items:
+        if not item.get('_pending_toto_save'):
+            combinations *= max(1, len(item.get('picks') or []))
+            continue
+        values = {'승': float(item.get('p_h') or 0), '무': float(item.get('p_d') or 0), '패': float(item.get('p_a') or 0)}
+        ranked = sorted(values, key=lambda mark: values[mark], reverse=True)
+        item['picks'] = ranked[:1]
+        item['top_outcome_probability'] = values[ranked[0]]
+        item['marking_policy'] = 'round-coverage-existing-gap7-budget8'
+        if values[ranked[0]] > 0 and values[ranked[0]] - values[ranked[1]] <= 7.0:
+            candidates.append((values[ranked[1]]/values[ranked[0]], str(item.get('match', {}).get('id')), item, ranked[1]))
+    for _, _, item, second in sorted(candidates, key=lambda row: (-row[0], row[1])):
+        item['double_suppressed'] = combinations * 2 > cap
+        if combinations * 2 <= cap:
+            item['picks'].append(second)
+            combinations *= 2
+    return items
+
+
+def _finalize_toto14_round(items):
+    # Discard analyses crossing kickoff before allocating; no past result can
+    # influence another game's marks through a rewritten frozen ticket.
+    for index, item in enumerate(items):
+        if not item.get('_pending_toto_save'):
+            continue
+        match = item['match']
+        kickoff = _parse_kst_match_time(match.get('match_time'))
+        if kickoff is None or datetime.now(KST) >= kickoff:
+            items[index] = _locked_toto14_fallback(match) or _unavailable_toto14_item(match)
+    _allocate_toto14_round(items)
+    for index, item in enumerate(items):
+        if not item.pop('_pending_toto_save', False):
+            continue
+        match = item['match']
+        marks = item['picks']
+        display = ', '.join(match['home']+' 승' if mark=='승' else match['away']+' 승' if mark=='패' else '무승부' for mark in marks)
+        coverage = sum(float(item.get({'승':'p_h','무':'p_d','패':'p_a'}[mark]) or 0) for mark in marks)
+        item.update(best_pick_display=display, picks_html=_render_toto14_picks_html(marks),
+                    covered_probability=round(coverage, 1))
+        match_id = 'TOTO14_' + str(match['id'])
+        saved = save_dual_predictions_to_local_db(
+            match_id, '승무패 14경기', match['home'], match['away'], display, coverage,
+            display, coverage, 0, 0, 0, match.get('match_time'), 1,
+            item.get('api_fixture_id') or 0, item.get('analysis_stage') or 'regular',
+            item.get('analysis_confidence') or 0)
+        kickoff = _parse_kst_match_time(match.get('match_time'))
+        if not saved or not kickoff or datetime.now(KST) >= kickoff:
+            items[index] = _locked_toto14_fallback(match) or _unavailable_toto14_item(match)
+        elif item.get('analysis_stage') == 'T-30-final':
+            items[index] = _freeze_toto14_prediction(match_id, match['home'], match['away'], match.get('match_time'), item) or item
+    return items
+
+
 def _scoring_reason(conn, match_id, reason, delay=1800):
     conn.execute("""
         INSERT INTO scoring_queue(match_id,reason,last_attempt,retry_at,attempts)
@@ -6397,6 +6583,7 @@ def auto_score_matches():
             )
         conn.commit()  # Repairs must survive even when no due batches run.
         backfilled_count = _backfill_finished_postmortems(conn)
+        _backfill_candidate_learning(conn)
         conn.commit()  # Release writes before network/cache operations.
         if backfilled_count:
             print(f"✅ 기존 오답노트 학습 태그 보강: {backfilled_count}건")
@@ -6409,6 +6596,7 @@ def auto_score_matches():
         """)
         pending_matches = cursor.fetchall()
         api_call_count = 0
+        graded_count, result_error_count = 0, 0
         now = datetime.now(KST)
         due_matches = _select_scoring_due(pending_matches,conn,now)
 
@@ -6437,6 +6625,9 @@ def auto_score_matches():
                 api_call_count += 1
                 payload = res.json() if res.status_code == 200 else {}
                 if res.status_code != 200 or payload.get("errors"):
+                    result_error_count += 1
+                    for row in batch:
+                        _scoring_reason(conn, row[0], f"결과 수신 실패 · HTTP {res.status_code} · 공급사 오류", 3600)
                     print(f"⚠️ 묶음 채점 API 오류: HTTP {res.status_code} {payload.get('errors', '')}")
                     continue
                 fixture_map = {
@@ -6493,10 +6684,25 @@ def auto_score_matches():
                             ev_pick=ev_pick,
                             event_timeline=event_timeline,
                             return_postmortem=True,
+                            fetch_official_stats=False,
                         )
-                        candidate_review = _grade_prediction_candidates(
-                            conn, match_id, h_team, a_team, eval_h, eval_a
-                        )
+                        # The verified result must survive optional learning/report
+                        # failures, and must not wait for one statistics API per game.
+                        cursor.execute("""
+                            UPDATE predictions SET actual_score=?, actual_result='FINISHED',
+                                is_correct_prob=?, is_correct_ev=?, ai_note=?, postmortem_json=?
+                            WHERE match_id=? AND actual_result='PENDING'
+                        """, (score_str, is_corr_prob, is_corr_ev, ai_note, postmortem_data, match_id))
+                        conn.commit()
+                        candidate_review = None
+                        try:
+                            candidate_review = _grade_prediction_candidates(
+                                conn, match_id, h_team, a_team, eval_h, eval_a
+                            )
+                            conn.commit()
+                        except Exception as review_error:
+                            conn.rollback()
+                            print(f"⚠️ 결과 저장 완료 · 후보 복기 보강 대기: {match_id} ({type(review_error).__name__})")
                         if candidate_review:
                             try:
                                 postmortem_payload = json.loads(postmortem_data or "{}")
@@ -6518,12 +6724,13 @@ def auto_score_matches():
                             SET actual_score = ?, actual_result = 'FINISHED',
                                 is_correct_prob = ?, is_correct_ev = ?, ai_note = ?,
                                 postmortem_json = ?
-                            WHERE match_id = ? AND actual_result = 'PENDING'
+                            WHERE match_id = ? AND actual_result = 'FINISHED'
                         """, (
                             score_str, is_corr_prob, is_corr_ev, ai_note,
                             postmortem_data, match_id,
                         ))
                         _scoring_reason(conn,match_id,"채점 완료",86400)
+                        graded_count += 1
                         print(f"  ✨ [정밀 채점 완료] {h_team} vs {a_team} ({score_str})")
                     elif status in CANCELED_STATUSES:
                         cursor.execute("""
@@ -6539,13 +6746,20 @@ def auto_score_matches():
                         print(f"  ⏸️ [경기 연기 - 추후 재확인] {h_team} vs {a_team}")
                 conn.commit()
             except Exception as batch_error:
+                result_error_count += 1
                 conn.rollback()
                 for failed_row in batch:
+                    still_pending = conn.execute("SELECT actual_result FROM predictions WHERE match_id=?", (failed_row[0],)).fetchone()
+                    if still_pending and still_pending[0] != 'PENDING':
+                        continue
                     _scoring_reason(conn,failed_row[0],
                                     "API 예산/연결 확인 필요" if isinstance(batch_error,ApiQuotaUnavailable) else "채점 처리 오류 · 재시도 대기",3600)
                 print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
 
         scoring_calls_after = int(get_api_usage_status().get("scoring_calls") or 0)
+        _update_collector_status("score", "running", due_count=len(due_matches),
+                                 graded_count=graded_count, result_error_count=result_error_count,
+                                 results_state="degraded" if result_error_count else "checked")
         scoring_calls_used = max(0, scoring_calls_after - scoring_calls_before)
         print(
             "✅ 스마트 채점 사이클 종료 "
@@ -6589,6 +6803,8 @@ def _request_fixture_board(params, purpose="live"):
             if payload.get("errors"):
                 raise RuntimeError(str(payload.get("errors")))
             return payload.get("response", [])
+        except (ApiQuotaUnavailable, ApiRateLimited):
+            raise
         except Exception as error:
             last_error = error
             if attempt == 0:
@@ -8162,11 +8378,26 @@ def run_score_job():
     success = auto_score_matches()
     if not success:
         return False
-    if not upload_sqlite_to_github("ai_predictions.db"):
+    # Publish a small, score-owned feed first. Heavy cache/DB uploads and the
+    # analysis worker cannot overwrite or block these already committed results.
+    snapshot = _build_grading_snapshot()
+    if snapshot.get("error"):
+        _update_collector_status("score", "running", last_stage="snapshot_failed")
         return False
-    if not _refresh_dashboard_grading_snapshot():
+    snapshot["schema_version"] = "grading-results.v1"
+    _atomic_write_json("grading_results.json", snapshot)
+    if not upload_to_github("grading_results.json"):
+        _update_collector_status("score", "running", last_stage="grading_publish_failed")
         return False
-    return upload_to_github("dashboard_data.json")
+    _update_collector_status("score", "running", last_stage="grading_published",
+                             grading_published_at=snapshot.get("generated_at"))
+    # Keep legacy consumers current locally; the website prefers the separate
+    # feed. DB backup still runs, but its failure is recorded independently.
+    _refresh_dashboard_grading_snapshot()
+    backup_ok = upload_sqlite_to_github("ai_predictions.db")
+    _update_collector_status("score", "running", db_backup_ok=backup_ok,
+                             last_stage="complete" if backup_ok else "grading_published_backup_pending")
+    return True
 
 
 def _world_schedule_refresh_due(now=None):
