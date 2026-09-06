@@ -3,11 +3,10 @@
     "scheduler": {
       "supervisor_pid": 305379,
       "state": "running",
-      "heartbeat_at": "2026-09-06T00:16:47+00:00",
+      "heartbeat_at": "2026-09-06T00:17:17+00:00",
       "pid": 305379,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "live": 313393,
         "score": 313394
       }
     },
@@ -25,16 +24,16 @@
     },
     "score": {
       "child_pid": 313394,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T00:16:48+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-06T00:17:24+00:00",
       "pid": 313394,
       "last_started_at": "2026-09-06T00:16:47+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 30.0,
+      "duration_seconds": 36.35,
       "last_success_at": "2026-09-04T16:56:26+00:00",
-      "last_failure_at": "2026-09-06T00:12:17+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-06T00:17:24+00:00",
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 313389,
@@ -63,7 +62,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-06T00:16:52+00:00",
+  "updated_at": "2026-09-06T00:17:24+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -118,28 +117,28 @@
         "calls": 23
       },
       {
-        "purpose": "world",
-        "endpoint": "/fixtures/lineups",
-        "calls": 15
+        "purpose": "scoring",
+        "endpoint": "/fixtures/statistics",
+        "calls": 19
       },
       {
         "purpose": "world",
-        "endpoint": "/players/topassists",
-        "calls": 14
+        "endpoint": "/fixtures/lineups",
+        "calls": 15
       }
     ],
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-06",
     "reset_timezone": "UTC",
-    "local_calls": 611,
-    "provider_remaining": 6889,
+    "local_calls": 626,
+    "provider_remaining": 6874,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 500,
     "analysis_calls": 95,
     "live_calls": 7,
-    "scoring_calls": 9,
+    "scoring_calls": 24,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
     "quota_exhausted": false
