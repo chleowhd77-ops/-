@@ -2012,7 +2012,7 @@ def _render_live_match_card(item):
         f"<div class='center-time-box' style='min-width:140px'>{time_display}</div>"
         f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
         "</div>"
-        f"{event_html}<div class='pred-grid'>{boxes}</div>{odds_bar_html}{_detail_html(detail_item)}"
+        f"{event_html}<div class='pred-grid'>{boxes}</div>{odds_bar_html}{_detail_html(detail_item, always_visible=True)}"
         "</div>"
     )
 
@@ -2415,7 +2415,7 @@ def _pick_categories(item):
     return categories
 
 
-def _detail_html(item):
+def _detail_html(item, *, always_visible=False):
     if not isinstance(item, dict):
         return ""
     detail = None
@@ -2428,6 +2428,18 @@ def _detail_html(item):
     if isinstance(detail, (dict, list)):
         detail = json.dumps(detail, ensure_ascii=False, indent=2)
     safe_detail = escape(str(detail)).replace("\n", "<br>")
+    # Both LIVE tabs show the full saved report without a click (2026-09-06).
+    # Keep other tabs' existing disclosure behavior unchanged.
+    if always_visible:
+        return (
+            "<section class='analysis-details analysis-details-visible' "
+            "style='margin-top:10px;max-width:100%;overflow:hidden'>"
+            "<div style='color:#94A3B8;font-weight:800'>상세 분석 근거</div>"
+            "<div style='margin-top:8px;padding:10px 12px;border-radius:10px;"
+            "background:rgba(15,23,42,.55);line-height:1.65;"
+            "overflow-wrap:anywhere;word-break:keep-all;white-space:normal'>"
+            f"{safe_detail}</div></section>"
+        )
     return (
         "<details class='analysis-details' style='margin-top:10px;max-width:100%;"
         "overflow:hidden'><summary style='cursor:pointer;color:#94A3B8;font-weight:800'>"
