@@ -673,7 +673,7 @@ def _render_team_availability_status(injury_data, diff_hours, lineup_confirmed, 
         elif float(diff_hours or 0) <= 1.5:
             badges.append(
                 "<div class='injury-badge' style='color:#F59E0B; border-color:#F59E0B;'>"
-                "⏳ 선발 발표 대기</div>"
+                "⏳ 공식 선발자료 미수신</div>"
             )
         else:
             badges.append(
@@ -697,6 +697,51 @@ def _choose_toto14_picks(probs_dict, current_combinations, max_combinations=None
     can_afford_double = int(current_combinations) * 2 <= max_combinations
     picks = [first_pick, second_pick] if wants_double and can_afford_double else [first_pick]
     return _normalize_toto14_picks(picks), first_pct, wants_double and not can_afford_double
+
+
+def _toto14_from_canonical_proto(match, proto_items):
+    """Reuse current same-fixture WDL; never rewrite a previously frozen ticket."""
+    when = _parse_kst_match_time(match.get("match_time"))
+    if when is None or when <= datetime.now(KST):
+        return None
+    matches = []
+    for item in proto_items:
+        source = item.get("match") or {}
+        source_when = _parse_kst_match_time(item.get("final_match_time") or source.get("match_time"))
+        vector = item.get("wdl_forecast") or {}
+        try:
+            generated = datetime.fromisoformat(str(vector.get("generated_at") or "").replace("Z", "+00:00"))
+            if generated.tzinfo is None or not generated < when or generated > datetime.now(KST):
+                continue
+        except ValueError:
+            continue
+        if (int(item.get("api_fixture_id") or 0) <= 0 or not source_when
+                or int(vector.get("fixture_id") or 0) != int(item.get("api_fixture_id") or 0)
+                or abs((source_when-when).total_seconds()) > 60
+                or str(source.get("home")) != str(match.get("home"))
+                or str(source.get("away")) != str(match.get("away"))
+                or vector.get("forecast_model_version") != FORECAST_MODEL_VERSION):
+            continue
+        probs = vector.get("probabilities") or []
+        if len(probs) == 3 and all(math.isfinite(float(p)) and 0 <= float(p) <= 1 for p in probs) and abs(sum(probs)-1) < 1e-5:
+            matches.append((item, probs))
+    if not matches or len({int(item["api_fixture_id"]) for item, _ in matches}) != 1:
+        return None
+    # Ambiguous snapshots for one fixture cannot silently choose different WDL.
+    if any(tuple(probs) != tuple(matches[0][1]) for _, probs in matches):
+        return None
+    item, probs = matches[0]
+    result = {k: item.get(k) for k in ("home_logo", "away_logo", "analysis_version", "analysis_confidence",
+              "analysis_stage", "home_form", "away_form", "h_rank_html", "a_rank_html", "h_inj_html", "a_inj_html")}
+    pct_h, pct_d = round(probs[0]*100, 1), round(probs[1]*100, 1)
+    result.update(match=dict(match), api_fixture_id=item["api_fixture_id"], _pending_toto_save=True,
+                  p_h=pct_h, p_d=pct_d, p_a=round(100-pct_h-pct_d, 1),
+                  goal_model_audit=item.get("goal_model_audit"),
+                  wdl_forecast=dict(item["wdl_forecast"]), probability_source="canonical_proto_same_fixture")
+    picks, _, _ = _choose_toto14_picks({"승":pct_h, "무":pct_d, "패":result["p_a"]}, 1)
+    result.update(picks=picks, picks_html=_render_toto14_picks_html(picks),
+                  best_pick_display=", ".join("무승부" if p == "무" else f"{match['home'] if p == '승' else match['away']} 승" for p in picks))
+    return result
 
 
 def _ensure_toto14_freeze_table(conn):
@@ -1271,8 +1316,10 @@ def load_market_performance(league_name=None):
             else []
         )
         diagnostics = _candidate_learning_diagnostics(conn)
+        price_policy = _verified_price_policy(conn)
         for market in summary:
             summary[market].update(diagnostics.get(market, {}))
+            summary[market]["price_policy"] = price_policy
         conn.close()
     except Exception:
         return summary
@@ -1376,6 +1423,57 @@ def validate_time_ordered_calibration(groups):
             "method": "result-availability-aware-prequential-v1"}
 
 
+def _verified_price_policy(conn):
+    """Replay complete frozen candidate sets once per fixture, read-only."""
+    groups = {}
+    try:
+        rows = conn.execute("""SELECT p.api_fixture_id,p.match_time,s.id,s.created_at,s.candidates_json,
+            r.raw_pick,r.is_correct,r.graded_at,s.confidence
+            FROM prediction_analysis_snapshots s JOIN predictions p ON p.match_id=s.match_id
+            JOIN prediction_candidate_results r ON r.analysis_snapshot_id=s.id
+            WHERE p.actual_result='FINISHED' AND COALESCE(p.is_toto14,0)=0
+              AND p.api_fixture_id>0 AND s.candidates_json LIKE ?
+            ORDER BY s.id DESC,r.id DESC LIMIT 8000""",
+            ('%"forecast_model_version": "'+FORECAST_MODEL_VERSION+'"%',)).fetchall()
+    except sqlite3.Error:
+        return validate_price_policy([])
+    selected_snapshots, payloads = {}, {}
+    now = datetime.now(timezone.utc).timestamp()
+    def stamp(value):
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+    for fixture, when, sid, created, raw, pick_name, outcome, received, confidence in rows:
+        try:
+            kickoff = _parse_kst_match_time(when).timestamp()
+            known_at = stamp(received)
+            if not stamp(created) < kickoff < known_at <= now:
+                continue
+            selected_snapshots.setdefault(fixture, sid)
+            if selected_snapshots[fixture] != sid:
+                continue
+            if sid not in payloads:
+                payloads[sid] = {p["raw_pick"]: p for p in json.loads(raw)}
+            saved = payloads[sid].get(pick_name) or {}
+            if saved.get("forecast_model_version") != FORECAST_MODEL_VERSION or outcome not in (0, 1):
+                continue
+            pick = dict(saved, prob=saved.get("model_probability"), fair_prob=saved.get("fair_probability"), outcome=outcome)
+            if not valid_analysis_candidates([pick]) or not float(pick.get("odd") or 0) > 1:
+                continue
+            group = groups.setdefault(fixture, dict(fixture=fixture, kickoff=kickoff, known_at=known_at,
+                                                   confidence=float(confidence or 0), picks={}))
+            group["known_at"] = max(group["known_at"], known_at)
+            group["picks"][pick_name] = pick
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+    # Price policy must see all eight real binary priced candidates, not just
+    # whichever winning market happened to be saved. Partial games don't train it.
+    complete = [dict(g, picks=list(g["picks"].values())) for g in groups.values() if len(g["picks"]) == 8]
+    policy = validate_price_policy(complete)
+    policy["cohort_fixtures"] = len(complete)
+    policy["forecast_model_version"] = FORECAST_MODEL_VERSION
+    return policy
+
+
 def _verified_calibration_history(conn):
     """Use pre-learning probabilities with timestamp proof; never read APIs."""
     out = {market: {"calibration_bins": {}, "calibration_validated": False,
@@ -1383,14 +1481,15 @@ def _verified_calibration_history(conn):
     try:
         rows = conn.execute("""
             SELECT r.market_key,r.raw_pick,r.is_correct,r.graded_at,p.api_fixture_id,
-                   p.match_id,p.match_time,s.id,s.created_at,s.candidates_json
+                   p.match_id,p.match_time,s.id,s.created_at,s.candidates_json,r.analysis_version
             FROM prediction_candidate_results r
             JOIN predictions p ON p.match_id=r.match_id
             JOIN prediction_analysis_snapshots s ON s.id=r.analysis_snapshot_id
             WHERE p.actual_result='FINISHED' AND COALESCE(p.is_toto14,0)=0
-              AND r.analysis_version IN (?,?)
+              AND (r.analysis_version IN (?,?) OR s.candidates_json LIKE ?)
             ORDER BY s.id DESC,r.id DESC LIMIT 8000
-        """, (ANALYSIS_VERSION, WORLD_ANALYSIS_VERSION)).fetchall()
+        """, (ANALYSIS_VERSION, WORLD_ANALYSIS_VERSION,
+                '%"forecast_model_version": "'+FORECAST_MODEL_VERSION+'"%')).fetchall()
     except sqlite3.Error:
         return out
     parsed, snapshots, grouped, seen = {}, {}, {}, set()
@@ -1400,7 +1499,7 @@ def _verified_calibration_history(conn):
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
 
-    for market, raw_pick, y, received, fixture, match_id, match_time, sid, created, payload in rows:
+    for market, raw_pick, y, received, fixture, match_id, match_time, sid, created, payload, version in rows:
         if market not in out:
             continue
         try:
@@ -1411,6 +1510,13 @@ def _verified_calibration_history(conn):
             if sid not in parsed:
                 parsed[sid] = {str(c.get("raw_pick")): c for c in json.loads(payload or "[]")}
             candidate = parsed[sid].get(raw_pick) or {}
+            signature = candidate.get("forecast_model_version")
+            if signature and signature != FORECAST_MODEL_VERSION:
+                continue
+            if not signature and version not in {ANALYSIS_VERSION, WORLD_ANALYSIS_VERSION}:
+                continue
+            if int(fixture or 0) <= 0:
+                continue  # Unknown fixture cannot count as an independent match.
             p = float(candidate["raw_model_probability"])
             if not 0 < p < 1 or y not in (0, 1) or not candidate.get("settlement_supported", True):
                 continue
@@ -1507,7 +1613,7 @@ def _candidate_learning_diagnostics(conn):
     return diagnostics
 
 
-def attach_analysis_contracts(picks, exp_h, exp_a, total_line, goal_model_audit):
+def attach_analysis_contracts(picks, exp_h, exp_a, total_line, goal_model_audit, matrix=None):
     """Persist the actual payout contract before selection and learning."""
     for pick in picks:
         pick["goal_model_audit"] = goal_model_audit
@@ -1517,7 +1623,7 @@ def attach_analysis_contracts(picks, exp_h, exp_a, total_line, goal_model_audit)
         pick["totals_base"] = total_line
         if abs(float(total_line) % 1 - .5) < 1e-8:
             continue
-        settlement = total_settlement_probabilities(exp_h, exp_a, total_line, pick["selection_side"])
+        settlement = total_settlement_probabilities(exp_h, exp_a, total_line, pick["selection_side"], matrix)
         pick["settlement"] = settlement
         pick["prob"] = settlement["profit_probability"]
         pick["non_binary_settlement"] = True
@@ -1541,14 +1647,21 @@ def calibrate_market_candidates(picks, market_performance, confidence):
     for market, market_picks in grouped.items():
         if not market_picks:
             continue
-        history = market_performance.get(market, {})
+        joint = (market_picks[0].get("goal_model_audit") or {}).get("joint_forecast") or {}
+        coherent = joint.get("coherent_score_distribution", False)
+        history = market_performance.get("1x2" if coherent else market, {})
         samples = int(history.get("samples") or 0)
         hit_rate = float(history.get("hit_rate") or 0.5)
         adjusted_values = []
         for pick in market_picks:
             raw_probability = max(0.0, min(1.0, float(pick.get("prob") or 0)))
             fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
-            pick["raw_model_prob"] = round(raw_probability, 6)
+            side = pick.get("selection_side")
+            index = ({"home": 0, "draw": 1, "away": 2} if market == "1x2"
+                     else {"under": 3, "over": 4} if market == "totals"
+                     else {"home": 5, "draw": 6, "away": 7}).get(side)
+            original = joint.get("raw_market_probabilities", [])
+            pick["raw_model_prob"] = round(original[index] if coherent and index is not None else raw_probability, 6)
             cohort = history.get("calibration_bins", {}).get(str(min(9, int(raw_probability*10))), {})
             cohort_n = int(cohort.get("samples") or 0)
             history_weight = min(0.18, cohort_n / (cohort_n + 30.0) * 0.18) if history.get("calibration_validated") else 0.0
@@ -1556,11 +1669,17 @@ def calibrate_market_candidates(picks, market_performance, confidence):
                 history_weight = 0.0
             correction = float(cohort.get("error_sum") or 0) / cohort_n if cohort_n else 0.0
             adjusted = max(0.0, min(1.0, raw_probability + history_weight * correction))
+            if coherent:
+                # Learning has already reweighted the shared score matrix.
+                # Never independently move a marginal away from that matrix.
+                adjusted = raw_probability
+                history_weight = max(joint.get("wdl_learning_weights") or [0])
+                cohort_n = min(joint.get("wdl_learning_samples") or [0])
             pick["learning_weight"] = round(history_weight, 4)
             pick["learning_cohort_samples"] = cohort_n
             adjusted_values.append(adjusted)
 
-        normalized = adjusted_values if any(p.get("non_binary_settlement") for p in market_picks) else normalize_probabilities(adjusted_values)
+        normalized = adjusted_values if coherent or any(p.get("non_binary_settlement") for p in market_picks) else normalize_probabilities(adjusted_values)
         neutral = 1.0 / len(market_picks)
         for pick, probability in zip(market_picks, normalized):
             fair_probability = max(0.0, min(1.0, float(pick.get("market_prob") or 0)))
@@ -1584,6 +1703,7 @@ def calibrate_market_candidates(picks, market_performance, confidence):
                                             ("candidate_samples", "brier_score", "unit_roi", "odds_bands",
                                              "calibration_validated", "validation_fixtures", "baseline_brier", "corrected_brier")}
             pick["data_confidence"] = round(confidence, 4)
+            pick["price_policy"] = history.get("price_policy") or {}
             pick["error_margin"] = round(error_margin, 4)
             pick["probability_interval"] = {
                 "low": round(max(0.0, probability - error_margin), 6),
@@ -1778,7 +1898,10 @@ def _report_pick_line(pick, home_team=""):
         refund = float((pick.get("settlement") or {}).get("refund_weight") or 0)
         return (f"{display_pick} · 이익 발생 확률 {probability*100:.1f}% · "
                 f"예상 환급 지분 {refund*100:.1f}% · 공식 정산 검증 대기")
-    return f"{display_pick} · 모델 {probability * 100:.1f}% · {comparison}"
+    odd = float(pick.get("odd") or 0)
+    price = (f" · 실제 배당 {odd:.2f}배 · 손익분기 {100/odd:.1f}%"
+             if odd > 1 else " · 실제 배당 미수신")
+    return f"{display_pick} · 모델 {probability * 100:.1f}% · {comparison}{price}"
 
 
 def build_detailed_report(
@@ -1860,18 +1983,41 @@ def build_detailed_report(
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
         if missing_names else "요구된 핵심 데이터 항목이 모두 연결되어 있습니다."
     )
+    goal_audit = selected_pick.get("goal_model_audit") or {}
+    joint = goal_audit.get("joint_forecast") or {}
+    opponent_model = goal_audit.get("opponent_model") or {}
+    wdl_sides = {p.get("selection_side"): p for p in candidates if infer_pick_market(p) == "1x2"}
+    wdl_text = " · ".join(f"{label} {float(wdl_sides[side].get('prob') or 0)*100:.1f}%"
+                          for side, label in (("home", home+" 승"), ("draw", "무승부"), ("away", away+" 승")) if side in wdl_sides)
+    underdogs = [p for p in wdl_sides.values() if p.get("is_true_underdog")]
+    underdog_text = ("실제 승무패 역배 방향: " + _report_pick_line(underdogs[0], home) +
+                    ". 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다."
+                    if underdogs else "승무패 역배 판단은 양 팀의 실제 배당 확인이 필요합니다. +1승/-1패 자체를 역배 승리로 분류하지 않습니다.")
+    learning_text = (f"상대강도 모형 {'사용' if opponent_model.get('active') else '미사용'}: "
+                     f"{opponent_model.get('reason') or '학습 자료 미확인'}. "
+                     f"검증 경기 {int(opponent_model.get('validation_fixtures') or 0)}개. "
+                     f"확률 보정 학습 {'적용' if joint.get('calibration_active') else '미적용(검증 근거 부족 또는 개선 미확인)'}. "
+                     "과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.")
+    formula_text = (
+        "시간가중 상대 공격·수비·홈원정 모형과 중복 제거 결장·일정 보정을 사용합니다. "
+        "최근득점·xG를 여기에 다시 곱하지 않습니다. "
+        if opponent_model.get("active") else
+        "득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. "
+    )
     return "\n\n".join([
         (
             f"[종합 경기 흐름] 예상 정규시간 득점은 {home} {exp_h:.2f}골, "
             f"{away} {exp_a:.2f}골입니다. {flow}{weather_note}"
         ),
         f"[일반 승무패 분석] {_report_pick_line(market_best.get('1x2'), home)}.",
+        f"[승무패 전체 방향] {wdl_text or '세 방향 자료 미확인'}. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.",
         f"[핸디캡 분석] {_report_pick_line(market_best.get('handicap'), home)}.",
         f"[언더오버 분석] {_report_pick_line(market_best.get('totals'), home)}.",
+        f"[역배 판단] {underdog_text}",
         f"[확인 자료와 계산 기준] {evidence_text}. {missing_text} "
-        "득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, "
-        "중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 "
+        + formula_text + "순위·맞대결·감독·날씨는 참고 자료이며 "
         "별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.",
+        f"[학습 상태] {learning_text}",
         (
             ("[최종 선택과 신뢰도] " + " ".join(final_parts) +
              " 내부 후보만 기록·학습하며 공식 추천 적중률에는 포함하지 않습니다."
@@ -1977,6 +2123,9 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "settlement_supported": item.get("settlement_supported", True),
             "eligibility_reason": item.get("eligibility_reason", ""),
             "goal_model_audit": item.get("goal_model_audit"),
+            "forecast_model_version": (item.get("goal_model_audit") or {}).get("joint_forecast", {}).get("forecast_model_version"),
+            "calibration_version": (item.get("goal_model_audit") or {}).get("joint_forecast", {}).get("calibration_version"),
+            "pick_policy_version": PICK_POLICY_VERSION,
             "sort_id": int(item.get("sort_id", 0) or 0),
             "model_probability": _audit_number(item.get("prob"), 0.0),
             "raw_model_probability": _audit_number(item.get("raw_model_prob")),
@@ -2391,37 +2540,12 @@ def select_pick_categories(picks, confidence):
     if not available:
         return categories, []
 
-    # 실제 가격과 보수적 우위가 검증된 후보가 있으면 그 집합 안에서
-    # 적중 가능성(보수확률)을 먼저 비교한다. 배당은 확률을 대신하지 않고,
-    # 같은 수준의 후보에서만 우선순위를 가르는 자격조건/동점 기준이다.
-    value_candidates = [
-        pick for pick in available
-        if pick.get("fair_prob") is not None
-        and math.isfinite(float(pick.get("odd", 0) or 0))
-        and float(pick.get("odd", 0) or 0) > 1.0
-        and pick.get("settlement_supported", True)
-        and float(pick.get("robust_ev", 0) or 0) >= 1.01
-        and confidence >= 0.50
-    ]
-    value_candidates = [
-        pick for pick in value_candidates
-        if float(pick.get("prob") or 0) >= (
-            0.40 if infer_pick_market(pick) == "1x2" else 0.50
-        ) or bool(pick.get("is_qualified_underdog"))
-    ]
-    # Price/value gates determine preferred eligibility and badges, never an
-    # empty answer when an actual, settleable model candidate exists.
-    selection_pool = value_candidates or available
-    high_source = max(
-        selection_pool,
-        key=lambda pick: (
-            float(pick.get("robust_probability", pick.get("prob", 0)) or 0),
-            float(pick.get("prob", 0) or 0),
-            float(pick.get("robust_edge", 0) or 0),
-            float(pick.get("robust_ev", 0) or 0),
-            float(pick.get("balanced_score", 0) or 0),
-        ),
-    )
+    value_candidates = [p for p in available if price_eligible(p, confidence)]
+    policy = available[0].get("price_policy") or {}
+    band = (min(.05, max(0, float(policy.get("maximum_probability_sacrifice") or 0)))
+            if policy.get("active") and policy.get("forecast_model_version") == FORECAST_MODEL_VERSION
+            and int(policy.get("validation_fixtures") or 0) >= 40 else 0.0)
+    high_source = probability_price_choice(available, confidence, band)
     high_source = dict(high_source)
     value_qualified = any(
         str(pick.get("raw_pick") or "") == str(high_source.get("raw_pick") or "")
@@ -2436,19 +2560,29 @@ def select_pick_categories(picks, confidence):
     high_source["official_final_pick"] = True
     high_source["recommendation_status"] = "SELECTED"
     high_source["selection_reason"] = (
-        f"승무패·언더오버·핸디캡 전체 {len(available)}개 후보 중 "
-        "실제 배당의 보수적 기대수익 기준을 통과한 "
-        f"{len(selection_pool)}개에서 보수확률이 가장 높은 방향 선택. "
+        f"승무패·언더오버·핸디캡 전체 {len(available)}개 후보 중 " +
+        (f"시간순 검증을 통과한 확률차 {band*100:.1f}%p 이내에서 실제 배당가치 비교. " if band else
+         "최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. ") +
         f"선택 배당 {float(high_source.get('odd') or 0):.2f}배."
     )
-    if not value_candidates:
-        high_source.update(choose_analysis_fallback(available))
+    if not value_qualified:
+        # Warn on the chosen candidate; do not reselect from another pool.
+        high_source.update(choose_analysis_fallback([high_source]))
         if confidence < .50:
             high_source["selection_warning"] += " · 데이터 신뢰도 낮음"
+        high_source["selection_reason"] = (
+            f"전체 {len(available)}개 후보의 최고 모델확률을 우선 보호했습니다. "
+            "더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. "
+            + high_source["selection_warning"] + "."
+        )
     else:
         high_source["probability_fallback"] = False
         high_source["selection_warning"] = ""
     high_source["selection_policy"] = {"minimum_odds": None,
+                                       "policy_version": PICK_POLICY_VERSION,
+                                       "maximum_probability_sacrifice": band,
+                                       "price_tradeoff_validated": bool(band),
+                                       "price_validation": policy,
                                        "valid_decimal_odds_above": 1.0,
                                        "conservative_gross_return_floor": 1.01,
                                        "compare_all_markets": True,
@@ -2467,7 +2601,8 @@ def select_pick_categories(picks, confidence):
         "self_modifying": False,
         "objective": "probability_calibration_and_price_value_without_empty_pick",
         "value_failure_action": "probability_pick_with_warning",
-        "calibration_model_version": ANALYSIS_VERSION,
+        "calibration_model_version": FORECAST_MODEL_VERSION,
+        "calibration_version": CALIBRATION_VERSION,
         "calibration_cohort_samples": int(high_source.get("learning_cohort_samples") or 0),
         "calibration_active": float(high_source.get("learning_weight") or 0) > 0,
         "diagnostics": high_source.get("learning_diagnostics") or {},
@@ -4197,8 +4332,8 @@ def _analyze_world_match(item, now, market_performance):
     a_recent = fetch_team_recent_form_metrics(away_id, heavy_ttl)
     h_stats = fetch_recent_team_stats_api(home_id, heavy_ttl)
     a_stats = fetch_recent_team_stats_api(away_id, heavy_ttl)
-    h_stand = fetch_team_standing_api(home_id, heavy_ttl)
-    a_stand = fetch_team_standing_api(away_id, heavy_ttl)
+    h_stand = fetch_team_standing_api(home_id, heavy_ttl, league_id, season)
+    a_stand = fetch_team_standing_api(away_id, heavy_ttl, league_id, season)
     h_survival = calculate_survival_motivation(h_stand)
     a_survival = calculate_survival_motivation(a_stand)
     h2h = fetch_fixture_details_api(home_id, away_id, heavy_ttl)
@@ -4332,6 +4467,10 @@ def _analyze_world_match(item, now, market_performance):
         h_long, a_long, h_recent, a_recent, h_stats, a_stats, league_name,
         h_total_penalty, a_total_penalty,
     )
+    exp_h, exp_a, goal_model_audit = apply_cached_opponent_model(
+        exp_h, exp_a, goal_model_audit, home_id, away_id, league_id, kickoff,
+        h_total_penalty, a_total_penalty,
+    )
 
     totals_odds = odds.get("totals") or {}
     uo_base = float(totals_odds.get("line") or 2.5)
@@ -4341,27 +4480,15 @@ def _analyze_world_match(item, now, market_performance):
     if handi_base is None:
         handi_base = -1.0 if preliminary[0] >= preliminary[2] else 1.0
     handi_base = float(handi_base)
-    h_win, draw, a_win, prob_u, prob_o, handi_h, handi_d, handi_a = calculate_poisson_probs(
-        exp_h, exp_a, handi_base, uo_base
+    probabilities, joint_audit, joint_matrix = coherent_match_forecast(
+        exp_h, exp_a, handi_base, uo_base,
+        [wdl_odds.get(side) for side in ("home", "draw", "away")], confidence,
+        market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
     )
-    if valid_wdl_odds:
-        h_win, draw, a_win = calibrate_three_way_probabilities(
-            [h_win, draw, a_win],
-            [wdl_odds["home"], wdl_odds["draw"], wdl_odds["away"]],
-            confidence,
-        )
+    h_win, draw, a_win, prob_u, prob_o, handi_h, handi_d, handi_a = probabilities
+    goal_model_audit["joint_forecast"] = joint_audit
     valid_totals_odds = all(float(totals_odds.get(side) or 0) > 1.0 for side in ("under", "over"))
-    if valid_totals_odds:
-        prob_u, prob_o = calibrate_two_way_probabilities(
-            [prob_u, prob_o], [totals_odds["under"], totals_odds["over"]], confidence
-        )
     valid_handicap_odds = all(float(handicap_odds.get(side) or 0) > 1.0 for side in ("home", "draw", "away"))
-    if valid_handicap_odds:
-        handi_h, handi_d, handi_a = calibrate_three_way_probabilities(
-            [handi_h, handi_d, handi_a],
-            [handicap_odds["home"], handicap_odds["draw"], handicap_odds["away"]],
-            confidence,
-        )
 
     wdl_market = normalize_probabilities([
         1.0 / float(wdl_odds["home"]), 1.0 / float(wdl_odds["draw"]), 1.0 / float(wdl_odds["away"]),
@@ -4383,7 +4510,7 @@ def _analyze_world_match(item, now, market_performance):
         {"label": "언더 예측", "sort_id": 1, "raw_pick": f"언더 (U/O {uo_base:g})", "prob": prob_u, "odd": float(totals_odds.get("under") or 0), "market_prob": totals_market[0], "selection_side": "under"},
         {"label": "오버 예측", "sort_id": 1, "raw_pick": f"오버 (U/O {uo_base:g})", "prob": prob_o, "odd": float(totals_odds.get("over") or 0), "market_prob": totals_market[1], "selection_side": "over"},
     ]
-    attach_analysis_contracts(candidates, exp_h, exp_a, uo_base, goal_model_audit)
+    attach_analysis_contracts(candidates, exp_h, exp_a, uo_base, goal_model_audit, joint_matrix)
     calibrate_market_candidates(candidates, market_performance, confidence)
     underdog_side = (
         "home" if float(wdl_odds.get("home") or 0) > float(wdl_odds.get("away") or 0)
@@ -5087,8 +5214,8 @@ def build_dashboard_data():
         weather_condition = fetch_weather_api(city, odds_ttl)
          
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"], heavy_ttl)
-        h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl)
-        a_stand = fetch_team_standing_api(away_info.get("id"), heavy_ttl)
+        h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
+        a_stand = fetch_team_standing_api(away_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
         h_rank, a_rank = h_stand["rank"], a_stand["rank"]
         
         h_manager = fetch_new_manager_status(home_info.get("id"), heavy_ttl)
@@ -5240,6 +5367,10 @@ def build_dashboard_data():
             h_long, a_long, h_recent, a_recent, h_stats, a_stats, league_n,
             h_total_penalty, a_total_penalty,
         )
+        exp_h, exp_a, goal_model_audit = apply_cached_opponent_model(
+            exp_h, exp_a, goal_model_audit, home_info.get("id"), away_info.get("id"),
+            (os_data or {}).get("league_id"), m_dt, h_total_penalty, a_total_penalty,
+        )
 
         base_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
@@ -5293,21 +5424,12 @@ def build_dashboard_data():
         elif analysis_odds_source == "model_only":
             analysis_confidence = round(max(0.35, analysis_confidence * 0.85), 3)
          
-        h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a = calculate_poisson_probs(exp_h, exp_a, handi_base, uo_base)
-
-        if has_market_odds:
-            h_win, draw, a_win = calibrate_three_way_probabilities(
-                [h_win, draw, a_win], [odd_h, odd_d, odd_a], analysis_confidence
-            )
-        if uo_under > 1.0 and uo_over > 1.0:
-            prob_u, prob_o = calibrate_two_way_probabilities(
-                [prob_u, prob_o], [uo_under, uo_over], analysis_confidence
-            )
-        if min(handi_h, handi_d, handi_a) > 1.0:
-            prob_handi_h, prob_handi_d, prob_handi_a = calibrate_three_way_probabilities(
-                [prob_handi_h, prob_handi_d, prob_handi_a],
-                [handi_h, handi_d, handi_a], analysis_confidence,
-            )
+        probabilities, joint_audit, joint_matrix = coherent_match_forecast(
+            exp_h, exp_a, handi_base, uo_base, [odd_h, odd_d, odd_a],
+            analysis_confidence, market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
+        )
+        h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a = probabilities
+        goal_model_audit["joint_forecast"] = joint_audit
 
         wdl_market = (
             normalize_probabilities([1 / odd_h, 1 / odd_d, 1 / odd_a])
@@ -5366,7 +5488,7 @@ def build_dashboard_data():
         # 있으므로, 제공된 세 시장의 모든 방향을 같은 출발선에서 비교한다.
         all_market_picks = wdl_cands + handi_cands + uo_cands
         valid_all_picks = all_market_picks
-        attach_analysis_contracts(all_market_picks, exp_h, exp_a, uo_base, goal_model_audit)
+        attach_analysis_contracts(all_market_picks, exp_h, exp_a, uo_base, goal_model_audit, joint_matrix)
         calibrate_market_candidates(
             all_market_picks, market_performance, analysis_confidence
         )
@@ -5546,6 +5668,11 @@ def build_dashboard_data():
             continue
         dashboard_proto.append({
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
+            "goal_model_audit": goal_model_audit,
+            "wdl_forecast": {"probabilities": list(probabilities[:3]),
+                             "forecast_model_version": FORECAST_MODEL_VERSION,
+                             "generated_at": datetime.now(timezone.utc).isoformat(),
+                             "fixture_id": int(api_fixture_id or 0)},
             "api_fixture_id": int(api_fixture_id or 0),
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks,
@@ -5694,6 +5821,12 @@ def build_dashboard_data():
             frozen_prediction_count += 1
             continue
 
+        canonical_toto = _toto14_from_canonical_proto(m, dashboard_proto)
+        if canonical_toto is not None:
+            dashboard_toto14.append(canonical_toto)
+            total_combinations *= max(1, len(canonical_toto.get("picks") or []))
+            continue
+
         home_info, away_info, identity_fixture = resolve_match_team_pair(
             home_team, away_team, match_time, ttl_h=2
         )
@@ -5714,8 +5847,8 @@ def build_dashboard_data():
         city = os_data.get("city") if os_data else None
         weather_condition = fetch_weather_api(city, odds_ttl) 
          
-        h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl)
-        a_stand = fetch_team_standing_api(away_info.get("id"), heavy_ttl)
+        h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
+        a_stand = fetch_team_standing_api(away_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
         h_rank, a_rank = h_stand["rank"], a_stand["rank"]
         
         h_manager = fetch_new_manager_status(home_info.get("id"), heavy_ttl)
@@ -5819,7 +5952,7 @@ def build_dashboard_data():
         h_recent = fetch_team_recent_form_metrics(home_info.get("id"), heavy_ttl)
         a_recent = fetch_team_recent_form_metrics(away_info.get("id"), heavy_ttl)
          
-        league_n_14 = m.get('league', '')
+        league_n_14 = (os_data or {}).get("league_name") or m.get('league', '')
         h_stats = fetch_recent_team_stats_api(home_info.get("id"), heavy_ttl)
         a_stats = fetch_recent_team_stats_api(away_info.get("id"), heavy_ttl)
 
@@ -5861,6 +5994,10 @@ def build_dashboard_data():
             h_long, a_long, h_recent, a_recent, h_stats, a_stats, league_n_14,
             h_total_penalty, a_total_penalty,
         )
+        exp_h, exp_a, goal_model_audit = apply_cached_opponent_model(
+            exp_h, exp_a, goal_model_audit, home_info.get("id"), away_info.get("id"),
+            (os_data or {}).get("league_id"), m_dt, h_total_penalty, a_total_penalty,
+        )
 
         analysis_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
@@ -5868,24 +6005,15 @@ def build_dashboard_data():
             diff_hours, lineup_confirmed,
         )
          
-        h_win, draw, a_win, _, _, _, _, _ = calculate_poisson_probs(exp_h, exp_a)
-        
         market_odds = []
         if os_data and min(float(os_data.get("odd_h") or 0), float(os_data.get("odd_d") or 0), float(os_data.get("odd_a") or 0)) > 1.0:
             market_odds = [os_data["odd_h"], os_data["odd_d"], os_data["odd_a"]]
-        h_win, draw, a_win = calibrate_three_way_probabilities(
-            [h_win, draw, a_win], market_odds, analysis_confidence
+        probabilities, joint_audit, _ = coherent_match_forecast(
+            exp_h, exp_a, 0, 2.5, market_odds, analysis_confidence,
+            market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
         )
-
-        # 베트맨 투표율은 정답이 아닌 대중 심리라서, 배당을 못 찾았을 때만 8% 참고한다.
-        vote_values = [m.get("vote_h"), m.get("vote_d"), m.get("vote_a")]
-        if not market_odds and all(value is not None for value in vote_values):
-            vote_probs = normalize_probabilities(vote_values)
-            h_win, draw, a_win = normalize_probabilities([
-                h_win * 0.92 + vote_probs[0] * 0.08,
-                draw * 0.92 + vote_probs[1] * 0.08,
-                a_win * 0.92 + vote_probs[2] * 0.08,
-            ])
+        h_win, draw, a_win = probabilities[:3]
+        goal_model_audit["joint_forecast"] = joint_audit
 
         pct_h = round(h_win * 100, 1)
         pct_d = round(draw * 100, 1)
@@ -6054,6 +6182,37 @@ def _cached_fixture_identity_board(date_key, purpose="scoring"):
         raise
 
 
+def _stored_team_identity_matches(local_name, stored_name, api_id=0):
+    """Exact names/curated aliases or verified IDs, never a fuzzy recovery."""
+    expected = known_team_id(local_name)
+    actual = int(api_id or known_team_id(stored_name) or 0)
+    if expected and actual:
+        return expected == actual
+    def keys(name):
+        values = {str(name or "")}
+        for english, korean in WORLD_TEAM_NAME_KO_OVERRIDES.items():
+            norm = lambda s: re.sub(r"[^a-z0-9가-힣]", "", str(s).casefold())
+            if norm(name) in {norm(english), norm(korean)}:
+                values.update((english, korean))
+        values.add(TEAM_NAME_MAP.get(str(name), ""))
+        values.add(MANUAL_TEAM_MAP.get(str(name), ""))
+        return {re.sub(r"[^a-z0-9가-힣]", "", v.casefold()) for v in values if v}
+    return bool(keys(local_name) & keys(stored_name))
+
+
+def _record_fixture_recovery(conn, recovered, source):
+    conn.execute("""CREATE TABLE IF NOT EXISTS fixture_identity_recovery_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT, old_fixture_id INTEGER,
+        new_fixture_id INTEGER, home_team TEXT, away_team TEXT, match_time TEXT,
+        evidence_source TEXT, recorded_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    for match_id, fixture_id in recovered.items():
+        conn.execute("""INSERT INTO fixture_identity_recovery_audit
+            (match_id,old_fixture_id,new_fixture_id,home_team,away_team,match_time,evidence_source)
+            SELECT match_id,COALESCE(api_fixture_id,0),?,home_team,away_team,match_time,?
+            FROM predictions WHERE match_id=? AND COALESCE(api_fixture_id,0)=0""",
+            (fixture_id, source, match_id))
+
+
 def _recover_due_fixture_ids(rows, conn):
     """Recover unresolved fixtures from their scheduled date, including terminal games."""
     # Reuse an already linked canonical/WORLD fixture before fetching another
@@ -6068,12 +6227,13 @@ def _recover_due_fixture_ids(rows, conn):
         candidates = set()
         for home, away, when, fixture in known:
             known_dt = _parse_kst_match_time(when)
-            if (match_dt and known_dt and abs((match_dt-known_dt).total_seconds()) <= 3*3600
-                    and team_matches_api(row[1], home, 0) and team_matches_api(row[2], away, 0)):
+            if (match_dt and known_dt and abs((match_dt-known_dt).total_seconds()) <= 15*60
+                    and _stored_team_identity_matches(row[1], home) and _stored_team_identity_matches(row[2], away)):
                 candidates.add(int(fixture))
         if len(candidates) == 1:
             recovered_local[str(row[0])] = candidates.pop()
     if recovered_local:
+        _record_fixture_recovery(conn, recovered_local, "stored_prediction_ordered_teams_kickoff_15min")
         conn.executemany("UPDATE predictions SET api_fixture_id=? WHERE match_id=? AND COALESCE(api_fixture_id,0)=0",
                          [(fixture, match_id) for match_id, fixture in recovered_local.items()])
         conn.commit()
@@ -6084,7 +6244,16 @@ def _recover_due_fixture_ids(rows, conn):
 
     boards = {}
     now = datetime.now(KST)
+    date_rows = {}
     for row in unresolved:
+        dt = _parse_kst_match_time(row[5])
+        if dt is not None:
+            date_rows.setdefault(dt.strftime("%Y-%m-%d"), row)
+    cursor = get_db_cache("fixture_recovery_date_cursor_v1", 24*365) or {}
+    dates = sorted(date_rows)
+    start = next((i for i, date in enumerate(dates) if date > str(cursor.get("last_date") or "")), 0)
+    ordered_rows = [date_rows[date] for date in dates[start:]+dates[:start]]
+    for row in ordered_rows:
         match_dt = _parse_kst_match_time(row[5])
         if match_dt is None:
             continue
@@ -6103,6 +6272,8 @@ def _recover_due_fixture_ids(rows, conn):
         except Exception as error:
             print(f"⚠️ 미연결 경기판 조회 실패({date_key}): {error}")
             boards[date_key] = []
+    if boards:
+        set_db_cache("fixture_recovery_date_cursor_v1", {"last_date": next(reversed(boards))})
 
     recovered = {}
     for row in unresolved:
@@ -6114,14 +6285,14 @@ def _recover_due_fixture_ids(rows, conn):
         candidates = []
         for item in boards.get(match_dt.strftime("%Y-%m-%d"), []):
             api_dt = _api_fixture_datetime(item)
-            if api_dt is None or abs((api_dt - match_dt).total_seconds()) > 3 * 3600:
+            if api_dt is None or abs((api_dt - match_dt).total_seconds()) > 15 * 60:
                 continue
             teams = item.get("teams", {})
             api_home = teams.get("home", {})
             api_away = teams.get("away", {})
-            if not team_matches_api(home_team, api_home.get("name"), api_home.get("id")):
+            if not _stored_team_identity_matches(home_team, api_home.get("name"), api_home.get("id")):
                 continue
-            if not team_matches_api(away_team, api_away.get("name"), api_away.get("id")):
+            if not _stored_team_identity_matches(away_team, api_away.get("name"), api_away.get("id")):
                 continue
             candidates.append((abs((api_dt - match_dt).total_seconds()), item))
         if not candidates:
@@ -6132,6 +6303,7 @@ def _recover_due_fixture_ids(rows, conn):
             recovered[str(match_id)] = fixture_id
 
     if recovered:
+        _record_fixture_recovery(conn, recovered, "cached_date_board_ordered_teams_kickoff_15min")
         conn.executemany(
             "UPDATE predictions SET api_fixture_id = ? WHERE match_id = ? AND COALESCE(api_fixture_id, 0) = 0",
             [(fixture_id, match_id) for match_id, fixture_id in recovered.items()],
@@ -6157,8 +6329,8 @@ def _scoring_row_matches_fixture(row, match_info):
     api_home = teams.get("home", {}) or {}
     api_away = teams.get("away", {}) or {}
     return (
-        team_matches_api(row[1], api_home.get("name"), api_home.get("id"))
-        and team_matches_api(row[2], api_away.get("name"), api_away.get("id"))
+        _stored_team_identity_matches(row[1], api_home.get("name"), api_home.get("id"))
+        and _stored_team_identity_matches(row[2], api_away.get("name"), api_away.get("id"))
     )
 
 

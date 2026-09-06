@@ -225,7 +225,7 @@ def _verified_observations(
             else:
                 observations.append({
                     "code": "RESULT_DESPITE_ON_TARGET_EDGE",
-                    "text": f"선택 팀 유효슈팅은 {left}개로 상대 {right}개보다 적지 않았지만 승리 결과로 이어지지 않았습니다.",
+                    "text": f"선택 팀 유효슈팅은 {left}개로 상대 {right}개보다 적지 않았지만 해당 추천픽의 정산 조건은 충족되지 않았습니다.",
                     "evidence": "official_statistics",
                 })
 
@@ -303,7 +303,11 @@ def postmortem_text(payload: Dict[str, Any]) -> str:
         lines = [f"- {item.get('label')}({item.get('pick') or '픽 정보 없음'}): {item.get('reason')}" for item in misses]
         sections.append("[미적중 원인 · 확인된 결과]\n" + "\n".join(lines))
     if observations:
-        sections.append("[현실 근거 · 공식 데이터 관찰]\n" + "\n".join(f"- {item.get('text')}" for item in observations))
+        # Display correction for old notes only: original JSON/picks stay intact.
+        sections.append("[현실 근거 · 공식 데이터 관찰]\n" + "\n".join(
+            "- " + str(item.get('text') or '').replace("승리 결과로 이어지지 않았습니다.",
+                                                       "해당 추천픽의 정산 조건은 충족되지 않았습니다.")
+            for item in observations))
     tags = payload.get("learning_tags") or []
     if tags:
         sections.append("[학습 로봇 태그] " + ", ".join(tags))

@@ -1963,7 +1963,7 @@ def _world_live_item(world_item, proto_by_fixture):
             injury_text = "부상자료 미수신"
         missing_core = (inputs.get("lineups") or {}).get(side+"_missing_core") or []
         lineup_text = ("선발 확인 · 핵심 제외 " + ", ".join(map(str,missing_core))) if missing_core else (
-            "선발 확인 · 핵심 제외 없음" if item["lineup_confirmed"] else "선발 발표 대기")
+            "선발 확인 · 핵심 제외 없음" if item["lineup_confirmed"] else "공식 선발자료 미수신")
         item[prefix+"_inj_html"] = f"<div class='injury-badge'>{escape(injury_text)}</div><div class='injury-badge'>{escape(lineup_text)}</div>"
         item[prefix+"_rest_html"] = f"<div class='fatigue-badge'>휴식 {escape(str(rest))}일</div>" if rest is not None and rest<90 else ""
     return item
@@ -2015,6 +2015,10 @@ def _with_analysis_pick(item):
 def _render_live_match_card(item):
     """ONE component for Proto and World: score, events, pick, quality, full report."""
     item = _with_analysis_pick(item)
+    if _live_state(item) in {"LIVE", "FINISHED"}:
+        item = dict(item)
+        for field in ("h_inj_html", "a_inj_html"):
+            item[field] = str(item.get(field) or "").replace("선발 발표 대기", "공식 선발자료 미수신").replace("선발 확인 예정", "공식 선발자료 미수신")
     m = item.get("match",{})
     live_info = _live_info_for_item(item)
     db_result = _result_for_item(item)
@@ -2081,7 +2085,8 @@ def _render_live_match_card(item):
         f"<div class='center-time-box' style='min-width:140px'>{time_display}</div>"
         f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
         "</div>"
-        f"{event_html}{_detail_html(detail_item, always_visible=True)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
+        f"{event_html}<div style='color:#94A3B8;font-size:12px;margin:10px 0'>분석·픽·확률은 경기 전 기준입니다. 위 LIVE 점수·사건은 현재 상황이며 예측확률을 실시간으로 다시 계산한 것이 아닙니다.</div>"
+        f"{_detail_html(detail_item, always_visible=True)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
         "</div>"
     )
 
@@ -2425,11 +2430,11 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
     result_parts = [f"확률픽 {'적중' if prob_ok else '미적중'}"]
     result_parts.append(
         f"배당형 대안픽 {'적중' if ev_ok else '미적중'}"
-        if has_ev_pick else "배당형 대안픽 미선정"
+        if has_ev_pick else "별도 대안픽 기록 없음 · 최종픽만 채점"
     )
     sections = [f"[채점 결과] {' · '.join(result_parts)}."]
     if main_text.strip():
-        sections.append(main_text.strip())
+        sections.append(main_text.strip().replace("승리 결과로 이어지지 않았습니다.", "해당 추천픽의 정산 조건은 충족되지 않았습니다."))
 
     # New rows carry JSON for the future learning robot.  Old rows are rebuilt
     # from their frozen picks, final score, and any facts already in the note.
@@ -3457,7 +3462,7 @@ with main_tab4:
             prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
             if not has_ev_pick:
                 ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>미선정</span>"
-                ev_pick = "승무패·핸디캡 배당 자료 없음"
+                ev_pick = "별도 대안픽 기록 없음 · 최종픽만 채점"
             elif same_pick:
                 ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>동일픽</span>"
                 ev_pick += " · A/B 별도 집계 제외"
@@ -3482,7 +3487,7 @@ with main_tab4:
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>"
                 f"</div>"
                 f"<div class='report-pick-box'>"
-                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🍯 배당형 대안픽 예측</span>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>{'🍯 당시 대안픽 기록' if has_ev_pick else '검증 정보 · 과거 예측 보존'}</span>"
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>"
                 f"</div>"
                 f"</div>"

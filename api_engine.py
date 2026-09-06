@@ -10,6 +10,8 @@ import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+from football_model import (clean_records, train_challenger, predict_goals,
+                            price_eligible, probability_price_choice, validate_price_policy)
 
 from grading_postmortem import (
     build_postmortem,
@@ -32,10 +34,13 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.5.1-analysis-pick-required"
+ANALYSIS_VERSION = "V7.6.0-coherent-probability"
+FORECAST_MODEL_VERSION = "goals-v2-joint-wdl-v1"
+CALIBRATION_VERSION = "fixture-time-wdl-projection-v1"
+PICK_POLICY_VERSION = "probability-protected-price-v1"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.5.1-pick-with-warnings"
+SYSTEM_VERSION = "R7.6.0-coherent-probability"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1774,7 +1779,7 @@ def fetch_overseas_odds_and_fixture_api(
     m_dt = parse_match_time(match_time_str)
     date_str = m_dt.strftime('%Y-%m-%d')
     odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
-    cache_key = f"odds_fixture_v12_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
+    cache_key = f"odds_fixture_v13_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1783,18 +1788,15 @@ def fetch_overseas_odds_and_fixture_api(
         if date_fixtures is None:
             return None
 
-        target_ids = {int(home_id), int(away_id)}
         exact_matches = []
         for fixture_data in date_fixtures:
             teams = fixture_data.get("teams", {})
-            candidate_ids = {
-                teams.get("home", {}).get("id"),
-                teams.get("away", {}).get("id"),
-            }
-            if candidate_ids == target_ids:
+            if (int(teams.get("home", {}).get("id") or 0) == int(home_id)
+                    and int(teams.get("away", {}).get("id") or 0) == int(away_id)
+                    and abs(float(fixture_data.get("fixture", {}).get("timestamp") or 0)-m_dt.timestamp()) <= 3*3600):
                 exact_matches.append(fixture_data)
 
-        if exact_matches:
+        if exact_matches and len({item["fixture"]["id"] for item in exact_matches}) == 1:
             match_data = min(
                 exact_matches,
                 key=lambda item: abs(
@@ -1806,6 +1808,11 @@ def fetch_overseas_odds_and_fixture_api(
             city_name = match_data["fixture"].get("venue", {}).get("city")
             res_val = {
                 "fixture_id": fix_id,
+                "home_team_id": int(home_id), "away_team_id": int(away_id),
+                "kickoff_timestamp": match_data["fixture"].get("timestamp"),
+                "league_id": (match_data.get("league") or {}).get("id"),
+                "league_name": (match_data.get("league") or {}).get("name"),
+                "season": (match_data.get("league") or {}).get("season"),
                 "odd_h": None,
                 "odd_d": None,
                 "odd_a": None,
@@ -1993,7 +2000,7 @@ def fetch_team_long_term_stats_api(team_id, ttl_h):
         return default_res
     except: return default_res
 
-def fetch_team_standing_api(team_id, ttl_h):
+def fetch_team_standing_api(team_id, ttl_h, target_league_id=None, target_season=None):
     default_res = {
         "rank": 99, "points": 0, "played": 0, "league_id": None,
         "season": None, "total_teams": 0, "team_goals": 0,
@@ -2003,20 +2010,29 @@ def fetch_team_standing_api(team_id, ttl_h):
         "points_above_zone": None, "relegation_zone_source": "none",
     }
     if not team_id: return default_res
-    cache_key = f"standing_v5_survival_{team_id}"
+    cache_key = (f"standing_v6_{team_id}_{target_league_id}_{target_season}"
+                 if target_league_id else f"standing_v5_survival_{team_id}")
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        year = datetime.now().year
-        res = api_get("/standings", params={"team": team_id, "season": year}, timeout=5)
+        year = int(target_season or datetime.now().year)
+        params = {"team": team_id, "season": year}
+        if target_league_id:
+            params["league"] = int(target_league_id)
+        res = api_get("/standings", params=params, timeout=5)
         data = res.json().get("response", [])
-        if not data:
-            res = api_get("/standings", params={"team": team_id, "season": year-1}, timeout=5)
+        if not data and not target_season:
+            params["season"] = year-1
+            res = api_get("/standings", params=params, timeout=5)
             data = res.json().get("response", [])
         if data:
             for league_data in data:
                 league_id = league_data.get("league", {}).get("id")
                 season = league_data.get("league", {}).get("season")
+                if target_league_id and int(league_id or 0) != int(target_league_id):
+                    continue
+                if target_season and int(season or 0) != int(target_season):
+                    continue
                 standings_list = league_data.get("league", {}).get("standings", [])
                 for group in standings_list:
                     group = [row for row in (group or []) if isinstance(row, dict)]
@@ -2459,8 +2475,8 @@ def build_score_matrix(exp_h, exp_a, rho=-0.15):
     return [[p / total for p in row] for row in matrix]
 
 
-def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5):
-    matrix = build_score_matrix(exp_h, exp_a)
+def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5, matrix=None):
+    matrix = build_score_matrix(exp_h, exp_a) if matrix is None else matrix
     h_win, draw, a_win, prob_u, prob_o = 0.0, 0.0, 0.0, 0.0, 0.0
     prob_handi_h, prob_handi_d, prob_handi_a = 0.0, 0.0, 0.0
     for h, row in enumerate(matrix):
@@ -2475,6 +2491,67 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5):
             elif (h + handi_val) < a: prob_handi_a += p
             
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a
+
+
+def project_score_matrix_wdl(matrix, target):
+    """Reweight disjoint W/D/L cells, preserving their conditional score shape."""
+    masses = [0.0, 0.0, 0.0]
+    for h, row in enumerate(matrix):
+        for a, p in enumerate(row):
+            masses[0 if h > a else 1 if h == a else 2] += p
+    if len(target) != 3 or any(not math.isfinite(float(p)) or p < 0 for p in target):
+        raise ValueError("invalid WDL target")
+    if abs(sum(target) - 1) > 1e-8:
+        raise ValueError("WDL target must sum to one")
+    if any(m <= 0 and p > 0 for m, p in zip(masses, target)):
+        raise ValueError("cannot assign probability to an impossible event")
+    factors = [p/m if m else 0 for p, m in zip(target, masses)]
+    return [[p * factors[0 if h > a else 1 if h == a else 2]
+             for a, p in enumerate(row)] for h, row in enumerate(matrix)]
+
+
+def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
+                            history=None, rho=-.15):
+    """All markets and refund contracts come from ONE final score distribution.
+
+    Only WDL is market/learning calibrated. Independent handicap/totals
+    calibration would contradict the same score events. Market prices for
+    those markets remain available for value comparison, not extra goal boosts.
+    """
+    matrix = build_score_matrix(exp_h, exp_a, rho)
+    wdl = list(calculate_poisson_probs(exp_h, exp_a, matrix=matrix)[:3])
+    valid_odds = len(odds or []) == 3 and all(
+        math.isfinite(float(o or 0)) and float(o or 0) > 1 for o in odds)
+    target = calibrate_three_way_probabilities(wdl, odds if valid_odds else [], confidence)
+    matrix = project_score_matrix_wdl(matrix, target)
+    before = calculate_poisson_probs(exp_h, exp_a, handicap, total, matrix)
+    history = history or {}
+    corrected, weights, counts = [], [], []
+    for p in target:
+        cohort = history.get("calibration_bins", {}).get(str(min(9, int(p*10))), {})
+        n = int(cohort.get("samples") or 0)
+        weight = min(.18, n/(n+30.0)*.18) if history.get("calibration_validated") and n else 0.0
+        error = float(cohort.get("error_sum") or 0)/n if n else 0.0
+        corrected.append(max(0.0, min(1.0, p+weight*error)))
+        weights.append(weight)
+        counts.append(n)
+    matrix = project_score_matrix_wdl(matrix, normalize_probabilities(corrected))
+    probabilities = calculate_poisson_probs(exp_h, exp_a, handicap, total, matrix)
+    audit = {
+        "coherent_score_distribution": True,
+        "forecast_model_version": FORECAST_MODEL_VERSION,
+        "calibration_version": CALIBRATION_VERSION,
+        "pick_policy_version": PICK_POLICY_VERSION,
+        "raw_market_probabilities": list(before),
+        "final_market_probabilities": list(probabilities),
+        "wdl_learning_weights": weights, "wdl_learning_samples": counts,
+        "calibration_active": any(weights),
+        "validation_fixtures": int(history.get("validation_fixtures") or 0),
+        "market_blend": "wdl_only" if valid_odds else "none",
+        "rho": rho,
+    }
+    # Matrix is transient; only the small audit is persisted for each candidate.
+    return probabilities, audit, matrix
 
 
 def estimate_match_goals(h_long, a_long, h_recent, a_recent, h_stats, a_stats,
@@ -2541,6 +2618,77 @@ def estimate_match_goals(h_long, a_long, h_recent, a_recent, h_stats, a_stats,
     return eh, ea, audit
 
 
+_FIT_MEMORY = {}
+
+
+def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id, kickoff,
+                                home_penalty=0.0, away_penalty=0.0):
+    """Read cached fixtures only; never spend an API request to train/check.
+
+    A stale/missing/failed challenger leaves the auditable baseline untouched.
+    The fitted goal model deliberately replaces, rather than multiplies, the
+    baseline's recent-form and xG components. Absence adjustment is applied once.
+    """
+    audit = dict(audit)
+    now = datetime.now(timezone.utc).timestamp()
+    cutoff = min(now, kickoff.timestamp()) if kickoff is not None else now
+    inactive = {"active": False, "parameters_fitted": False, "samples": 0,
+                "reason": "경기·대회 신원 미확인"}
+    if not all((home_id, away_id, league_id)) or int(home_id) == int(away_id) or cutoff < now-60:
+        audit["opponent_model"] = inactive
+        return exp_h, exp_a, audit
+    key = f"opponent_fit_v1_{int(league_id)}_{int(cutoff//21600)}"
+    artifact = _FIT_MEMORY.get(key) or get_db_cache(key, 6)
+    if not artifact:
+        fixtures = []
+        conn = None
+        try:
+            conn = sqlite3.connect("file:ai_predictions.db?mode=ro", uri=True, timeout=2)
+            rows = conn.execute("SELECT cache_value FROM api_cache WHERE cache_key LIKE 'recent_fixtures_v2_%' "
+                                "AND updated_at >= datetime('now','-7 days') ORDER BY updated_at DESC LIMIT 1500").fetchall()
+            for (value,) in rows:
+                try:
+                    payload = json.loads(value)
+                    if isinstance(payload, list):
+                        fixtures.extend(payload)
+                except (ValueError, TypeError):
+                    continue
+            records = clean_records(fixtures, league_id, cutoff)
+            priors = audit.get("league_prior") or {"home": 1.5, "away": 1.2}
+            if isinstance(priors, dict):
+                priors = (priors.get("home", 1.5), priors.get("away", 1.2))
+            artifact = train_challenger(records, priors, calculate_poisson_probs)
+            artifact["trained_at"] = cutoff
+        except (sqlite3.Error, ValueError, TypeError, KeyError) as error:
+            artifact = dict(inactive, reason="저장 훈련자료 읽기 실패 · 기초모형 유지", error_type=type(error).__name__)
+        finally:
+            if conn is not None:
+                conn.close()
+        set_db_cache(key, artifact)
+    _FIT_MEMORY[key] = artifact
+    # Keep memory bounded as the daily collector spans many leagues.
+    if len(_FIT_MEMORY) > 256:
+        _FIT_MEMORY.pop(next(iter(_FIT_MEMORY)))
+    public = {k: v for k, v in artifact.items() if k != "parameters"}
+    parameters = artifact.get("parameters") or {}
+    sufficient_teams = min(parameters.get("team_samples", {}).get(str(team), 0) for team in (home_id, away_id)) >= 8
+    active = bool(artifact.get("active") and sufficient_teams
+                  and float(artifact.get("available_after") or 0) <= cutoff
+                  and float(artifact.get("trained_at") or 0) <= cutoff)
+    public["active"] = active
+    if artifact.get("active") and not sufficient_teams:
+        public["reason"] = "해당 팀 종료 표본 8경기 미만 · 기초모형 유지"
+    audit["opponent_model"] = public
+    if active:
+        eh, ea = predict_goals(parameters, home_id, away_id)
+        exp_h, exp_a = [round(max(.3, min(3.2, g*(1-max(0, min(.3, float(p or 0)))))), 4)
+                        for g, p in ((eh, home_penalty), (ea, away_penalty))]
+        audit.update(model=artifact["model_version"], parameters_fitted=True, rho=parameters["rho"],
+                     expected_goals={"home": exp_h, "away": exp_a},
+                     active_features="time_weighted_opponent_attack_defence_and_single_availability_penalty")
+    return exp_h, exp_a, audit
+
+
 def combine_availability_penalties(injury, lineup, goal_dependency, fatigue, rotation, depth=1.0):
     """Same missing player must not incur injury+lineup+goal-share penalties."""
     absence = max(float(injury or 0), float(lineup or 0), float(goal_dependency or 0))
@@ -2548,7 +2696,7 @@ def combine_availability_penalties(injury, lineup, goal_dependency, fatigue, rot
     return min(0.30, max(0.0, (1 - (1-absence) * (1-schedule)) * float(depth or 1)))
 
 
-def total_settlement_probabilities(exp_h, exp_a, line, side):
+def total_settlement_probabilities(exp_h, exp_a, line, side, matrix=None):
     """Asian totals: distinguish winning stake, refunded stake and loss.
 
     Three-way handicaps are deliberately NOT treated as Asian handicaps.
@@ -2558,7 +2706,7 @@ def total_settlement_probabilities(exp_h, exp_a, line, side):
         raise ValueError("unsupported totals contract")
     lines = [line] if abs(line*2-round(line*2)) < 1e-8 else [line-.25, line+.25]
     states = {"win": 0.0, "half_win": 0.0, "push": 0.0, "half_loss": 0.0, "loss": 0.0}
-    for h, row in enumerate(build_score_matrix(exp_h, exp_a)):
+    for h, row in enumerate(build_score_matrix(exp_h, exp_a) if matrix is None else matrix):
         for a, p in enumerate(row):
             results = [(1 if h+a < boundary else -1 if h+a > boundary else 0) * (1 if side == "under" else -1)
                        for boundary in lines]
