@@ -3,13 +3,11 @@
     "scheduler": {
       "supervisor_pid": 305379,
       "state": "running",
-      "heartbeat_at": "2026-09-06T00:07:17+00:00",
+      "heartbeat_at": "2026-09-06T00:10:17+00:00",
       "pid": 305379,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "world": 313377,
-        "live": 313378,
-        "score": 313379
+        "world": 313377
       }
     },
     "live": {
@@ -52,52 +50,92 @@
     },
     "world": {
       "child_pid": 313377,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T00:07:17+00:00",
-      "pid": 305379,
+      "state": "failed",
+      "heartbeat_at": "2026-09-06T00:10:39+00:00",
+      "pid": 313377,
       "last_started_at": "2026-09-06T00:06:47+00:00",
-      "elapsed_seconds": 30.0,
+      "elapsed_seconds": 210.2,
       "overlap_skips": 0,
-      "duration_seconds": 28.1,
+      "duration_seconds": 230.78,
       "last_success_at": "2026-09-04T23:46:15+00:00",
-      "last_failure_at": "2026-09-05T23:52:15+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-06T00:10:39+00:00",
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-06T00:07:20+00:00",
+  "updated_at": "2026-09-06T00:10:39+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
       {
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "calls": 3
-      },
-      {
-        "purpose": "scoring",
-        "endpoint": "/fixtures",
-        "calls": 2
-      },
-      {
         "purpose": "world",
         "endpoint": "/fixtures",
-        "calls": 1
+        "calls": 94
       },
       {
         "purpose": "world",
         "endpoint": "/odds",
-        "calls": 1
+        "calls": 88
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "calls": 83
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/standings",
+        "calls": 48
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/coachs",
+        "calls": 46
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/squads",
+        "calls": 45
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/injuries",
+        "calls": 30
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures/headtohead",
+        "calls": 23
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures/lineups",
+        "calls": 15
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topassists",
+        "calls": 14
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "calls": 14
+      },
+      {
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "calls": 3
       }
     ],
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-06",
     "reset_timezone": "UTC",
-    "local_calls": 7,
-    "provider_remaining": 7493,
+    "local_calls": 505,
+    "provider_remaining": 6995,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 2,
+    "world_calls": 500,
     "analysis_calls": 0,
     "live_calls": 3,
     "scoring_calls": 2,
