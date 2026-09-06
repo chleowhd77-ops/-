@@ -1814,6 +1814,33 @@ if st.session_state.get('role') == ROLE_ADMIN:
         api_usage = source_meta.get("api_usage", {})
         if api_usage.get("quota_exhausted"):
             st.warning("오늘 API 사용량이 소진되어 기존 정상 캐시로 분석 중입니다. 일일 한도 초기화 후 자동으로 최신 자료를 보강합니다.")
+        endpoints = api_usage.get("top_endpoints") or []
+        runtime_metrics = api_usage.get("runtime_metrics") or []
+        if endpoints or runtime_metrics:
+            with st.expander("API 사용 위치 확인"):
+                st.caption(
+                    "실제 전송된 호출은 용도·주소별로, 절약된 호출은 캐시·중복차단별로 표시합니다."
+                )
+                if endpoints:
+                    st.write("실제 호출 상위")
+                    for row in endpoints:
+                        st.write(
+                            f"{row.get('purpose', 'analysis')} · "
+                            f"{row.get('endpoint', '-')} · {int(row.get('calls') or 0)}회"
+                        )
+                if runtime_metrics:
+                    labels = {
+                        "cache_hit": "캐시 재사용",
+                        "singleflight_block": "같은 요청 중복 차단",
+                        "rate_retry": "공급사 429 재시도",
+                    }
+                    st.write("호출 절약·재시도")
+                    for row in runtime_metrics:
+                        metric = labels.get(str(row.get("metric") or ""), row.get("metric") or "기타")
+                        st.write(
+                            f"{metric} · {row.get('purpose', 'analysis')} · "
+                            f"{row.get('endpoint', '-')} · {int(row.get('count') or 0)}회"
+                        )
 
 def _live_info_for_item(item):
     match = item.get("match", {}) if isinstance(item, dict) else {}
@@ -2608,7 +2635,18 @@ def _proto_terminal_datetime(item):
 
 
 def _proto_is_recent_or_active(item):
-    return _live_state(item) != "FINISHED"
+    state = _live_state(item)
+    if state == "FINISHED":
+        return False
+    # A result-link problem must not leave a Saturday card in LIVE forever.
+    # Keep the immutable prediction in grading, but remove an unconfirmed card
+    # from the recommendation feed after the live lookup window.
+    if state == "AWAITING_STATUS":
+        kickoff = _item_kickoff_datetime(item)
+        now = datetime.now(timezone(timedelta(hours=9)))
+        if kickoff and now >= kickoff + timedelta(hours=6):
+            return False
+    return True
 
 
 def _proto_live_sort_key(item):
@@ -2788,7 +2826,7 @@ def _top3_strategy_html(item):
     elif isinstance(honey, dict) and str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
         support_text = "같은 최종픽이 보수적 배당가치 기준도 통과했습니다."
     else:
-        support_text = "별도 반대 픽 없이 세 시장 중 이 한 방향만 추천합니다."
+        support_text = "승무패를 먼저 판단하고, 검증된 기준을 통과한 경우에만 다른 시장으로 전환한 한 방향입니다."
 
     return (
         "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"
@@ -3189,6 +3227,23 @@ with main_tab3:
         <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
     </div>
     """, unsafe_allow_html=True)
+    honey_combo = dashboard_data.get("honey_two_pick") or {}
+    combo_rows = honey_combo.get("picks") or []
+    if len(combo_rows) == 2:
+        combo_lines = "".join(
+            "<div style='padding:5px 0;color:#E2E8F0;'>"
+            f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))} · "
+            f"<b style='color:#F59E0B'>{escape(_human_pick_label(row.get('pick'), row.get('home')))}</b> "
+            f"({float(row.get('probability') or 0)*100:.1f}% / {float(row.get('odd') or 0):.2f}배)</div>"
+            for row in combo_rows
+        )
+        st.markdown(
+            "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;margin-bottom:18px;'>"
+            "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🍯 꿀 2픽 조합</div>"
+            + combo_lines
+            + f"<div style='margin-top:7px;color:#94A3B8;font-size:12px;'>두 경기 모두 개별 최종픽의 꿀픽 기준 통과 · 조합 배당 {float(honey_combo.get('combined_odd') or 0):.2f}배</div>"
+            "</div>", unsafe_allow_html=True,
+        )
     top3_list = [
         item for item in dashboard_data.get("top3", [])
         if _recommendation_is_upcoming(item)

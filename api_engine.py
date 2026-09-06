@@ -11,7 +11,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from football_model import (clean_records, train_challenger, predict_goals,
-                            price_eligible, probability_price_choice, validate_price_policy)
+                            price_eligible, probability_price_choice, validate_price_policy,
+                            wdl_centered_choice)
 
 from grading_postmortem import (
     build_postmortem,
@@ -34,13 +35,13 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.6.0-coherent-probability"
-FORECAST_MODEL_VERSION = "goals-v2-joint-wdl-v1"
-CALIBRATION_VERSION = "fixture-time-wdl-projection-v1"
-PICK_POLICY_VERSION = "probability-protected-price-v1"
+ANALYSIS_VERSION = "V7.7.0-wdl-first-learned-dc"
+FORECAST_MODEL_VERSION = "goals-v3-learned-dc-movement-wdl-v1"
+CALIBRATION_VERSION = "fixture-time-wdl-movement-projection-v2"
+PICK_POLICY_VERSION = "wdl-first-validated-market-override-v2"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.6.0-coherent-probability"
+SYSTEM_VERSION = "R7.7.0-wdl-first-analysis-grading"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -222,6 +223,9 @@ def _runtime_connect():
         CREATE TABLE IF NOT EXISTS api_endpoint_daily (
             usage_day TEXT,purpose TEXT,endpoint TEXT,calls INTEGER DEFAULT 0,
             PRIMARY KEY(usage_day,purpose,endpoint));
+        CREATE TABLE IF NOT EXISTS api_runtime_metric_daily (
+            usage_day TEXT,metric TEXT,purpose TEXT,endpoint TEXT,count INTEGER DEFAULT 0,
+            PRIMARY KEY(usage_day,metric,purpose,endpoint));
         CREATE TABLE IF NOT EXISTS request_cache (
             key TEXT PRIMARY KEY, body TEXT, expires REAL DEFAULT 0, lease REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS runtime_meta (key TEXT PRIMARY KEY);
@@ -245,6 +249,20 @@ def _runtime_connect():
             if legacy is not None:
                 legacy.close()
     return conn
+
+
+def _record_runtime_metric(day, metric, purpose, endpoint):
+    try:
+        conn = _runtime_connect()
+        conn.execute("""
+            INSERT INTO api_runtime_metric_daily VALUES (?,?,?,?,1)
+            ON CONFLICT(usage_day,metric,purpose,endpoint)
+            DO UPDATE SET count=count+1
+        """, (day, str(metric), str(purpose), str(endpoint)))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def _reserve_api_request(day, purpose, path):
@@ -462,10 +480,12 @@ def api_get(path, params=None, timeout=7, purpose=None):
     try:
         cached = _claim_request_cache(key)
     except ApiRateLimited:
+        _record_runtime_metric(day, "singleflight_block", purpose, path)
         raise
     except Exception as error:
         raise ApiQuotaUnavailable("Cache/ledger unavailable; no request sent") from error
     if cached is not None:
+        _record_runtime_metric(day, "cache_hit", purpose, path)
         return cached
     saved = False
     try:
@@ -483,6 +503,7 @@ def api_get(path, params=None, timeout=7, purpose=None):
                 _show_api_quota_notice("공급사 일일 사용량 소진")
                 return response
             if response.status_code == 429 or "rate limit" in error_text:
+                _record_runtime_metric(day, "rate_retry", purpose, path)
                 if attempt >= API_RATE_LIMIT_RETRIES:
                     raise ApiRateLimited("Temporary provider rate limit")
                 time.sleep(min(10*(attempt+1),30))
@@ -516,10 +537,18 @@ def get_api_usage_status():
             {"purpose":r[0],"endpoint":r[1],"calls":r[2]}
             for r in conn.execute("SELECT purpose,endpoint,calls FROM api_endpoint_daily WHERE usage_day=? ORDER BY calls DESC LIMIT 12",(day_key,))
         ]
+        runtime_metrics = [
+            {"metric": r[0], "purpose": r[1], "endpoint": r[2], "count": r[3]}
+            for r in conn.execute(
+                "SELECT metric,purpose,endpoint,count FROM api_runtime_metric_daily "
+                "WHERE usage_day=? ORDER BY count DESC LIMIT 20", (day_key,)
+            )
+        ]
     finally:
         conn.close()
     return {
         "top_endpoints": endpoints,
+        "runtime_metrics": runtime_metrics,
         "accounting": "local-preflight-reservation-v2",
         "usage_day": day_key.removeprefix("utc:"),
         "reset_timezone": "UTC",
@@ -2448,11 +2477,7 @@ def get_league_averages(league_name):
     return 1.50, 1.20
 
 def build_score_matrix(exp_h, exp_a, rho=-0.15):
-    """Dixon-Coles with correct off-diagonal lambdas and a bounded tail.
-
-    rho retains the previous model assumption; it is NOT a fitted coefficient.
-    See goalmodel/R/dixoncoles.R. No artificial probability clipping per cell.
-    """
+    """Dixon-Coles with fitted-or-fallback rho and a bounded Poisson tail."""
     exp_h, exp_a, rho = float(exp_h), float(exp_a), float(rho)
     if not all(math.isfinite(x) for x in (exp_h, exp_a, rho)) or not (0 < exp_h <= 20 and 0 < exp_a <= 20):
         raise ValueError("expected goals must be finite and in (0, 20]")
@@ -2511,7 +2536,7 @@ def project_score_matrix_wdl(matrix, target):
 
 
 def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
-                            history=None, rho=-.15):
+                            history=None, rho=-.15, movement_adjustment=None):
     """All markets and refund contracts come from ONE final score distribution.
 
     Only WDL is market/learning calibrated. Independent handicap/totals
@@ -2523,6 +2548,16 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
     valid_odds = len(odds or []) == 3 and all(
         math.isfinite(float(o or 0)) and float(o or 0) > 1 for o in odds)
     target = calibrate_three_way_probabilities(wdl, odds if valid_odds else [], confidence)
+    movement_adjustment = list(movement_adjustment or [0.0, 0.0, 0.0])
+    if len(movement_adjustment) != 3:
+        movement_adjustment = [0.0, 0.0, 0.0]
+    movement_adjustment = [max(-.05, min(.05, float(value or 0))) for value in movement_adjustment]
+    movement_applied = any(abs(value) > 1e-12 for value in movement_adjustment)
+    if movement_applied:
+        target = normalize_probabilities([
+            max(1e-9, probability + adjustment)
+            for probability, adjustment in zip(target, movement_adjustment)
+        ])
     matrix = project_score_matrix_wdl(matrix, target)
     before = calculate_poisson_probs(exp_h, exp_a, handicap, total, matrix)
     history = history or {}
@@ -2549,6 +2584,9 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
         "validation_fixtures": int(history.get("validation_fixtures") or 0),
         "market_blend": "wdl_only" if valid_odds else "none",
         "rho": rho,
+        "rho_source": "learned" if abs(float(rho) + .15) > 1e-9 else "validated_fallback",
+        "movement_adjustment": movement_adjustment,
+        "movement_learning_active": movement_applied,
     }
     # Matrix is transient; only the small audit is persisted for each candidate.
     return probabilities, audit, matrix
@@ -2637,7 +2675,9 @@ def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id
     if not all((home_id, away_id, league_id)) or int(home_id) == int(away_id) or cutoff < now-60:
         audit["opponent_model"] = inactive
         return exp_h, exp_a, audit
-    key = f"opponent_fit_v1_{int(league_id)}_{int(cutoff//21600)}"
+    # The v2 key deliberately prevents a cached fixed-rho R7.6 artifact from
+    # being mistaken for the learned-rho model introduced in R7.7.
+    key = f"opponent_fit_v2_{int(league_id)}_{int(cutoff//21600)}"
     artifact = _FIT_MEMORY.get(key) or get_db_cache(key, 6)
     if not artifact:
         fixtures = []

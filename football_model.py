@@ -7,18 +7,26 @@ This is a promotion gate, not a claim of prospective profitability.
 import math
 from collections import Counter
 
-MODEL_VERSION = "time-weighted-opponent-poisson-v1"
+MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
+MIN_RHO_LOW_SCORE_TRAIN = 30
 
 
 def price_eligible(pick, confidence):
     market = pick.get("market_key") or "1x2"
+    side = str(pick.get("selection_side") or "").strip().lower()
+    # A single 40% floor for every 1X2 outcome silently excluded almost every
+    # realistic draw.  Draws are a normal W/D/L direction, so use a draw-aware
+    # probability floor while keeping the same conservative EV/edge checks.
+    probability_floor = .25 if market == "1x2" and side == "draw" else (
+        .4 if market == "1x2" else .5
+    )
     return bool(confidence >= .5 and pick.get("settlement_supported", True)
                 and float(pick.get("odd") or 0) > 1
                 and pick.get("fair_prob") is not None
                 and float(pick.get("robust_ev") or 0) >= 1.01
-                and (float(pick.get("prob") or 0) >= (.4 if market == "1x2" else .5)
+                and (float(pick.get("prob") or 0) >= probability_floor
                      or pick.get("is_qualified_underdog")))
 
 
@@ -31,10 +39,86 @@ def probability_price_choice(picks, confidence, band=0):
                                     float(p.get("robust_edge") or 0), p.get("market_key") == "1x2"))
 
 
+def _selection_key(pick):
+    return (float(pick.get("robust_probability") or pick.get("prob") or 0),
+            float(pick.get("prob") or 0), float(pick.get("robust_edge") or 0),
+            float(pick.get("robust_ev") or 0), str(pick.get("raw_pick") or ""))
+
+
+def wdl_centered_choice(picks, confidence, policy=None, return_reason=False):
+    """Choose W/D/L first; cross-market probability is never a direct rank.
+
+    Handicap and totals describe different events, so their raw probability is
+    not comparable with a three-way outcome.  They may replace the W/D/L anchor
+    only when no W/D/L candidate has verified price value, or when a
+    chronological policy has proved a clearly larger robust edge.
+    """
+    available = [p for p in picks if p.get("settlement_supported", True)]
+    if not available:
+        raise ValueError("no settlement-compatible candidate")
+    wdl = [p for p in available if (p.get("market_key") or "1x2") == "1x2"]
+    alternatives = [p for p in available if (p.get("market_key") or "1x2") != "1x2"]
+    wdl_priced = [p for p in wdl if price_eligible(p, confidence)]
+    alt_priced = [p for p in alternatives if price_eligible(p, confidence)]
+    anchor_pool = wdl_priced or wdl
+    if not anchor_pool:
+        pool = alt_priced or alternatives
+        chosen = max(pool, key=_selection_key)
+        reason = "wdl_unavailable"
+        return (chosen, reason) if return_reason else chosen
+    anchor = max(anchor_pool, key=_selection_key)
+    if not wdl_priced and alt_priced:
+        # A W/D/L direction above 50% is already more likely than the other
+        # two regulation-time outcomes combined.  Do not discard that strong
+        # base call merely because a composite handicap/total has a nicer
+        # price.  Other markets become the fallback when the W/D/L direction
+        # itself is also uncertain.
+        best_alternative = max(
+            alt_priced,
+            key=lambda p: (
+                float(p.get("robust_probability") or p.get("prob") or 0),
+                float(p.get("robust_edge") or 0),
+                float(p.get("robust_ev") or 0),
+            ),
+        )
+        anchor_probability = float(
+            anchor.get("robust_probability") or anchor.get("prob") or 0
+        )
+        alternative_probability = float(
+            best_alternative.get("robust_probability")
+            or best_alternative.get("prob") or 0
+        )
+        if anchor_probability >= .50 and anchor_probability >= alternative_probability + .03:
+            reason = "wdl_probability_strong"
+            return (anchor, reason) if return_reason else anchor
+        chosen = max(alt_priced, key=lambda p: (
+            float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
+            float(p.get("robust_probability") or p.get("prob") or 0)))
+        reason = "wdl_price_unqualified"
+        return (chosen, reason) if return_reason else chosen
+
+    policy = policy or {}
+    compatible = bool(policy.get("active") and int(policy.get("validation_fixtures") or 0) >= MIN_VALIDATION)
+    if compatible and wdl_priced and alt_priced:
+        edge_gap = max(.01, min(.08, float(policy.get("minimum_edge_advantage") or .025)))
+        ev_gap = max(0.0, min(.20, float(policy.get("minimum_ev_advantage") or .03)))
+        overrides = [p for p in alt_priced
+                     if float(p.get("robust_edge") or 0) >= float(anchor.get("robust_edge") or 0) + edge_gap
+                     and float(p.get("robust_ev") or 0) >= float(anchor.get("robust_ev") or 0) + ev_gap]
+        if overrides:
+            chosen = max(overrides, key=lambda p: (
+                float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
+                float(p.get("robust_probability") or p.get("prob") or 0)))
+            reason = "validated_cross_market_override"
+            return (chosen, reason) if return_reason else chosen
+    return (anchor, "wdl_anchor") if return_reason else anchor
+
+
 def validate_price_policy(groups):
     policy = {"active": False, "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0, "method": "chronological-price-policy-v1"}
+              "minimum_edge_advantage": None, "minimum_ev_advantage": .03,
+              "reason": "승무패 우선 시장전환 검증 표본 부족",
+              "validation_fixtures": 0, "method": "chronological-wdl-first-market-override-v2"}
     unique = {g["fixture"]: g for g in groups}
     ordered = sorted(unique.values(), key=lambda g: (g["kickoff"], g["fixture"]))
     if len(ordered) < MIN_TRAIN+MIN_VALIDATION:
@@ -44,27 +128,33 @@ def validate_price_policy(groups):
     validation = [g for g in ordered if g["kickoff"] >= boundary]
     if len(train) < MIN_TRAIN or len(validation) < MIN_VALIDATION:
         return policy
-    def evaluate(rows, band):
+    def evaluate(rows, trial_policy):
         hits, profit = 0, 0.0
         for group in rows:
-            pick = probability_price_choice(group["picks"], group["confidence"], band)
+            pick = wdl_centered_choice(group["picks"], group["confidence"], trial_policy)
             hits += pick["outcome"]
             profit += pick["outcome"]*pick["odd"]-1
         return hits, profit/len(rows)
-    baseline = evaluate(train, 0)
-    trials = [(band, evaluate(train, band)) for band in (.01, .025, .05)]
-    eligible = [(band, value) for band, value in trials if value[0] >= baseline[0] and value[1] > baseline[1]]
+    baseline_policy = {"active": False}
+    baseline = evaluate(train, baseline_policy)
+    trials = [(gap, evaluate(train, {"active": True, "validation_fixtures": MIN_VALIDATION,
+                                     "minimum_edge_advantage": gap, "minimum_ev_advantage": .03}))
+              for gap in (.01, .025, .05)]
+    eligible = [(gap, value) for gap, value in trials if value[0] >= baseline[0] and value[1] > baseline[1]]
     policy.update(train_fixtures=len(train), validation_fixtures=len(validation), train_before=boundary)
     if not eligible:
         policy["reason"] = "훈련 표본에서 적중 유지·가격 개선 동시 충족 없음"
         return policy
-    band, _ = max(eligible, key=lambda pair: (pair[1][1], -pair[0]))
-    base, trial = evaluate(validation, 0), evaluate(validation, band)
+    gap, _ = max(eligible, key=lambda pair: (pair[1][1], pair[0]))
+    trial_policy = {"active": True, "validation_fixtures": len(validation),
+                    "minimum_edge_advantage": gap, "minimum_ev_advantage": .03}
+    base, trial = evaluate(validation, baseline_policy), evaluate(validation, trial_policy)
     passed = trial[0] >= base[0] and trial[1] > base[1]
-    policy.update(active=passed, maximum_probability_sacrifice=band if passed else 0.0,
-                  tested_band=band, baseline_hits=base[0], policy_hits=trial[0],
+    policy.update(active=passed, minimum_edge_advantage=gap if passed else None,
+                  tested_edge_advantage=gap, baseline_hits=base[0], policy_hits=trial[0],
                   baseline_roi=base[1], policy_roi=trial[1],
-                  reason="시간순 검증에서 적중 유지·가격 개선 확인" if passed else "시간순 검증 개선 미확인 · 확률 희생 없음")
+                  reason="시간순 검증에서 승무패 우선 대비 적중 유지·수익 개선 확인" if passed
+                         else "시간순 검증 개선 미확인 · 승무패 우선 유지")
     return policy
 
 
@@ -98,6 +188,86 @@ def clean_records(fixtures, league_id, cutoff):
     return sorted((r for fid, r in records.items() if fid not in conflicts), key=lambda r: (r[1], r[0]))
 
 
+def _poisson_values(rate, limit=16):
+    values = [math.exp(-rate)]
+    for score in range(1, limit):
+        values.append(values[-1] * rate / score)
+    return values
+
+
+def _rho_bounds(home_rate, away_rate):
+    return (-1.0 / max(home_rate, away_rate) + 1e-9,
+            min(1.0, 1.0 / (home_rate * away_rate)) - 1e-9)
+
+
+def _dc_tau(home_score, away_score, home_rate, away_rate, rho):
+    if home_score == 0 and away_score == 0:
+        return 1.0 - home_rate * away_rate * rho
+    if home_score == 1 and away_score == 0:
+        return 1.0 + away_rate * rho
+    if home_score == 0 and away_score == 1:
+        return 1.0 + home_rate * rho
+    if home_score == 1 and away_score == 1:
+        return 1.0 - rho
+    return 1.0
+
+
+def dixon_coles_wdl(home_rate, away_rate, rho):
+    hp, ap = _poisson_values(home_rate), _poisson_values(away_rate)
+    masses = [0.0, 0.0, 0.0]
+    total = 0.0
+    for home_score, ph in enumerate(hp):
+        for away_score, pa in enumerate(ap):
+            value = ph * pa * _dc_tau(home_score, away_score, home_rate, away_rate, rho)
+            if value <= 0:
+                continue
+            masses[0 if home_score > away_score else 1 if home_score == away_score else 2] += value
+            total += value
+    return tuple(value / total for value in masses)
+
+
+def fit_rho(records, model, fallback=-.15):
+    """Fit Dixon-Coles low-score dependence from cached pre-holdout scores."""
+    latest = max(r[1] for r in records)
+    low_score = []
+    for record in records:
+        if record[4] > 1 or record[5] > 1:
+            continue
+        rates = predict_goals(model, record[2], record[3])
+        weight = 2 ** (-(latest - record[1]) / (180 * 86400))
+        low_score.append((record, rates, weight))
+    result = {"rho": fallback, "active": False, "low_score_samples": len(low_score),
+              "method": "weighted-low-score-likelihood-grid-v1",
+              "reason": "저장된 저득점 표본 부족 · 안전 기준값 유지"}
+    if len(low_score) < MIN_RHO_LOW_SCORE_TRAIN:
+        return result
+    candidates = [index / 100 for index in range(-35, 26)]
+    scored = []
+    for rho in candidates:
+        score = 0.0
+        valid = True
+        for record, rates, weight in low_score:
+            lower, upper = _rho_bounds(*rates)
+            if not lower < rho < upper:
+                valid = False
+                break
+            tau = _dc_tau(record[4], record[5], rates[0], rates[1], rho)
+            if tau <= 0:
+                valid = False
+                break
+            score += weight * math.log(tau)
+        if valid:
+            # Weak shrinkage prevents a sparse low-score tail choosing a boundary.
+            scored.append((score - 2.0 * rho * rho, rho))
+    if not scored:
+        result["reason"] = "허용 범위 안의 rho를 찾지 못해 안전 기준값 유지"
+        return result
+    rho = max(scored)[1]
+    result.update(rho=rho, fitted_rho=rho, parameters_fitted=True,
+                  reason="저장된 저득점 경기의 시간가중 우도로 추정")
+    return result
+
+
 def fit_strengths(records):
     """Regularized Poisson attack/defence, venue intercept and recency weights."""
     teams = sorted({r[i] for r in records for i in (2, 3)})
@@ -127,8 +297,12 @@ def fit_strengths(records):
         for k in attacks:
             attacks[k] = max(-1.2, min(1.2, attacks[k]-.35*ag[k]/scale[k]))
             defences[k] = max(-1.2, min(1.2, defences[k]-.35*dg[k]/scale[k]))
-    return {"attack": attacks, "defence": defences, "home_intercept": bh,
-            "away_intercept": ba, "team_samples": dict(counts), "rho": -.15}
+    model = {"attack": attacks, "defence": defences, "home_intercept": bh,
+             "away_intercept": ba, "team_samples": dict(counts), "rho": -.15}
+    rho_fit = fit_rho(records, model)
+    model["rho"] = float(rho_fit["rho"])
+    model["rho_fit"] = rho_fit
+    return model
 
 
 def predict_goals(model, home, away):
@@ -151,6 +325,7 @@ def train_challenger(records, priors, wdl_function):
     artifact = {"model_version": MODEL_VERSION, "active": False, "parameters_fitted": False,
                 "samples": len(records), "validation_fixtures": 0,
                 "reason": "저장된 동일 리그 종료 경기 표본 부족", "rho": -.15,
+                "rho_active": False,
                 "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance"}
     if len(records) < MIN_TRAIN+MIN_VALIDATION:
         return artifact
@@ -160,22 +335,54 @@ def train_challenger(records, priors, wdl_function):
     if len(train) < MIN_TRAIN or len(validation) < MIN_VALIDATION:
         return artifact
     model = fit_strengths(train)
+    learned_rho = float(model.get("rho") or -.15)
+    rho_losses = {"fallback_score_log_loss": 0.0, "learned_score_log_loss": 0.0,
+                  "fallback_wdl_brier": 0.0, "learned_wdl_brier": 0.0}
+    for r in validation:
+        rates = predict_goals(model, r[2], r[3])
+        result = 0 if r[4] > r[5] else 1 if r[4] == r[5] else 2
+        for label, rho in (("fallback", -.15), ("learned", learned_rho)):
+            probs = dixon_coles_wdl(*rates, rho)
+            rho_losses[f"{label}_wdl_brier"] += sum(
+                (p - int(index == result)) ** 2 for index, p in enumerate(probs))
+            hp, ap = _poisson_values(rates[0]), _poisson_values(rates[1])
+            if r[4] < len(hp) and r[5] < len(ap):
+                probability = hp[r[4]] * ap[r[5]] * _dc_tau(r[4], r[5], *rates, rho)
+            else:
+                probability = 1e-12
+            rho_losses[f"{label}_score_log_loss"] -= math.log(max(1e-12, probability))
+    n = len(validation)
+    rho_passed = bool(
+        learned_rho != -.15
+        and rho_losses["learned_score_log_loss"] < rho_losses["fallback_score_log_loss"]
+        and rho_losses["learned_wdl_brier"] <= rho_losses["fallback_wdl_brier"] + 1e-9
+    )
+    if not rho_passed:
+        model["rho"] = -.15
     losses = [[0.0, 0.0], [0.0, 0.0]]
     # Fixed pre-holdout model and baseline; no validation outcomes enter either.
     for r in validation:
         result = 0 if r[4] > r[5] else 1 if r[4] == r[5] else 2
         forecasts = (predict_goals(model, r[2], r[3]), venue_baseline(train, r[2], r[3], priors))
         for i, goals in enumerate(forecasts):
-            probs = wdl_function(*goals)[:3]
+            probs = dixon_coles_wdl(*goals, model["rho"] if i == 0 else -.15)
             losses[i][0] += sum((p-int(j == result))**2 for j, p in enumerate(probs))
             losses[i][1] -= math.log(max(1e-12, probs[result]))
-    n = len(validation)
     artifact.update(parameters_fitted=True, train_fixtures=len(train), validation_fixtures=n,
                     train_before=boundary-6*3600, available_after=max(r[1] for r in records)+6*3600,
                     fitted_brier=losses[0][0]/n, baseline_brier=losses[1][0]/n,
                     fitted_log_loss=losses[0][1]/n, baseline_log_loss=losses[1][1]/n)
+    artifact.update(rho=model["rho"], rho_active=rho_passed,
+                    rho_fitted_value=learned_rho,
+                    rho_low_score_samples=int((model.get("rho_fit") or {}).get("low_score_samples") or 0),
+                    rho_validation={key: value / n for key, value in rho_losses.items()},
+                    rho_reason=("시간순 보류 표본에서 저득점 우도 개선 확인" if rho_passed
+                                else "시간순 개선 미확인 · 안전 기준값 사용"))
     passed = losses[0][0] < losses[1][0] and losses[0][1] < losses[1][1]
     artifact.update(active=passed, reason="시간순 보류 표본에서 기초모형 대비 오차 감소" if passed else "시간순 검증 개선 미확인 · 기초모형 유지")
     if passed:
-        artifact["parameters"] = fit_strengths(records)
+        final_model = fit_strengths(records)
+        if not rho_passed:
+            final_model["rho"] = -.15
+        artifact["parameters"] = final_model
     return artifact
