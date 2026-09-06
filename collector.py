@@ -1924,6 +1924,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "learning_robot": dict(selected.get("learning_robot") or {}),
             "recommendation_status": selected.get("recommendation_status", "SELECTED"),
             "selection_reason": selected.get("selection_reason", ""),
+            "probability_fallback": bool(selected.get("probability_fallback")),
+            "selection_warning": str(selected.get("selection_warning") or ""),
             "independent_support_count": int(
                 selected.get("independent_support_count", 0) or 0
             ),
@@ -2037,9 +2039,9 @@ def build_pick_selection_audit(candidates, categories, confidence):
     decision = {
         "schema_version": PICK_AUDIT_SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
-        "selector": "probability-first-positive-return-v3",
+        "selector": "probability-first-required-pick-v4",
         "score_order": [
-            "settlement_and_price_eligibility", "robust_probability", "model_probability",
+            "settlement_eligibility", "value_pool_or_all_valid_candidates", "robust_probability", "model_probability",
             "robust_edge", "robust_ev",
         ],
         "candidate_count": len(candidate_rows),
@@ -2054,6 +2056,9 @@ def build_pick_selection_audit(candidates, categories, confidence):
             selected_high.get("selection_reason") or "경기 전 저장된 선택 기준 유지"
         ),
         "final_pick_grade": str(selected_high.get("final_pick_grade") or "standard"),
+        "provide_pick_when_analyzable": True,
+        "probability_fallback": bool(selected_high.get("probability_fallback")),
+        "selection_warning": str(selected_high.get("selection_warning") or ""),
         "value_badge": compact_categories.get("honey") is not None,
         "vip_promoted": compact_categories.get("vip_underdog") is not None,
         "learning_robot": dict(selected_high.get("learning_robot") or {
@@ -2382,7 +2387,7 @@ def select_pick_categories(picks, confidence):
         return categories, []
 
     confidence = float(confidence or 0)
-    available = [pick for pick in picks if float(pick.get("prob", 0) or 0) > 0]
+    available = valid_analysis_candidates(picks)
     if not available:
         return categories, []
 
@@ -2404,14 +2409,9 @@ def select_pick_categories(picks, confidence):
             0.40 if infer_pick_market(pick) == "1x2" else 0.50
         ) or bool(pick.get("is_qualified_underdog"))
     ]
-    selection_pool = value_candidates
-    if not selection_pool:
-        categories["high_probability"] = {
-            "raw_pick": "", "prob": 0.0, "official_final_pick": False,
-            "recommendation_status": "WITHHELD",
-            "selection_reason": "세 시장 모두 확률·실제 배당·보수적 가치 기준 미충족",
-        }
-        return categories, []
+    # Price/value gates determine preferred eligibility and badges, never an
+    # empty answer when an actual, settleable model candidate exists.
+    selection_pool = value_candidates or available
     high_source = max(
         selection_pool,
         key=lambda pick: (
@@ -2441,10 +2441,19 @@ def select_pick_categories(picks, confidence):
         f"{len(selection_pool)}개에서 보수확률이 가장 높은 방향 선택. "
         f"선택 배당 {float(high_source.get('odd') or 0):.2f}배."
     )
+    if not value_candidates:
+        high_source.update(choose_analysis_fallback(available))
+        if confidence < .50:
+            high_source["selection_warning"] += " · 데이터 신뢰도 낮음"
+    else:
+        high_source["probability_fallback"] = False
+        high_source["selection_warning"] = ""
     high_source["selection_policy"] = {"minimum_odds": None,
                                        "valid_decimal_odds_above": 1.0,
                                        "conservative_gross_return_floor": 1.01,
                                        "compare_all_markets": True,
+                                       "provide_pick_when_analyzable": True,
+                                       "value_failure_action": "probability_pick_with_warning",
                                        "force_underdog": False}
     high_source["learning_robot"] = {
         "mode": "controlled_adviser",
@@ -2456,7 +2465,8 @@ def select_pick_categories(picks, confidence):
         "influence_cap": 0.18,
         "history_rewrite": False,
         "self_modifying": False,
-        "objective": "probability_calibration_and_price_value",
+        "objective": "probability_calibration_and_price_value_without_empty_pick",
+        "value_failure_action": "probability_pick_with_warning",
         "calibration_model_version": ANALYSIS_VERSION,
         "calibration_cohort_samples": int(high_source.get("learning_cohort_samples") or 0),
         "calibration_active": float(high_source.get("learning_weight") or 0) > 0,
@@ -4876,6 +4886,8 @@ def _locked_proto_item(match, previous=None):
         if row.get("home_team") != match.get("home") or row.get("away_team") != match.get("away"):
             return None
         item = dict(previous or {})
+        item.pop("display_candidates", None)
+        item.pop("display_candidates_saved_at", None)
         saved = conn.execute("SELECT * FROM prediction_analysis WHERE match_id=?",(str(row["match_id"]),)).fetchone()
         selected = {
             "raw_pick":row.get("prob_pick") or "", "prob":float(row.get("prob_pick_prob") or 0)/100,
@@ -4886,8 +4898,14 @@ def _locked_proto_item(match, previous=None):
         if saved is not None and str(saved["selected_pick"] or "") == selected["raw_pick"]:
             saved = dict(saved)
             kickoff = _parse_kst_match_time(row.get("match_time"))
-            saved_at = datetime.fromisoformat(str(saved.get("updated_at"))).replace(tzinfo=timezone.utc)
+            saved_at = datetime.fromisoformat(str(saved.get("updated_at")).replace("Z", "+00:00"))
+            if saved_at.tzinfo is None:
+                saved_at = saved_at.replace(tzinfo=timezone.utc)
             if kickoff and saved_at <= kickoff:
+                # Read-only display material: never replace a frozen empty
+                # official selection with a retrospectively graded prediction.
+                item["display_candidates"] = json.loads(saved.get("markets_json") or "[]")
+                item["display_candidates_saved_at"] = saved_at.isoformat()
                 stored_categories = json.loads(saved.get("categories_json") or "{}")
                 high = stored_categories.get("high_probability") or {}
                 selected.update(high,prob=float(row.get("prob_pick_prob") or 0)/100)

@@ -11,6 +11,7 @@ import re
 import base64
 from pathlib import Path
 from html import escape
+from api_engine import choose_analysis_fallback
 
 from grading_postmortem import (
     build_postmortem,
@@ -1934,6 +1935,9 @@ def _world_live_item(world_item, proto_by_fixture):
             report += f"\n{name}: 예상 핵심 후보 {', '.join(map(str,core)) or '자료 없음'} / 공식 선발 {', '.join(map(str,starters)) or '미수신'}"
     item = dict(world_item,match=match,pick_categories=categories,
                 ev_sorted_picks=[selected] if selected.get("raw_pick") else [],
+                display_candidates=[dict(candidate, raw_pick=localize(candidate.get("raw_pick")))
+                                    for candidate in (analysis.get("candidates") or []) if isinstance(candidate, dict)],
+                display_candidates_saved_at=analysis.get("analyzed_at"),
                 detailed_report=report,story="",
                 analysis_stage=analysis.get("analysis_stage"),
                 analysis_version=analysis.get("analysis_version"),
@@ -1965,8 +1969,52 @@ def _world_live_item(world_item, proto_by_fixture):
     return item
 
 
+def _with_analysis_pick(item):
+    """Fill legacy empty cards from pre-kickoff evidence, not current results.
+
+    This is a display-only copy. The historical prediction, decision and grade
+    remain unchanged, including an old decision not to issue an official pick.
+    """
+    categories = item.get("pick_categories") or {}
+    selected = categories.get("high_probability") or {}
+    if selected.get("raw_pick") or any(p.get("raw_pick") for p in item.get("ev_sorted_picks", []) if isinstance(p, dict)):
+        return item
+    if _live_state(item) == "FINISHED":
+        return item
+    kickoff = _item_kickoff_datetime(item)
+    try:
+        saved_at = datetime.fromisoformat(str(item.get("display_candidates_saved_at") or "").replace("Z", "+00:00"))
+        if saved_at.tzinfo is None:
+            saved_at = saved_at.replace(tzinfo=timezone.utc)
+        if kickoff is None or saved_at > kickoff:
+            return item
+    except (ValueError, TypeError):
+        return item
+    selected = choose_analysis_fallback(item.get("display_candidates") or [])
+    if not selected:
+        return item
+    selected.update(official_final_pick=False, display_only=True,
+                    recommendation_status="DISPLAY_ONLY",
+                    category_key="high_probability", category_label="최종 추천픽")
+    note = ("경기 전 저장 후보를 현재 표시 기준으로 선택했습니다. 현재 점수는 반영하지 않았으며, "
+            "당시 공식 미선정 기록과 과거 채점·적중률은 바꾸지 않습니다.")
+    selected["display_notice"] = note
+    report = str(item.get("detailed_report") or "")
+    final = (f"[최종 선택과 신뢰도] 분석픽: {_human_pick_label(selected['raw_pick'], (item.get('match') or {}).get('home', ''))} "
+             f"· 당시 모델 {selected['prob'] * 100:.1f}%. {selected['selection_warning']}. {note}")
+    pattern = r"\[최종 선택과 신뢰도\].*?(?=\n\n\[|\Z)"
+    if re.search(pattern, report, flags=re.S):
+        report = re.sub(pattern, lambda _: final, report, flags=re.S)
+    else:
+        report += "\n\n" + final
+    return dict(item, pick_categories={"high_probability": selected, "honey": None, "vip_underdog": None},
+                ev_sorted_picks=[selected], detailed_report=report,
+                display_only_pick=True, story="")
+
+
 def _render_live_match_card(item):
     """ONE component for Proto and World: score, events, pick, quality, full report."""
+    item = _with_analysis_pick(item)
     m = item.get("match",{})
     live_info = _live_info_for_item(item)
     db_result = _result_for_item(item)
@@ -2439,6 +2487,7 @@ def _pick_categories(item):
 def _detail_html(item, *, always_visible=False):
     if not isinstance(item, dict):
         return ""
+    item = _with_analysis_pick(item)
     detail = None
     for key in ("detailed_report", "detail_report", "analysis_detail", "analysis_rationale", "rationale", "long_reason", "report_detail"):
         if item.get(key):
@@ -2775,7 +2824,9 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
         grade_parts.append("🍯 배당가치 통과")
     if vip_badge:
         grade_parts.append("💎 VIP 엄격기준 통과")
-    grade_text = " · ".join(grade_parts) if grade_parts else "일반 최종픽 검증"
+    grade_text = " · ".join(grade_parts) if grade_parts else "일반 분석픽"
+    if isinstance(pick, dict) and pick.get("selection_warning"):
+        grade_text = escape(str(pick["selection_warning"]))
     fair_text = ""
     if isinstance(pick, dict) and pick.get("fair_prob") is not None:
         try:
@@ -2798,6 +2849,11 @@ def generate_pred_boxes(
     home_team="", analysis_item=None,
 ):
     """Show one official pick; value and VIP are badges on the same answer."""
+    if isinstance(analysis_item, dict):
+        display_item = _with_analysis_pick(analysis_item)
+        if display_item.get("display_only_pick"):
+            pick_categories = display_item.get("pick_categories")
+            picks = display_item.get("ev_sorted_picks")
     picks = picks or []
     categories = {
         "high_probability": None,
@@ -2825,7 +2881,7 @@ def generate_pred_boxes(
     if isinstance(pick,dict) and pick.get("recommendation_status") == "WITHHELD":
         return (
             "<div class='pred-box'><div class='pred-label'>최종 추천픽</div>"
-            "<span class='pred-value'>추천 보류</span><small>확률·실제 배당가치 기준 미충족</small></div>"
+            "<span class='pred-value'>분석 원본 확인 중</span><small>경기 전 저장 후보 연결이 필요합니다.</small></div>"
             + _final_pick_validation_html(analysis_item,pick)
         )
     if not pick:
@@ -2848,7 +2904,9 @@ def generate_pred_boxes(
         badges.append("<span style='color:#F59E0B;font-weight:900;'>🍯 배당가치 우수</span>")
     if vip_badge:
         badges.append("<span style='color:#FFD54A;font-weight:900;'>💎 VIP 검증 등급</span>")
-    badge_text = " · ".join(badges) if badges else "일반 최종픽"
+    badge_text = " · ".join(badges) if badges else "일반 분석픽"
+    if pick.get("display_only"):
+        badge_text = "저장 후보 참고픽 · 과거 채점 제외"
     meta_parts = [escape(str(pick.get("label") or "통합 시장 분석"))]
     if pick.get("fair_prob") is not None:
         meta_parts.append(f"공정확률 {float(pick['fair_prob']) * 100:.1f}%")
@@ -2857,8 +2915,12 @@ def generate_pred_boxes(
     samples = int(pick.get("market_history_samples", 0) or 0)
     if samples:
         meta_parts.append(f"학습표본 {samples}건")
+    if pick.get("selection_warning"):
+        meta_parts.append(escape(str(pick["selection_warning"])))
+    if pick.get("display_only"):
+        meta_parts.append("경기 전 분석 기준 · 현재 점수 미반영")
     grade_html = ""
-    if isinstance(grading, dict) and grading.get("actual_result") == "FINISHED":
+    if not pick.get("display_only") and isinstance(grading, dict) and grading.get("actual_result") == "FINISHED":
         if same_raw == str(grading.get("prob_pick") or ""):
             grade_value = int(grading.get("is_correct_prob") or 0)
             grade_label = "적중" if grade_value == 1 else "미적중"

@@ -32,10 +32,10 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.5.0-evidence-shrunk-goals"
+ANALYSIS_VERSION = "V7.5.1-analysis-pick-required"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.5.0-analysis-contract-audit"
+SYSTEM_VERSION = "R7.5.1-pick-with-warnings"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -56,6 +56,71 @@ SQLITE_BUSY_TIMEOUT_MS = max(
     5000, min(60000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000")))
 )
 SQLITE_BUSY_RETRY_DELAYS = (0.2, 0.5, 1.0)
+
+
+def valid_analysis_candidates(picks):
+    """Normalize recorded candidates without inventing prices or probabilities."""
+    def number(value, default=None):
+        try:
+            value = float(value)
+            return value if math.isfinite(value) else default
+        except (TypeError, ValueError):
+            return default
+
+    valid = []
+    for source in picks or []:
+        if not isinstance(source, dict):
+            continue
+        pick = dict(source)
+        raw = str(pick.get("raw_pick") or pick.get("pick") or "").strip()
+        probability = number(pick.get("prob", pick.get("model_probability", pick.get("probability"))))
+        if not raw or probability is None or not 0 < probability <= 1:
+            continue
+        market = pick.get("market_key") or pick.get("market")
+        if market not in {"1x2", "totals", "handicap"}:
+            market = "totals" if re.search(r"언더|오버|U/O", raw) else (
+                "handicap" if re.search(r"핸디|적용 후|\[[+-]?\d", raw) else "1x2")
+        if not pick.get("settlement_supported", True):
+            continue
+        # Legacy rows may predate the explicit settlement flag. Do not treat a
+        # push/half settlement as a binary win merely to fill the recommendation.
+        if market == "totals":
+            line = number(pick.get("totals_base"))
+            if line is None:
+                match = re.search(r"U/O\s*([0-9]+(?:\.[0-9]+)?)", raw)
+                line = number(match.group(1)) if match else None
+            if line is None or abs(line % 1 - .5) > 1e-8:
+                continue
+        pick.update(raw_pick=raw, market_key=market, prob=probability,
+                    odd=number(pick.get("odd"), 0.0),
+                    fair_prob=number(pick.get("fair_prob", pick.get("fair_probability"))),
+                    robust_probability=number(pick.get("robust_probability"), probability))
+        for key in ("robust_edge", "robust_ev", "balanced_score"):
+            pick[key] = number(pick.get(key), 0.0)
+        valid.append(pick)
+    return valid
+
+
+def choose_analysis_fallback(picks):
+    """One factual probability-first pick even when price/value is unqualified."""
+    available = valid_analysis_candidates(picks)
+    if not available:
+        return None
+    pick = dict(max(available, key=lambda p: (
+        p["robust_probability"], p["prob"], p["robust_edge"], p["robust_ev"],
+        p["balanced_score"], p["raw_pick"],
+    )))
+    priced = bool(pick["odd"] > 1 and pick.get("fair_prob") is not None
+                  and 0 < pick["fair_prob"] < 1)
+    warning = ("배당가치 기준 미충족 · 수익 우위 미확인" if priced
+               else "배당 자료 미확인 · 배당가치 비교 불가")
+    pick.update(recommendation_status="SELECTED", official_final_pick=True,
+                probability_fallback=True, final_pick_grade="standard",
+                value_pick_tier="not_qualified", odds_verified=priced,
+                selection_warning=warning,
+                selection_reason=(f"가치 조건을 통과한 후보가 없어도 픽을 비우지 않고, "
+                                  f"계산 가능한 {len(available)}개 후보 중 보수확률 우선으로 선택. {warning}."))
+    return pick
 
 
 def _sqlite_connect(path="ai_predictions.db", timeout=None):
