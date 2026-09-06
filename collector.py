@@ -503,6 +503,25 @@ def download_latest_db_from_github():
             pass
 
 
+def _github_upload_error_detail(response):
+    try:
+        return response.json()
+    except Exception:
+        return str(getattr(response, "text", "") or "")[:300]
+
+
+def _github_upload_is_retryable(response, detail):
+    """Retry only conflicts and explicitly transient GitHub failures."""
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status in {409, 422, 429} or 500 <= status < 600:
+        return True
+    detail_text = json.dumps(detail, ensure_ascii=False).lower()
+    return status == 403 and (
+        "timed out validating rule" in detail_text
+        or ("please try again" in detail_text and "validating rule" in detail_text)
+    )
+
+
 def upload_to_github(file_path, remote_path=None):
     local_path = _local_path(file_path)
     remote_path = str(remote_path or Path(file_path).name).replace("\\", "/")
@@ -527,28 +546,41 @@ def upload_to_github(file_path, remote_path=None):
             content = file.read()
         b64_content = base64.b64encode(content).decode("utf-8")
 
-        for attempt in range(2):
-            sha = None
-            r_get = requests.get(url, headers=git_headers, timeout=15)
-            if r_get.status_code == 200:
-                sha = r_get.json().get("sha")
-            elif r_get.status_code not in (404,):
-                print(f"⚠️ GitHub 현재 버전 조회 실패({remote_path}): HTTP {r_get.status_code}")
-            data = {"message": f"Auto update {remote_path}", "content": b64_content}
-            if sha:
-                data["sha"] = sha
-            r_put = requests.put(url, headers=git_headers, json=data, timeout=45)
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                sha = None
+                r_get = requests.get(url, headers=git_headers, timeout=15)
+                if r_get.status_code == 200:
+                    sha = r_get.json().get("sha")
+                elif r_get.status_code not in (404,):
+                    print(f"⚠️ GitHub 현재 버전 조회 실패({remote_path}): HTTP {r_get.status_code}")
+                data = {"message": f"Auto update {remote_path}", "content": b64_content}
+                if sha:
+                    data["sha"] = sha
+                r_put = requests.put(url, headers=git_headers, json=data, timeout=45)
+            except Exception as error:
+                if attempt + 1 >= max_attempts:
+                    print(f"❌ [관제 봇 떡밥] GitHub 업로드 에러: {error}")
+                    return False
+                print(
+                    f"⚠️ GitHub 일시 연결 오류({remote_path}) · "
+                    f"재시도 {attempt + 2}/{max_attempts}: {error}"
+                )
+                time.sleep(2 ** attempt)
+                continue
             if r_put.status_code in (200, 201):
                 print(f"✅ GitHub 동기화 완료: {remote_path}")
                 return True
-            if r_put.status_code not in (409, 422) or attempt == 1:
-                try:
-                    detail = r_put.json()
-                except Exception:
-                    detail = r_put.text[:300]
+            detail = _github_upload_error_detail(r_put)
+            if not _github_upload_is_retryable(r_put, detail) or attempt + 1 >= max_attempts:
                 print(f"❌ GitHub 동기화 실패 ({remote_path}): {detail}")
                 return False
-            time.sleep(1)
+            print(
+                f"⚠️ GitHub 일시 오류({remote_path}, HTTP {r_put.status_code}) · "
+                f"재시도 {attempt + 2}/{max_attempts}"
+            )
+            time.sleep(2 ** attempt)
         return False
     except Exception as error:
         print(f"❌ [관제 봇 떡밥] GitHub 업로드 에러: {error}")
@@ -4990,14 +5022,27 @@ def analyze_world_schedule():
                 item["pick_status"] = "NOT_ANALYZED"
                 changed = True
             continue
-        if item.get("frozen_at") or item.get("analysis_status") == "FROZEN_SHADOW":
-            continue
         previous_stage = str(item.get("analysis_stage") or "")
         previous_version = str(
             item.get("analysis_version")
             or (item.get("analysis") or {}).get("analysis_version")
             or ""
         )
+        frozen = bool(
+            item.get("frozen_at")
+            or item.get("analysis_status") == "FROZEN_SHADOW"
+        )
+        refresh_old_version = _needs_current_analysis_refresh(
+            item, kickoff, now, WORLD_ANALYSIS_VERSION
+        )
+        if frozen and not refresh_old_version:
+            continue
+        if frozen and refresh_old_version:
+            print(
+                f"🔄 경기 전 구버전 세계분석 교체: "
+                f"{match.get('home')} vs {match.get('away')} · "
+                f"{previous_version or '버전 미기록'} → {WORLD_ANALYSIS_VERSION}"
+            )
         if previous_stage == stage and previous_version == WORLD_ANALYSIS_VERSION:
             if not (
                 stage == "T-60-lineup"
@@ -5259,6 +5304,18 @@ def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
     )
 
 
+def _needs_current_analysis_refresh(item, kickoff, now, target_version):
+    """Allow one pre-kickoff migration from an older analysis version."""
+    if not isinstance(item, dict) or kickoff is None or kickoff <= now:
+        return False
+    previous_version = str(
+        item.get("analysis_version")
+        or (item.get("analysis") or {}).get("analysis_version")
+        or ""
+    )
+    return previous_version != str(target_version)
+
+
 def _locked_proto_item(match, previous=None):
     """Read the stored forecast, never regenerate it with post-kickoff inputs."""
     conn = sqlite3.connect(str(_local_path("ai_predictions.db")),timeout=5)
@@ -5400,6 +5457,9 @@ def build_dashboard_data():
                 and isinstance(previous_item.get("pick_categories"), dict)
                 and previous_item["pick_categories"].get("high_probability")
                 and str(previous_item.get("odds_source") or "betman") != "model_only"
+                and not _needs_current_analysis_refresh(
+                    previous_item, scheduled, datetime.now(KST), ANALYSIS_VERSION
+                )
             ):
                 preserved = dict(previous_item)
                 preserved["match"] = dict(m)
@@ -6465,13 +6525,20 @@ def _stored_team_identity_matches(local_name, stored_name, api_id=0):
         values.add(TEAM_NAME_MAP.get(str(name), ""))
         values.add(MANUAL_TEAM_MAP.get(str(name), ""))
         return {re.sub(r"[^a-z0-9가-힣]", "", v.casefold()) for v in values if v}
+    # An explicit provider ID is stronger than a display-name match. Reject a
+    # known mismatch before accepting an identical or translated team name.
+    explicit_api_id = int(api_id or 0)
+    if explicit_api_id:
+        expected_id = int(known_team_id(local_name) or 0)
+        if expected_id and expected_id != explicit_api_id:
+            return False
     if keys(local_name) & keys(stored_name):
         return True
     # Only consult the already verified ID cache when exact/curated names did
     # not settle the identity. This keeps the local grading recovery path free
     # of unnecessary cache work for the common exact-name case.
     expected = known_team_id(local_name)
-    actual = int(api_id or known_team_id(stored_name) or 0)
+    actual = int(explicit_api_id or known_team_id(stored_name) or 0)
     return bool(expected and actual and expected == actual)
 
 
