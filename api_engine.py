@@ -32,10 +32,10 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.4.1-probability-price-balance"
+ANALYSIS_VERSION = "V7.5.0-evidence-shrunk-goals"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.4.1-result-first-shared-live"
+SYSTEM_VERSION = "R7.5.0-analysis-contract-audit"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1855,9 +1855,21 @@ def fetch_team_recent_fixtures_api(team_id, ttl_h):
         return stale_data or []
 
 
+def regulation_score(fixture):
+    """Never train a 90-minute market on extra-time or shootout goals."""
+    status = str(fixture.get("fixture", {}).get("status", {}).get("short") or "")
+    full = fixture.get("score", {}).get("fulltime") or {}
+    if full.get("home") is not None and full.get("away") is not None:
+        return int(full["home"]), int(full["away"])
+    goals = fixture.get("goals") or {}
+    if status == "FT" and goals.get("home") is not None and goals.get("away") is not None:
+        return int(goals["home"]), int(goals["away"])
+    return None
+
+
 def fetch_team_form_api(team_id, ttl_h):
     if not team_id: return ""
-    cache_key = f"form_v4_{team_id}"
+    cache_key = f"form_v5_regulation_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None: return cached_data
     try:
@@ -1865,8 +1877,10 @@ def fetch_team_form_api(team_id, ttl_h):
         form_list = []
         for m in data:
             home_id = m["teams"]["home"]["id"]
-            home_win = m["teams"]["home"]["winner"]
-            away_win = m["teams"]["away"]["winner"]
+            score = regulation_score(m)
+            if score is None:
+                continue
+            home_win, away_win = score[0] > score[1], score[1] > score[0]
             if home_id == team_id:
                 if home_win is True: form_list.append("승")
                 elif home_win is False and away_win is True: form_list.append("패")
@@ -1887,7 +1901,7 @@ def fetch_team_form_api(team_id, ttl_h):
 def fetch_team_long_term_stats_api(team_id, ttl_h):
     default_res = {"home_wins": 0, "home_total": 0, "home_gf": 0, "home_ga": 0, "away_wins": 0, "away_total": 0, "away_gf": 0, "away_ga": 0}
     if not team_id: return default_res
-    cache_key = f"stats_v4_{team_id}"
+    cache_key = f"stats_v5_regulation_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
@@ -1895,12 +1909,11 @@ def fetch_team_long_term_stats_api(team_id, ttl_h):
         for m in data:
             home_id = m["teams"]["home"]["id"]
             away_id = m["teams"]["away"]["id"]
-            winner_home = m["teams"]["home"]["winner"]
-            winner_away = m["teams"]["away"]["winner"]
-            goals_h = m.get("goals", {}).get("home")
-            goals_a = m.get("goals", {}).get("away")
-            gh = int(goals_h) if goals_h is not None else 0
-            ga = int(goals_a) if goals_a is not None else 0
+            score = regulation_score(m)
+            if score is None:
+                continue
+            gh, ga = score
+            winner_home, winner_away = gh > ga, ga > gh
             if home_id == team_id:
                 default_res["home_total"] += 1
                 default_res["home_gf"] += gh
@@ -2239,56 +2252,62 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
     default_res = {
         "possession": 50, "shots_on_goal": 4.0, "corners": 4.5,
         "yellow_cards": 1.5, "sample_size": 0, "xg": None,
-        "xg_sample_size": 0,
+        "xg_sample_size": 0, "xga": None, "xga_sample_size": 0,
+        "field_samples": {}, "source_fixture_ids": [],
     }
     if not team_id: return default_res
-    cache_key = f"recent_stats_v2_{team_id}"
+    cache_key = f"recent_stats_v3_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
         fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-2:]
-        total_possession, total_sog, total_corn, total_yc = 0, 0, 0, 0
-        total_xg, xg_matches = 0.0, 0
-        valid_matches = 0
+        values = {key: [] for key in ("possession", "shots_on_goal", "corners", "yellow_cards", "xg", "xga")}
+        fields = {"Ball Possession": "possession", "Shots on Goal": "shots_on_goal",
+                  "Corner Kicks": "corners", "Yellow Cards": "yellow_cards",
+                  "expected_goals": "xg", "Expected Goals": "xg", "expected goals": "xg", "xG": "xg"}
+        source_ids = []
         for f in fixtures:
             fix_id = f["fixture"]["id"]
-            stat_res = api_get("/fixtures/statistics", params={"fixture": fix_id}, timeout=5)
-            stats_data = stat_res.json().get("response", [])
+            fixture_cache_key = f"completed_fixture_stats_v1_{fix_id}"
+            stats_data = get_db_cache(fixture_cache_key, 24 * 30)
+            if stats_data is None:
+                stat_res = api_get("/fixtures/statistics", params={"fixture": fix_id}, timeout=5)
+                payload = stat_res.json() if stat_res.status_code == 200 else {}
+                if not payload or payload.get("errors"):
+                    continue
+                stats_data = payload.get("response", [])
+                if stats_data and any(t.get("statistics") for t in stats_data):
+                    set_db_cache(fixture_cache_key, stats_data)
             for team_stat in stats_data:
-                if team_stat["team"]["id"] == team_id:
-                    pos_val, sog_val, corn_val, yc_val = 50, 4.0, 4.5, 1.5
-                    xg_val = None
-                    for s in team_stat["statistics"]:
-                        if s["type"] == "Ball Possession" and s["value"]: pos_val = int(str(s["value"]).replace('%', ''))
-                        if s["type"] == "Shots on Goal" and s["value"]: sog_val = float(s["value"])
-                        if s["type"] == "Corner Kicks" and s["value"]: corn_val = float(s["value"])
-                        if s["type"] == "Yellow Cards" and s["value"]: yc_val = float(s["value"])
-                        if str(s.get("type", "")).casefold() in {"expected goals", "expected_goals", "xg"} and s.get("value") not in (None, ""):
-                            try:
-                                xg_val = float(s["value"])
-                            except (TypeError, ValueError):
-                                xg_val = None
-                    total_possession += pos_val
-                    total_sog += sog_val
-                    total_corn += corn_val
-                    total_yc += yc_val
-                    if xg_val is not None:
-                        total_xg += xg_val
-                        xg_matches += 1
-                    valid_matches += 1
-                    break
-        if valid_matches > 0:
-            res_val = {
-                "possession": round(total_possession / valid_matches, 1),
-                "shots_on_goal": round(total_sog / valid_matches, 1),
-                "corners": round(total_corn / valid_matches, 1),
-                "yellow_cards": round(total_yc / valid_matches, 1),
-                "sample_size": valid_matches,
-                "xg": round(total_xg / xg_matches, 2) if xg_matches else None,
-                "xg_sample_size": xg_matches,
-            }
-        else: res_val = default_res
-        set_db_cache(cache_key, res_val)
+                own = str(team_stat.get("team", {}).get("id")) == str(team_id)
+                parsed = {}
+                for s in team_stat.get("statistics", []):
+                    key = fields.get(s.get("type"))
+                    if not key or s.get("value") in (None, ""):
+                        continue
+                    try:
+                        value = float(str(s["value"]).replace("%", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(value) and value >= 0:
+                        parsed[key] = value  # Zero is an observation, never a default.
+                if own and parsed:
+                    source_ids.append(fix_id)
+                    for key, value in parsed.items():
+                        values[key].append(value)
+                elif not own and "xg" in parsed:
+                    values["xga"].append(parsed["xg"])
+        res_val = dict(default_res)
+        for key, samples in values.items():
+            if samples:
+                res_val[key] = round(sum(samples) / len(samples), 3)
+        res_val.update(sample_size=len(set(source_ids)), xg_sample_size=len(values["xg"]),
+                       xga_sample_size=len(values["xga"]),
+                       field_samples={key: len(samples) for key, samples in values.items()},
+                       source_fixture_ids=sorted(set(source_ids)),
+                       observed_at=datetime.now(timezone.utc).isoformat())
+        if res_val["sample_size"]:
+            set_db_cache(cache_key, res_val)
         return res_val
     except: pass
     return default_res
@@ -2301,16 +2320,18 @@ def fetch_team_recent_form_metrics(team_id, ttl_h):
         return default_res
     try:
         fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-5:]
-        points = goals_for = goals_against = 0
+        points = goals_for = goals_against = count = 0
         for match in fixtures:
             is_home = match.get("teams", {}).get("home", {}).get("id") == team_id
-            gh = int(match.get("goals", {}).get("home") or 0)
-            ga = int(match.get("goals", {}).get("away") or 0)
+            score = regulation_score(match)
+            if score is None:
+                continue
+            gh, ga = score
+            count += 1
             own, opp = (gh, ga) if is_home else (ga, gh)
             goals_for += own
             goals_against += opp
             points += 3 if own > opp else (1 if own == opp else 0)
-        count = len(fixtures)
         if not count:
             return default_res
         ppg = points / count
@@ -2333,11 +2354,11 @@ def calculate_rest_days(last_date_iso, match_time_str):
 
 def get_league_averages(league_name):
     name = league_name.lower() if league_name else ""
-    if "프리미어" in name or "epl" in name: return 1.60, 1.35
-    if "분데스리가" in name: return 1.65, 1.45
-    if "에레디비시" in name: return 1.75, 1.45
-    if "라리가" in name or "스페인" in name: return 1.45, 1.20
-    if "세리에" in name or "이탈리아" in name: return 1.40, 1.15
+    if "프리미어" in name or "epl" in name or "premier league" in name: return 1.60, 1.35
+    if "분데스리가" in name or "bundesliga" in name: return 1.65, 1.45
+    if "에레디비시" in name or "eredivisie" in name: return 1.75, 1.45
+    if "라리가" in name or "스페인" in name or "la liga" in name: return 1.45, 1.20
+    if "세리에" in name or "이탈리아" in name or "serie a" in name: return 1.40, 1.15
     if "k1" in name or "k리그1" in name: return 1.35, 1.20 
     if "k2" in name or "k리그2" in name: return 1.30, 1.15
     if "j1" in name or "j리그" in name: return 1.40, 1.25 
@@ -2345,40 +2366,146 @@ def get_league_averages(league_name):
     if "챔피언스" in name or "유로파" in name: return 1.55, 1.25
     return 1.50, 1.20
 
+def build_score_matrix(exp_h, exp_a, rho=-0.15):
+    """Dixon-Coles with correct off-diagonal lambdas and a bounded tail.
+
+    rho retains the previous model assumption; it is NOT a fitted coefficient.
+    See goalmodel/R/dixoncoles.R. No artificial probability clipping per cell.
+    """
+    exp_h, exp_a, rho = float(exp_h), float(exp_a), float(rho)
+    if not all(math.isfinite(x) for x in (exp_h, exp_a, rho)) or not (0 < exp_h <= 20 and 0 < exp_a <= 20):
+        raise ValueError("expected goals must be finite and in (0, 20]")
+    rho = max(-1.0 / max(exp_h, exp_a) + 1e-12,
+              min(rho, 1.0, 1.0 / (exp_h * exp_a)))
+
+    def poisson(rate):
+        values = [math.exp(-rate)]
+        while len(values) < 100 and (len(values) < 2 or 1.0 - sum(values) > 1e-12):
+            values.append(values[-1] * rate / len(values))
+        return values
+
+    hp, ap = poisson(exp_h), poisson(exp_a)
+    matrix = [[ph * pa for pa in ap] for ph in hp]
+    matrix[0][0] *= 1.0 - exp_h * exp_a * rho
+    matrix[1][0] *= 1.0 + exp_a * rho
+    matrix[0][1] *= 1.0 + exp_h * rho
+    matrix[1][1] *= 1.0 - rho
+    total = sum(map(sum, matrix))
+    return [[p / total for p in row] for row in matrix]
+
+
 def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5):
-    rho = -0.15 
-    h_probs = [(math.exp(-exp_h) * (exp_h**i)) / math.factorial(i) for i in range(8)]
-    a_probs = [(math.exp(-exp_a) * (exp_a**j)) / math.factorial(j) for j in range(8)]
-    matrix = [[0.0 for _ in range(8)] for _ in range(8)]
-    total_prob = 0.0
-    for h in range(8):
-        for a in range(8):
-            p = h_probs[h] * a_probs[a]
-            if h == 0 and a == 0: p *= max(0, 1 - (exp_h * exp_a * rho))
-            elif h == 1 and a == 0: p *= max(0, 1 + (exp_h * rho))
-            elif h == 0 and a == 1: p *= max(0, 1 + (exp_a * rho))
-            elif h == 1 and a == 1: p *= max(0, 1 - rho)
-            matrix[h][a] = p
-            total_prob += p
-    for h in range(8):
-        for a in range(8):
-            matrix[h][a] /= total_prob
-            
+    matrix = build_score_matrix(exp_h, exp_a)
     h_win, draw, a_win, prob_u, prob_o = 0.0, 0.0, 0.0, 0.0, 0.0
     prob_handi_h, prob_handi_d, prob_handi_a = 0.0, 0.0, 0.0
-    for h in range(8):
-        for a in range(8):
-            p = matrix[h][a]
+    for h, row in enumerate(matrix):
+        for a, p in enumerate(row):
             if h > a: h_win += p
             elif h == a: draw += p
             else: a_win += p
             if (h + a) < uo_base: prob_u += p
-            else: prob_o += p
+            elif (h + a) > uo_base: prob_o += p
             if (h + handi_val) > a: prob_handi_h += p
             elif (h + handi_val) == a: prob_handi_d += p
             elif (h + handi_val) < a: prob_handi_a += p
             
     return h_win, draw, a_win, prob_u, prob_o, prob_handi_h, prob_handi_d, prob_handi_a
+
+
+def estimate_match_goals(h_long, a_long, h_recent, a_recent, h_stats, a_stats,
+                         league_name, home_penalty=0.0, away_penalty=0.0):
+    """Shared, auditable pre-match goal model; no extra API or market-as-goals.
+
+    Five pseudo-matches shrink noisy venue rates toward league priors. These
+    are declared regularization assumptions, not validated optimal parameters.
+    xG replaces part of the goal estimate; shots/possession do not multiply it
+    again. Venue priors already include home advantage.
+    """
+    avg_h, avg_a = get_league_averages(league_name)
+
+    def number(value, default=0.0):
+        try:
+            value = float(value)
+            return value if math.isfinite(value) and value >= 0 else default
+        except (TypeError, ValueError):
+            return default
+
+    def rate(stats, venue, metric, prior):
+        n = number(stats.get(venue + "_total"))
+        return (number(stats.get(venue + "_" + metric)) + 5.0 * prior) / (n + 5.0)
+
+    base_h = rate(h_long, "home", "gf", avg_h) * rate(a_long, "away", "ga", avg_h) / avg_h
+    base_a = rate(a_long, "away", "gf", avg_a) * rate(h_long, "home", "ga", avg_a) / avg_a
+    audit = {"model": "shrunk-venue-goals-v1", "prior_matches": 5,
+             "league_prior": [avg_h, avg_a], "venue_goals": [base_h, base_a],
+             "market_in_goal_formula": False, "home_advantage_applied_once": True,
+             "parameters_fitted": False, "sides": {}}
+
+    def side(base, recent, own_stats, other_stats, penalty, name):
+        n = number(recent.get("matches"))
+        recent_weight = min(0.25, n / (n + 10.0))
+        # Form points and goal difference are correlated with goals: use GF
+        # once, with a bounded blend, not another strength multiplier.
+        recent_gf = number(recent.get("gf_pg"), base)
+        formed = base * (1 - recent_weight) + recent_gf * recent_weight
+        xg_inputs = []
+        for stats, field, count_field in ((own_stats, "xg", "xg_sample_size"),
+                                          (other_stats, "xga", "xga_sample_size")):
+            count = number(stats.get(count_field))
+            if stats.get(field) is not None and count > 0:
+                value = number(stats.get(field), -1)
+                if value >= 0:
+                    xg_inputs.append((value, count))
+        xg_n = min((count for _, count in xg_inputs), default=0)
+        xg_weight = min(0.25, xg_n / (xg_n + 8.0))
+        xg_rate = sum(v for v, _ in xg_inputs) / len(xg_inputs) if xg_inputs else formed
+        adjusted = formed * (1 - xg_weight) + xg_rate * xg_weight
+        penalty = min(0.30, number(penalty))
+        final = max(0.3, min(3.2, adjusted * (1 - penalty)))
+        audit["sides"][name] = {"venue": round(base, 6), "recent_weight": recent_weight,
+                                "recent_goal_rate": recent_gf, "xg_inputs": xg_inputs,
+                                "stats_fixture_ids": list(own_stats.get("source_fixture_ids") or []),
+                                "xg_weight": xg_weight, "xg_samples": xg_n,
+                                "availability_penalty": penalty,
+                                "clipped": final != adjusted * (1 - penalty)}
+        return round(final, 4)
+
+    eh = side(base_h, h_recent, h_stats, a_stats, home_penalty, "home")
+    ea = side(base_a, a_recent, a_stats, h_stats, away_penalty, "away")
+    audit["expected_goals"] = {"home": eh, "away": ea}
+    return eh, ea, audit
+
+
+def combine_availability_penalties(injury, lineup, goal_dependency, fatigue, rotation, depth=1.0):
+    """Same missing player must not incur injury+lineup+goal-share penalties."""
+    absence = max(float(injury or 0), float(lineup or 0), float(goal_dependency or 0))
+    schedule = max(float(fatigue or 0), float(rotation or 0))
+    return min(0.30, max(0.0, (1 - (1-absence) * (1-schedule)) * float(depth or 1)))
+
+
+def total_settlement_probabilities(exp_h, exp_a, line, side):
+    """Asian totals: distinguish winning stake, refunded stake and loss.
+
+    Three-way handicaps are deliberately NOT treated as Asian handicaps.
+    """
+    line = float(line)
+    if side not in {"under", "over"} or not math.isfinite(line) or line < 0 or abs(line*4-round(line*4)) > 1e-8:
+        raise ValueError("unsupported totals contract")
+    lines = [line] if abs(line*2-round(line*2)) < 1e-8 else [line-.25, line+.25]
+    states = {"win": 0.0, "half_win": 0.0, "push": 0.0, "half_loss": 0.0, "loss": 0.0}
+    for h, row in enumerate(build_score_matrix(exp_h, exp_a)):
+        for a, p in enumerate(row):
+            results = [(1 if h+a < boundary else -1 if h+a > boundary else 0) * (1 if side == "under" else -1)
+                       for boundary in lines]
+            result = sum(results) / len(results)
+            states[{1: "win", .5: "half_win", 0: "push", -.5: "half_loss", -1: "loss"}[result]] += p
+    win_weight = states["win"] + .5 * states["half_win"]
+    loss_weight = states["loss"] + .5 * states["half_loss"]
+    states.update(win_weight=win_weight, loss_weight=loss_weight,
+                  refund_weight=1-win_weight-loss_weight,
+                  profit_probability=states["win"]+states["half_win"],
+                  fair_decimal_odds=1+loss_weight/win_weight if win_weight > 0 else None)
+    return states
 
 
 def normalize_probabilities(values):
@@ -2391,7 +2518,7 @@ def normalize_probabilities(values):
 
 def _temperature_scale(values, temperature):
     normalized = normalize_probabilities(values)
-    powered = [max(value, 1e-9) ** (1.0 / max(1.0, temperature)) for value in normalized]
+    powered = [value ** (1.0 / max(1.0, temperature)) if value > 0 else 0.0 for value in normalized]
     return normalize_probabilities(powered)
 
 
@@ -2420,6 +2547,9 @@ def calibrate_three_way_probabilities(model_probs, odds, confidence):
         market = normalize_probabilities([1.0 / float(odd) for odd in odds])
         market_weight = 0.45 - (0.18 * confidence)
         model = [(1.0 - market_weight) * m + market_weight * q for m, q in zip(model, market)]
+    # A fractional three-way handicap has no draw. Calibration must not turn
+    # an impossible outcome into a positive-probability candidate.
+    model = [p if float(raw) > 0 else 0.0 for p, raw in zip(model, model_probs)]
     return _cap_probabilities(model, 0.80)
 
 
