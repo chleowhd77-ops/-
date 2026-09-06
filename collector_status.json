@@ -3,14 +3,12 @@
     "scheduler": {
       "supervisor_pid": 317503,
       "state": "running",
-      "heartbeat_at": "2026-09-06T09:34:05+00:00",
+      "heartbeat_at": "2026-09-06T09:34:35+00:00",
       "pid": 317503,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "live": 317511,
         "score": 317512,
-        "master": 317513,
-        "world": 317514
+        "master": 317513
       }
     },
     "live": {
@@ -27,30 +25,30 @@
     },
     "score": {
       "child_pid": 317512,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T09:34:30+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-06T09:34:44+00:00",
       "pid": 317512,
       "last_started_at": "2026-09-06T09:34:05+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.2,
       "overlap_skips": 0,
-      "duration_seconds": 15.87,
-      "last_success_at": "2026-09-06T09:33:55+00:00",
+      "duration_seconds": 38.05,
+      "last_success_at": "2026-09-06T09:34:44+00:00",
       "last_failure_at": "2026-09-06T02:27:31+00:00",
       "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published",
+      "last_stage": "grading_published_backup_pending",
       "grading_published_at": "2026-09-06T09:34:13+00:00",
-      "db_backup_ok": true
+      "db_backup_ok": false
     },
     "master": {
       "child_pid": 317513,
       "state": "running",
-      "heartbeat_at": "2026-09-06T09:34:06+00:00",
-      "pid": 317513,
+      "heartbeat_at": "2026-09-06T09:34:35+00:00",
+      "pid": 317503,
       "last_started_at": "2026-09-06T09:34:05+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.2,
       "overlap_skips": 0,
       "duration_seconds": 44.32,
       "last_failure_at": "2026-09-06T02:12:52+00:00",
@@ -69,7 +67,7 @@
       "last_failure_at": "2026-09-06T02:22:47+00:00"
     }
   },
-  "updated_at": "2026-09-06T09:34:30+00:00",
+  "updated_at": "2026-09-06T09:34:44+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -143,15 +141,15 @@
       },
       {
         "metric": "cache_hit",
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "count": 3
+        "purpose": "analysis",
+        "endpoint": "/coachs",
+        "count": 7
       },
       {
         "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/coachs",
-        "count": 2
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 3
       },
       {
         "metric": "cache_hit",
