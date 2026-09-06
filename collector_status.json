@@ -3,11 +3,10 @@
     "scheduler": {
       "supervisor_pid": 316778,
       "state": "running",
-      "heartbeat_at": "2026-09-06T08:09:06+00:00",
+      "heartbeat_at": "2026-09-06T08:10:06+00:00",
       "pid": 316778,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "score": 316781,
         "master": 316782
       }
     },
@@ -44,15 +43,15 @@
     },
     "master": {
       "child_pid": 316782,
-      "state": "running",
-      "heartbeat_at": "2026-09-06T08:09:06+00:00",
-      "pid": 316778,
+      "state": "success",
+      "heartbeat_at": "2026-09-06T08:10:09+00:00",
+      "pid": 316782,
       "last_started_at": "2026-09-06T08:08:36+00:00",
-      "elapsed_seconds": 30.1,
+      "elapsed_seconds": 90.2,
       "overlap_skips": 0,
-      "duration_seconds": 40.36,
+      "duration_seconds": 91.16,
       "last_failure_at": "2026-09-06T02:12:52+00:00",
-      "last_success_at": "2026-09-06T07:59:14+00:00"
+      "last_success_at": "2026-09-06T08:10:09+00:00"
     },
     "world": {
       "child_pid": 316783,
@@ -67,7 +66,7 @@
       "last_failure_at": "2026-09-06T02:22:47+00:00"
     }
   },
-  "updated_at": "2026-09-06T08:09:14+00:00",
+  "updated_at": "2026-09-06T08:10:09+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -88,12 +87,17 @@
       },
       {
         "purpose": "analysis",
+        "endpoint": "/odds",
+        "calls": 141
+      },
+      {
+        "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
         "calls": 136
       },
       {
         "purpose": "analysis",
-        "endpoint": "/odds",
+        "endpoint": "/standings",
         "calls": 117
       },
       {
@@ -108,18 +112,13 @@
       },
       {
         "purpose": "analysis",
+        "endpoint": "/injuries",
+        "calls": 82
+      },
+      {
+        "purpose": "analysis",
         "endpoint": "/coachs",
         "calls": 75
-      },
-      {
-        "purpose": "analysis",
-        "endpoint": "/injuries",
-        "calls": 67
-      },
-      {
-        "purpose": "analysis",
-        "endpoint": "/standings",
-        "calls": 67
       },
       {
         "purpose": "world",
@@ -135,13 +134,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-06",
     "reset_timezone": "UTC",
-    "local_calls": 1808,
-    "provider_remaining": 5692,
+    "local_calls": 1897,
+    "provider_remaining": 5603,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 749,
-    "analysis_calls": 720,
+    "analysis_calls": 809,
     "live_calls": 229,
     "scoring_calls": 110,
     "world_daily_limit": 1500,
