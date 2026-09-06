@@ -1403,7 +1403,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-30-final",
+      "analysis_stage": "locked",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 73,
       "data_quality_grade": "주의",
@@ -1411,548 +1411,135 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-30-final",
+        "analysis_stage": "locked",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 73,
         "data_quality_grade": "주의",
         "lineup_confirmed": true,
         "categories": {
           "high_probability": {
-            "label": "언더 예측",
-            "sort_id": 1,
             "raw_pick": "언더 (U/O 2.5)",
-            "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 2.5]</span><br>⬇️ 언더",
-            "prob": 0.558325,
-            "ev": 1.060817,
-            "odd": 1.9,
-            "market_prob": 0.4632768361581921,
-            "selection_side": "under",
-            "goal_model_audit": {
-              "model": "shrunk-venue-goals-v1",
-              "prior_matches": 5,
-              "league_prior": [
-                1.4,
-                1.25
-              ],
-              "venue_goals": [
-                1.2172442941673711,
-                1.8696005917159764
-              ],
-              "market_in_goal_formula": false,
-              "home_advantage_applied_once": true,
-              "parameters_fitted": false,
-              "sides": {
-                "home": {
-                  "venue": 1.217244,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 0.6,
-                  "xg_inputs": [
-                    [
-                      2.69,
-                      1.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556032,
-                    1556043
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.20799999999999996,
-                  "clipped": false
-                },
-                "away": {
-                  "venue": 1.869601,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 1.2,
-                  "xg_inputs": [
-                    [
-                      2.52,
-                      1.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556031,
-                    1556049
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.1904,
-                  "clipped": false
-                }
-              },
-              "expected_goals": {
-                "home": 0.985,
-                "away": 1.4517
-              },
-              "opponent_model": {
-                "model_version": "time-weighted-opponent-poisson-v1",
-                "active": false,
-                "parameters_fitted": true,
-                "samples": 352,
-                "validation_fixtures": 71,
-                "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-                "rho": -0.15,
-                "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-                "train_fixtures": 278,
-                "train_before": 1779588000.0,
-                "available_after": 1788364800.0,
-                "fitted_brier": 0.6056778954581574,
-                "baseline_brier": 0.6026940459320409,
-                "fitted_log_loss": 1.017159514088732,
-                "baseline_log_loss": 1.0105912506203258,
-                "trained_at": 1788682129.791735
-              },
-              "joint_forecast": {
-                "coherent_score_distribution": true,
-                "forecast_model_version": "goals-v2-joint-wdl-v1",
-                "calibration_version": "fixture-time-wdl-projection-v1",
-                "pick_policy_version": "probability-protected-price-v1",
-                "raw_market_probabilities": [
-                  0.26051995763998026,
-                  0.296207214171757,
-                  0.443272828188263,
-                  0.5583246220088163,
-                  0.44167537799118406,
-                  0.5567271718117366,
-                  0.21516961146323954,
-                  0.22810321672502357
-                ],
-                "final_market_probabilities": [
-                  0.2605199576399801,
-                  0.2962072141717571,
-                  0.4432728281882627,
-                  0.5583246220088163,
-                  0.4416753779911837,
-                  0.5567271718117366,
-                  0.21516961146323943,
-                  0.22810321672502343
-                ],
-                "wdl_learning_weights": [
-                  0.0,
-                  0.0,
-                  0.0
-                ],
-                "wdl_learning_samples": [
-                  0,
-                  0,
-                  0
-                ],
-                "calibration_active": false,
-                "validation_fixtures": 0,
-                "market_blend": "wdl_only",
-                "rho": -0.15
-              }
-            },
-            "settlement_supported": true,
-            "totals_base": 2.5,
-            "market_key": "totals",
-            "raw_model_prob": 0.558325,
-            "learning_weight": 0.0,
-            "learning_cohort_samples": 0,
-            "fair_prob": 0.463277,
-            "edge": 0.095,
-            "market_hit_rate": 0.4144,
-            "market_history_samples": 103,
-            "market_history_scope": "global",
-            "learning_diagnostics": {
-              "candidate_samples": 366,
-              "brier_score": 0.223189,
-              "unit_roi": -0.046503,
-              "odds_bands": {
-                "2_to_3": {
-                  "samples": 86,
-                  "hits": 26,
-                  "profit": -26.895
-                },
-                "3_plus": {
-                  "samples": 205,
-                  "hits": 61,
-                  "profit": 30.46
-                },
-                "below_2": {
-                  "samples": 75,
-                  "hits": 34,
-                  "profit": -20.585
-                }
-              },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            },
-            "data_confidence": 0.861,
-            "price_policy": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "error_margin": 0.0595,
-            "probability_interval": {
-              "low": 0.498865,
-              "high": 0.617785
-            },
-            "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.357411,
-            "support_signals": [],
-            "is_true_underdog": false,
-            "safe_score": 0.4807,
-            "value_score": 0.0818,
-            "robust_probability": 0.540475,
-            "robust_edge": 0.077198,
-            "robust_ev": 1.026902,
-            "underdog_gate_version": "U3-alternative-pick-20260902",
-            "is_qualified_underdog": false,
-            "recommendation_score": 0.6265,
-            "value_pick_tier": "qualified",
-            "odds_verified": true,
+            "prob": 0.5579999999999999,
             "official_final_pick": true,
             "recommendation_status": "SELECTED",
-            "selection_reason": "승무패·언더오버·핸디캡 전체 8개 후보 중 최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. 선택 배당 1.90배.",
-            "probability_fallback": false,
-            "selection_warning": "",
-            "selection_policy": {
-              "minimum_odds": null,
-              "policy_version": "probability-protected-price-v1",
-              "maximum_probability_sacrifice": 0.0,
-              "price_tradeoff_validated": false,
-              "price_validation": {
-                "active": false,
-                "maximum_probability_sacrifice": 0.0,
-                "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-                "validation_fixtures": 0,
-                "method": "chronological-price-policy-v1",
-                "cohort_fixtures": 0,
-                "forecast_model_version": "goals-v2-joint-wdl-v1"
-              },
-              "valid_decimal_odds_above": 1.0,
-              "conservative_gross_return_floor": 1.01,
-              "compare_all_markets": true,
-              "provide_pick_when_analyzable": true,
-              "value_failure_action": "probability_pick_with_warning",
-              "force_underdog": false
-            },
+            "fair_probability": 0.463277,
+            "final_pick_grade": "standard",
+            "independent_support_count": 0,
             "learning_robot": {
-              "mode": "controlled_adviser",
-              "market": "totals",
-              "samples": 0,
-              "hit_rate": 0.4144,
-              "scope": "global",
-              "influence_weight": 0.0,
-              "influence_cap": 0.18,
-              "history_rewrite": false,
-              "self_modifying": false,
-              "objective": "probability_calibration_and_price_value_without_empty_pick",
-              "value_failure_action": "probability_pick_with_warning",
+              "calibration_active": false,
+              "calibration_cohort_samples": 0,
               "calibration_model_version": "goals-v2-joint-wdl-v1",
               "calibration_version": "fixture-time-wdl-projection-v1",
-              "calibration_cohort_samples": 0,
-              "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 366,
+                "baseline_brier": null,
                 "brier_score": 0.223189,
-                "unit_roi": -0.046503,
+                "calibration_validated": false,
+                "candidate_samples": 366,
+                "corrected_brier": null,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 86,
                     "hits": 26,
-                    "profit": -26.895
+                    "profit": -26.895,
+                    "samples": 86
                   },
                   "3_plus": {
-                    "samples": 205,
                     "hits": 61,
-                    "profit": 30.46
+                    "profit": 30.46,
+                    "samples": 205
                   },
                   "below_2": {
-                    "samples": 75,
                     "hits": 34,
-                    "profit": -20.585
+                    "profit": -20.585,
+                    "samples": 75
                   }
                 },
-                "calibration_validated": false,
-                "validation_fixtures": 0,
-                "baseline_brier": null,
-                "corrected_brier": null
-              }
+                "unit_roi": -0.046503,
+                "validation_fixtures": 0
+              },
+              "history_rewrite": false,
+              "hit_rate": 0.4144,
+              "influence_cap": 0.18,
+              "influence_weight": 0.0,
+              "market": "totals",
+              "mode": "controlled_adviser",
+              "objective": "probability_calibration_and_price_value_without_empty_pick",
+              "samples": 0,
+              "scope": "global",
+              "self_modifying": false,
+              "value_failure_action": "probability_pick_with_warning"
             },
-            "final_pick_grade": "standard",
-            "category_key": "high_probability",
-            "category_label": "최종 추천픽"
+            "market_key": "totals",
+            "odd": 1.9,
+            "probability": 0.558325,
+            "probability_fallback": false,
+            "robust_edge": 0.077198,
+            "selection_reason": "승무패·언더오버·핸디캡 전체 8개 후보 중 최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. 선택 배당 1.90배.",
+            "selection_warning": "",
+            "value_pick_tier": "qualified"
           },
           "honey": null,
           "vip_underdog": null
         },
         "selected": {
-          "label": "언더 예측",
-          "sort_id": 1,
           "raw_pick": "언더 (U/O 2.5)",
-          "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 2.5]</span><br>⬇️ 언더",
-          "prob": 0.558325,
-          "ev": 1.060817,
-          "odd": 1.9,
-          "market_prob": 0.4632768361581921,
-          "selection_side": "under",
-          "goal_model_audit": {
-            "model": "shrunk-venue-goals-v1",
-            "prior_matches": 5,
-            "league_prior": [
-              1.4,
-              1.25
-            ],
-            "venue_goals": [
-              1.2172442941673711,
-              1.8696005917159764
-            ],
-            "market_in_goal_formula": false,
-            "home_advantage_applied_once": true,
-            "parameters_fitted": false,
-            "sides": {
-              "home": {
-                "venue": 1.217244,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 0.6,
-                "xg_inputs": [
-                  [
-                    2.69,
-                    1.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556032,
-                  1556043
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.20799999999999996,
-                "clipped": false
-              },
-              "away": {
-                "venue": 1.869601,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 1.2,
-                "xg_inputs": [
-                  [
-                    2.52,
-                    1.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556031,
-                  1556049
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.1904,
-                "clipped": false
-              }
-            },
-            "expected_goals": {
-              "home": 0.985,
-              "away": 1.4517
-            },
-            "opponent_model": {
-              "model_version": "time-weighted-opponent-poisson-v1",
-              "active": false,
-              "parameters_fitted": true,
-              "samples": 352,
-              "validation_fixtures": 71,
-              "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-              "rho": -0.15,
-              "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-              "train_fixtures": 278,
-              "train_before": 1779588000.0,
-              "available_after": 1788364800.0,
-              "fitted_brier": 0.6056778954581574,
-              "baseline_brier": 0.6026940459320409,
-              "fitted_log_loss": 1.017159514088732,
-              "baseline_log_loss": 1.0105912506203258,
-              "trained_at": 1788682129.791735
-            },
-            "joint_forecast": {
-              "coherent_score_distribution": true,
-              "forecast_model_version": "goals-v2-joint-wdl-v1",
-              "calibration_version": "fixture-time-wdl-projection-v1",
-              "pick_policy_version": "probability-protected-price-v1",
-              "raw_market_probabilities": [
-                0.26051995763998026,
-                0.296207214171757,
-                0.443272828188263,
-                0.5583246220088163,
-                0.44167537799118406,
-                0.5567271718117366,
-                0.21516961146323954,
-                0.22810321672502357
-              ],
-              "final_market_probabilities": [
-                0.2605199576399801,
-                0.2962072141717571,
-                0.4432728281882627,
-                0.5583246220088163,
-                0.4416753779911837,
-                0.5567271718117366,
-                0.21516961146323943,
-                0.22810321672502343
-              ],
-              "wdl_learning_weights": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "wdl_learning_samples": [
-                0,
-                0,
-                0
-              ],
-              "calibration_active": false,
-              "validation_fixtures": 0,
-              "market_blend": "wdl_only",
-              "rho": -0.15
-            }
-          },
-          "settlement_supported": true,
-          "totals_base": 2.5,
-          "market_key": "totals",
-          "raw_model_prob": 0.558325,
-          "learning_weight": 0.0,
-          "learning_cohort_samples": 0,
-          "fair_prob": 0.463277,
-          "edge": 0.095,
-          "market_hit_rate": 0.4144,
-          "market_history_samples": 103,
-          "market_history_scope": "global",
-          "learning_diagnostics": {
-            "candidate_samples": 366,
-            "brier_score": 0.223189,
-            "unit_roi": -0.046503,
-            "odds_bands": {
-              "2_to_3": {
-                "samples": 86,
-                "hits": 26,
-                "profit": -26.895
-              },
-              "3_plus": {
-                "samples": 205,
-                "hits": 61,
-                "profit": 30.46
-              },
-              "below_2": {
-                "samples": 75,
-                "hits": 34,
-                "profit": -20.585
-              }
-            },
-            "calibration_validated": false,
-            "validation_fixtures": 0,
-            "baseline_brier": null,
-            "corrected_brier": null
-          },
-          "data_confidence": 0.861,
-          "price_policy": {
-            "active": false,
-            "maximum_probability_sacrifice": 0.0,
-            "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-            "validation_fixtures": 0,
-            "method": "chronological-price-policy-v1",
-            "cohort_fixtures": 0,
-            "forecast_model_version": "goals-v2-joint-wdl-v1"
-          },
-          "error_margin": 0.0595,
-          "probability_interval": {
-            "low": 0.498865,
-            "high": 0.617785
-          },
-          "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.357411,
-          "support_signals": [],
-          "is_true_underdog": false,
-          "safe_score": 0.4807,
-          "value_score": 0.0818,
-          "robust_probability": 0.540475,
-          "robust_edge": 0.077198,
-          "robust_ev": 1.026902,
-          "underdog_gate_version": "U3-alternative-pick-20260902",
-          "is_qualified_underdog": false,
-          "recommendation_score": 0.6265,
-          "value_pick_tier": "qualified",
-          "odds_verified": true,
+          "prob": 0.5579999999999999,
           "official_final_pick": true,
           "recommendation_status": "SELECTED",
-          "selection_reason": "승무패·언더오버·핸디캡 전체 8개 후보 중 최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. 선택 배당 1.90배.",
-          "probability_fallback": false,
-          "selection_warning": "",
-          "selection_policy": {
-            "minimum_odds": null,
-            "policy_version": "probability-protected-price-v1",
-            "maximum_probability_sacrifice": 0.0,
-            "price_tradeoff_validated": false,
-            "price_validation": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "valid_decimal_odds_above": 1.0,
-            "conservative_gross_return_floor": 1.01,
-            "compare_all_markets": true,
-            "provide_pick_when_analyzable": true,
-            "value_failure_action": "probability_pick_with_warning",
-            "force_underdog": false
-          },
+          "fair_probability": 0.463277,
+          "final_pick_grade": "standard",
+          "independent_support_count": 0,
           "learning_robot": {
-            "mode": "controlled_adviser",
-            "market": "totals",
-            "samples": 0,
-            "hit_rate": 0.4144,
-            "scope": "global",
-            "influence_weight": 0.0,
-            "influence_cap": 0.18,
-            "history_rewrite": false,
-            "self_modifying": false,
-            "objective": "probability_calibration_and_price_value_without_empty_pick",
-            "value_failure_action": "probability_pick_with_warning",
+            "calibration_active": false,
+            "calibration_cohort_samples": 0,
             "calibration_model_version": "goals-v2-joint-wdl-v1",
             "calibration_version": "fixture-time-wdl-projection-v1",
-            "calibration_cohort_samples": 0,
-            "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 366,
+              "baseline_brier": null,
               "brier_score": 0.223189,
-              "unit_roi": -0.046503,
+              "calibration_validated": false,
+              "candidate_samples": 366,
+              "corrected_brier": null,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 86,
                   "hits": 26,
-                  "profit": -26.895
+                  "profit": -26.895,
+                  "samples": 86
                 },
                 "3_plus": {
-                  "samples": 205,
                   "hits": 61,
-                  "profit": 30.46
+                  "profit": 30.46,
+                  "samples": 205
                 },
                 "below_2": {
-                  "samples": 75,
                   "hits": 34,
-                  "profit": -20.585
+                  "profit": -20.585,
+                  "samples": 75
                 }
               },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            }
+              "unit_roi": -0.046503,
+              "validation_fixtures": 0
+            },
+            "history_rewrite": false,
+            "hit_rate": 0.4144,
+            "influence_cap": 0.18,
+            "influence_weight": 0.0,
+            "market": "totals",
+            "mode": "controlled_adviser",
+            "objective": "probability_calibration_and_price_value_without_empty_pick",
+            "samples": 0,
+            "scope": "global",
+            "self_modifying": false,
+            "value_failure_action": "probability_pick_with_warning"
           },
-          "final_pick_grade": "standard",
-          "category_key": "high_probability",
-          "category_label": "최종 추천픽",
+          "market_key": "totals",
+          "odd": 1.9,
+          "probability": 0.5579999999999999,
+          "probability_fallback": false,
+          "robust_edge": 0.077198,
+          "selection_reason": "승무패·언더오버·핸디캡 전체 8개 후보 중 최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. 선택 배당 1.90배.",
+          "selection_warning": "",
+          "value_pick_tier": "qualified",
           "display": "언더 (U/O 2.5)",
-          "probability": 0.558325,
           "badges": []
         },
         "report": "[종합 경기 흐름] 예상 정규시간 득점은 제프 유나이티드 0.98골, 감바 오사카 1.45골입니다. 득점 모형에서는 감바 오사카가 앞섭니다. 역습 전술을 확인했다는 뜻은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] 감바 오사카 승 · 모델 44.3% · 시장 공정확률 44.7%, 차이 -0.3%p · 실제 배당 1.95배 · 손익분기 51.3%.\n\n[승무패 전체 방향] 제프 유나이티드 승 26.1% · 무승부 29.6% · 감바 오사카 승 44.3%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 제프 유나이티드 +1.0 적용 후 승 · 모델 55.7% · 시장 공정확률 52.4%, 차이 +3.3%p · 실제 배당 1.66배 · 손익분기 60.2%.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 55.8% · 시장 공정확률 46.3%, 차이 +9.5%p · 실제 배당 1.90배 · 손익분기 52.6%.\n\n[역배 판단] 실제 승무패 역배 방향: 제프 유나이티드 승 · 모델 26.1% · 시장 공정확률 28.6%, 차이 -2.5%p · 실제 배당 3.05배 · 손익분기 32.8%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 0.20/1.20, 슈팅 품질: 유효슈팅 5.0/4.5, 홈·원정: 홈 6승/21경기, 원정 7승/21경기, 상대 전적: 1승-3무-1승, 선수 결장: 결장 0명/0명, 휴식일: 3일/3일, 날씨: Rain, 팀 신원·경기 연결: 팀ID 301/293, 경기ID 1556053. 확보하지 못한 항목(xG, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 언더 (U/O 2.5) · 모델 55.8% · 시장 공정확률 46.3%, 차이 +9.5%p · 실제 배당 1.90배 · 손익분기 52.6%입니다. 승무패·언더오버·핸디캡 전체 8개 후보 중 최고 모델확률을 먼저 보호하고 동률 후보에서 실제 배당가치를 비교. 선택 배당 1.90배. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 55.8%이며, 베팅업체 마진 제거 공정확률은 46.3%이고 모델과의 차이는 +9.5%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 49.9%~61.8%, 데이터 신뢰도는 86.1%입니다. 이 수치는 적중을 보장하지 않습니다.",
@@ -2037,7 +1624,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-30-final",
+      "analysis_stage": "locked",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 90,
       "data_quality_grade": "정상",
@@ -2045,562 +1632,135 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-30-final",
+        "analysis_stage": "locked",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 90,
         "data_quality_grade": "정상",
         "lineup_confirmed": true,
         "categories": {
           "high_probability": {
-            "label": "일반 승무패 예측",
-            "sort_id": 3,
             "raw_pick": "가시마 앤틀러스 승",
-            "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div>가시마 앤틀러스 승",
-            "prob": 0.543704,
-            "ev": 0.913422,
-            "odd": 1.68,
-            "market_prob": 0.5175282234105764,
-            "selection_side": "home",
-            "goal_model_audit": {
-              "model": "shrunk-venue-goals-v1",
-              "prior_matches": 5,
-              "league_prior": [
-                1.4,
-                1.25
-              ],
-              "venue_goals": [
-                2.0702380952380954,
-                0.5937499999999999
-              ],
-              "market_in_goal_formula": false,
-              "home_advantage_applied_once": true,
-              "parameters_fitted": false,
-              "sides": {
-                "home": {
-                  "venue": 2.070238,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 2.4,
-                  "xg_inputs": [
-                    [
-                      2.19,
-                      2.0
-                    ],
-                    [
-                      1.29,
-                      2.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556038,
-                    1556045
-                  ],
-                  "xg_weight": 0.2,
-                  "xg_samples": 2.0,
-                  "availability_penalty": 0.07999999999999996,
-                  "clipped": false
-                },
-                "away": {
-                  "venue": 0.59375,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 2.2,
-                  "xg_inputs": [
-                    [
-                      2.8,
-                      2.0
-                    ],
-                    [
-                      0.84,
-                      2.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556037,
-                    1556041
-                  ],
-                  "xg_weight": 0.2,
-                  "xg_samples": 2.0,
-                  "availability_penalty": 0.1904,
-                  "clipped": false
-                }
-              },
-              "expected_goals": {
-                "home": 1.9045,
-                "away": 0.9393
-              },
-              "opponent_model": {
-                "model_version": "time-weighted-opponent-poisson-v1",
-                "active": false,
-                "parameters_fitted": true,
-                "samples": 352,
-                "validation_fixtures": 71,
-                "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-                "rho": -0.15,
-                "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-                "train_fixtures": 278,
-                "train_before": 1779588000.0,
-                "available_after": 1788364800.0,
-                "fitted_brier": 0.6056778954581574,
-                "baseline_brier": 0.6026940459320409,
-                "fitted_log_loss": 1.017159514088732,
-                "baseline_log_loss": 1.0105912506203258,
-                "trained_at": 1788682129.791735
-              },
-              "joint_forecast": {
-                "coherent_score_distribution": true,
-                "forecast_model_version": "goals-v2-joint-wdl-v1",
-                "calibration_version": "fixture-time-wdl-projection-v1",
-                "pick_policy_version": "probability-protected-price-v1",
-                "raw_market_probabilities": [
-                  0.5437036864439536,
-                  0.2621570505186407,
-                  0.19413926303740642,
-                  0.4654574531757214,
-                  0.5345425468242796,
-                  0.33078125296583394,
-                  0.2129224334781196,
-                  0.4562963135560467
-                ],
-                "final_market_probabilities": [
-                  0.5437036864439528,
-                  0.2621570505186408,
-                  0.19413926303740633,
-                  0.4654574531757212,
-                  0.534542546824279,
-                  0.3307812529658334,
-                  0.2129224334781193,
-                  0.4562963135560468
-                ],
-                "wdl_learning_weights": [
-                  0.0,
-                  0.0,
-                  0.0
-                ],
-                "wdl_learning_samples": [
-                  0,
-                  0,
-                  0
-                ],
-                "calibration_active": false,
-                "validation_fixtures": 0,
-                "market_blend": "wdl_only",
-                "rho": -0.15
-              }
-            },
-            "settlement_supported": true,
-            "market_key": "1x2",
-            "raw_model_prob": 0.543704,
-            "learning_weight": 0.0,
-            "learning_cohort_samples": 0,
-            "fair_prob": 0.517528,
-            "edge": 0.0262,
-            "market_hit_rate": 0.4144,
-            "market_history_samples": 103,
-            "market_history_scope": "global",
-            "learning_diagnostics": {
-              "candidate_samples": 366,
-              "brier_score": 0.223189,
-              "unit_roi": -0.046503,
-              "odds_bands": {
-                "2_to_3": {
-                  "samples": 86,
-                  "hits": 26,
-                  "profit": -26.895
-                },
-                "3_plus": {
-                  "samples": 205,
-                  "hits": 61,
-                  "profit": 30.46
-                },
-                "below_2": {
-                  "samples": 75,
-                  "hits": 34,
-                  "profit": -20.585
-                }
-              },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            },
-            "data_confidence": 0.917,
-            "price_policy": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "error_margin": 0.0516,
-            "probability_interval": {
-              "low": 0.492084,
-              "high": 0.595324
-            },
-            "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.412099,
-            "support_signals": [],
-            "is_true_underdog": false,
-            "safe_score": 0.4986,
-            "value_score": 0.024,
-            "robust_probability": 0.528224,
-            "robust_edge": 0.010696,
-            "robust_ev": 0.887416,
-            "underdog_gate_version": "U3-alternative-pick-20260902",
-            "is_qualified_underdog": false,
-            "recommendation_score": 0.5893,
-            "value_pick_tier": "not_qualified",
-            "odds_verified": true,
+            "prob": 0.544,
             "official_final_pick": true,
             "recommendation_status": "SELECTED",
-            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-            "probability_fallback": true,
+            "fair_probability": 0.517528,
             "final_pick_grade": "standard",
-            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-            "selection_policy": {
-              "minimum_odds": null,
-              "policy_version": "probability-protected-price-v1",
-              "maximum_probability_sacrifice": 0.0,
-              "price_tradeoff_validated": false,
-              "price_validation": {
-                "active": false,
-                "maximum_probability_sacrifice": 0.0,
-                "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-                "validation_fixtures": 0,
-                "method": "chronological-price-policy-v1",
-                "cohort_fixtures": 0,
-                "forecast_model_version": "goals-v2-joint-wdl-v1"
-              },
-              "valid_decimal_odds_above": 1.0,
-              "conservative_gross_return_floor": 1.01,
-              "compare_all_markets": true,
-              "provide_pick_when_analyzable": true,
-              "value_failure_action": "probability_pick_with_warning",
-              "force_underdog": false
-            },
+            "independent_support_count": 0,
             "learning_robot": {
-              "mode": "controlled_adviser",
-              "market": "1x2",
-              "samples": 0,
-              "hit_rate": 0.4144,
-              "scope": "global",
-              "influence_weight": 0.0,
-              "influence_cap": 0.18,
-              "history_rewrite": false,
-              "self_modifying": false,
-              "objective": "probability_calibration_and_price_value_without_empty_pick",
-              "value_failure_action": "probability_pick_with_warning",
+              "calibration_active": false,
+              "calibration_cohort_samples": 0,
               "calibration_model_version": "goals-v2-joint-wdl-v1",
               "calibration_version": "fixture-time-wdl-projection-v1",
-              "calibration_cohort_samples": 0,
-              "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 366,
+                "baseline_brier": null,
                 "brier_score": 0.223189,
-                "unit_roi": -0.046503,
+                "calibration_validated": false,
+                "candidate_samples": 366,
+                "corrected_brier": null,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 86,
                     "hits": 26,
-                    "profit": -26.895
+                    "profit": -26.895,
+                    "samples": 86
                   },
                   "3_plus": {
-                    "samples": 205,
                     "hits": 61,
-                    "profit": 30.46
+                    "profit": 30.46,
+                    "samples": 205
                   },
                   "below_2": {
-                    "samples": 75,
                     "hits": 34,
-                    "profit": -20.585
+                    "profit": -20.585,
+                    "samples": 75
                   }
                 },
-                "calibration_validated": false,
-                "validation_fixtures": 0,
-                "baseline_brier": null,
-                "corrected_brier": null
-              }
+                "unit_roi": -0.046503,
+                "validation_fixtures": 0
+              },
+              "history_rewrite": false,
+              "hit_rate": 0.4144,
+              "influence_cap": 0.18,
+              "influence_weight": 0.0,
+              "market": "1x2",
+              "mode": "controlled_adviser",
+              "objective": "probability_calibration_and_price_value_without_empty_pick",
+              "samples": 0,
+              "scope": "global",
+              "self_modifying": false,
+              "value_failure_action": "probability_pick_with_warning"
             },
-            "category_key": "high_probability",
-            "category_label": "최종 추천픽"
+            "market_key": "1x2",
+            "odd": 1.68,
+            "probability": 0.543704,
+            "probability_fallback": true,
+            "robust_edge": 0.010696,
+            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+            "value_pick_tier": "not_qualified"
           },
           "honey": null,
           "vip_underdog": null
         },
         "selected": {
-          "label": "일반 승무패 예측",
-          "sort_id": 3,
           "raw_pick": "가시마 앤틀러스 승",
-          "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div>가시마 앤틀러스 승",
-          "prob": 0.543704,
-          "ev": 0.913422,
-          "odd": 1.68,
-          "market_prob": 0.5175282234105764,
-          "selection_side": "home",
-          "goal_model_audit": {
-            "model": "shrunk-venue-goals-v1",
-            "prior_matches": 5,
-            "league_prior": [
-              1.4,
-              1.25
-            ],
-            "venue_goals": [
-              2.0702380952380954,
-              0.5937499999999999
-            ],
-            "market_in_goal_formula": false,
-            "home_advantage_applied_once": true,
-            "parameters_fitted": false,
-            "sides": {
-              "home": {
-                "venue": 2.070238,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 2.4,
-                "xg_inputs": [
-                  [
-                    2.19,
-                    2.0
-                  ],
-                  [
-                    1.29,
-                    2.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556038,
-                  1556045
-                ],
-                "xg_weight": 0.2,
-                "xg_samples": 2.0,
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false
-              },
-              "away": {
-                "venue": 0.59375,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 2.2,
-                "xg_inputs": [
-                  [
-                    2.8,
-                    2.0
-                  ],
-                  [
-                    0.84,
-                    2.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556037,
-                  1556041
-                ],
-                "xg_weight": 0.2,
-                "xg_samples": 2.0,
-                "availability_penalty": 0.1904,
-                "clipped": false
-              }
-            },
-            "expected_goals": {
-              "home": 1.9045,
-              "away": 0.9393
-            },
-            "opponent_model": {
-              "model_version": "time-weighted-opponent-poisson-v1",
-              "active": false,
-              "parameters_fitted": true,
-              "samples": 352,
-              "validation_fixtures": 71,
-              "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-              "rho": -0.15,
-              "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-              "train_fixtures": 278,
-              "train_before": 1779588000.0,
-              "available_after": 1788364800.0,
-              "fitted_brier": 0.6056778954581574,
-              "baseline_brier": 0.6026940459320409,
-              "fitted_log_loss": 1.017159514088732,
-              "baseline_log_loss": 1.0105912506203258,
-              "trained_at": 1788682129.791735
-            },
-            "joint_forecast": {
-              "coherent_score_distribution": true,
-              "forecast_model_version": "goals-v2-joint-wdl-v1",
-              "calibration_version": "fixture-time-wdl-projection-v1",
-              "pick_policy_version": "probability-protected-price-v1",
-              "raw_market_probabilities": [
-                0.5437036864439536,
-                0.2621570505186407,
-                0.19413926303740642,
-                0.4654574531757214,
-                0.5345425468242796,
-                0.33078125296583394,
-                0.2129224334781196,
-                0.4562963135560467
-              ],
-              "final_market_probabilities": [
-                0.5437036864439528,
-                0.2621570505186408,
-                0.19413926303740633,
-                0.4654574531757212,
-                0.534542546824279,
-                0.3307812529658334,
-                0.2129224334781193,
-                0.4562963135560468
-              ],
-              "wdl_learning_weights": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "wdl_learning_samples": [
-                0,
-                0,
-                0
-              ],
-              "calibration_active": false,
-              "validation_fixtures": 0,
-              "market_blend": "wdl_only",
-              "rho": -0.15
-            }
-          },
-          "settlement_supported": true,
-          "market_key": "1x2",
-          "raw_model_prob": 0.543704,
-          "learning_weight": 0.0,
-          "learning_cohort_samples": 0,
-          "fair_prob": 0.517528,
-          "edge": 0.0262,
-          "market_hit_rate": 0.4144,
-          "market_history_samples": 103,
-          "market_history_scope": "global",
-          "learning_diagnostics": {
-            "candidate_samples": 366,
-            "brier_score": 0.223189,
-            "unit_roi": -0.046503,
-            "odds_bands": {
-              "2_to_3": {
-                "samples": 86,
-                "hits": 26,
-                "profit": -26.895
-              },
-              "3_plus": {
-                "samples": 205,
-                "hits": 61,
-                "profit": 30.46
-              },
-              "below_2": {
-                "samples": 75,
-                "hits": 34,
-                "profit": -20.585
-              }
-            },
-            "calibration_validated": false,
-            "validation_fixtures": 0,
-            "baseline_brier": null,
-            "corrected_brier": null
-          },
-          "data_confidence": 0.917,
-          "price_policy": {
-            "active": false,
-            "maximum_probability_sacrifice": 0.0,
-            "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-            "validation_fixtures": 0,
-            "method": "chronological-price-policy-v1",
-            "cohort_fixtures": 0,
-            "forecast_model_version": "goals-v2-joint-wdl-v1"
-          },
-          "error_margin": 0.0516,
-          "probability_interval": {
-            "low": 0.492084,
-            "high": 0.595324
-          },
-          "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.412099,
-          "support_signals": [],
-          "is_true_underdog": false,
-          "safe_score": 0.4986,
-          "value_score": 0.024,
-          "robust_probability": 0.528224,
-          "robust_edge": 0.010696,
-          "robust_ev": 0.887416,
-          "underdog_gate_version": "U3-alternative-pick-20260902",
-          "is_qualified_underdog": false,
-          "recommendation_score": 0.5893,
-          "value_pick_tier": "not_qualified",
-          "odds_verified": true,
+          "prob": 0.544,
           "official_final_pick": true,
           "recommendation_status": "SELECTED",
-          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-          "probability_fallback": true,
+          "fair_probability": 0.517528,
           "final_pick_grade": "standard",
-          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-          "selection_policy": {
-            "minimum_odds": null,
-            "policy_version": "probability-protected-price-v1",
-            "maximum_probability_sacrifice": 0.0,
-            "price_tradeoff_validated": false,
-            "price_validation": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "valid_decimal_odds_above": 1.0,
-            "conservative_gross_return_floor": 1.01,
-            "compare_all_markets": true,
-            "provide_pick_when_analyzable": true,
-            "value_failure_action": "probability_pick_with_warning",
-            "force_underdog": false
-          },
+          "independent_support_count": 0,
           "learning_robot": {
-            "mode": "controlled_adviser",
-            "market": "1x2",
-            "samples": 0,
-            "hit_rate": 0.4144,
-            "scope": "global",
-            "influence_weight": 0.0,
-            "influence_cap": 0.18,
-            "history_rewrite": false,
-            "self_modifying": false,
-            "objective": "probability_calibration_and_price_value_without_empty_pick",
-            "value_failure_action": "probability_pick_with_warning",
+            "calibration_active": false,
+            "calibration_cohort_samples": 0,
             "calibration_model_version": "goals-v2-joint-wdl-v1",
             "calibration_version": "fixture-time-wdl-projection-v1",
-            "calibration_cohort_samples": 0,
-            "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 366,
+              "baseline_brier": null,
               "brier_score": 0.223189,
-              "unit_roi": -0.046503,
+              "calibration_validated": false,
+              "candidate_samples": 366,
+              "corrected_brier": null,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 86,
                   "hits": 26,
-                  "profit": -26.895
+                  "profit": -26.895,
+                  "samples": 86
                 },
                 "3_plus": {
-                  "samples": 205,
                   "hits": 61,
-                  "profit": 30.46
+                  "profit": 30.46,
+                  "samples": 205
                 },
                 "below_2": {
-                  "samples": 75,
                   "hits": 34,
-                  "profit": -20.585
+                  "profit": -20.585,
+                  "samples": 75
                 }
               },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            }
+              "unit_roi": -0.046503,
+              "validation_fixtures": 0
+            },
+            "history_rewrite": false,
+            "hit_rate": 0.4144,
+            "influence_cap": 0.18,
+            "influence_weight": 0.0,
+            "market": "1x2",
+            "mode": "controlled_adviser",
+            "objective": "probability_calibration_and_price_value_without_empty_pick",
+            "samples": 0,
+            "scope": "global",
+            "self_modifying": false,
+            "value_failure_action": "probability_pick_with_warning"
           },
-          "category_key": "high_probability",
-          "category_label": "최종 추천픽",
+          "market_key": "1x2",
+          "odd": 1.68,
+          "probability": 0.544,
+          "probability_fallback": true,
+          "robust_edge": 0.010696,
+          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+          "value_pick_tier": "not_qualified",
           "display": "가시마 앤틀러스 승",
-          "probability": 0.543704,
           "badges": []
         },
         "report": "[종합 경기 흐름] 예상 정규시간 득점은 가시마 앤틀러스 1.90골, 우라와 레드 0.94골입니다. 득점 모형에서는 가시마 앤틀러스가 앞섭니다. 점유율·전술 우위를 뜻하는 것은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] 가시마 앤틀러스 승 · 모델 54.4% · 시장 공정확률 51.8%, 차이 +2.6%p · 실제 배당 1.68배 · 손익분기 59.5%.\n\n[승무패 전체 방향] 가시마 앤틀러스 승 54.4% · 무승부 26.2% · 우라와 레드 승 19.4%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 가시마 앤틀러스 -1.0 적용 후 패 · 모델 45.6% · 시장 공정확률 44.3%, 차이 +1.3%p · 실제 배당 1.96배 · 손익분기 51.0%.\n\n[언더오버 분석] 오버 (U/O 2.5) · 모델 53.5% · 시장 공정확률 53.7%, 차이 -0.2%p · 실제 배당 1.64배 · 손익분기 61.0%.\n\n[역배 판단] 실제 승무패 역배 방향: 우라와 레드 승 · 모델 19.4% · 시장 공정확률 22.3%, 차이 -2.9%p · 실제 배당 3.90배 · 손익분기 25.6%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 2.40/1.80, xG: 2.19/2.8, 슈팅 품질: 유효슈팅 5.5/7.0, 홈·원정: 홈 18승/20경기, 원정 6승/19경기, 상대 전적: 3승-2무-5승, 선수 결장: 결장 0명/0명, 휴식일: 3일/3일, 날씨: Rain, 배당 변동: 오버 기준선 2.5→2.75 (4개 업체), 팀 신원·경기 연결: 팀ID 290/287, 경기ID 1556055. 확보하지 못한 항목(심판, 전술 상성)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 가시마 앤틀러스 승 · 모델 54.4% · 시장 공정확률 51.8%, 차이 +2.6%p · 실제 배당 1.68배 · 손익분기 59.5%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 54.4%이며, 베팅업체 마진 제거 공정확률은 51.8%이고 모델과의 차이는 +2.6%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 49.2%~59.5%, 데이터 신뢰도는 91.7%입니다. 이 수치는 적중을 보장하지 않습니다.",
@@ -2685,7 +1845,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-30-final",
+      "analysis_stage": "locked",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 85,
       "data_quality_grade": "정상",
@@ -2693,564 +1853,135 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-30-final",
+        "analysis_stage": "locked",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 85,
         "data_quality_grade": "정상",
         "lineup_confirmed": true,
         "categories": {
           "high_probability": {
-            "label": "핸디캡 예측",
-            "sort_id": 2,
             "raw_pick": "[+1.0] 나고야 그램퍼스 핸디승",
-            "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] 나고야 그램퍼스 (+1.0)</span><br>",
-            "prob": 0.566216,
-            "ev": 0.939918,
-            "odd": 1.66,
-            "market_prob": 0.5248091603053436,
-            "selection_side": "home",
-            "handicap_base": 1.0,
-            "goal_model_audit": {
-              "model": "shrunk-venue-goals-v1",
-              "prior_matches": 5,
-              "league_prior": [
-                1.4,
-                1.25
-              ],
-              "venue_goals": [
-                1.1160714285714286,
-                1.9247596153846156
-              ],
-              "market_in_goal_formula": false,
-              "home_advantage_applied_once": true,
-              "parameters_fitted": false,
-              "sides": {
-                "home": {
-                  "venue": 1.116071,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 1.4,
-                  "xg_inputs": [
-                    [
-                      1.835,
-                      2.0
-                    ],
-                    [
-                      1.76,
-                      1.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556035,
-                    1556046
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.07999999999999996,
-                  "clipped": false
-                },
-                "away": {
-                  "venue": 1.92476,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 2.6,
-                  "xg_inputs": [
-                    [
-                      2.64,
-                      1.0
-                    ],
-                    [
-                      1.84,
-                      2.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556034,
-                    1556044
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.2639999999999999,
-                  "clipped": false
-                }
-              },
-              "expected_goals": {
-                "home": 1.1545,
-                "away": 1.5528
-              },
-              "opponent_model": {
-                "model_version": "time-weighted-opponent-poisson-v1",
-                "active": false,
-                "parameters_fitted": true,
-                "samples": 352,
-                "validation_fixtures": 71,
-                "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-                "rho": -0.15,
-                "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-                "train_fixtures": 278,
-                "train_before": 1779588000.0,
-                "available_after": 1788364800.0,
-                "fitted_brier": 0.6056778954581574,
-                "baseline_brier": 0.6026940459320409,
-                "fitted_log_loss": 1.017159514088732,
-                "baseline_log_loss": 1.0105912506203258,
-                "trained_at": 1788682129.791735
-              },
-              "joint_forecast": {
-                "coherent_score_distribution": true,
-                "forecast_model_version": "goals-v2-joint-wdl-v1",
-                "calibration_version": "fixture-time-wdl-projection-v1",
-                "pick_policy_version": "probability-protected-price-v1",
-                "raw_market_probabilities": [
-                  0.27845590265252906,
-                  0.2877596873594273,
-                  0.4337844099880434,
-                  0.4920928158947892,
-                  0.5079071841052107,
-                  0.5662155900119565,
-                  0.20448328360440862,
-                  0.22930112638363445
-                ],
-                "final_market_probabilities": [
-                  0.2784559026525293,
-                  0.28775968735942714,
-                  0.4337844099880436,
-                  0.4920928158947892,
-                  0.5079071841052109,
-                  0.5662155900119565,
-                  0.2044832836044087,
-                  0.22930112638363456
-                ],
-                "wdl_learning_weights": [
-                  0.0,
-                  0.0,
-                  0.0
-                ],
-                "wdl_learning_samples": [
-                  0,
-                  0,
-                  0
-                ],
-                "calibration_active": false,
-                "validation_fixtures": 0,
-                "market_blend": "wdl_only",
-                "rho": -0.15
-              }
-            },
-            "settlement_supported": true,
-            "market_key": "handicap",
-            "raw_model_prob": 0.566216,
-            "learning_weight": 0.0,
-            "learning_cohort_samples": 0,
-            "fair_prob": 0.524809,
-            "edge": 0.0414,
-            "market_hit_rate": 0.4144,
-            "market_history_samples": 103,
-            "market_history_scope": "global",
-            "learning_diagnostics": {
-              "candidate_samples": 366,
-              "brier_score": 0.223189,
-              "unit_roi": -0.046503,
-              "odds_bands": {
-                "2_to_3": {
-                  "samples": 86,
-                  "hits": 26,
-                  "profit": -26.895
-                },
-                "3_plus": {
-                  "samples": 205,
-                  "hits": 61,
-                  "profit": 30.46
-                },
-                "below_2": {
-                  "samples": 75,
-                  "hits": 34,
-                  "profit": -20.585
-                }
-              },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            },
-            "data_confidence": 0.901,
-            "price_policy": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "error_margin": 0.0539,
-            "probability_interval": {
-              "low": 0.512356,
-              "high": 0.620076
-            },
-            "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.437822,
-            "support_signals": [],
-            "is_true_underdog": true,
-            "safe_score": 0.5102,
-            "value_score": 0.0373,
-            "robust_probability": 0.550046,
-            "robust_edge": 0.025237,
-            "robust_ev": 0.913076,
-            "underdog_gate_version": "U3-alternative-pick-20260902",
-            "is_qualified_underdog": false,
-            "recommendation_score": 0.6106,
-            "value_pick_tier": "not_qualified",
-            "odds_verified": true,
+            "prob": 0.5660000000000001,
             "official_final_pick": true,
             "recommendation_status": "SELECTED",
-            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-            "probability_fallback": true,
+            "fair_probability": 0.524809,
             "final_pick_grade": "standard",
-            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-            "selection_policy": {
-              "minimum_odds": null,
-              "policy_version": "probability-protected-price-v1",
-              "maximum_probability_sacrifice": 0.0,
-              "price_tradeoff_validated": false,
-              "price_validation": {
-                "active": false,
-                "maximum_probability_sacrifice": 0.0,
-                "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-                "validation_fixtures": 0,
-                "method": "chronological-price-policy-v1",
-                "cohort_fixtures": 0,
-                "forecast_model_version": "goals-v2-joint-wdl-v1"
-              },
-              "valid_decimal_odds_above": 1.0,
-              "conservative_gross_return_floor": 1.01,
-              "compare_all_markets": true,
-              "provide_pick_when_analyzable": true,
-              "value_failure_action": "probability_pick_with_warning",
-              "force_underdog": false
-            },
+            "independent_support_count": 0,
             "learning_robot": {
-              "mode": "controlled_adviser",
-              "market": "handicap",
-              "samples": 0,
-              "hit_rate": 0.4144,
-              "scope": "global",
-              "influence_weight": 0.0,
-              "influence_cap": 0.18,
-              "history_rewrite": false,
-              "self_modifying": false,
-              "objective": "probability_calibration_and_price_value_without_empty_pick",
-              "value_failure_action": "probability_pick_with_warning",
+              "calibration_active": false,
+              "calibration_cohort_samples": 0,
               "calibration_model_version": "goals-v2-joint-wdl-v1",
               "calibration_version": "fixture-time-wdl-projection-v1",
-              "calibration_cohort_samples": 0,
-              "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 366,
+                "baseline_brier": null,
                 "brier_score": 0.223189,
-                "unit_roi": -0.046503,
+                "calibration_validated": false,
+                "candidate_samples": 366,
+                "corrected_brier": null,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 86,
                     "hits": 26,
-                    "profit": -26.895
+                    "profit": -26.895,
+                    "samples": 86
                   },
                   "3_plus": {
-                    "samples": 205,
                     "hits": 61,
-                    "profit": 30.46
+                    "profit": 30.46,
+                    "samples": 205
                   },
                   "below_2": {
-                    "samples": 75,
                     "hits": 34,
-                    "profit": -20.585
+                    "profit": -20.585,
+                    "samples": 75
                   }
                 },
-                "calibration_validated": false,
-                "validation_fixtures": 0,
-                "baseline_brier": null,
-                "corrected_brier": null
-              }
+                "unit_roi": -0.046503,
+                "validation_fixtures": 0
+              },
+              "history_rewrite": false,
+              "hit_rate": 0.4144,
+              "influence_cap": 0.18,
+              "influence_weight": 0.0,
+              "market": "handicap",
+              "mode": "controlled_adviser",
+              "objective": "probability_calibration_and_price_value_without_empty_pick",
+              "samples": 0,
+              "scope": "global",
+              "self_modifying": false,
+              "value_failure_action": "probability_pick_with_warning"
             },
-            "category_key": "high_probability",
-            "category_label": "최종 추천픽"
+            "market_key": "handicap",
+            "odd": 1.66,
+            "probability": 0.566216,
+            "probability_fallback": true,
+            "robust_edge": 0.025237,
+            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+            "value_pick_tier": "not_qualified"
           },
           "honey": null,
           "vip_underdog": null
         },
         "selected": {
-          "label": "핸디캡 예측",
-          "sort_id": 2,
           "raw_pick": "[+1.0] 나고야 그램퍼스 핸디승",
-          "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] 나고야 그램퍼스 (+1.0)</span><br>",
-          "prob": 0.566216,
-          "ev": 0.939918,
-          "odd": 1.66,
-          "market_prob": 0.5248091603053436,
-          "selection_side": "home",
-          "handicap_base": 1.0,
-          "goal_model_audit": {
-            "model": "shrunk-venue-goals-v1",
-            "prior_matches": 5,
-            "league_prior": [
-              1.4,
-              1.25
-            ],
-            "venue_goals": [
-              1.1160714285714286,
-              1.9247596153846156
-            ],
-            "market_in_goal_formula": false,
-            "home_advantage_applied_once": true,
-            "parameters_fitted": false,
-            "sides": {
-              "home": {
-                "venue": 1.116071,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 1.4,
-                "xg_inputs": [
-                  [
-                    1.835,
-                    2.0
-                  ],
-                  [
-                    1.76,
-                    1.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556035,
-                  1556046
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false
-              },
-              "away": {
-                "venue": 1.92476,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 2.6,
-                "xg_inputs": [
-                  [
-                    2.64,
-                    1.0
-                  ],
-                  [
-                    1.84,
-                    2.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556034,
-                  1556044
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.2639999999999999,
-                "clipped": false
-              }
-            },
-            "expected_goals": {
-              "home": 1.1545,
-              "away": 1.5528
-            },
-            "opponent_model": {
-              "model_version": "time-weighted-opponent-poisson-v1",
-              "active": false,
-              "parameters_fitted": true,
-              "samples": 352,
-              "validation_fixtures": 71,
-              "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-              "rho": -0.15,
-              "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-              "train_fixtures": 278,
-              "train_before": 1779588000.0,
-              "available_after": 1788364800.0,
-              "fitted_brier": 0.6056778954581574,
-              "baseline_brier": 0.6026940459320409,
-              "fitted_log_loss": 1.017159514088732,
-              "baseline_log_loss": 1.0105912506203258,
-              "trained_at": 1788682129.791735
-            },
-            "joint_forecast": {
-              "coherent_score_distribution": true,
-              "forecast_model_version": "goals-v2-joint-wdl-v1",
-              "calibration_version": "fixture-time-wdl-projection-v1",
-              "pick_policy_version": "probability-protected-price-v1",
-              "raw_market_probabilities": [
-                0.27845590265252906,
-                0.2877596873594273,
-                0.4337844099880434,
-                0.4920928158947892,
-                0.5079071841052107,
-                0.5662155900119565,
-                0.20448328360440862,
-                0.22930112638363445
-              ],
-              "final_market_probabilities": [
-                0.2784559026525293,
-                0.28775968735942714,
-                0.4337844099880436,
-                0.4920928158947892,
-                0.5079071841052109,
-                0.5662155900119565,
-                0.2044832836044087,
-                0.22930112638363456
-              ],
-              "wdl_learning_weights": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "wdl_learning_samples": [
-                0,
-                0,
-                0
-              ],
-              "calibration_active": false,
-              "validation_fixtures": 0,
-              "market_blend": "wdl_only",
-              "rho": -0.15
-            }
-          },
-          "settlement_supported": true,
-          "market_key": "handicap",
-          "raw_model_prob": 0.566216,
-          "learning_weight": 0.0,
-          "learning_cohort_samples": 0,
-          "fair_prob": 0.524809,
-          "edge": 0.0414,
-          "market_hit_rate": 0.4144,
-          "market_history_samples": 103,
-          "market_history_scope": "global",
-          "learning_diagnostics": {
-            "candidate_samples": 366,
-            "brier_score": 0.223189,
-            "unit_roi": -0.046503,
-            "odds_bands": {
-              "2_to_3": {
-                "samples": 86,
-                "hits": 26,
-                "profit": -26.895
-              },
-              "3_plus": {
-                "samples": 205,
-                "hits": 61,
-                "profit": 30.46
-              },
-              "below_2": {
-                "samples": 75,
-                "hits": 34,
-                "profit": -20.585
-              }
-            },
-            "calibration_validated": false,
-            "validation_fixtures": 0,
-            "baseline_brier": null,
-            "corrected_brier": null
-          },
-          "data_confidence": 0.901,
-          "price_policy": {
-            "active": false,
-            "maximum_probability_sacrifice": 0.0,
-            "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-            "validation_fixtures": 0,
-            "method": "chronological-price-policy-v1",
-            "cohort_fixtures": 0,
-            "forecast_model_version": "goals-v2-joint-wdl-v1"
-          },
-          "error_margin": 0.0539,
-          "probability_interval": {
-            "low": 0.512356,
-            "high": 0.620076
-          },
-          "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.437822,
-          "support_signals": [],
-          "is_true_underdog": true,
-          "safe_score": 0.5102,
-          "value_score": 0.0373,
-          "robust_probability": 0.550046,
-          "robust_edge": 0.025237,
-          "robust_ev": 0.913076,
-          "underdog_gate_version": "U3-alternative-pick-20260902",
-          "is_qualified_underdog": false,
-          "recommendation_score": 0.6106,
-          "value_pick_tier": "not_qualified",
-          "odds_verified": true,
+          "prob": 0.5660000000000001,
           "official_final_pick": true,
           "recommendation_status": "SELECTED",
-          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-          "probability_fallback": true,
+          "fair_probability": 0.524809,
           "final_pick_grade": "standard",
-          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-          "selection_policy": {
-            "minimum_odds": null,
-            "policy_version": "probability-protected-price-v1",
-            "maximum_probability_sacrifice": 0.0,
-            "price_tradeoff_validated": false,
-            "price_validation": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "valid_decimal_odds_above": 1.0,
-            "conservative_gross_return_floor": 1.01,
-            "compare_all_markets": true,
-            "provide_pick_when_analyzable": true,
-            "value_failure_action": "probability_pick_with_warning",
-            "force_underdog": false
-          },
+          "independent_support_count": 0,
           "learning_robot": {
-            "mode": "controlled_adviser",
-            "market": "handicap",
-            "samples": 0,
-            "hit_rate": 0.4144,
-            "scope": "global",
-            "influence_weight": 0.0,
-            "influence_cap": 0.18,
-            "history_rewrite": false,
-            "self_modifying": false,
-            "objective": "probability_calibration_and_price_value_without_empty_pick",
-            "value_failure_action": "probability_pick_with_warning",
+            "calibration_active": false,
+            "calibration_cohort_samples": 0,
             "calibration_model_version": "goals-v2-joint-wdl-v1",
             "calibration_version": "fixture-time-wdl-projection-v1",
-            "calibration_cohort_samples": 0,
-            "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 366,
+              "baseline_brier": null,
               "brier_score": 0.223189,
-              "unit_roi": -0.046503,
+              "calibration_validated": false,
+              "candidate_samples": 366,
+              "corrected_brier": null,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 86,
                   "hits": 26,
-                  "profit": -26.895
+                  "profit": -26.895,
+                  "samples": 86
                 },
                 "3_plus": {
-                  "samples": 205,
                   "hits": 61,
-                  "profit": 30.46
+                  "profit": 30.46,
+                  "samples": 205
                 },
                 "below_2": {
-                  "samples": 75,
                   "hits": 34,
-                  "profit": -20.585
+                  "profit": -20.585,
+                  "samples": 75
                 }
               },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            }
+              "unit_roi": -0.046503,
+              "validation_fixtures": 0
+            },
+            "history_rewrite": false,
+            "hit_rate": 0.4144,
+            "influence_cap": 0.18,
+            "influence_weight": 0.0,
+            "market": "handicap",
+            "mode": "controlled_adviser",
+            "objective": "probability_calibration_and_price_value_without_empty_pick",
+            "samples": 0,
+            "scope": "global",
+            "self_modifying": false,
+            "value_failure_action": "probability_pick_with_warning"
           },
-          "category_key": "high_probability",
-          "category_label": "최종 추천픽",
+          "market_key": "handicap",
+          "odd": 1.66,
+          "probability": 0.5660000000000001,
+          "probability_fallback": true,
+          "robust_edge": 0.025237,
+          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+          "value_pick_tier": "not_qualified",
           "display": "나고야 그램퍼스 +1.0 적용 후 승",
-          "probability": 0.566216,
           "badges": []
         },
         "report": "[종합 경기 흐름] 예상 정규시간 득점은 나고야 그램퍼스 1.15골, FC마치다 젤비아 1.55골입니다. 득점 모형에서는 FC마치다 젤비아가 앞섭니다. 역습 전술을 확인했다는 뜻은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] FC마치다 젤비아 승 · 모델 43.4% · 시장 공정확률 43.8%, 차이 -0.4%p · 실제 배당 1.99배 · 손익분기 50.3%.\n\n[승무패 전체 방향] 나고야 그램퍼스 승 27.8% · 무승부 28.8% · FC마치다 젤비아 승 43.4%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 나고야 그램퍼스 +1.0 적용 후 승 · 모델 56.6% · 시장 공정확률 52.5%, 차이 +4.1%p · 실제 배당 1.66배 · 손익분기 60.2%.\n\n[언더오버 분석] 오버 (U/O 2.5) · 모델 50.8% · 시장 공정확률 51.4%, 차이 -0.6%p · 실제 배당 1.71배 · 손익분기 58.5%.\n\n[역배 판단] 실제 승무패 역배 방향: 나고야 그램퍼스 승 · 모델 27.8% · 시장 공정확률 29.0%, 차이 -1.2%p · 실제 배당 3.00배 · 손익분기 33.3%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 1.20/2.60, xG: 1.835/2.64, 슈팅 품질: 유효슈팅 2.5/4.0, 홈·원정: 홈 10승/21경기, 원정 8승/19경기, 상대 전적: 2승-2무-6승, 선수 결장: 결장 0명/0명, 휴식일: 3일/3일, 날씨: Rain, 팀 신원·경기 연결: 팀ID 288/303, 경기ID 1556057. 확보하지 못한 항목(심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 나고야 그램퍼스 +1.0 적용 후 승 · 모델 56.6% · 시장 공정확률 52.5%, 차이 +4.1%p · 실제 배당 1.66배 · 손익분기 60.2%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 56.6%이며, 베팅업체 마진 제거 공정확률은 52.5%이고 모델과의 차이는 +4.1%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 51.2%~62.0%, 데이터 신뢰도는 90.1%입니다. 이 수치는 적중을 보장하지 않습니다.",
@@ -3335,7 +2066,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-30-final",
+      "analysis_stage": "locked",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 90,
       "data_quality_grade": "정상",
@@ -3343,564 +2074,135 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-30-final",
+        "analysis_stage": "locked",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 90,
         "data_quality_grade": "정상",
         "lineup_confirmed": true,
         "categories": {
           "high_probability": {
-            "label": "핸디캡 예측",
-            "sort_id": 2,
             "raw_pick": "[+1.0] 파지아노 오카야마 핸디승",
-            "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] 파지아노 오카야마 (+1.0)</span><br>",
-            "prob": 0.55554,
-            "ev": 1.016638,
-            "odd": 1.83,
-            "market_prob": 0.47589310708671584,
-            "selection_side": "home",
-            "handicap_base": 1.0,
-            "goal_model_audit": {
-              "model": "shrunk-venue-goals-v1",
-              "prior_matches": 5,
-              "league_prior": [
-                1.4,
-                1.25
-              ],
-              "venue_goals": [
-                1.2734693877551022,
-                1.2709523809523808
-              ],
-              "market_in_goal_formula": false,
-              "home_advantage_applied_once": true,
-              "parameters_fitted": false,
-              "sides": {
-                "home": {
-                  "venue": 1.273469,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 1.4,
-                  "xg_inputs": [
-                    [
-                      1.46,
-                      1.0
-                    ],
-                    [
-                      0.58,
-                      1.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556035,
-                    1556043
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.07999999999999996,
-                  "clipped": false
-                },
-                "away": {
-                  "venue": 1.270952,
-                  "recent_weight": 0.25,
-                  "recent_goal_rate": 2.4,
-                  "xg_inputs": [
-                    [
-                      2.22,
-                      1.0
-                    ],
-                    [
-                      3.09,
-                      1.0
-                    ]
-                  ],
-                  "stats_fixture_ids": [
-                    1556031,
-                    1556046
-                  ],
-                  "xg_weight": 0.1111111111111111,
-                  "xg_samples": 1.0,
-                  "availability_penalty": 0.07999999999999996,
-                  "clipped": false
-                }
-              },
-              "expected_goals": {
-                "home": 1.1716,
-                "away": 1.5416
-              },
-              "opponent_model": {
-                "model_version": "time-weighted-opponent-poisson-v1",
-                "active": false,
-                "parameters_fitted": true,
-                "samples": 352,
-                "validation_fixtures": 71,
-                "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-                "rho": -0.15,
-                "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-                "train_fixtures": 278,
-                "train_before": 1779588000.0,
-                "available_after": 1788364800.0,
-                "fitted_brier": 0.6056778954581574,
-                "baseline_brier": 0.6026940459320409,
-                "fitted_log_loss": 1.017159514088732,
-                "baseline_log_loss": 1.0105912506203258,
-                "trained_at": 1788682129.791735
-              },
-              "joint_forecast": {
-                "coherent_score_distribution": true,
-                "forecast_model_version": "goals-v2-joint-wdl-v1",
-                "calibration_version": "fixture-time-wdl-projection-v1",
-                "pick_policy_version": "probability-protected-price-v1",
-                "raw_market_probabilities": [
-                  0.2701300506562779,
-                  0.2854098785732263,
-                  0.4444600707704959,
-                  0.4892149288162897,
-                  0.5107850711837101,
-                  0.5555399292295042,
-                  0.2108985941123567,
-                  0.23356147665813906
-                ],
-                "final_market_probabilities": [
-                  0.2701300506562778,
-                  0.28540987857322647,
-                  0.4444600707704958,
-                  0.48921492881628986,
-                  0.51078507118371,
-                  0.5555399292295045,
-                  0.21089859411235665,
-                  0.23356147665813895
-                ],
-                "wdl_learning_weights": [
-                  0.0,
-                  0.0,
-                  0.0
-                ],
-                "wdl_learning_samples": [
-                  0,
-                  0,
-                  0
-                ],
-                "calibration_active": false,
-                "validation_fixtures": 0,
-                "market_blend": "wdl_only",
-                "rho": -0.15
-              }
-            },
-            "settlement_supported": true,
-            "market_key": "handicap",
-            "raw_model_prob": 0.55554,
-            "learning_weight": 0.0,
-            "learning_cohort_samples": 0,
-            "fair_prob": 0.475893,
-            "edge": 0.0796,
-            "market_hit_rate": 0.4144,
-            "market_history_samples": 103,
-            "market_history_scope": "global",
-            "learning_diagnostics": {
-              "candidate_samples": 366,
-              "brier_score": 0.223189,
-              "unit_roi": -0.046503,
-              "odds_bands": {
-                "2_to_3": {
-                  "samples": 86,
-                  "hits": 26,
-                  "profit": -26.895
-                },
-                "3_plus": {
-                  "samples": 205,
-                  "hits": 61,
-                  "profit": 30.46
-                },
-                "below_2": {
-                  "samples": 75,
-                  "hits": 34,
-                  "profit": -20.585
-                }
-              },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            },
-            "data_confidence": 0.917,
-            "price_policy": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "error_margin": 0.0516,
-            "probability_interval": {
-              "low": 0.50392,
-              "high": 0.60716
-            },
-            "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.43017,
-            "support_signals": [],
-            "is_true_underdog": true,
-            "safe_score": 0.5094,
-            "value_score": 0.073,
-            "robust_probability": 0.54006,
-            "robust_edge": 0.064167,
-            "robust_ev": 0.98831,
-            "underdog_gate_version": "U3-alternative-pick-20260902",
-            "is_qualified_underdog": false,
-            "recommendation_score": 0.6272,
-            "value_pick_tier": "not_qualified",
-            "odds_verified": true,
+            "prob": 0.556,
             "official_final_pick": true,
             "recommendation_status": "SELECTED",
-            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-            "probability_fallback": true,
+            "fair_probability": 0.475893,
             "final_pick_grade": "standard",
-            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-            "selection_policy": {
-              "minimum_odds": null,
-              "policy_version": "probability-protected-price-v1",
-              "maximum_probability_sacrifice": 0.0,
-              "price_tradeoff_validated": false,
-              "price_validation": {
-                "active": false,
-                "maximum_probability_sacrifice": 0.0,
-                "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-                "validation_fixtures": 0,
-                "method": "chronological-price-policy-v1",
-                "cohort_fixtures": 0,
-                "forecast_model_version": "goals-v2-joint-wdl-v1"
-              },
-              "valid_decimal_odds_above": 1.0,
-              "conservative_gross_return_floor": 1.01,
-              "compare_all_markets": true,
-              "provide_pick_when_analyzable": true,
-              "value_failure_action": "probability_pick_with_warning",
-              "force_underdog": false
-            },
+            "independent_support_count": 0,
             "learning_robot": {
-              "mode": "controlled_adviser",
-              "market": "handicap",
-              "samples": 0,
-              "hit_rate": 0.4144,
-              "scope": "global",
-              "influence_weight": 0.0,
-              "influence_cap": 0.18,
-              "history_rewrite": false,
-              "self_modifying": false,
-              "objective": "probability_calibration_and_price_value_without_empty_pick",
-              "value_failure_action": "probability_pick_with_warning",
+              "calibration_active": false,
+              "calibration_cohort_samples": 0,
               "calibration_model_version": "goals-v2-joint-wdl-v1",
               "calibration_version": "fixture-time-wdl-projection-v1",
-              "calibration_cohort_samples": 0,
-              "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 366,
+                "baseline_brier": null,
                 "brier_score": 0.223189,
-                "unit_roi": -0.046503,
+                "calibration_validated": false,
+                "candidate_samples": 366,
+                "corrected_brier": null,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 86,
                     "hits": 26,
-                    "profit": -26.895
+                    "profit": -26.895,
+                    "samples": 86
                   },
                   "3_plus": {
-                    "samples": 205,
                     "hits": 61,
-                    "profit": 30.46
+                    "profit": 30.46,
+                    "samples": 205
                   },
                   "below_2": {
-                    "samples": 75,
                     "hits": 34,
-                    "profit": -20.585
+                    "profit": -20.585,
+                    "samples": 75
                   }
                 },
-                "calibration_validated": false,
-                "validation_fixtures": 0,
-                "baseline_brier": null,
-                "corrected_brier": null
-              }
+                "unit_roi": -0.046503,
+                "validation_fixtures": 0
+              },
+              "history_rewrite": false,
+              "hit_rate": 0.4144,
+              "influence_cap": 0.18,
+              "influence_weight": 0.0,
+              "market": "handicap",
+              "mode": "controlled_adviser",
+              "objective": "probability_calibration_and_price_value_without_empty_pick",
+              "samples": 0,
+              "scope": "global",
+              "self_modifying": false,
+              "value_failure_action": "probability_pick_with_warning"
             },
-            "category_key": "high_probability",
-            "category_label": "최종 추천픽"
+            "market_key": "handicap",
+            "odd": 1.83,
+            "probability": 0.55554,
+            "probability_fallback": true,
+            "robust_edge": 0.064167,
+            "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+            "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+            "value_pick_tier": "not_qualified"
           },
           "honey": null,
           "vip_underdog": null
         },
         "selected": {
-          "label": "핸디캡 예측",
-          "sort_id": 2,
           "raw_pick": "[+1.0] 파지아노 오카야마 핸디승",
-          "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] 파지아노 오카야마 (+1.0)</span><br>",
-          "prob": 0.55554,
-          "ev": 1.016638,
-          "odd": 1.83,
-          "market_prob": 0.47589310708671584,
-          "selection_side": "home",
-          "handicap_base": 1.0,
-          "goal_model_audit": {
-            "model": "shrunk-venue-goals-v1",
-            "prior_matches": 5,
-            "league_prior": [
-              1.4,
-              1.25
-            ],
-            "venue_goals": [
-              1.2734693877551022,
-              1.2709523809523808
-            ],
-            "market_in_goal_formula": false,
-            "home_advantage_applied_once": true,
-            "parameters_fitted": false,
-            "sides": {
-              "home": {
-                "venue": 1.273469,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 1.4,
-                "xg_inputs": [
-                  [
-                    1.46,
-                    1.0
-                  ],
-                  [
-                    0.58,
-                    1.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556035,
-                  1556043
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false
-              },
-              "away": {
-                "venue": 1.270952,
-                "recent_weight": 0.25,
-                "recent_goal_rate": 2.4,
-                "xg_inputs": [
-                  [
-                    2.22,
-                    1.0
-                  ],
-                  [
-                    3.09,
-                    1.0
-                  ]
-                ],
-                "stats_fixture_ids": [
-                  1556031,
-                  1556046
-                ],
-                "xg_weight": 0.1111111111111111,
-                "xg_samples": 1.0,
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false
-              }
-            },
-            "expected_goals": {
-              "home": 1.1716,
-              "away": 1.5416
-            },
-            "opponent_model": {
-              "model_version": "time-weighted-opponent-poisson-v1",
-              "active": false,
-              "parameters_fitted": true,
-              "samples": 352,
-              "validation_fixtures": 71,
-              "reason": "시간순 검증 개선 미확인 · 기초모형 유지",
-              "rho": -0.15,
-              "validation_scope": "chronological_holdout_vs_venue_baseline_not_live_performance",
-              "train_fixtures": 278,
-              "train_before": 1779588000.0,
-              "available_after": 1788364800.0,
-              "fitted_brier": 0.6056778954581574,
-              "baseline_brier": 0.6026940459320409,
-              "fitted_log_loss": 1.017159514088732,
-              "baseline_log_loss": 1.0105912506203258,
-              "trained_at": 1788682129.791735
-            },
-            "joint_forecast": {
-              "coherent_score_distribution": true,
-              "forecast_model_version": "goals-v2-joint-wdl-v1",
-              "calibration_version": "fixture-time-wdl-projection-v1",
-              "pick_policy_version": "probability-protected-price-v1",
-              "raw_market_probabilities": [
-                0.2701300506562779,
-                0.2854098785732263,
-                0.4444600707704959,
-                0.4892149288162897,
-                0.5107850711837101,
-                0.5555399292295042,
-                0.2108985941123567,
-                0.23356147665813906
-              ],
-              "final_market_probabilities": [
-                0.2701300506562778,
-                0.28540987857322647,
-                0.4444600707704958,
-                0.48921492881628986,
-                0.51078507118371,
-                0.5555399292295045,
-                0.21089859411235665,
-                0.23356147665813895
-              ],
-              "wdl_learning_weights": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "wdl_learning_samples": [
-                0,
-                0,
-                0
-              ],
-              "calibration_active": false,
-              "validation_fixtures": 0,
-              "market_blend": "wdl_only",
-              "rho": -0.15
-            }
-          },
-          "settlement_supported": true,
-          "market_key": "handicap",
-          "raw_model_prob": 0.55554,
-          "learning_weight": 0.0,
-          "learning_cohort_samples": 0,
-          "fair_prob": 0.475893,
-          "edge": 0.0796,
-          "market_hit_rate": 0.4144,
-          "market_history_samples": 103,
-          "market_history_scope": "global",
-          "learning_diagnostics": {
-            "candidate_samples": 366,
-            "brier_score": 0.223189,
-            "unit_roi": -0.046503,
-            "odds_bands": {
-              "2_to_3": {
-                "samples": 86,
-                "hits": 26,
-                "profit": -26.895
-              },
-              "3_plus": {
-                "samples": 205,
-                "hits": 61,
-                "profit": 30.46
-              },
-              "below_2": {
-                "samples": 75,
-                "hits": 34,
-                "profit": -20.585
-              }
-            },
-            "calibration_validated": false,
-            "validation_fixtures": 0,
-            "baseline_brier": null,
-            "corrected_brier": null
-          },
-          "data_confidence": 0.917,
-          "price_policy": {
-            "active": false,
-            "maximum_probability_sacrifice": 0.0,
-            "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-            "validation_fixtures": 0,
-            "method": "chronological-price-policy-v1",
-            "cohort_fixtures": 0,
-            "forecast_model_version": "goals-v2-joint-wdl-v1"
-          },
-          "error_margin": 0.0516,
-          "probability_interval": {
-            "low": 0.50392,
-            "high": 0.60716
-          },
-          "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.43017,
-          "support_signals": [],
-          "is_true_underdog": true,
-          "safe_score": 0.5094,
-          "value_score": 0.073,
-          "robust_probability": 0.54006,
-          "robust_edge": 0.064167,
-          "robust_ev": 0.98831,
-          "underdog_gate_version": "U3-alternative-pick-20260902",
-          "is_qualified_underdog": false,
-          "recommendation_score": 0.6272,
-          "value_pick_tier": "not_qualified",
-          "odds_verified": true,
+          "prob": 0.556,
           "official_final_pick": true,
           "recommendation_status": "SELECTED",
-          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
-          "probability_fallback": true,
+          "fair_probability": 0.475893,
           "final_pick_grade": "standard",
-          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
-          "selection_policy": {
-            "minimum_odds": null,
-            "policy_version": "probability-protected-price-v1",
-            "maximum_probability_sacrifice": 0.0,
-            "price_tradeoff_validated": false,
-            "price_validation": {
-              "active": false,
-              "maximum_probability_sacrifice": 0.0,
-              "reason": "호환 모형의 경기 단위 가격선택 검증 표본 부족",
-              "validation_fixtures": 0,
-              "method": "chronological-price-policy-v1",
-              "cohort_fixtures": 0,
-              "forecast_model_version": "goals-v2-joint-wdl-v1"
-            },
-            "valid_decimal_odds_above": 1.0,
-            "conservative_gross_return_floor": 1.01,
-            "compare_all_markets": true,
-            "provide_pick_when_analyzable": true,
-            "value_failure_action": "probability_pick_with_warning",
-            "force_underdog": false
-          },
+          "independent_support_count": 0,
           "learning_robot": {
-            "mode": "controlled_adviser",
-            "market": "handicap",
-            "samples": 0,
-            "hit_rate": 0.4144,
-            "scope": "global",
-            "influence_weight": 0.0,
-            "influence_cap": 0.18,
-            "history_rewrite": false,
-            "self_modifying": false,
-            "objective": "probability_calibration_and_price_value_without_empty_pick",
-            "value_failure_action": "probability_pick_with_warning",
+            "calibration_active": false,
+            "calibration_cohort_samples": 0,
             "calibration_model_version": "goals-v2-joint-wdl-v1",
             "calibration_version": "fixture-time-wdl-projection-v1",
-            "calibration_cohort_samples": 0,
-            "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 366,
+              "baseline_brier": null,
               "brier_score": 0.223189,
-              "unit_roi": -0.046503,
+              "calibration_validated": false,
+              "candidate_samples": 366,
+              "corrected_brier": null,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 86,
                   "hits": 26,
-                  "profit": -26.895
+                  "profit": -26.895,
+                  "samples": 86
                 },
                 "3_plus": {
-                  "samples": 205,
                   "hits": 61,
-                  "profit": 30.46
+                  "profit": 30.46,
+                  "samples": 205
                 },
                 "below_2": {
-                  "samples": 75,
                   "hits": 34,
-                  "profit": -20.585
+                  "profit": -20.585,
+                  "samples": 75
                 }
               },
-              "calibration_validated": false,
-              "validation_fixtures": 0,
-              "baseline_brier": null,
-              "corrected_brier": null
-            }
+              "unit_roi": -0.046503,
+              "validation_fixtures": 0
+            },
+            "history_rewrite": false,
+            "hit_rate": 0.4144,
+            "influence_cap": 0.18,
+            "influence_weight": 0.0,
+            "market": "handicap",
+            "mode": "controlled_adviser",
+            "objective": "probability_calibration_and_price_value_without_empty_pick",
+            "samples": 0,
+            "scope": "global",
+            "self_modifying": false,
+            "value_failure_action": "probability_pick_with_warning"
           },
-          "category_key": "high_probability",
-          "category_label": "최종 추천픽",
+          "market_key": "handicap",
+          "odd": 1.83,
+          "probability": 0.556,
+          "probability_fallback": true,
+          "robust_edge": 0.064167,
+          "selection_reason": "전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인.",
+          "selection_warning": "배당가치 기준 미충족 · 수익 우위 미확인",
+          "value_pick_tier": "not_qualified",
           "display": "파지아노 오카야마 +1.0 적용 후 승",
-          "probability": 0.55554,
           "badges": []
         },
         "report": "[종합 경기 흐름] 예상 정규시간 득점은 파지아노 오카야마 1.17골, 산프레체 히로시마 1.54골입니다. 득점 모형에서는 산프레체 히로시마가 앞섭니다. 역습 전술을 확인했다는 뜻은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] 산프레체 히로시마 승 · 모델 44.4% · 시장 공정확률 48.8%, 차이 -4.4%p · 실제 배당 1.78배 · 손익분기 56.2%.\n\n[승무패 전체 방향] 파지아노 오카야마 승 27.0% · 무승부 28.5% · 산프레체 히로시마 승 44.4%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 파지아노 오카야마 +1.0 적용 후 승 · 모델 55.6% · 시장 공정확률 47.6%, 차이 +8.0%p · 실제 배당 1.83배 · 손익분기 54.6%.\n\n[언더오버 분석] 오버 (U/O 2.5) · 모델 51.1% · 시장 공정확률 52.1%, 차이 -1.1%p · 실제 배당 1.69배 · 손익분기 59.2%.\n\n[역배 판단] 실제 승무패 역배 방향: 파지아노 오카야마 승 · 모델 27.0% · 시장 공정확률 24.8%, 차이 +2.2%p · 실제 배당 3.50배 · 손익분기 28.6%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 2.00/2.20, xG: 1.46/2.22, 슈팅 품질: 유효슈팅 3.0/5.5, 홈·원정: 홈 6승/16경기, 원정 8승/20경기, 상대 전적: 2승-2무-2승, 선수 결장: 결장 0명/0명, 휴식일: 3일/3일, 날씨: Rain, 배당 변동: 언더 기준선 2.75→2.5 (4개 업체), 팀 신원·경기 연결: 팀ID 310/282, 경기ID 1556058. 확보하지 못한 항목(심판, 전술 상성)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 파지아노 오카야마 +1.0 적용 후 승 · 모델 55.6% · 시장 공정확률 47.6%, 차이 +8.0%p · 실제 배당 1.83배 · 손익분기 54.6%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 55.6%이며, 베팅업체 마진 제거 공정확률은 47.6%이고 모델과의 차이는 +8.0%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 50.4%~60.7%, 데이터 신뢰도는 91.7%입니다. 이 수치는 적중을 보장하지 않습니다.",
@@ -5012,7 +3314,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 63,
       "data_quality_grade": "주의",
@@ -5020,7 +3322,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 63,
         "data_quality_grade": "주의",
@@ -5031,10 +3333,10 @@
             "sort_id": 2,
             "raw_pick": "[+1.0] FC안양 핸디승",
             "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] FC안양 (+1.0)</span><br>",
-            "prob": 0.596193,
-            "ev": 0.983719,
-            "odd": 1.65,
-            "market_prob": 0.5336556340647081,
+            "prob": 0.601806,
+            "ev": 0.96289,
+            "odd": 1.6,
+            "market_prob": 0.5498976230748687,
             "selection_side": "home",
             "handicap_base": 1.0,
             "goal_model_audit": {
@@ -5107,24 +3409,24 @@
                 "calibration_version": "fixture-time-wdl-projection-v1",
                 "pick_policy_version": "probability-protected-price-v1",
                 "raw_market_probabilities": [
-                  0.2916013450927419,
-                  0.30459197766751755,
-                  0.4038066772397402,
-                  0.5502710753919394,
-                  0.4497289246080602,
-                  0.5961933227602598,
-                  0.20689075588010747,
-                  0.19691592135963285
+                  0.29436161633452596,
+                  0.3074448643318807,
+                  0.3981935193335932,
+                  0.5514072233019846,
+                  0.44859277669801534,
+                  0.6018064806664067,
+                  0.20401484879997853,
+                  0.1941786705336149
                 ],
                 "final_market_probabilities": [
-                  0.29160134509274244,
-                  0.30459197766751755,
-                  0.4038066772397401,
-                  0.5502710753919396,
-                  0.4497289246080605,
-                  0.5961933227602604,
-                  0.20689075588010744,
-                  0.19691592135963282
+                  0.2943616163345261,
+                  0.30744486433188073,
+                  0.39819351933359315,
+                  0.5514072233019847,
+                  0.4485927766980154,
+                  0.6018064806664071,
+                  0.20401484879997847,
+                  0.19417867053361484
                 ],
                 "wdl_learning_weights": [
                   0.0,
@@ -5144,11 +3446,11 @@
             },
             "settlement_supported": true,
             "market_key": "handicap",
-            "raw_model_prob": 0.596193,
+            "raw_model_prob": 0.601806,
             "learning_weight": 0.0,
             "learning_cohort_samples": 0,
-            "fair_prob": 0.533656,
-            "edge": 0.0625,
+            "fair_prob": 0.549898,
+            "edge": 0.0519,
             "market_hit_rate": 0.4144,
             "market_history_samples": 103,
             "market_history_scope": "global",
@@ -5190,21 +3492,21 @@
             },
             "error_margin": 0.0686,
             "probability_interval": {
-              "low": 0.527633,
-              "high": 0.664753
+              "low": 0.533246,
+              "high": 0.670366
             },
             "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.472162,
+            "balanced_score": 0.477133,
             "support_signals": [],
             "is_true_underdog": true,
-            "safe_score": 0.4746,
-            "value_score": 0.0498,
-            "robust_probability": 0.575613,
-            "robust_edge": 0.041957,
-            "robust_ev": 0.949761,
+            "safe_score": 0.479,
+            "value_score": 0.0413,
+            "robust_probability": 0.581226,
+            "robust_edge": 0.031328,
+            "robust_ev": 0.929962,
             "underdog_gate_version": "U3-alternative-pick-20260902",
             "is_qualified_underdog": false,
-            "recommendation_score": 0.6229,
+            "recommendation_score": 0.621,
             "value_pick_tier": "not_qualified",
             "odds_verified": true,
             "official_final_pick": true,
@@ -5288,10 +3590,10 @@
           "sort_id": 2,
           "raw_pick": "[+1.0] FC안양 핸디승",
           "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [플핸승] FC안양 (+1.0)</span><br>",
-          "prob": 0.596193,
-          "ev": 0.983719,
-          "odd": 1.65,
-          "market_prob": 0.5336556340647081,
+          "prob": 0.601806,
+          "ev": 0.96289,
+          "odd": 1.6,
+          "market_prob": 0.5498976230748687,
           "selection_side": "home",
           "handicap_base": 1.0,
           "goal_model_audit": {
@@ -5364,24 +3666,24 @@
               "calibration_version": "fixture-time-wdl-projection-v1",
               "pick_policy_version": "probability-protected-price-v1",
               "raw_market_probabilities": [
-                0.2916013450927419,
-                0.30459197766751755,
-                0.4038066772397402,
-                0.5502710753919394,
-                0.4497289246080602,
-                0.5961933227602598,
-                0.20689075588010747,
-                0.19691592135963285
+                0.29436161633452596,
+                0.3074448643318807,
+                0.3981935193335932,
+                0.5514072233019846,
+                0.44859277669801534,
+                0.6018064806664067,
+                0.20401484879997853,
+                0.1941786705336149
               ],
               "final_market_probabilities": [
-                0.29160134509274244,
-                0.30459197766751755,
-                0.4038066772397401,
-                0.5502710753919396,
-                0.4497289246080605,
-                0.5961933227602604,
-                0.20689075588010744,
-                0.19691592135963282
+                0.2943616163345261,
+                0.30744486433188073,
+                0.39819351933359315,
+                0.5514072233019847,
+                0.4485927766980154,
+                0.6018064806664071,
+                0.20401484879997847,
+                0.19417867053361484
               ],
               "wdl_learning_weights": [
                 0.0,
@@ -5401,11 +3703,11 @@
           },
           "settlement_supported": true,
           "market_key": "handicap",
-          "raw_model_prob": 0.596193,
+          "raw_model_prob": 0.601806,
           "learning_weight": 0.0,
           "learning_cohort_samples": 0,
-          "fair_prob": 0.533656,
-          "edge": 0.0625,
+          "fair_prob": 0.549898,
+          "edge": 0.0519,
           "market_hit_rate": 0.4144,
           "market_history_samples": 103,
           "market_history_scope": "global",
@@ -5447,21 +3749,21 @@
           },
           "error_margin": 0.0686,
           "probability_interval": {
-            "low": 0.527633,
-            "high": 0.664753
+            "low": 0.533246,
+            "high": 0.670366
           },
           "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.472162,
+          "balanced_score": 0.477133,
           "support_signals": [],
           "is_true_underdog": true,
-          "safe_score": 0.4746,
-          "value_score": 0.0498,
-          "robust_probability": 0.575613,
-          "robust_edge": 0.041957,
-          "robust_ev": 0.949761,
+          "safe_score": 0.479,
+          "value_score": 0.0413,
+          "robust_probability": 0.581226,
+          "robust_edge": 0.031328,
+          "robust_ev": 0.929962,
           "underdog_gate_version": "U3-alternative-pick-20260902",
           "is_qualified_underdog": false,
-          "recommendation_score": 0.6229,
+          "recommendation_score": 0.621,
           "value_pick_tier": "not_qualified",
           "odds_verified": true,
           "official_final_pick": true,
@@ -5537,10 +3839,10 @@
           "category_key": "high_probability",
           "category_label": "최종 추천픽",
           "display": "FC안양 +1.0 적용 후 승",
-          "probability": 0.596193,
+          "probability": 0.601806,
           "badges": []
         },
-        "report": "[종합 경기 흐름] 예상 정규시간 득점은 FC안양 1.11골, 강원FC 1.36골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] 강원FC 승 · 모델 40.4% · 시장 공정확률 43.0%, 차이 -2.6%p · 실제 배당 2.07배 · 손익분기 48.3%.\n\n[승무패 전체 방향] FC안양 승 29.2% · 무승부 30.5% · 강원FC 승 40.4%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] FC안양 +1.0 적용 후 승 · 모델 59.6% · 시장 공정확률 53.4%, 차이 +6.2%p · 실제 배당 1.65배 · 손익분기 60.6%.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 55.0% · 시장 공정확률 53.4%, 차이 +1.7%p · 실제 배당 1.67배 · 손익분기 59.9%.\n\n[역배 판단] 실제 승무패 역배 방향: FC안양 승 · 모델 29.2% · 시장 공정확률 28.3%, 차이 +0.9%p · 실제 배당 3.15배 · 손익분기 31.7%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 1.40/1.20, 홈·원정: 홈 8승/20경기, 원정 6승/22경기, 상대 전적: 3승-4무-3승, 선수 결장: 결장 0명/0명, 휴식일: 7일/6일, 날씨: Clear, 팀 신원·경기 연결: 팀ID 2748/2746, 경기ID 1507056. 확보하지 못한 항목(xG, 슈팅 품질, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 시간가중 상대 공격·수비·홈원정 모형과 중복 제거 결장·일정 보정을 사용합니다. 최근득점·xG를 여기에 다시 곱하지 않습니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 사용: 시간순 보류 표본에서 기초모형 대비 오차 감소. 검증 경기 47개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 FC안양 +1.0 적용 후 승 · 모델 59.6% · 시장 공정확률 53.4%, 차이 +6.2%p · 실제 배당 1.65배 · 손익분기 60.6%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 59.6%이며, 베팅업체 마진 제거 공정확률은 53.4%이고 모델과의 차이는 +6.2%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 52.8%~66.5%, 데이터 신뢰도는 79.6%입니다. 이 수치는 적중을 보장하지 않습니다.",
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 FC안양 1.11골, 강원FC 1.36골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] 강원FC 승 · 모델 39.8% · 시장 공정확률 41.2%, 차이 -1.4%p · 실제 배당 2.16배 · 손익분기 46.3%.\n\n[승무패 전체 방향] FC안양 승 29.4% · 무승부 30.7% · 강원FC 승 39.8%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] FC안양 +1.0 적용 후 승 · 모델 60.2% · 시장 공정확률 55.0%, 차이 +5.2%p · 실제 배당 1.60배 · 손익분기 62.5%.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 55.1% · 시장 공정확률 53.4%, 차이 +1.8%p · 실제 배당 1.67배 · 손익분기 59.9%.\n\n[역배 판단] 실제 승무패 역배 방향: FC안양 승 · 모델 29.4% · 시장 공정확률 29.2%, 차이 +0.3%p · 실제 배당 3.05배 · 손익분기 32.8%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 1.40/1.20, 홈·원정: 홈 8승/20경기, 원정 6승/22경기, 상대 전적: 3승-4무-3승, 선수 결장: 결장 0명/0명, 휴식일: 7일/6일, 날씨: Clear, 팀 신원·경기 연결: 팀ID 2748/2746, 경기ID 1507056. 확보하지 못한 항목(xG, 슈팅 품질, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 시간가중 상대 공격·수비·홈원정 모형과 중복 제거 결장·일정 보정을 사용합니다. 최근득점·xG를 여기에 다시 곱하지 않습니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 사용: 시간순 보류 표본에서 기초모형 대비 오차 감소. 검증 경기 47개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 FC안양 +1.0 적용 후 승 · 모델 60.2% · 시장 공정확률 55.0%, 차이 +5.2%p · 실제 배당 1.60배 · 손익분기 62.5%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 60.2%이며, 베팅업체 마진 제거 공정확률은 55.0%이고 모델과의 차이는 +5.2%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 53.3%~67.0%, 데이터 신뢰도는 79.6%입니다. 이 수치는 적중을 보장하지 않습니다.",
         "canonical_source": "PROTO",
         "canonical_match_id": "9547"
       },
@@ -5622,7 +3924,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 68,
       "data_quality_grade": "주의",
@@ -5630,7 +3932,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 68,
         "data_quality_grade": "주의",
@@ -6232,7 +4534,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-06T03:53:29+00:00",
       "data_quality_score": 63,
       "data_quality_grade": "주의",
@@ -6240,7 +4542,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-06T03:53:29+00:00",
         "data_quality_score": 63,
         "data_quality_grade": "주의",
@@ -6251,10 +4553,10 @@
             "sort_id": 2,
             "raw_pick": "[-1.0] 김포FC 핸디패",
             "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [핸디패] 김포FC 패배 (-1.0)</span><br>",
-            "prob": 0.6276,
-            "ev": 1.041816,
-            "odd": 1.66,
-            "market_prob": 0.5239748741758028,
+            "prob": 0.638163,
+            "ev": 0.989152,
+            "odd": 1.55,
+            "market_prob": 0.5610808944142277,
             "selection_side": "away",
             "handicap_base": -1.0,
             "goal_model_audit": {
@@ -6325,24 +4627,24 @@
                 "calibration_version": "fixture-time-wdl-projection-v1",
                 "pick_policy_version": "probability-protected-price-v1",
                 "raw_market_probabilities": [
-                  0.3723998585550913,
-                  0.3223298471333698,
-                  0.30527029431153896,
-                  0.6215451155900216,
-                  0.37845488440997843,
-                  0.1616115400361443,
-                  0.210788318518947,
-                  0.6276001414449083
+                  0.3618372865884358,
+                  0.3257244573922186,
+                  0.312438256019345,
+                  0.6227839974163298,
+                  0.37721600258366955,
+                  0.15702766739747825,
+                  0.20480961919095778,
+                  0.6381627134115636
                 ],
                 "final_market_probabilities": [
-                  0.37239985855509133,
-                  0.32232984713337,
-                  0.3052702943115386,
-                  0.6215451155900217,
-                  0.3784548844099783,
-                  0.16161154003614434,
-                  0.21078831851894703,
-                  0.6276001414449079
+                  0.36183728658843617,
+                  0.3257244573922186,
+                  0.3124382560193452,
+                  0.6227839974163302,
+                  0.3772160025836699,
+                  0.15702766739747842,
+                  0.20480961919095803,
+                  0.6381627134115638
                 ],
                 "wdl_learning_weights": [
                   0.0,
@@ -6362,11 +4664,11 @@
             },
             "settlement_supported": true,
             "market_key": "handicap",
-            "raw_model_prob": 0.6276,
+            "raw_model_prob": 0.638163,
             "learning_weight": 0.0,
             "learning_cohort_samples": 0,
-            "fair_prob": 0.523975,
-            "edge": 0.1036,
+            "fair_prob": 0.561081,
+            "edge": 0.0771,
             "market_hit_rate": 0.4144,
             "market_history_samples": 103,
             "market_history_scope": "global",
@@ -6408,21 +4710,21 @@
             },
             "error_margin": 0.0686,
             "probability_interval": {
-              "low": 0.55904,
-              "high": 0.69616
+              "low": 0.569603,
+              "high": 0.706723
             },
             "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.510033,
+            "balanced_score": 0.518733,
             "support_signals": [],
             "is_true_underdog": true,
-            "safe_score": 0.4996,
-            "value_score": 0.0825,
-            "robust_probability": 0.60702,
-            "robust_edge": 0.083045,
-            "robust_ev": 1.007653,
+            "safe_score": 0.508,
+            "value_score": 0.0614,
+            "robust_probability": 0.617583,
+            "robust_edge": 0.056502,
+            "robust_ev": 0.957254,
             "underdog_gate_version": "U3-alternative-pick-20260902",
             "is_qualified_underdog": false,
-            "recommendation_score": 0.6681,
+            "recommendation_score": 0.6611,
             "value_pick_tier": "not_qualified",
             "odds_verified": true,
             "official_final_pick": true,
@@ -6506,10 +4808,10 @@
           "sort_id": 2,
           "raw_pick": "[-1.0] 김포FC 핸디패",
           "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>🛡️ [핸디패] 김포FC 패배 (-1.0)</span><br>",
-          "prob": 0.6276,
-          "ev": 1.041816,
-          "odd": 1.66,
-          "market_prob": 0.5239748741758028,
+          "prob": 0.638163,
+          "ev": 0.989152,
+          "odd": 1.55,
+          "market_prob": 0.5610808944142277,
           "selection_side": "away",
           "handicap_base": -1.0,
           "goal_model_audit": {
@@ -6580,24 +4882,24 @@
               "calibration_version": "fixture-time-wdl-projection-v1",
               "pick_policy_version": "probability-protected-price-v1",
               "raw_market_probabilities": [
-                0.3723998585550913,
-                0.3223298471333698,
-                0.30527029431153896,
-                0.6215451155900216,
-                0.37845488440997843,
-                0.1616115400361443,
-                0.210788318518947,
-                0.6276001414449083
+                0.3618372865884358,
+                0.3257244573922186,
+                0.312438256019345,
+                0.6227839974163298,
+                0.37721600258366955,
+                0.15702766739747825,
+                0.20480961919095778,
+                0.6381627134115636
               ],
               "final_market_probabilities": [
-                0.37239985855509133,
-                0.32232984713337,
-                0.3052702943115386,
-                0.6215451155900217,
-                0.3784548844099783,
-                0.16161154003614434,
-                0.21078831851894703,
-                0.6276001414449079
+                0.36183728658843617,
+                0.3257244573922186,
+                0.3124382560193452,
+                0.6227839974163302,
+                0.3772160025836699,
+                0.15702766739747842,
+                0.20480961919095803,
+                0.6381627134115638
               ],
               "wdl_learning_weights": [
                 0.0,
@@ -6617,11 +4919,11 @@
           },
           "settlement_supported": true,
           "market_key": "handicap",
-          "raw_model_prob": 0.6276,
+          "raw_model_prob": 0.638163,
           "learning_weight": 0.0,
           "learning_cohort_samples": 0,
-          "fair_prob": 0.523975,
-          "edge": 0.1036,
+          "fair_prob": 0.561081,
+          "edge": 0.0771,
           "market_hit_rate": 0.4144,
           "market_history_samples": 103,
           "market_history_scope": "global",
@@ -6663,21 +4965,21 @@
           },
           "error_margin": 0.0686,
           "probability_interval": {
-            "low": 0.55904,
-            "high": 0.69616
+            "low": 0.569603,
+            "high": 0.706723
           },
           "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.510033,
+          "balanced_score": 0.518733,
           "support_signals": [],
           "is_true_underdog": true,
-          "safe_score": 0.4996,
-          "value_score": 0.0825,
-          "robust_probability": 0.60702,
-          "robust_edge": 0.083045,
-          "robust_ev": 1.007653,
+          "safe_score": 0.508,
+          "value_score": 0.0614,
+          "robust_probability": 0.617583,
+          "robust_edge": 0.056502,
+          "robust_ev": 0.957254,
           "underdog_gate_version": "U3-alternative-pick-20260902",
           "is_qualified_underdog": false,
-          "recommendation_score": 0.6681,
+          "recommendation_score": 0.6611,
           "value_pick_tier": "not_qualified",
           "odds_verified": true,
           "official_final_pick": true,
@@ -6753,10 +5055,10 @@
           "category_key": "high_probability",
           "category_label": "최종 추천픽",
           "display": "김포FC -1.0 적용 후 패",
-          "probability": 0.6276,
+          "probability": 0.638163,
           "badges": []
         },
-        "report": "[종합 경기 흐름] 예상 정규시간 득점은 김포FC 1.13골, 성남FC 1.06골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] 김포FC 승 · 모델 37.2% · 시장 공정확률 42.8%, 차이 -5.6%p · 실제 배당 2.03배 · 손익분기 49.3%.\n\n[승무패 전체 방향] 김포FC 승 37.2% · 무승부 32.2% · 성남FC 승 30.5%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 김포FC -1.0 적용 후 패 · 모델 62.8% · 시장 공정확률 52.4%, 차이 +10.4%p · 실제 배당 1.66배 · 손익분기 60.2%.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 62.2% · 시장 공정확률 54.6%, 차이 +7.5%p · 실제 배당 1.61배 · 손익분기 62.1%.\n\n[역배 판단] 실제 승무패 역배 방향: 성남FC 승 · 모델 30.5% · 시장 공정확률 27.2%, 차이 +3.4%p · 실제 배당 3.20배 · 손익분기 31.2%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 1.60/1.60, 홈·원정: 홈 6승/18경기, 원정 9승/22경기, 상대 전적: 2승-7무-1승, 선수 결장: 결장 0명/0명, 휴식일: 7일/7일, 날씨: Clear, 팀 신원·경기 연결: 팀ID 7078/2757, 경기ID 1510441. 확보하지 못한 항목(xG, 슈팅 품질, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 시간가중 상대 공격·수비·홈원정 모형과 중복 제거 결장·일정 보정을 사용합니다. 최근득점·xG를 여기에 다시 곱하지 않습니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 사용: 시간순 보류 표본에서 기초모형 대비 오차 감소. 검증 경기 59개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 김포FC -1.0 적용 후 패 · 모델 62.8% · 시장 공정확률 52.4%, 차이 +10.4%p · 실제 배당 1.66배 · 손익분기 60.2%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 62.8%이며, 베팅업체 마진 제거 공정확률은 52.4%이고 모델과의 차이는 +10.4%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 55.9%~69.6%, 데이터 신뢰도는 79.6%입니다. 이 수치는 적중을 보장하지 않습니다.",
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 김포FC 1.13골, 성남FC 1.06골입니다. 기대 득점 차이가 작아 한쪽의 일방적인 주도보다 접전 가능성을 높게 봅니다.\n\n[일반 승무패 분석] 김포FC 승 · 모델 36.2% · 시장 공정확률 39.4%, 차이 -3.2%p · 실제 배당 2.21배 · 손익분기 45.2%.\n\n[승무패 전체 방향] 김포FC 승 36.2% · 무승부 32.6% · 성남FC 승 31.2%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] 김포FC -1.0 적용 후 패 · 모델 63.8% · 시장 공정확률 56.1%, 차이 +7.7%p · 실제 배당 1.55배 · 손익분기 64.5%.\n\n[언더오버 분석] 언더 (U/O 2.5) · 모델 62.3% · 시장 공정확률 54.6%, 차이 +7.6%p · 실제 배당 1.61배 · 손익분기 62.1%.\n\n[역배 판단] 실제 승무패 역배 방향: 성남FC 승 · 모델 31.2% · 시장 공정확률 29.5%, 차이 +1.7%p · 실제 배당 2.95배 · 손익분기 33.9%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 1.60/1.60, 홈·원정: 홈 6승/18경기, 원정 9승/22경기, 상대 전적: 2승-7무-1승, 선수 결장: 결장 0명/0명, 휴식일: 7일/7일, 날씨: Clear, 팀 신원·경기 연결: 팀ID 7078/2757, 경기ID 1510441. 확보하지 못한 항목(xG, 슈팅 품질, 심판, 전술 상성, 배당 변동)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 시간가중 상대 공격·수비·홈원정 모형과 중복 제거 결장·일정 보정을 사용합니다. 최근득점·xG를 여기에 다시 곱하지 않습니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 사용: 시간순 보류 표본에서 기초모형 대비 오차 감소. 검증 경기 59개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 김포FC -1.0 적용 후 패 · 모델 63.8% · 시장 공정확률 56.1%, 차이 +7.7%p · 실제 배당 1.55배 · 손익분기 64.5%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 63.8%이며, 베팅업체 마진 제거 공정확률은 56.1%이고 모델과의 차이는 +7.7%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 57.0%~70.7%, 데이터 신뢰도는 79.6%입니다. 이 수치는 적중을 보장하지 않습니다.",
         "canonical_source": "PROTO",
         "canonical_match_id": "9567"
       },
@@ -7282,7 +5584,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 85,
       "data_quality_grade": "정상",
@@ -7290,7 +5592,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 85,
         "data_quality_grade": "정상",
@@ -7932,7 +6234,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 90,
       "data_quality_grade": "정상",
@@ -7940,7 +6242,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 90,
         "data_quality_grade": "정상",
@@ -8582,7 +6884,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 85,
       "data_quality_grade": "정상",
@@ -8590,7 +6892,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 85,
         "data_quality_grade": "정상",
@@ -9232,7 +7534,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "T-90",
+      "analysis_stage": "T-60",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 85,
       "data_quality_grade": "정상",
@@ -9240,7 +7542,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "T-90",
+        "analysis_stage": "T-60",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 85,
         "data_quality_grade": "정상",
@@ -12353,7 +10655,7 @@
       },
       "analysis_version": "V7.6.0-coherent-probability",
       "system_version": "R7.6.0-coherent-probability",
-      "analysis_stage": "regular",
+      "analysis_stage": "T-90",
       "analyzed_at": "2026-09-05T05:21:43+00:00",
       "data_quality_score": 90,
       "data_quality_grade": "정상",
@@ -12361,7 +10663,7 @@
       "analysis": {
         "analysis_version": "V7.6.0-coherent-probability",
         "system_version": "R7.6.0-coherent-probability",
-        "analysis_stage": "regular",
+        "analysis_stage": "T-90",
         "analyzed_at": "2026-09-05T05:21:43+00:00",
         "data_quality_score": 90,
         "data_quality_grade": "정상",
@@ -12372,10 +10674,10 @@
             "sort_id": 1,
             "raw_pick": "오버 (U/O 2.5)",
             "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 2.5]</span><br>⬆️ 오버",
-            "prob": 0.64947,
-            "ev": 1.006679,
-            "odd": 1.55,
-            "market_prob": 0.5682451253481895,
+            "prob": 0.651372,
+            "ev": 0.977059,
+            "odd": 1.5,
+            "market_prob": 0.5867768595041322,
             "selection_side": "over",
             "goal_model_audit": {
               "model": "shrunk-venue-goals-v1",
@@ -12467,24 +10769,24 @@
                 "calibration_version": "fixture-time-wdl-projection-v1",
                 "pick_policy_version": "probability-protected-price-v1",
                 "raw_market_probabilities": [
-                  0.5222794400619366,
-                  0.25215492628729136,
-                  0.2255656336507721,
-                  0.3505298731992237,
-                  0.6494701268007764,
-                  0.31979951678365365,
-                  0.20247992327828346,
-                  0.47772055993806356
+                  0.5279440100485998,
+                  0.24748822263235695,
+                  0.22456776731904327,
+                  0.3486276350698052,
+                  0.6513723649301951,
+                  0.323268017753761,
+                  0.20467599229483904,
+                  0.4720559899514004
                 ],
                 "final_market_probabilities": [
-                  0.5222794400619368,
-                  0.25215492628729147,
-                  0.22556563365077198,
-                  0.3505298731992237,
-                  0.6494701268007765,
-                  0.31979951678365376,
-                  0.2024799232782835,
-                  0.47772055993806356
+                  0.5279440100486,
+                  0.24748822263235717,
+                  0.224567767319043,
+                  0.3486276350698053,
+                  0.6513723649301952,
+                  0.32326801775376107,
+                  0.20467599229483913,
+                  0.47205598995140036
                 ],
                 "wdl_learning_weights": [
                   0.0,
@@ -12505,11 +10807,11 @@
             "settlement_supported": true,
             "totals_base": 2.5,
             "market_key": "totals",
-            "raw_model_prob": 0.64947,
+            "raw_model_prob": 0.651372,
             "learning_weight": 0.0,
             "learning_cohort_samples": 0,
-            "fair_prob": 0.568245,
-            "edge": 0.0812,
+            "fair_prob": 0.586777,
+            "edge": 0.0646,
             "market_hit_rate": 0.4144,
             "market_history_samples": 103,
             "market_history_scope": "global",
@@ -12539,7 +10841,7 @@
               "baseline_brier": null,
               "corrected_brier": null
             },
-            "data_confidence": 0.917,
+            "data_confidence": 0.904,
             "price_policy": {
               "active": false,
               "maximum_probability_sacrifice": 0.0,
@@ -12549,23 +10851,23 @@
               "cohort_fixtures": 0,
               "forecast_model_version": "goals-v2-joint-wdl-v1"
             },
-            "error_margin": 0.0516,
+            "error_margin": 0.0534,
             "probability_interval": {
-              "low": 0.59785,
-              "high": 0.70109
+              "low": 0.597932,
+              "high": 0.704812
             },
             "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-            "balanced_score": 0.46996,
+            "balanced_score": 0.470675,
             "support_signals": [],
             "is_true_underdog": false,
-            "safe_score": 0.5956,
-            "value_score": 0.0745,
-            "robust_probability": 0.63399,
-            "robust_edge": 0.065745,
-            "robust_ev": 0.982684,
+            "safe_score": 0.5888,
+            "value_score": 0.0584,
+            "robust_probability": 0.635352,
+            "robust_edge": 0.048575,
+            "robust_ev": 0.953028,
             "underdog_gate_version": "U3-alternative-pick-20260902",
             "is_qualified_underdog": false,
-            "recommendation_score": 0.6957,
+            "recommendation_score": 0.6853,
             "value_pick_tier": "not_qualified",
             "odds_verified": true,
             "official_final_pick": true,
@@ -12649,10 +10951,10 @@
           "sort_id": 1,
           "raw_pick": "오버 (U/O 2.5)",
           "html_pick": "<div style='margin-bottom:6px;'><span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span></div><span style='color:#00F2FE; font-size:14px; font-weight:900;'>[기준 2.5]</span><br>⬆️ 오버",
-          "prob": 0.64947,
-          "ev": 1.006679,
-          "odd": 1.55,
-          "market_prob": 0.5682451253481895,
+          "prob": 0.651372,
+          "ev": 0.977059,
+          "odd": 1.5,
+          "market_prob": 0.5867768595041322,
           "selection_side": "over",
           "goal_model_audit": {
             "model": "shrunk-venue-goals-v1",
@@ -12744,24 +11046,24 @@
               "calibration_version": "fixture-time-wdl-projection-v1",
               "pick_policy_version": "probability-protected-price-v1",
               "raw_market_probabilities": [
-                0.5222794400619366,
-                0.25215492628729136,
-                0.2255656336507721,
-                0.3505298731992237,
-                0.6494701268007764,
-                0.31979951678365365,
-                0.20247992327828346,
-                0.47772055993806356
+                0.5279440100485998,
+                0.24748822263235695,
+                0.22456776731904327,
+                0.3486276350698052,
+                0.6513723649301951,
+                0.323268017753761,
+                0.20467599229483904,
+                0.4720559899514004
               ],
               "final_market_probabilities": [
-                0.5222794400619368,
-                0.25215492628729147,
-                0.22556563365077198,
-                0.3505298731992237,
-                0.6494701268007765,
-                0.31979951678365376,
-                0.2024799232782835,
-                0.47772055993806356
+                0.5279440100486,
+                0.24748822263235717,
+                0.224567767319043,
+                0.3486276350698053,
+                0.6513723649301952,
+                0.32326801775376107,
+                0.20467599229483913,
+                0.47205598995140036
               ],
               "wdl_learning_weights": [
                 0.0,
@@ -12782,11 +11084,11 @@
           "settlement_supported": true,
           "totals_base": 2.5,
           "market_key": "totals",
-          "raw_model_prob": 0.64947,
+          "raw_model_prob": 0.651372,
           "learning_weight": 0.0,
           "learning_cohort_samples": 0,
-          "fair_prob": 0.568245,
-          "edge": 0.0812,
+          "fair_prob": 0.586777,
+          "edge": 0.0646,
           "market_hit_rate": 0.4144,
           "market_history_samples": 103,
           "market_history_scope": "global",
@@ -12816,7 +11118,7 @@
             "baseline_brier": null,
             "corrected_brier": null
           },
-          "data_confidence": 0.917,
+          "data_confidence": 0.904,
           "price_policy": {
             "active": false,
             "maximum_probability_sacrifice": 0.0,
@@ -12826,23 +11128,23 @@
             "cohort_fixtures": 0,
             "forecast_model_version": "goals-v2-joint-wdl-v1"
           },
-          "error_margin": 0.0516,
+          "error_margin": 0.0534,
           "probability_interval": {
-            "low": 0.59785,
-            "high": 0.70109
+            "low": 0.597932,
+            "high": 0.704812
           },
           "interval_method": "heuristic_sensitivity_not_statistical_confidence",
-          "balanced_score": 0.46996,
+          "balanced_score": 0.470675,
           "support_signals": [],
           "is_true_underdog": false,
-          "safe_score": 0.5956,
-          "value_score": 0.0745,
-          "robust_probability": 0.63399,
-          "robust_edge": 0.065745,
-          "robust_ev": 0.982684,
+          "safe_score": 0.5888,
+          "value_score": 0.0584,
+          "robust_probability": 0.635352,
+          "robust_edge": 0.048575,
+          "robust_ev": 0.953028,
           "underdog_gate_version": "U3-alternative-pick-20260902",
           "is_qualified_underdog": false,
-          "recommendation_score": 0.6957,
+          "recommendation_score": 0.6853,
           "value_pick_tier": "not_qualified",
           "odds_verified": true,
           "official_final_pick": true,
@@ -12918,10 +11220,10 @@
           "category_key": "high_probability",
           "category_label": "최종 추천픽",
           "display": "오버 (U/O 2.5)",
-          "probability": 0.64947,
+          "probability": 0.651372,
           "badges": []
         },
-        "report": "[종합 경기 흐름] 예상 정규시간 득점은 FC도쿄 2.06골, 교토 상가FC 1.31골입니다. 득점 모형에서는 FC도쿄가 앞섭니다. 점유율·전술 우위를 뜻하는 것은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] FC도쿄 승 · 모델 52.2% · 시장 공정확률 55.8%, 차이 -3.6%p · 실제 배당 1.56배 · 손익분기 64.1%.\n\n[승무패 전체 방향] FC도쿄 승 52.2% · 무승부 25.2% · 교토 상가FC 승 22.6%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] FC도쿄 -1.0 적용 후 패 · 모델 47.8% · 시장 공정확률 40.6%, 차이 +7.1%p · 실제 배당 2.14배 · 손익분기 46.7%.\n\n[언더오버 분석] 오버 (U/O 2.5) · 모델 64.9% · 시장 공정확률 56.8%, 차이 +8.1%p · 실제 배당 1.55배 · 손익분기 64.5%.\n\n[역배 판단] 실제 승무패 역배 방향: 교토 상가FC 승 · 모델 22.6% · 시장 공정확률 18.9%, 차이 +3.6%p · 실제 배당 4.60배 · 손익분기 21.7%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 2.20/1.60, xG: 2.305/1.355, 슈팅 품질: 유효슈팅 5.5/4.5, 홈·원정: 홈 10승/20경기, 원정 6승/19경기, 상대 전적: 6승-1무-3승, 선수 결장: 결장 0명/0명, 휴식일: 4일/4일, 날씨: Rain, 배당 변동: 오버 1.94→1.82 (+3.0%p, 시간당 +0.7%p, 4개 업체 중앙값, 시초 대비 지속), 팀 신원·경기 연결: 팀ID 292/302, 경기ID 1556054. 확보하지 못한 항목(심판, 전술 상성)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 오버 (U/O 2.5) · 모델 64.9% · 시장 공정확률 56.8%, 차이 +8.1%p · 실제 배당 1.55배 · 손익분기 64.5%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 64.9%이며, 베팅업체 마진 제거 공정확률은 56.8%이고 모델과의 차이는 +8.1%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 59.8%~70.1%, 데이터 신뢰도는 91.7%입니다. 이 수치는 적중을 보장하지 않습니다.",
+        "report": "[종합 경기 흐름] 예상 정규시간 득점은 FC도쿄 2.06골, 교토 상가FC 1.31골입니다. 득점 모형에서는 FC도쿄가 앞섭니다. 점유율·전술 우위를 뜻하는 것은 아닙니다. 현지 비 정보는 참고 사항이며, 강도·경기 시각 검증 없이 득점을 일괄 감점하지 않습니다.\n\n[일반 승무패 분석] FC도쿄 승 · 모델 52.8% · 시장 공정확률 58.0%, 차이 -5.2%p · 실제 배당 1.50배 · 손익분기 66.7%.\n\n[승무패 전체 방향] FC도쿄 승 52.8% · 무승부 24.7% · 교토 상가FC 승 22.5%. 승무패·핸디·언더오버는 같은 최종 스코어 확률표에서 계산합니다.\n\n[핸디캡 분석] FC도쿄 -1.0 적용 후 패 · 모델 47.2% · 시장 공정확률 36.9%, 차이 +10.3%p · 실제 배당 2.36배 · 손익분기 42.4%.\n\n[언더오버 분석] 오버 (U/O 2.5) · 모델 65.1% · 시장 공정확률 58.7%, 차이 +6.5%p · 실제 배당 1.50배 · 손익분기 66.7%.\n\n[역배 판단] 실제 승무패 역배 방향: 교토 상가FC 승 · 모델 22.5% · 시장 공정확률 18.5%, 차이 +4.0%p · 실제 배당 4.70배 · 손익분기 21.3%. 정배팀이 못 이길 확률(무승부 포함)과 역배팀이 이길 확률은 다릅니다. 역배 여부와 꿀/VIP 등급은 별개입니다.\n\n[확인 자료와 계산 기준] 최근 성적: 최근 5/5경기, PPG 2.20/1.60, xG: 2.305/1.355, 슈팅 품질: 유효슈팅 5.5/4.5, 홈·원정: 홈 10승/20경기, 원정 6승/19경기, 상대 전적: 6승-1무-3승, 선수 결장: 결장 0명/0명, 휴식일: 4일/4일, 날씨: Rain, 배당 변동: 오버 1.94→1.82 (+3.0%p, 시간당 +0.6%p, 4개 업체 중앙값, 시초 대비 지속), 팀 신원·경기 연결: 팀ID 292/302, 경기ID 1556054. 확보하지 못한 항목(심판, 전술 상성)은 임의로 추측하지 않고 신뢰도에서 감점했습니다. 득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. 순위·맞대결·감독·날씨는 참고 자료이며 별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.\n\n[학습 상태] 상대강도 모형 미사용: 시간순 검증 개선 미확인 · 기초모형 유지. 검증 경기 71개. 확률 보정 학습 미적용(검증 근거 부족 또는 개선 미확인). 과거 8개 후보·픽·확률은 그대로 보존하며 이후 경기만 보정합니다. 실전 성능 향상은 별도 검증이 필요합니다.\n\n[최종 선택과 신뢰도] 최종 추천픽은 오버 (U/O 2.5) · 모델 65.1% · 시장 공정확률 58.7%, 차이 +6.5%p · 실제 배당 1.50배 · 손익분기 66.7%입니다. 전체 8개 후보의 최고 모델확률을 우선 보호했습니다. 더 좋은 배당만으로 낮은 확률로 바꾸지 않았습니다. 배당가치 기준 미충족 · 수익 우위 미확인. 세 시장을 모두 비교해 한 방향을 골랐으며, 별도 가치·VIP 등급은 부여하지 않았습니다. 선택된 최종픽의 보정 확률은 65.1%이며, 베팅업체 마진 제거 공정확률은 58.7%이고 모델과의 차이는 +6.5%p입니다. 가정에 따른 민감도 범위(통계적 신뢰구간 아님)는 59.8%~70.5%, 데이터 신뢰도는 90.4%입니다. 이 수치는 적중을 보장하지 않습니다.",
         "canonical_source": "PROTO",
         "canonical_match_id": "9575"
       },
@@ -82095,7 +80397,7 @@
         {
           "purpose": "live",
           "endpoint": "/fixtures",
-          "calls": 253
+          "calls": 265
         },
         {
           "purpose": "world",
@@ -82105,12 +80407,12 @@
         {
           "purpose": "analysis",
           "endpoint": "/fixtures",
-          "calls": 178
+          "calls": 179
         },
         {
           "purpose": "analysis",
           "endpoint": "/odds",
-          "calls": 158
+          "calls": 159
         },
         {
           "purpose": "analysis",
@@ -82125,7 +80427,7 @@
         {
           "purpose": "analysis",
           "endpoint": "/injuries",
-          "calls": 98
+          "calls": 99
         },
         {
           "purpose": "world",
@@ -82139,6 +80441,11 @@
         },
         {
           "purpose": "analysis",
+          "endpoint": "/fixtures/lineups",
+          "calls": 76
+        },
+        {
+          "purpose": "analysis",
           "endpoint": "/coachs",
           "calls": 75
         },
@@ -82146,25 +80453,20 @@
           "purpose": "world",
           "endpoint": "/fixtures/lineups",
           "calls": 66
-        },
-        {
-          "purpose": "analysis",
-          "endpoint": "/fixtures/lineups",
-          "calls": 65
         }
       ],
       "accounting": "local-preflight-reservation-v2",
       "usage_day": "2026-09-06",
       "reset_timezone": "UTC",
-      "local_calls": 1982,
-      "provider_remaining": 5518,
+      "local_calls": 2009,
+      "provider_remaining": 5491,
       "analysis_soft_limit": 6000,
       "daily_limit": 7500,
       "live_reserve": 1500,
       "world_calls": 749,
-      "analysis_calls": 868,
-      "live_calls": 253,
-      "scoring_calls": 112,
+      "analysis_calls": 882,
+      "live_calls": 265,
+      "scoring_calls": 113,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
       "quota_exhausted": false
@@ -82179,5 +80481,5 @@
     "analysis_per_league_limit": 5,
     "quota_paused": false
   },
-  "last_analysis_at": "2026-09-06T18:08:42.558867+09:00"
+  "last_analysis_at": "2026-09-06T18:23:43.962349+09:00"
 }
