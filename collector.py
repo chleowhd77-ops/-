@@ -5423,9 +5423,14 @@ def build_dashboard_data():
     # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
     market_performance_cache = {}
       
-    for m in proto_matches:
+for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
+        # 🔥 배당을 먼저 읽어옵니다.
+        odd_h = float(m.get("odd_h") or 0)
+        odd_d = float(m.get("odd_d") or 0)
+        odd_a = float(m.get("odd_a") or 0)
+        
         m_dt = parse_match_time(final_match_time)
         scheduled = _parse_kst_match_time(final_match_time)
         if scheduled is not None and datetime.now(KST) >= scheduled:
@@ -5433,8 +5438,10 @@ def build_dashboard_data():
             if frozen_item:
                 dashboard_proto.append(frozen_item)
             continue  # No odds/injuries/lineups/form API calls after kickoff.
+            
+        # 🔥 배당 정보를 파라미터로 같이 넘겨서 모르는 팀의 지문을 찾게 만듭니다.
         home_info, away_info, _ = resolve_match_team_pair(
-            home_team, away_team, final_match_time, ttl_h=2
+            home_team, away_team, final_match_time, odd_h, odd_d, odd_a, ttl_h=2
         )
 
         now = datetime.now(timezone(timedelta(hours=9)))
@@ -6157,8 +6164,8 @@ def build_dashboard_data():
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
             continue
 
-        home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, match_time, ttl_h=2
+home_info, away_info, identity_fixture = resolve_match_team_pair(
+            home_team, away_team, match_time, 0.0, 0.0, 0.0, ttl_h=2
         )
         if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
             unavailable = _unavailable_toto14_item(m)
