@@ -3,12 +3,11 @@
     "scheduler": {
       "supervisor_pid": 317974,
       "state": "running",
-      "heartbeat_at": "2026-09-07T05:44:58+00:00",
+      "heartbeat_at": "2026-09-07T05:45:28+00:00",
       "pid": 317974,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "world": 321101,
-        "live": 321102,
         "score": 321103
       }
     },
@@ -26,22 +25,23 @@
     },
     "score": {
       "child_pid": 321103,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T05:44:59+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T05:45:39+00:00",
       "pid": 321103,
       "last_started_at": "2026-09-07T05:44:58+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 47.85,
+      "duration_seconds": 39.63,
       "last_success_at": "2026-09-07T05:40:46+00:00",
-      "last_failure_at": "2026-09-07T05:30:50+00:00",
-      "due_count": 0,
+      "last_failure_at": "2026-09-07T05:45:39+00:00",
+      "due_count": 12,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published_backup_pending",
+      "last_stage": "grading_publish_failed",
       "grading_published_at": "2026-09-07T05:40:09+00:00",
-      "db_backup_ok": false
+      "db_backup_ok": false,
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 321091,
@@ -58,19 +58,19 @@
     },
     "world": {
       "child_pid": 321101,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T05:44:59+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T05:45:51+00:00",
       "pid": 321101,
       "last_started_at": "2026-09-07T05:44:58+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 50.4,
+      "duration_seconds": 52.21,
       "last_success_at": "2026-09-06T12:59:25+00:00",
-      "last_failure_at": "2026-09-07T05:30:48+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-07T05:45:51+00:00",
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-07T05:45:03+00:00",
+  "updated_at": "2026-09-07T05:45:51+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -92,7 +92,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures",
-        "calls": 16
+        "calls": 17
       },
       {
         "purpose": "analysis",
@@ -127,15 +127,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-07",
     "reset_timezone": "UTC",
-    "local_calls": 244,
-    "provider_remaining": 7256,
+    "local_calls": 245,
+    "provider_remaining": 7255,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 41,
     "analysis_calls": 34,
     "live_calls": 153,
-    "scoring_calls": 16,
+    "scoring_calls": 17,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
     "quota_exhausted": false
