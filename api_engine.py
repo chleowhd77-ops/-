@@ -1637,13 +1637,8 @@ def _fixture_team_payload(fixture_data, side):
     return team
 
 
-def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
-    """실제 날짜별 경기표에서 홈·원정 두 팀을 동시에 확정한다.
-
-    한 팀씩 검색하면 동명이인이나 오래된 잘못된 캐시가 상대 팀까지 오염시킬
-    수 있다. 이 함수는 같은 경기의 양쪽 이름과 킥오프 시간을 함께 대조하고,
-    서로 다른 두 팀에 같은 ID가 배정되는 결과를 절대 반환하지 않는다.
-    """
+def resolve_match_team_pair(home_name, away_name, match_time_str, odd_h=0.0, odd_d=0.0, odd_a=0.0, ttl_h=2):
+    """실제 날짜별 경기표에서 홈·원정 두 팀을 동시에 확정한다."""
     home_name = str(home_name or "").strip()
     away_name = str(away_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
@@ -1682,8 +1677,6 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 if min(best[1], best[2]) >= 0.72 and best[1] + best[2] >= 1.52:
                     selected = best
 
-            # 베트맨의 새 축약명이 사전에 아직 없더라도, 한쪽 팀이 정확하고
-            # 같은 시각 후보가 하나뿐이면 실제 상대 팀을 경기표에서 역확정한다.
             if selected is None:
                 partner_candidates = [
                     item for item in candidates
@@ -1696,20 +1689,65 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 if len(unique_pairs) == 1 and partner_candidates:
                     selected = max(partner_candidates, key=lambda item: item[0])
 
+            # 🔥 [V5 딥러닝] 이름으로 도저히 못 찾겠다면, '배당률 지문(Odds Fingerprint)'으로 매칭한다!
+            if selected is None and float(odd_h or 0) > 1.0 and float(odd_d or 0) > 1.0 and float(odd_a or 0) > 1.0:
+                time_filtered = [item for item in candidates if item[3] <= 3.0] # 킥오프 3시간 이내 후보들
+                best_fixture = None
+                min_dist = 999.0
+                for item in time_filtered:
+                    fix_data = item[4]
+                    fix_id = fix_data["fixture"]["id"]
+                    try:
+                        odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
+                        if odds_res and odds_res.status_code == 200:
+                            odds_payload = odds_res.json().get("response", [])
+                            if odds_payload and odds_payload[0].get("bookmakers"):
+                                bets = odds_payload[0]["bookmakers"][0].get("bets", [])
+                                for b in bets:
+                                    if str(b.get("name")).strip().casefold() in {"match winner", "1x2"}:
+                                        vals = b["values"]
+                                        if len(vals) == 3:
+                                            a_odd_h = float(vals[0]["odd"])
+                                            a_odd_d = float(vals[1]["odd"])
+                                            a_odd_a = float(vals[2]["odd"])
+                                            
+                                            # 배당 역수(확률)를 통한 정밀 오차 거리 계산
+                                            dist = abs(1/a_odd_h - 1/float(odd_h)) + abs(1/a_odd_d - 1/float(odd_d)) + abs(1/a_odd_a - 1/float(odd_a))
+                                            if dist < min_dist:
+                                                min_dist = dist
+                                                best_fixture = item
+                                        break
+                    except Exception:
+                        pass
+                
+                # 거리 오차가 0.15 미만이면 베트맨 마진을 고려해도 완벽히 동일한 경기로 볼 수 있음
+                if best_fixture and min_dist < 0.15:
+                    selected = best_fixture
+                    print(f"🤖 [배당 지문 자가학습 성공] 이름으로 못 찾은 팀 식별: {home_name} vs {away_name} (오차: {min_dist:.3f})")
+
             if selected is not None:
                 _, home_score, away_score, _, fixture_data, home_api, away_api = selected
                 verified_home = _remember_verified_team(home_name, home_api)
                 verified_away = _remember_verified_team(away_name, away_api)
+                
+                # 🔥 [핵심] 찾은 팀은 로봇이 단어장(smart_mapping)에 스스로 영구 박제!
+                if home_score < 0.85 or away_score < 0.85:
+                    smart_mapping = load_smart_mapping()
+                    changed = False
+                    if home_score < 0.85 and home_api.get("name"):
+                        smart_mapping[home_name] = home_api.get("name")
+                        changed = True
+                    if away_score < 0.85 and away_api.get("name"):
+                        smart_mapping[away_name] = away_api.get("name")
+                        changed = True
+                    if changed:
+                        save_smart_mapping(smart_mapping)
+
                 if (
                     verified_home
                     and verified_away
                     and int(verified_home["id"]) != int(verified_away["id"])
                 ):
-                    print(
-                        f"[팀검증 성공] 실제 경기표 팀 확정: {home_name}({verified_home['id']}) vs "
-                        f"{away_name}({verified_away['id']}) "
-                        f"[이름 점수 {home_score:.2f}/{away_score:.2f}]"
-                    )
                     return verified_home, verified_away, fixture_data
 
             print(
@@ -1717,8 +1755,6 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 f"{home_name} vs {away_name} ({date_str})"
             )
 
-    # 날짜 정보가 없거나 공급사 경기표가 잠시 실패하면 기존 개별 검색을
-    # 사용하되, 서로 다른 팀이 같은 ID가 되는 순간 결과를 폐기한다.
     home_info = fetch_team_info_api(home_name)
     away_info = fetch_team_info_api(away_name)
     home_id = int(home_info.get("id") or 0)
