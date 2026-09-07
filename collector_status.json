@@ -3,7 +3,7 @@
     "scheduler": {
       "supervisor_pid": 322348,
       "state": "running",
-      "heartbeat_at": "2026-09-07T13:26:08+00:00",
+      "heartbeat_at": "2026-09-07T13:26:38+00:00",
       "pid": 322348,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
@@ -14,34 +14,36 @@
     },
     "live": {
       "child_pid": 324259,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T13:26:09+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T13:26:44+00:00",
       "pid": 324259,
       "last_started_at": "2026-09-07T13:26:08+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 4.15,
-      "last_failure_at": "2026-09-07T12:47:15+00:00",
-      "last_success_at": "2026-09-07T13:21:13+00:00"
+      "duration_seconds": 35.1,
+      "last_failure_at": "2026-09-07T13:26:44+00:00",
+      "last_success_at": "2026-09-07T13:21:13+00:00",
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "child_pid": 324260,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T13:26:09+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T13:26:47+00:00",
       "pid": 324260,
       "last_started_at": "2026-09-07T13:26:08+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 52.77,
+      "duration_seconds": 38.12,
       "last_success_at": "2026-09-07T13:22:02+00:00",
-      "last_failure_at": "2026-09-07T13:12:10+00:00",
-      "due_count": 1,
+      "last_failure_at": "2026-09-07T13:26:47+00:00",
+      "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published_backup_pending",
+      "last_stage": "grading_publish_failed",
       "grading_published_at": "2026-09-07T13:21:16+00:00",
-      "db_backup_ok": false
+      "db_backup_ok": false,
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 324242,
@@ -58,24 +60,24 @@
     "world": {
       "child_pid": 324258,
       "state": "running",
-      "heartbeat_at": "2026-09-07T13:26:09+00:00",
-      "pid": 324258,
+      "heartbeat_at": "2026-09-07T13:26:38+00:00",
+      "pid": 322348,
       "last_started_at": "2026-09-07T13:26:08+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
       "duration_seconds": 60.46,
       "last_success_at": "2026-09-07T13:12:09+00:00",
       "last_failure_at": "2026-09-07T07:54:56+00:00"
     }
   },
-  "updated_at": "2026-09-07T13:26:09+00:00",
+  "updated_at": "2026-09-07T13:26:47+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 250
+        "calls": 252
       },
       {
         "purpose": "world",
@@ -152,14 +154,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-07",
     "reset_timezone": "UTC",
-    "local_calls": 502,
-    "provider_remaining": 6998,
+    "local_calls": 504,
+    "provider_remaining": 6996,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 128,
     "analysis_calls": 88,
-    "live_calls": 250,
+    "live_calls": 252,
     "scoring_calls": 36,
     "world_daily_limit": 1500,
     "world_min_remaining": 1000,
