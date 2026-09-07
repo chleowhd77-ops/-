@@ -3,12 +3,11 @@
     "scheduler": {
       "supervisor_pid": 322275,
       "state": "running",
-      "heartbeat_at": "2026-09-07T07:54:08+00:00",
+      "heartbeat_at": "2026-09-07T07:54:38+00:00",
       "pid": 322275,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "world": 322310,
-        "live": 322311,
         "score": 322312
       }
     },
@@ -26,22 +25,23 @@
     },
     "score": {
       "child_pid": 322312,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T07:54:09+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T07:54:48+00:00",
       "pid": 322312,
       "last_started_at": "2026-09-07T07:54:08+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 55.81,
+      "duration_seconds": 39.15,
       "last_success_at": "2026-09-07T07:50:04+00:00",
-      "last_failure_at": "2026-09-07T07:30:57+00:00",
-      "due_count": 11,
+      "last_failure_at": "2026-09-07T07:54:48+00:00",
+      "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published_backup_pending",
+      "last_stage": "grading_publish_failed",
       "grading_published_at": "2026-09-07T07:49:22+00:00",
-      "db_backup_ok": false
+      "db_backup_ok": false,
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 322285,
@@ -58,19 +58,19 @@
     },
     "world": {
       "child_pid": 322310,
-      "state": "running",
-      "heartbeat_at": "2026-09-07T07:54:09+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-07T07:54:52+00:00",
       "pid": 322310,
       "last_started_at": "2026-09-07T07:54:08+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
-      "duration_seconds": 68.4,
+      "duration_seconds": 43.29,
       "last_success_at": "2026-09-06T12:59:25+00:00",
-      "last_failure_at": "2026-09-07T07:40:15+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-07T07:54:52+00:00",
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-07T07:54:14+00:00",
+  "updated_at": "2026-09-07T07:54:52+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
