@@ -2504,7 +2504,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "DEFERRED_DAILY_CAP",
+      "analysis_status": "MISSED_PREKICKOFF",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -2586,7 +2586,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "DEFERRED_DAILY_CAP",
+      "analysis_status": "MISSED_PREKICKOFF",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -2667,7 +2667,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "DEFERRED_DAILY_CAP",
+      "analysis_status": "MISSED_PREKICKOFF",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -4260,12 +4260,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  92,
-                  105
+                  94,
+                  94,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -4290,37 +4290,37 @@
             "market_key": "handicap",
             "raw_model_prob": 0.602095,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.446225,
             "edge": 0.1559,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.861,
             "price_policy": {
@@ -4331,7 +4331,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0595,
@@ -4390,7 +4390,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -4404,8 +4404,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "handicap",
-              "samples": 92,
-              "hit_rate": 0.419,
+              "samples": 94,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -4415,33 +4415,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -4567,12 +4567,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  92,
-                  105
+                  94,
+                  94,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -4597,37 +4597,37 @@
             "market_key": "handicap",
             "raw_model_prob": 0.602095,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.446225,
             "edge": 0.1559,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.861,
             "price_policy": {
@@ -4638,7 +4638,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0595,
@@ -4697,7 +4697,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -4711,8 +4711,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "handicap",
-              "samples": 92,
-              "hit_rate": 0.419,
+              "samples": 94,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -4722,33 +4722,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -4876,12 +4876,12 @@
                 0.0
               ],
               "wdl_learning_samples": [
-                92,
-                92,
-                105
+                94,
+                94,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -4906,37 +4906,37 @@
           "market_key": "handicap",
           "raw_model_prob": 0.602095,
           "learning_weight": 0.0,
-          "learning_cohort_samples": 92,
+          "learning_cohort_samples": 94,
           "fair_prob": 0.446225,
           "edge": 0.1559,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.861,
           "price_policy": {
@@ -4947,7 +4947,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0595,
@@ -5006,7 +5006,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -5020,8 +5020,8 @@
           "learning_robot": {
             "mode": "controlled_adviser",
             "market": "handicap",
-            "samples": 92,
-            "hit_rate": 0.419,
+            "samples": 94,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -5031,33 +5031,33 @@
             "value_failure_action": "probability_pick_with_warning",
             "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
             "calibration_version": "fixture-time-wdl-movement-projection-v2",
-            "calibration_cohort_samples": 92,
+            "calibration_cohort_samples": 94,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -5290,12 +5290,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  105,
-                  105,
+                  106,
+                  106,
                   13
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -5323,34 +5323,34 @@
             "learning_cohort_samples": 13,
             "fair_prob": 0.446877,
             "edge": 0.0539,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.877,
             "price_policy": {
@@ -5361,7 +5361,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0572,
@@ -5425,7 +5425,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -5440,7 +5440,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 13,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -5453,30 +5453,30 @@
               "calibration_cohort_samples": 13,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "category_key": "high_probability",
@@ -5603,12 +5603,12 @@
                 0.0
               ],
               "wdl_learning_samples": [
-                105,
-                105,
+                106,
+                106,
                 13
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -5636,34 +5636,34 @@
           "learning_cohort_samples": 13,
           "fair_prob": 0.446877,
           "edge": 0.0539,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.877,
           "price_policy": {
@@ -5674,7 +5674,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0572,
@@ -5738,7 +5738,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -5753,7 +5753,7 @@
             "mode": "controlled_adviser",
             "market": "1x2",
             "samples": 13,
-            "hit_rate": 0.419,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -5766,30 +5766,30 @@
             "calibration_cohort_samples": 13,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "category_key": "high_probability",
@@ -8727,11 +8727,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -8759,34 +8759,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.183059,
             "edge": 0.086,
-            "market_hit_rate": 0.4393,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4414,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.917,
             "price_policy": {
@@ -8797,7 +8797,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0516,
@@ -8860,7 +8860,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -8875,7 +8875,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.4393,
+              "hit_rate": 0.4414,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -8888,30 +8888,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -9056,11 +9056,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -9088,34 +9088,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.183059,
             "edge": 0.086,
-            "market_hit_rate": 0.4393,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4414,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.917,
             "price_policy": {
@@ -9126,7 +9126,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0516,
@@ -9189,7 +9189,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -9204,7 +9204,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.4393,
+              "hit_rate": 0.4414,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -9217,30 +9217,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -9387,11 +9387,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -9419,34 +9419,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.183059,
           "edge": 0.086,
-          "market_hit_rate": 0.4393,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4414,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.917,
           "price_policy": {
@@ -9457,7 +9457,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0516,
@@ -9520,7 +9520,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -9535,7 +9535,7 @@
             "mode": "controlled_adviser",
             "market": "1x2",
             "samples": 43,
-            "hit_rate": 0.4393,
+            "hit_rate": 0.4414,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -9548,30 +9548,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -9786,11 +9786,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  92
+                  106,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -9819,34 +9819,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.589674,
             "edge": 0.145,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.877,
             "price_policy": {
@@ -9857,7 +9857,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0572,
@@ -9916,7 +9916,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -9931,7 +9931,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -9944,30 +9944,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -10074,11 +10074,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  92
+                  106,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -10107,34 +10107,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.589674,
             "edge": 0.145,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.877,
             "price_policy": {
@@ -10145,7 +10145,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0572,
@@ -10204,7 +10204,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -10219,7 +10219,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -10232,30 +10232,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -10364,11 +10364,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                92
+                106,
+                94
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -10397,34 +10397,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.589674,
           "edge": 0.145,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.877,
           "price_policy": {
@@ -10435,7 +10435,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0572,
@@ -10494,7 +10494,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -10509,7 +10509,7 @@
             "mode": "controlled_adviser",
             "market": "totals",
             "samples": 43,
-            "hit_rate": 0.419,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -10522,30 +10522,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -10772,11 +10772,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -10804,34 +10804,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.355859,
             "edge": 0.1119,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.861,
             "price_policy": {
@@ -10842,7 +10842,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0595,
@@ -10905,7 +10905,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -10920,7 +10920,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -10933,30 +10933,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -11075,11 +11075,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -11107,34 +11107,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.355859,
             "edge": 0.1119,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.861,
             "price_policy": {
@@ -11145,7 +11145,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0595,
@@ -11208,7 +11208,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -11223,7 +11223,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -11236,30 +11236,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -11380,11 +11380,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -11412,34 +11412,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.355859,
           "edge": 0.1119,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.861,
           "price_policy": {
@@ -11450,7 +11450,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0595,
@@ -11513,7 +11513,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -11528,7 +11528,7 @@
             "mode": "controlled_adviser",
             "market": "1x2",
             "samples": 43,
-            "hit_rate": 0.419,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -11541,30 +11541,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -13181,12 +13181,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  92,
-                  92
+                  94,
+                  94,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -13212,37 +13212,37 @@
             "market_key": "totals",
             "raw_model_prob": 0.640314,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.488636,
             "edge": 0.1517,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -13253,7 +13253,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -13312,7 +13312,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -13326,8 +13326,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "totals",
-              "samples": 92,
-              "hit_rate": 0.4294,
+              "samples": 94,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -13337,33 +13337,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -13507,12 +13507,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  92,
-                  92
+                  94,
+                  94,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -13538,37 +13538,37 @@
             "market_key": "totals",
             "raw_model_prob": 0.640314,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.488636,
             "edge": 0.1517,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -13579,7 +13579,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -13638,7 +13638,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -13652,8 +13652,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "totals",
-              "samples": 92,
-              "hit_rate": 0.4294,
+              "samples": 94,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -13663,33 +13663,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -13835,12 +13835,12 @@
                 0.0
               ],
               "wdl_learning_samples": [
-                92,
-                92,
-                92
+                94,
+                94,
+                94
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -13866,37 +13866,37 @@
           "market_key": "totals",
           "raw_model_prob": 0.640314,
           "learning_weight": 0.0,
-          "learning_cohort_samples": 92,
+          "learning_cohort_samples": 94,
           "fair_prob": 0.488636,
           "edge": 0.1517,
-          "market_hit_rate": 0.4294,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4312,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.901,
           "price_policy": {
@@ -13907,7 +13907,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0539,
@@ -13966,7 +13966,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -13980,8 +13980,8 @@
           "learning_robot": {
             "mode": "controlled_adviser",
             "market": "totals",
-            "samples": 92,
-            "hit_rate": 0.4294,
+            "samples": 94,
+            "hit_rate": 0.4312,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -13991,33 +13991,33 @@
             "value_failure_action": "probability_pick_with_warning",
             "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
             "calibration_version": "fixture-time-wdl-movement-projection-v2",
-            "calibration_cohort_samples": 92,
+            "calibration_cohort_samples": 94,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -14268,11 +14268,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -14301,34 +14301,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.409341,
             "edge": 0.192,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -14339,7 +14339,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -14398,7 +14398,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -14413,7 +14413,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -14426,30 +14426,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -14592,11 +14592,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -14625,34 +14625,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.409341,
             "edge": 0.192,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -14663,7 +14663,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -14722,7 +14722,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -14737,7 +14737,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -14750,30 +14750,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -14918,11 +14918,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -14951,34 +14951,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.409341,
           "edge": 0.192,
-          "market_hit_rate": 0.4294,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4312,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.901,
           "price_policy": {
@@ -14989,7 +14989,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0539,
@@ -15048,7 +15048,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -15063,7 +15063,7 @@
             "mode": "controlled_adviser",
             "market": "totals",
             "samples": 43,
-            "hit_rate": 0.4294,
+            "hit_rate": 0.4312,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -15076,30 +15076,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -15352,11 +15352,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -15385,34 +15385,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.463277,
             "edge": 0.1187,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -15423,7 +15423,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -15482,7 +15482,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -15497,7 +15497,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -15510,30 +15510,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "standard",
@@ -15681,11 +15681,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -15714,34 +15714,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.463277,
           "edge": 0.1187,
-          "market_hit_rate": 0.4294,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4312,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.901,
           "price_policy": {
@@ -15752,7 +15752,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0539,
@@ -15811,7 +15811,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -15826,7 +15826,7 @@
             "mode": "controlled_adviser",
             "market": "totals",
             "samples": 43,
-            "hit_rate": 0.4294,
+            "hit_rate": 0.4312,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -15839,30 +15839,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "standard",
@@ -16113,11 +16113,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  92,
-                  105
+                  94,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -16146,34 +16146,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.5,
             "edge": 0.1342,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -16184,7 +16184,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -16243,7 +16243,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -16258,7 +16258,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -16271,30 +16271,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -16439,11 +16439,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  92,
-                  105
+                  94,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -16472,34 +16472,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.5,
             "edge": 0.1342,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.901,
             "price_policy": {
@@ -16510,7 +16510,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0539,
@@ -16569,7 +16569,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -16584,7 +16584,7 @@
               "mode": "controlled_adviser",
               "market": "totals",
               "samples": 43,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -16597,30 +16597,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -16767,11 +16767,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                92,
-                105
+                94,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -16800,34 +16800,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.5,
           "edge": 0.1342,
-          "market_hit_rate": 0.4294,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4312,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.901,
           "price_policy": {
@@ -16838,7 +16838,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0539,
@@ -16897,7 +16897,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -16912,7 +16912,7 @@
             "mode": "controlled_adviser",
             "market": "totals",
             "samples": 43,
-            "hit_rate": 0.4294,
+            "hit_rate": 0.4312,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -16925,30 +16925,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -17191,11 +17191,11 @@
                 ],
                 "wdl_learning_samples": [
                   13,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -17223,34 +17223,34 @@
             "learning_cohort_samples": 13,
             "fair_prob": 0.460251,
             "edge": 0.0406,
-            "market_hit_rate": 0.4294,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4312,
+            "market_history_samples": 203,
             "market_history_scope": "global+league",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.861,
             "price_policy": {
@@ -17261,7 +17261,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0595,
@@ -17325,7 +17325,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -17340,7 +17340,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 13,
-              "hit_rate": 0.4294,
+              "hit_rate": 0.4312,
               "scope": "global+league",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -17353,30 +17353,30 @@
               "calibration_cohort_samples": 13,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "category_key": "high_probability",
@@ -17513,11 +17513,11 @@
               ],
               "wdl_learning_samples": [
                 13,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -17545,34 +17545,34 @@
           "learning_cohort_samples": 13,
           "fair_prob": 0.460251,
           "edge": 0.0406,
-          "market_hit_rate": 0.4294,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4312,
+          "market_history_samples": 203,
           "market_history_scope": "global+league",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.861,
           "price_policy": {
@@ -17583,7 +17583,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0595,
@@ -17647,7 +17647,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -17662,7 +17662,7 @@
             "mode": "controlled_adviser",
             "market": "1x2",
             "samples": 13,
-            "hit_rate": 0.4294,
+            "hit_rate": 0.4312,
             "scope": "global+league",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -17675,30 +17675,30 @@
             "calibration_cohort_samples": 13,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "category_key": "high_probability",
@@ -21358,11 +21358,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -21390,34 +21390,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.186973,
             "edge": 0.0785,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.865,
             "price_policy": {
@@ -21428,7 +21428,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0589,
@@ -21487,7 +21487,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -21502,7 +21502,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -21515,30 +21515,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -21665,11 +21665,11 @@
                 ],
                 "wdl_learning_samples": [
                   43,
-                  105,
-                  105
+                  106,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -21697,34 +21697,34 @@
             "learning_cohort_samples": 43,
             "fair_prob": 0.186973,
             "edge": 0.0785,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.865,
             "price_policy": {
@@ -21735,7 +21735,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0589,
@@ -21794,7 +21794,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -21809,7 +21809,7 @@
               "mode": "controlled_adviser",
               "market": "1x2",
               "samples": 43,
-              "hit_rate": 0.419,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -21822,30 +21822,30 @@
               "calibration_cohort_samples": 43,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -21974,11 +21974,11 @@
               ],
               "wdl_learning_samples": [
                 43,
-                105,
-                105
+                106,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -22006,34 +22006,34 @@
           "learning_cohort_samples": 43,
           "fair_prob": 0.186973,
           "edge": 0.0785,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.865,
           "price_policy": {
@@ -22044,7 +22044,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0589,
@@ -22103,7 +22103,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -22118,7 +22118,7 @@
             "mode": "controlled_adviser",
             "market": "1x2",
             "samples": 43,
-            "hit_rate": 0.419,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -22131,30 +22131,30 @@
             "calibration_cohort_samples": 43,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -22388,12 +22388,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  105,
-                  92
+                  94,
+                  106,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -22418,37 +22418,37 @@
             "market_key": "1x2",
             "raw_model_prob": 0.343582,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.207218,
             "edge": 0.1364,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.865,
             "price_policy": {
@@ -22459,7 +22459,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0589,
@@ -22522,7 +22522,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -22536,8 +22536,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "1x2",
-              "samples": 92,
-              "hit_rate": 0.419,
+              "samples": 94,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -22547,33 +22547,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -22699,12 +22699,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  105,
-                  92
+                  94,
+                  106,
+                  94
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -22729,37 +22729,37 @@
             "market_key": "1x2",
             "raw_model_prob": 0.343582,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.207218,
             "edge": 0.1364,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.865,
             "price_policy": {
@@ -22770,7 +22770,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0589,
@@ -22833,7 +22833,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -22847,8 +22847,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "1x2",
-              "samples": 92,
-              "hit_rate": 0.419,
+              "samples": 94,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -22858,33 +22858,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "value",
@@ -23012,12 +23012,12 @@
                 0.0
               ],
               "wdl_learning_samples": [
-                92,
-                105,
-                92
+                94,
+                106,
+                94
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -23042,37 +23042,37 @@
           "market_key": "1x2",
           "raw_model_prob": 0.343582,
           "learning_weight": 0.0,
-          "learning_cohort_samples": 92,
+          "learning_cohort_samples": 94,
           "fair_prob": 0.207218,
           "edge": 0.1364,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.865,
           "price_policy": {
@@ -23083,7 +23083,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0589,
@@ -23146,7 +23146,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -23160,8 +23160,8 @@
           "learning_robot": {
             "mode": "controlled_adviser",
             "market": "1x2",
-            "samples": 92,
-            "hit_rate": 0.419,
+            "samples": 94,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -23171,33 +23171,33 @@
             "value_failure_action": "probability_pick_with_warning",
             "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
             "calibration_version": "fixture-time-wdl-movement-projection-v2",
-            "calibration_cohort_samples": 92,
+            "calibration_cohort_samples": 94,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "value",
@@ -23513,12 +23513,12 @@
                   0.0
                 ],
                 "wdl_learning_samples": [
-                  92,
-                  92,
-                  105
+                  94,
+                  94,
+                  106
                 ],
                 "calibration_active": false,
-                "validation_fixtures": 58,
+                "validation_fixtures": 59,
                 "market_blend": "wdl_only",
                 "rho": -0.15,
                 "rho_source": "validated_fallback",
@@ -23543,37 +23543,37 @@
             "market_key": "1x2",
             "raw_model_prob": 0.322982,
             "learning_weight": 0.0,
-            "learning_cohort_samples": 92,
+            "learning_cohort_samples": 94,
             "fair_prob": 0.259648,
             "edge": 0.0633,
-            "market_hit_rate": 0.419,
-            "market_history_samples": 202,
+            "market_hit_rate": 0.4218,
+            "market_history_samples": 203,
             "market_history_scope": "global",
             "learning_diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             },
             "data_confidence": 0.865,
             "price_policy": {
@@ -23584,7 +23584,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "error_margin": 0.0589,
@@ -23643,7 +23643,7 @@
                 "reason": "승무패 우선 시장전환 검증 표본 부족",
                 "validation_fixtures": 0,
                 "method": "chronological-wdl-first-market-override-v2",
-                "cohort_fixtures": 33,
+                "cohort_fixtures": 34,
                 "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
               },
               "valid_decimal_odds_above": 1.0,
@@ -23657,8 +23657,8 @@
             "learning_robot": {
               "mode": "controlled_adviser",
               "market": "1x2",
-              "samples": 92,
-              "hit_rate": 0.419,
+              "samples": 94,
+              "hit_rate": 0.4218,
               "scope": "global",
               "influence_weight": 0.0,
               "influence_cap": 0.18,
@@ -23668,33 +23668,33 @@
               "value_failure_action": "probability_pick_with_warning",
               "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
               "calibration_version": "fixture-time-wdl-movement-projection-v2",
-              "calibration_cohort_samples": 92,
+              "calibration_cohort_samples": 94,
               "calibration_active": false,
               "diagnostics": {
-                "candidate_samples": 636,
-                "brier_score": 0.222455,
-                "unit_roi": -0.062885,
+                "candidate_samples": 639,
+                "brier_score": 0.222268,
+                "unit_roi": -0.063983,
                 "odds_bands": {
                   "2_to_3": {
-                    "samples": 167,
-                    "hits": 53,
-                    "profit": -38.4
+                    "samples": 169,
+                    "hits": 54,
+                    "profit": -38.29
+                  },
+                  "3_plus": {
+                    "samples": 343,
+                    "hits": 96,
+                    "profit": 24.435
                   },
                   "below_2": {
                     "samples": 127,
                     "hits": 62,
                     "profit": -27.03
-                  },
-                  "3_plus": {
-                    "samples": 342,
-                    "hits": 96,
-                    "profit": 25.435
                   }
                 },
                 "calibration_validated": false,
-                "validation_fixtures": 58,
-                "baseline_brier": 0.6272045828227585,
-                "corrected_brier": 0.6279363382010439
+                "validation_fixtures": 59,
+                "baseline_brier": 0.6258650221976609,
+                "corrected_brier": 0.6266932823071131
               }
             },
             "final_pick_grade": "standard",
@@ -23823,12 +23823,12 @@
                 0.0
               ],
               "wdl_learning_samples": [
-                92,
-                92,
-                105
+                94,
+                94,
+                106
               ],
               "calibration_active": false,
-              "validation_fixtures": 58,
+              "validation_fixtures": 59,
               "market_blend": "wdl_only",
               "rho": -0.15,
               "rho_source": "validated_fallback",
@@ -23853,37 +23853,37 @@
           "market_key": "1x2",
           "raw_model_prob": 0.322982,
           "learning_weight": 0.0,
-          "learning_cohort_samples": 92,
+          "learning_cohort_samples": 94,
           "fair_prob": 0.259648,
           "edge": 0.0633,
-          "market_hit_rate": 0.419,
-          "market_history_samples": 202,
+          "market_hit_rate": 0.4218,
+          "market_history_samples": 203,
           "market_history_scope": "global",
           "learning_diagnostics": {
-            "candidate_samples": 636,
-            "brier_score": 0.222455,
-            "unit_roi": -0.062885,
+            "candidate_samples": 639,
+            "brier_score": 0.222268,
+            "unit_roi": -0.063983,
             "odds_bands": {
               "2_to_3": {
-                "samples": 167,
-                "hits": 53,
-                "profit": -38.4
+                "samples": 169,
+                "hits": 54,
+                "profit": -38.29
+              },
+              "3_plus": {
+                "samples": 343,
+                "hits": 96,
+                "profit": 24.435
               },
               "below_2": {
                 "samples": 127,
                 "hits": 62,
                 "profit": -27.03
-              },
-              "3_plus": {
-                "samples": 342,
-                "hits": 96,
-                "profit": 25.435
               }
             },
             "calibration_validated": false,
-            "validation_fixtures": 58,
-            "baseline_brier": 0.6272045828227585,
-            "corrected_brier": 0.6279363382010439
+            "validation_fixtures": 59,
+            "baseline_brier": 0.6258650221976609,
+            "corrected_brier": 0.6266932823071131
           },
           "data_confidence": 0.865,
           "price_policy": {
@@ -23894,7 +23894,7 @@
             "reason": "승무패 우선 시장전환 검증 표본 부족",
             "validation_fixtures": 0,
             "method": "chronological-wdl-first-market-override-v2",
-            "cohort_fixtures": 33,
+            "cohort_fixtures": 34,
             "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
           },
           "error_margin": 0.0589,
@@ -23953,7 +23953,7 @@
               "reason": "승무패 우선 시장전환 검증 표본 부족",
               "validation_fixtures": 0,
               "method": "chronological-wdl-first-market-override-v2",
-              "cohort_fixtures": 33,
+              "cohort_fixtures": 34,
               "forecast_model_version": "goals-v3-learned-dc-movement-wdl-v1"
             },
             "valid_decimal_odds_above": 1.0,
@@ -23967,8 +23967,8 @@
           "learning_robot": {
             "mode": "controlled_adviser",
             "market": "1x2",
-            "samples": 92,
-            "hit_rate": 0.419,
+            "samples": 94,
+            "hit_rate": 0.4218,
             "scope": "global",
             "influence_weight": 0.0,
             "influence_cap": 0.18,
@@ -23978,33 +23978,33 @@
             "value_failure_action": "probability_pick_with_warning",
             "calibration_model_version": "goals-v3-learned-dc-movement-wdl-v1",
             "calibration_version": "fixture-time-wdl-movement-projection-v2",
-            "calibration_cohort_samples": 92,
+            "calibration_cohort_samples": 94,
             "calibration_active": false,
             "diagnostics": {
-              "candidate_samples": 636,
-              "brier_score": 0.222455,
-              "unit_roi": -0.062885,
+              "candidate_samples": 639,
+              "brier_score": 0.222268,
+              "unit_roi": -0.063983,
               "odds_bands": {
                 "2_to_3": {
-                  "samples": 167,
-                  "hits": 53,
-                  "profit": -38.4
+                  "samples": 169,
+                  "hits": 54,
+                  "profit": -38.29
+                },
+                "3_plus": {
+                  "samples": 343,
+                  "hits": 96,
+                  "profit": 24.435
                 },
                 "below_2": {
                   "samples": 127,
                   "hits": 62,
                   "profit": -27.03
-                },
-                "3_plus": {
-                  "samples": 342,
-                  "hits": 96,
-                  "profit": 25.435
                 }
               },
               "calibration_validated": false,
-              "validation_fixtures": 58,
-              "baseline_brier": 0.6272045828227585,
-              "corrected_brier": 0.6279363382010439
+              "validation_fixtures": 59,
+              "baseline_brier": 0.6258650221976609,
+              "corrected_brier": 0.6266932823071131
             }
           },
           "final_pick_grade": "standard",
@@ -101099,7 +101099,7 @@
         {
           "purpose": "live",
           "endpoint": "/fixtures",
-          "calls": 605
+          "calls": 615
         },
         {
           "purpose": "world",
@@ -101174,7 +101174,7 @@
           "metric": "cache_hit",
           "purpose": "analysis",
           "endpoint": "/coachs",
-          "count": 114
+          "count": 115
         },
         {
           "metric": "cache_hit",
@@ -101216,14 +101216,14 @@
       "accounting": "local-preflight-reservation-v2",
       "usage_day": "2026-09-07",
       "reset_timezone": "UTC",
-      "local_calls": 1724,
-      "provider_remaining": 5776,
+      "local_calls": 1734,
+      "provider_remaining": 5766,
       "analysis_soft_limit": 6000,
       "daily_limit": 7500,
       "live_reserve": 1500,
       "world_calls": 880,
       "analysis_calls": 171,
-      "live_calls": 605,
+      "live_calls": 615,
       "scoring_calls": 68,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
@@ -101239,5 +101239,5 @@
     "analysis_per_league_limit": 5,
     "quota_paused": false
   },
-  "last_analysis_at": "2026-09-08T06:56:40.983784+09:00"
+  "last_analysis_at": "2026-09-08T07:11:46.546487+09:00"
 }
