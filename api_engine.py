@@ -41,7 +41,7 @@ CALIBRATION_VERSION = "fixture-time-wdl-movement-projection-v2"
 PICK_POLICY_VERSION = "wdl-first-validated-market-override-v2"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.7.1-safe-refresh-publish-retry"
+SYSTEM_VERSION = "R7.8.0-live-world-pick-grade"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -689,6 +689,8 @@ TEAM_NAME_MAP = {
     "LAFC": "Los Angeles FC", "포틀랜드 팀버스": "Portland Timbers", "샌디에이고FC": "San Diego", "콜로라도 래피즈": "Colorado Rapids",
     "새너제이 어스퀘이크스": "San Jose Earthquakes", "미네소타 유나이티드FC": "Minnesota United", "뉴잉글랜드 레벌루션": "New England Revolution",
     "뉴욕 시티FC": "New York City FC", "애틀랜타 유나이티드FC": "Atlanta United", "스포팅 캔자스시티": "Sporting Kansas City",
+    "풀루미넨시": "Fluminense", "플루미넨시": "Fluminense", "CA플라텐세": "Platense", "CA 플라텐세": "Platense", "플라텐세": "Platense",
+    "시드니FC": "Sydney FC", "시드니 FC": "Sydney FC", "멜버른빅토리": "Melbourne Victory", "멜버른 빅토리": "Melbourne Victory",
     "AEK아테": "AEK Athens", "L소피아": "Lokomotiv Sofia", "비킹FK": "Viking FK", "D자그레": "Dinamo Zagreb",
     "NK첼레": "NK Celje", "슬로반브": "Slovan Bratislava", "리옹": "Lyon", "페네르SK": "Fenerbahce",
     "이베리아": "Iberia 1999", "야기엘로": "Jagiellonia Bialystok", "오모니아": "Omonia Nicosia", "신트트라": "Sint-Truiden",
@@ -1063,6 +1065,15 @@ TEAM_INFO_FAILURE_RETRY_AT = {}
 # 여기서 찾은 동일 팀 ID를 팀 마크와 최근 전적 조회에 함께 사용한다.
 BUILTIN_TEAM_ALIASES = {
     # 베트맨 화면의 짧은 팀명도 같은 공식 API 팀으로 연결합니다.
+    "풀루미넨시": "Fluminense",
+    "플루미넨시": "Fluminense",
+    "CA플라텐세": "Platense",
+    "CA 플라텐세": "Platense",
+    "플라텐세": "Platense",
+    "시드니FC": "Sydney FC",
+    "시드니 FC": "Sydney FC",
+    "멜버른빅토리": "Melbourne Victory",
+    "멜버른 빅토리": "Melbourne Victory",
     "포츠머스": "Portsmouth",
     "더비카운": "Derby",
     "더비카운티": "Derby",

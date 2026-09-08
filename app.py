@@ -2454,11 +2454,9 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
                 event_lines.append(line)
     event_lines = event_lines[-8:]
 
-    result_parts = [f"확률픽 {'적중' if prob_ok else '미적중'}"]
-    result_parts.append(
-        f"배당형 대안픽 {'적중' if ev_ok else '미적중'}"
-        if has_ev_pick else "별도 대안픽 기록 없음 · 최종픽만 채점"
-    )
+    # The current product publishes one official final pick.  Legacy alternative
+    # data remains in the database for audit, but is not a second public result.
+    result_parts = [f"공식 최종픽 {'적중' if prob_ok else '미적중'}"]
     sections = [f"[채점 결과] {' · '.join(result_parts)}."]
     if main_text.strip():
         sections.append(main_text.strip().replace("승리 결과로 이어지지 않았습니다.", "해당 추천픽의 정산 조건은 충족되지 않았습니다."))
@@ -2467,6 +2465,12 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
     # from their frozen picks, final score, and any facts already in the note.
     row = row if isinstance(row, dict) else {}
     payload = parse_postmortem_json(row.get("postmortem_json"))
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["misses"] = [
+            miss for miss in (payload.get("misses") or [])
+            if str((miss or {}).get("slot") or "") != "alternative"
+        ]
     if payload is None and (not prob_ok or (has_ev_pick and not ev_ok)):
         score_match = re.match(
             r"^\s*(\d+)\s*:\s*(\d+)\s*$",
@@ -2855,7 +2859,14 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
     except (TypeError, ValueError):
         confidence_text = "신뢰도 계산 중"
     lineup_text = "확정 선발 반영" if item.get("lineup_confirmed") else "선발 미확인 감점"
-    stage_text = escape(str(item.get("analysis_stage") or "분석 단계 확인 중"))
+    stage_value = str(item.get("analysis_stage") or "")
+    stage_text = escape({
+        "market-preview": "정밀분석 대기 · 시장 선픽",
+        "T-24-initial": "경기 전 24시간 분석",
+        "T-3-refresh": "경기 전 3시간 재분석",
+        "T-60-lineup": "경기 전 선발 확인",
+        "T-30-final": "경기 전 최종 동결",
+    }.get(stage_value, stage_value or "분석 단계 확인 중"))
     source_text = {
         "betman": "베트맨 배당 반영",
         "overseas_fallback": "해외배당 임시 반영",
@@ -3160,9 +3171,17 @@ with main_tab2:
         total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
         max_budget = dashboard_data.get("toto14_meta", {}).get("max_budget", 8000)
         cap_exceeded_by_frozen = dashboard_data.get("toto14_meta", {}).get("cost_cap_exceeded_by_frozen", False)
+        ticket_complete = bool(dashboard_data.get("toto14_meta", {}).get("ticket_complete", False))
+        unavailable_pick_count = int(dashboard_data.get("toto14_meta", {}).get("unavailable_pick_count", 0) or 0)
+        combination_label = "최종" if ticket_complete else "현재 계산"
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 · 소액 상한 {max_budget:,}원</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>최종 <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 · 소액 상한 {max_budget:,}원</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
+        if not ticket_complete:
+            st.warning(
+                f"아직 픽이 확정되지 않은 경기가 {unavailable_pick_count}경기 있습니다. "
+                "위 금액은 현재 마킹된 경기 기준이며, 14경기 완성 전에는 최종 구매표가 아닙니다."
+            )
         if cap_exceeded_by_frozen:
             st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
 
@@ -3432,8 +3451,6 @@ with main_tab4:
         current_version_label = escape(stats.get('current_version') or '버전 정보 없음')
         prob_value = f"{p_stats['prob_acc']}%" if p_stats['total'] else "채점 대기"
         prob_note = f"({p_stats['prob_hit']}건 적중)" if p_stats['total'] else "종료 경기 결과를 기다리는 중"
-        honey_value = f"{p_stats['ev_acc']}%" if p_stats['ev_total'] else "채점 대기"
-        honey_note = f"({p_stats['ev_total']}건 중 {p_stats['ev_hit']}건 적중)" if p_stats['ev_total'] else "배당형 대안픽 결과를 기다리는 중"
         toto_value = f"{t_stats['acc']}%" if t_stats['total'] else "채점 대기"
         toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "종료 경기 없음"
         
@@ -3443,15 +3460,9 @@ with main_tab4:
                 <span class='grade-summary-title'>📊 누적 승부식 채점 (총 {p_stats['total']}경기)</span>
                 <div class='grade-dual-row'>
                     <div class='grade-metric'>
-                        <span class='grade-metric-label'>안전제일 확률픽</span>
+                        <span class='grade-metric-label'>공식 최종픽</span>
                         <span class='grade-metric-value probability'>{prob_value}</span>
                         <span class='grade-metric-note'>{prob_note}</span>
-                    </div>
-                    <div class='grade-versus'>VS</div>
-                    <div class='grade-metric'>
-                        <span class='grade-metric-label'>배당형 대안픽</span>
-                        <span class='grade-metric-value gold'>{honey_value}</span>
-                        <span class='grade-metric-note'>{honey_note}</span>
                     </div>
                 </div>
             </div>
@@ -3475,7 +3486,7 @@ with main_tab4:
                 "border:1px solid rgba(16,185,129,.35);background:rgba(16,185,129,.07);"
                 "color:#D1FAE5;font-size:13px;font-weight:800;'>"
                 f"✅ 오늘 종료 경기 {stats['today_finished_count']}경기 채점 완료"
-                f" · 확률픽 {stats.get('today_hit_count', 0)}/{stats['today_finished_count']} 적중"
+                f" · 공식 최종픽 {stats.get('today_hit_count', 0)}/{stats['today_finished_count']} 적중"
                 f"<span style='display:block;margin-top:4px;color:#94A3B8;font-size:11px;'>"
                 f"당시 경기 전 동결 버전: {today_versions}. 분석 확률과 픽은 그대로 두고 결과만 연결했습니다."
                 "</span></div>",
@@ -3496,15 +3507,10 @@ with main_tab4:
             row_version = escape(str(row.get('analysis_version') or '구버전 기록'))
             
             prob_pick_raw = str(row.get('prob_pick') or '')
-            ev_pick_raw = str(row.get('ev_pick') or '')
             prob_pick = escape(_human_pick_label(prob_pick_raw, row.get('home_team', '')))
-            ev_pick = escape(_human_pick_label(ev_pick_raw, row.get('home_team', '')))
             prob_ok = row.get('is_correct_prob', 0) == 1
-            ev_ok = row.get('is_correct_ev', 0) == 1
-            has_ev_pick = bool(ev_pick_raw.strip())
-            same_pick = has_ev_pick and ev_pick_raw == prob_pick_raw
             note = _clean_grading_note(
-                row.get('ai_note', ''), prob_ok, ev_ok, has_ev_pick, row=row
+                row.get('ai_note', ''), prob_ok, False, False, row=row
             )
             
             if row.get('actual_result') == 'CANCELED':
@@ -3512,17 +3518,9 @@ with main_tab4:
                 note_style = "real-ai-note"
             else:
                 score_html = f"<span class='report-score'>{score}</span>"
-                note_style = "real-ai-note" if (prob_ok or ev_ok) else "real-ai-note-fail"
+                note_style = "real-ai-note" if prob_ok else "real-ai-note-fail"
 
             prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
-            if not has_ev_pick:
-                ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>미선정</span>"
-                ev_pick = "별도 대안픽 기록 없음 · 최종픽만 채점"
-            elif same_pick:
-                ev_badge = "<span style='background:#475569; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>동일픽</span>"
-                ev_pick += " · A/B 별도 집계 제외"
-            else:
-                ev_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if ev_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
 
             html = (
                 f"<div class='report-card'>"
@@ -3538,12 +3536,8 @@ with main_tab4:
                 f"</div>"
                 f"<div class='report-picks'>"
                 f"<div class='report-pick-box'>"
-                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 확률픽 예측</span>"
+                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 공식 최종픽</span>"
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>"
-                f"</div>"
-                f"<div class='report-pick-box'>"
-                f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>{'🍯 당시 대안픽 기록' if has_ev_pick else '검증 정보 · 과거 예측 보존'}</span>"
-                f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{ev_badge} {ev_pick}</div>"
                 f"</div>"
                 f"</div>"
                 f"<div class='{note_style}'>{note}</div>"

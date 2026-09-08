@@ -19,6 +19,8 @@ DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccer
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
 
 TEAM_NAME_MAP = {
+    "풀루미넨시": "Fluminense", "플루미넨시": "Fluminense", "CA플라텐세": "Platense", "CA 플라텐세": "Platense", "플라텐세": "Platense",
+    "시드니FC": "Sydney FC", "시드니 FC": "Sydney FC", "멜버른빅토리": "Melbourne Victory", "멜버른 빅토리": "Melbourne Victory",
     "광주FC": "Gwangju FC", "포항스틸": "Pohang Steelers", "포항 스틸러스": "Pohang Steelers", "제주SKFC": "Jeju United", "제주 SKFC": "Jeju United", 
     "FC안양": "FC Anyang", "FC 안양": "FC Anyang", "FC서울": "FC Seoul", "대전하나": "Daejeon Citizen", "대전 하나시티즌": "Daejeon Citizen", 
     "충북청주": "Chungbuk Cheongju", "충북청주 프로축구단": "Chungbuk Cheongju", "전남드래": "Jeonnam Dragons", "전남 드래곤즈": "Jeonnam Dragons",

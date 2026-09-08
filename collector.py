@@ -42,7 +42,7 @@ except Exception:
 
 from config import *
 from api_engine import *
-from api_engine import _fetch_date_fixtures_api, _normalize_player_name
+from api_engine import _fetch_date_fixtures_api, _normalize_player_name, _team_name_match_score
 from grading_postmortem import (
     build_postmortem,
     events_from_note,
@@ -121,6 +121,7 @@ WORLD_ODDS_MAX_PAGES_PER_DAY = max(
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
 WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v2"
+WORLD_MARKET_PREVIEW_VERSION = f"{ANALYSIS_VERSION}-world-market-preview-v1"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Bucheon FC 1995": "부천 FC 1995",
     "Daejeon Citizen": "대전 하나시티즌",
@@ -590,12 +591,7 @@ def upload_to_github(file_path, remote_path=None):
 
 
 def upload_sqlite_to_github(db_path="ai_predictions.db"):
-    """GitHub DB 업로드 영구 중단 (용량 초과 및 409/422 에러 방지)"""
-    print("✅ DB 깃허브 백업 생략 (로컬 AWS 서버에 안전하게 보관 중)")
-    return True
-
-def _disabled_upload_sqlite(db_path="ai_predictions.db"):
-    """Old code disabled"""
+    """Upload a consistent SQLite snapshot rather than a file mid-transaction."""
     source_path = _local_path(db_path)
     if not _validate_sqlite_file(source_path):
         print("❌ 로컬 DB 검증 실패로 업로드하지 않습니다.")
@@ -3204,6 +3200,198 @@ def _has_valid_world_market(snapshot):
     )
 
 
+def _fair_market_probabilities(market, sides):
+    """Remove the bookmaker margin inside one market; never compare raw 2/3-way odds."""
+    inverse = []
+    for side in sides:
+        try:
+            odd = float((market or {}).get(side) or 0)
+        except (TypeError, ValueError):
+            return None
+        if odd <= 1.0 or not math.isfinite(odd):
+            return None
+        inverse.append(1.0 / odd)
+    total = sum(inverse)
+    if total <= 0:
+        return None
+    return {side: inverse[index] / total for index, side in enumerate(sides)}
+
+
+def _world_market_preview_analysis(item, now=None):
+    """Give every verified bettable WORLD fixture a transparent pre-analysis pick.
+
+    This is not presented as a Dixon-Coles forecast.  It uses only the already
+    collected full-time market median, removes the margin within that same
+    market, and always prefers 1X2 when it exists.  A later full-context run
+    replaces this preview before kickoff.
+    """
+    item = item if isinstance(item, dict) else {}
+    match = item.get("match") or {}
+    market_snapshot = item.get("market_snapshot") or {}
+    if not _has_valid_world_market(market_snapshot):
+        return None
+    home = str(match.get("home") or "홈팀")
+    away = str(match.get("away") or "원정팀")
+    bookmaker_count = int(market_snapshot.get("bookmaker_count") or 0)
+    candidate_rows = []
+    candidates_by_market = {}
+
+    market_specs = [
+        ("1x2", ("home", "draw", "away"), 3, "일반 승무패 시장 선픽"),
+        ("handicap", ("home", "draw", "away"), 2, "3방향 핸디캡 시장 선픽"),
+        ("totals", ("under", "over"), 1, "언더오버 시장 선픽"),
+    ]
+    for market_key, sides, sort_id, label in market_specs:
+        market = market_snapshot.get(market_key) or {}
+        fair = _fair_market_probabilities(market, sides)
+        if not fair:
+            continue
+        line = float(market.get("line") or 0)
+        rows = []
+        for side in sides:
+            if market_key == "1x2":
+                raw_pick = home + " 승" if side == "home" else ("무승부" if side == "draw" else away + " 승")
+            elif market_key == "handicap":
+                raw_pick = (
+                    f"[{line:+.1f}] {home} 핸디승" if side == "home"
+                    else (f"[{line:+.1f}] 핸디무" if side == "draw" else f"[{line:+.1f}] {home} 핸디패")
+                )
+            else:
+                raw_pick = f"{'언더' if side == 'under' else '오버'} (U/O {line:g})"
+            probability = float(fair[side])
+            odd = float(market.get(side) or 0)
+            row = {
+                "market_key": market_key,
+                "label": label,
+                "raw_pick": raw_pick,
+                "selection_side": side,
+                "handicap_base": line if market_key == "handicap" else None,
+                "sort_id": sort_id,
+                "model_probability": probability,
+                "raw_model_probability": probability,
+                "fair_probability": probability,
+                "prob": probability,
+                "probability": probability,
+                "fair_prob": probability,
+                "odd": odd,
+                "edge": 0.0,
+                "robust_probability": probability,
+                "robust_edge": 0.0,
+                "robust_ev": probability * odd,
+                "balanced_score": probability,
+                "safe_score": probability,
+                "recommendation_score": probability,
+                "market_hit_rate": 0.5,
+                "market_history_samples": 0,
+                "market_history_scope": "market_preview",
+                "learning_weight": 0.0,
+                "data_confidence": min(0.58, 0.38 + bookmaker_count * 0.03),
+                "error_margin": 0.12,
+                "probability_interval": {
+                    "low": max(0.0, probability - 0.12),
+                    "high": min(1.0, probability + 0.12),
+                },
+                "selection_warning": "정밀 팀 분석 대기 · 해외시장 기준 선픽",
+            }
+            rows.append(row)
+            candidate_rows.append(row)
+        candidates_by_market[market_key] = rows
+
+    # Product rule: 1X2 is the decision axis.  Only if it is absent do we use
+    # one complete fallback market, without comparing binary raw probabilities
+    # directly against a three-way market.
+    selected_market = next(
+        (key for key in ("1x2", "handicap", "totals") if candidates_by_market.get(key)),
+        "",
+    )
+    if not selected_market:
+        return None
+    selected = dict(max(candidates_by_market[selected_market], key=lambda row: row["probability"]))
+    selected["display"] = _human_pick_label(selected["raw_pick"], home)
+    selected["badges"] = []
+    compact_selected = {
+        key: selected.get(key)
+        for key in (
+            "market_key", "label", "raw_pick", "selection_side", "handicap_base",
+            "prob", "probability", "fair_prob", "fair_probability", "odd",
+            "probability_interval", "selection_warning", "data_confidence",
+        )
+    }
+    compact_selected.update(display=selected["display"], badges=[])
+    analyzed_at = (now or datetime.now(KST)).astimezone(KST).isoformat()
+    quality_score = min(58, 38 + bookmaker_count * 3)
+    market_name = {"1x2": "승무패", "handicap": "3방향 핸디캡", "totals": "언더오버"}[selected_market]
+    report = (
+        "[시장 기준 선픽] 정밀 팀 전력 분석이 끝나기 전에도 빈 픽을 두지 않기 위해, "
+        f"현재 확보된 {bookmaker_count}개 해외업체의 정규시간 {market_name} 중앙배당에서 "
+        "마진을 제거한 공정확률로 한 방향을 먼저 제시합니다.\n\n"
+        f"[현재 선픽] {selected['display']} · 시장 공정확률 {selected['probability'] * 100:.1f}% · "
+        f"중앙배당 {selected['odd']:.2f}배.\n\n"
+        "[주의] 이 값은 딕슨-콜스·최근성적·결장·선발을 모두 반영한 정밀 모델 확률이 아닙니다. "
+        "정밀분석이 완료되면 같은 경기의 최종픽과 확률로 교체되며, 승무패 시장이 있으면 "
+        "언더오버의 2지선다 숫자와 직접 비교하지 않고 승무패를 먼저 선택합니다."
+    )
+    return {
+        "analysis_version": WORLD_MARKET_PREVIEW_VERSION,
+        "system_version": SYSTEM_VERSION,
+        "analysis_stage": "market-preview",
+        "analyzed_at": analyzed_at,
+        "frozen_at": None,
+        "data_quality_score": quality_score,
+        "data_quality_grade": "보조 분석",
+        "missing_data": ["정밀 팀 전력 분석 대기", "확정 선발"],
+        "lineup_confirmed": False,
+        "odds_snapshot": dict(market_snapshot),
+        "inputs_snapshot": {},
+        "evidence": [{
+            "title": "해외시장 선픽",
+            "value": f"{bookmaker_count}개 업체 중앙배당 · {market_name} 마진 제거",
+        }],
+        "candidates": candidate_rows,
+        "categories": {
+            "high_probability": compact_selected,
+            "honey": None,
+            "vip_underdog": None,
+        },
+        "selected": compact_selected,
+        "alternative": {},
+        "learning_robot": {"applied": False, "reason": "정밀분석 대기"},
+        "decision": {
+            "decision_axis": "wdl_first",
+            "selected_market": selected_market,
+            "data_confidence": selected["data_confidence"],
+            "market_preview": True,
+        },
+        "report": report,
+    }
+
+
+def _ensure_world_market_previews(payload, now=None):
+    """Attach a preview only to valid empty cards; never overwrite an analysis."""
+    changed = []
+    for item in (payload or {}).get("matches", []) if isinstance(payload, dict) else []:
+        analysis = item.get("analysis") if isinstance(item, dict) else None
+        selected = (analysis or {}).get("selected") if isinstance(analysis, dict) else None
+        if isinstance(selected, dict) and str(selected.get("raw_pick") or "").strip():
+            continue
+        preview = _world_market_preview_analysis(item, now=now)
+        if not preview:
+            continue
+        item["analysis"] = preview
+        item["analysis_version"] = preview["analysis_version"]
+        item["system_version"] = SYSTEM_VERSION
+        item["analysis_stage"] = preview["analysis_stage"]
+        item["analyzed_at"] = preview["analyzed_at"]
+        item["data_quality_score"] = preview["data_quality_score"]
+        item["data_quality_grade"] = preview["data_quality_grade"]
+        item["missing_data"] = preview["missing_data"]
+        item["lineup_confirmed"] = False
+        item["analysis_status"] = "MARKET_PREVIEW_READY"
+        item["pick_status"] = "MARKET_PREVIEW_PICK"
+        changed.append(item)
+    return changed
+
+
 def build_world_schedule_payload(
     fixtures_by_date, now=None, market_snapshots_by_fixture=None
 ):
@@ -3332,13 +3520,16 @@ def collect_world_schedule():
         market_snapshots_by_fixture=market_snapshots_by_fixture,
     )
     _carry_world_shadow_analyses(payload, previous_payload)
+    preview_items = _ensure_world_market_previews(payload, now=now)
+    if preview_items:
+        _refresh_world_source_meta(payload)
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})
     print(
         "🌍 세계경기 1단계 수집 완료: "
         f"수집 목록 {source_meta.get('raw_fixture_count', 0)} / "
         f"배당 확인 {source_meta.get('eligible_shadow_count', 0)} / "
-        f"제외 {source_meta.get('rejected_count', 0)}"
+        f"시장 선픽 {len(preview_items)} / 제외 {source_meta.get('rejected_count', 0)}"
     )
     return True
 
@@ -3347,6 +3538,7 @@ WORLD_ANALYSIS_FIELDS = (
     "analysis_status", "pick_status", "analysis_version", "system_version", "analysis_stage",
     "analyzed_at", "frozen_at", "data_quality_score", "data_quality_grade",
     "missing_data", "lineup_confirmed", "lineup_attempts", "analysis",
+    "preview_learning_saved",
 )
 
 
@@ -4966,10 +5158,11 @@ def analyze_world_schedule():
         print("⚠️ 세계경기 일정 정상본이 없어 그림자 분석을 건너뜁니다.")
         return False, False
     now = datetime.now(KST)
+    preview_items = _ensure_world_market_previews(payload, now=now)
     day_key, today_ids, all_ids, league_counts = _world_analysis_usage()
     market_performance_cache = {}
     canonical_proto_by_fixture = _dashboard_proto_by_fixture()
-    changed = False
+    changed = bool(preview_items)
     analyzed_now = 0
     errors_now = 0
     quota_paused = False
@@ -4978,6 +5171,21 @@ def analyze_world_schedule():
         "T-3-refresh": 2, "T-24-initial": 3,
     }
     due_items = []
+
+    # Persist every pre-kickoff preview once so the public pick can later be
+    # graded.  It is still replaceable by the full-context analysis until
+    # kickoff, and it does not consume the deep-analysis daily quota.
+    for item in payload.get("matches", []):
+        analysis = item.get("analysis") or {}
+        if (
+            str(analysis.get("analysis_stage") or "") == "market-preview"
+            and not item.get("preview_learning_saved")
+        ):
+            match = item.get("match") or {}
+            kickoff = _parse_kst_match_time(match.get("match_time"))
+            if kickoff and now < kickoff and _save_world_learning_record(match, analysis):
+                item["preview_learning_saved"] = True
+                changed = True
 
     for item in payload.get("matches", []):
         match = item.get("match") or {}
@@ -5020,7 +5228,12 @@ def analyze_world_schedule():
                 changed = True
             continue
         if stage == "LOCKED_AFTER_KICKOFF":
-            if not item.get("analysis") and item.get("analysis_status") not in {
+            if str((item.get("analysis") or {}).get("analysis_stage") or "") == "market-preview":
+                item["frozen_at"] = str((item.get("analysis") or {}).get("analyzed_at") or "")
+                item["analysis_status"] = "FROZEN_MARKET_PREVIEW"
+                item["pick_status"] = "MARKET_PREVIEW_FROZEN"
+                changed = True
+            elif not item.get("analysis") and item.get("analysis_status") not in {
                 "MISSED_PREKICKOFF", "FROZEN_SHADOW"
             }:
                 item["analysis_status"] = "MISSED_PREKICKOFF"
@@ -6417,12 +6630,10 @@ def build_dashboard_data():
         dashboard_toto14.append(toto_item)
 
     dashboard_toto14 = _finalize_toto14_round(dashboard_toto14)
-    single_pick_count = sum(len(item.get('picks') or []) == 1 for item in dashboard_toto14)
-    double_pick_count = sum(len(item.get('picks') or []) == 2 for item in dashboard_toto14)
-    unavailable_pick_count = sum(not item.get('picks') for item in dashboard_toto14)
-    total_combinations = math.prod(max(1, len(item.get('picks') or [])) for item in dashboard_toto14)
-    suppressed_double_count = sum(bool(item.get('double_suppressed')) for item in dashboard_toto14)
-    frozen_prediction_count = sum(bool(item.get('prediction_frozen')) for item in dashboard_toto14)
+    toto14_meta = _build_toto14_ticket_meta(
+        dashboard_toto14,
+        cost_cap_exceeded_by_frozen=cost_cap_exceeded_by_frozen,
+    )
 
     # 종료된 예전 경기가 TOP 3에 다시 등장하지 않도록 아직 시작하지 않은 경기만 선정한다.
     now_ts = datetime.now(timezone(timedelta(hours=9))).timestamp()
@@ -6437,29 +6648,10 @@ def build_dashboard_data():
     )[:3]
     honey_two_pick = build_honey_two_pick(upcoming_proto)
 
-    toto_ticket_complete = len(dashboard_toto14) == 14 and unavailable_pick_count == 0
-    published_combinations = total_combinations if toto_ticket_complete else 0
-    cost_cap_exceeded_by_frozen = bool(
-        cost_cap_exceeded_by_frozen
-        or published_combinations > TOTO14_MAX_COMBINATIONS
-    )
     final_output = {
         "proto": dashboard_proto, "toto14": dashboard_toto14,
         "grading": _build_grading_snapshot(),
-        "toto14_meta": {
-            "total_combinations": published_combinations,
-            "single_pick_count": single_pick_count,
-            "double_pick_count": double_pick_count,
-            "unavailable_pick_count": unavailable_pick_count,
-            "suppressed_double_count": suppressed_double_count,
-            "frozen_prediction_count": frozen_prediction_count,
-            "ticket_complete": toto_ticket_complete,
-            "max_combinations": TOTO14_MAX_COMBINATIONS,
-            "unit_price": TOTO14_UNIT_PRICE,
-            "budget": published_combinations * TOTO14_UNIT_PRICE,
-            "max_budget": TOTO14_MAX_COMBINATIONS * TOTO14_UNIT_PRICE,
-            "cost_cap_exceeded_by_frozen": cost_cap_exceeded_by_frozen,
-        },
+        "toto14_meta": toto14_meta,
         "top3": top_3_picks,
         "honey_two_pick": honey_two_pick,
         "source_meta": {
@@ -6852,8 +7044,30 @@ def _backfill_finished_postmortems(conn):
     return len(updates)
 
 
+def _is_supported_grade_pick(pick, home_team="", away_team=""):
+    """Return True only for an explicit market result the scorer can re-evaluate."""
+    text = str(pick or "").strip().upper()
+    if not text:
+        return False
+    if "핸디" in text or "적용 후" in text:
+        has_line = bool(
+            re.search(r"\[\s*[+-]?\d+(?:\.\d+)?\s*\]", text)
+            or re.search(r"[+-]?\d+(?:\.\d+)?\s*(?:적용\s*후|HANDICAP)", text)
+        )
+        return has_line and bool(re.search(r"(?:핸디|적용\s*후)\s*(승|무|패)", text))
+    if "언더" in text or "오버" in text:
+        return bool(re.search(r"\d+(?:\.\d+)?", text))
+    if "무승부" in text or text in {"무", "DRAW"}:
+        return True
+    home = str(home_team or "").strip().upper()
+    away = str(away_team or "").strip().upper()
+    if text == "승" or text == "패":
+        return True
+    return bool((home and home in text and "승" in text) or (away and away in text and "승" in text))
+
+
 def _repair_finished_handicap_grades(conn):
-    """Repair only derived handicap grades; frozen forecasts stay immutable."""
+    """Recheck supported derived grades; frozen picks, odds and versions stay immutable."""
     _ensure_postmortem_column(conn)
     rows = conn.execute(
         """
@@ -6861,10 +7075,8 @@ def _repair_finished_handicap_grades(conn):
                actual_score, is_correct_prob, is_correct_ev, ai_note
         FROM predictions
         WHERE actual_result = 'FINISHED'
-          AND (
-              prob_pick LIKE '%핸디%' OR ev_pick LIKE '%핸디%'
-              OR prob_pick LIKE '%적용 후%' OR ev_pick LIKE '%적용 후%'
-          )
+          AND (length(trim(COALESCE(prob_pick,''))) > 0
+               OR length(trim(COALESCE(ev_pick,''))) > 0)
         """
     ).fetchall()
     repaired_predictions = 0
@@ -6873,9 +7085,19 @@ def _repair_finished_handicap_grades(conn):
         if not score_match:
             continue
         goals_h, goals_a = int(score_match.group(1)), int(score_match.group(2))
-        prob_hit = int(evaluate_single_pick(row[3], row[1], row[2], goals_h, goals_a))
+        prob_supported = _is_supported_grade_pick(row[3], row[1], row[2])
+        ev_supported = _is_supported_grade_pick(row[4], row[1], row[2])
+        if not prob_supported and not ev_supported:
+            continue
+        prob_hit = (
+            int(evaluate_single_pick(row[3], row[1], row[2], goals_h, goals_a))
+            if prob_supported else int(row[6] or 0)
+        )
         has_ev_pick = bool(str(row[4] or "").strip())
-        ev_hit = int(evaluate_single_pick(row[4], row[1], row[2], goals_h, goals_a))
+        ev_hit = (
+            int(evaluate_single_pick(row[4], row[1], row[2], goals_h, goals_a))
+            if ev_supported else int(row[7] or 0)
+        )
         if prob_hit == int(row[6] or 0) and ev_hit == int(row[7] or 0):
             continue
         official_stats = stats_from_note(row[8])
@@ -6924,12 +7146,14 @@ def _repair_finished_handicap_grades(conn):
         FROM prediction_candidate_results AS result
         JOIN predictions AS prediction ON prediction.match_id = result.match_id
         WHERE prediction.actual_result = 'FINISHED'
-          AND (result.raw_pick LIKE '%핸디%' OR result.raw_pick LIKE '%적용 후%')
+          AND length(trim(COALESCE(result.raw_pick,''))) > 0
         """
     ).fetchall()
     for result_id, raw_pick, old_hit, home_team, away_team, score in candidate_rows:
         score_match = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(score or ""))
         if not score_match:
+            continue
+        if not _is_supported_grade_pick(raw_pick, home_team, away_team):
             continue
         new_hit = int(evaluate_single_pick(
             raw_pick, home_team, away_team,
@@ -7165,6 +7389,38 @@ def _finalize_toto14_round(items):
     return items
 
 
+def _build_toto14_ticket_meta(items, cost_cap_exceeded_by_frozen=False):
+    """Keep calculated cost visible while reporting purchase readiness separately."""
+    items = list(items or [])
+    single_pick_count = sum(len(item.get("picks") or []) == 1 for item in items)
+    double_pick_count = sum(len(item.get("picks") or []) == 2 for item in items)
+    unavailable_pick_count = sum(not item.get("picks") for item in items)
+    total_combinations = math.prod(
+        max(1, len(item.get("picks") or [])) for item in items
+    )
+    ticket_complete = len(items) == 14 and unavailable_pick_count == 0
+    purchase_ready_combinations = total_combinations if ticket_complete else 0
+    return {
+        "total_combinations": total_combinations,
+        "single_pick_count": single_pick_count,
+        "double_pick_count": double_pick_count,
+        "unavailable_pick_count": unavailable_pick_count,
+        "suppressed_double_count": sum(bool(item.get("double_suppressed")) for item in items),
+        "frozen_prediction_count": sum(bool(item.get("prediction_frozen")) for item in items),
+        "ticket_complete": ticket_complete,
+        "purchase_ready_combinations": purchase_ready_combinations,
+        "max_combinations": TOTO14_MAX_COMBINATIONS,
+        "unit_price": TOTO14_UNIT_PRICE,
+        "budget": total_combinations * TOTO14_UNIT_PRICE,
+        "purchase_ready_budget": purchase_ready_combinations * TOTO14_UNIT_PRICE,
+        "max_budget": TOTO14_MAX_COMBINATIONS * TOTO14_UNIT_PRICE,
+        "cost_cap_exceeded_by_frozen": bool(
+            cost_cap_exceeded_by_frozen
+            or total_combinations > TOTO14_MAX_COMBINATIONS
+        ),
+    }
+
+
 def build_honey_two_pick(items):
     """Build an optional two-match combo only from two qualified final picks."""
     eligible = []
@@ -7250,7 +7506,7 @@ def auto_score_matches():
         repaired_predictions, repaired_candidates = _repair_finished_handicap_grades(conn)
         if repaired_predictions or repaired_candidates:
             print(
-                "✅ 핸디캡 결과 재판정 완료: "
+                "✅ 종료 경기 판정 재검증 완료: "
                 f"공식픽 {repaired_predictions}건 / 시장후보 {repaired_candidates}건 "
                 "(예측·확률·버전은 보존)"
             )
@@ -7633,10 +7889,66 @@ def _row_matches_fixture(row, match_info):
     teams = match_info.get("teams", {}) or {}
     api_home = teams.get("home", {}) or {}
     api_away = teams.get("away", {}) or {}
-    return (
+    exact_pair = (
         team_matches_api(row[2], api_home.get("name"), api_home.get("id"))
         and team_matches_api(row[3], api_away.get("name"), api_away.get("id"))
     )
+    if exact_pair:
+        return True
+    # Never let fuzzy text overrule a known provider-ID mismatch.
+    for local_name, api_team in ((row[2], api_home), (row[3], api_away)):
+        expected_id = int(known_team_id(local_name) or 0)
+        candidate_id = int(api_team.get("id") or 0)
+        if expected_id and candidate_id and expected_id != candidate_id:
+            return False
+    home_score = _team_name_match_score(row[2], api_home.get("name"))
+    away_score = _team_name_match_score(row[3], api_away.get("name"))
+    return min(home_score, away_score) >= 0.84 and home_score + away_score >= 1.75
+
+
+def _append_published_live_rows(all_rows, dashboard=None, world_dashboard=None):
+    """Add published cards missing from the prediction DB to LIVE tracking."""
+    rows = list(all_rows or [])
+    known_ids = {str(row[0]) for row in rows}
+    dashboard = dashboard if isinstance(dashboard, dict) else {}
+    for item in dashboard.get("proto", []) or []:
+        match = item.get("match") or {}
+        match_id = str(match.get("id") or item.get("match_id") or "")
+        if not match_id or match_id in known_ids:
+            continue
+        try:
+            fixture_id = int(
+                item.get("api_fixture_id")
+                or match.get("api_fixture_id")
+                or match.get("fixture_id")
+                or 0
+            )
+        except (TypeError, ValueError):
+            fixture_id = 0
+        rows.append((
+            match_id, fixture_id,
+            str(match.get("home") or ""), str(match.get("away") or ""),
+            str(item.get("final_match_time") or match.get("match_time") or ""),
+            "PENDING", "-:-",
+        ))
+        known_ids.add(match_id)
+
+    world_dashboard = world_dashboard if isinstance(world_dashboard, dict) else {}
+    for item in world_dashboard.get("matches", []) or []:
+        match = item.get("match") or {}
+        match_id = str(match.get("id") or "")
+        try:
+            fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+        except (TypeError, ValueError):
+            fixture_id = 0
+        if match_id and match_id not in known_ids and fixture_id:
+            rows.append((
+                match_id, fixture_id, str(match.get("home") or ""),
+                str(match.get("away") or ""), str(match.get("match_time") or ""),
+                "PENDING", "-:-",
+            ))
+            known_ids.add(match_id)
+    return rows
 
 
 def update_live_scores():
@@ -7656,16 +7968,13 @@ def update_live_scores():
             WHERE actual_result IN ('PENDING', 'FINISHED')
         """)
         all_rows = cursor.fetchall()
-        # World schedule must be live-trackable even before a recommendation is saved.
-        known_ids = {str(row[0]) for row in all_rows}
-        for item in (_read_json(WORLD_DASHBOARD_FILE,{}) or {}).get("matches",[]):
-            match = item.get("match") or {}
-            match_id = str(match.get("id") or "")
-            fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
-            if match_id and match_id not in known_ids and fixture_id:
-                all_rows.append((match_id,fixture_id,match.get("home",""),match.get("away",""),
-                                 match.get("match_time",""),"PENDING","-:-"))
-                known_ids.add(match_id)
+        # LIVE coverage follows the published boards, not only rows that reached
+        # the prediction DB.  Failed analysis/team linkage can recover later.
+        all_rows = _append_published_live_rows(
+            all_rows,
+            dashboard=_read_json("dashboard_data.json", {}),
+            world_dashboard=_read_json(WORLD_DASHBOARD_FILE, {}),
+        )
 
         now_kst = datetime.now(KST)
         relevant_rows = []
@@ -9085,7 +9394,8 @@ def run_master_job():
         return False
     # Publish the DB snapshot first. If it cannot be published, keep the remote
     # dashboard at its last-known-good version instead of exposing unmatched JSON.
-    upload_sqlite_to_github("ai_predictions.db")
+    if not upload_sqlite_to_github("ai_predictions.db"):
+        return False
     return upload_to_github("dashboard_data.json")
 
 
@@ -9146,8 +9456,8 @@ def run_world_job():
         return False
 
     # Store the private learning snapshot before publishing its matching admin JSON.
-    if analysis_changed:
-        upload_sqlite_to_github("ai_predictions.db")
+    if analysis_changed and not upload_sqlite_to_github("ai_predictions.db"):
+        return False
     if schedule_refreshed or analysis_changed:
         return upload_to_github(
             WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name
