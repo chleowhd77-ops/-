@@ -85,6 +85,9 @@ st.set_page_config(
 
 GITHUB_REPO = "chleowhd77-ops/-"
 DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
+# 결과 피드가 회차 전환 순간에 비어도 종료된 일반 축구 경기가
+# 다음 날 LIVE 추천 화면에 남지 않게 한다. 실제 LIVE 상태는 우선 보존된다.
+UNCONFIRMED_MATCH_GRACE_HOURS = 3
 
 NO_CACHE_HEADERS = {
     'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -2713,7 +2716,8 @@ def _proto_is_recent_or_active(item):
     if state == "AWAITING_STATUS":
         kickoff = _item_kickoff_datetime(item)
         now = datetime.now(timezone(timedelta(hours=9)))
-        if kickoff and now >= kickoff + timedelta(hours=6):
+        grace_hours = globals().get("UNCONFIRMED_MATCH_GRACE_HOURS", 3)
+        if kickoff and now >= kickoff + timedelta(hours=grace_hours):
             return False
     return True
 

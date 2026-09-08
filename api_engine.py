@@ -48,7 +48,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-v1-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.11.0-autonomous-learning-loop"
+SYSTEM_VERSION = "R7.11.1-finished-card-and-toto14-identity-hotfix"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1264,6 +1264,11 @@ BUILTIN_TEAM_ALIASES = {
     "코모1907": "Como",
     "광주FC": "Gwangju FC",
     "FC서울": "FC Seoul",
+    # 2026-09-10 승무패14 공식 경기표에서 확인하는 양 팀 이름.
+    # ID를 고정하지 않고 같은 날짜·시각의 공식 홈/원정 쌍으로 최종 검증한다.
+    "스포르팅CP": "Sporting CP",
+    "스포르팅 CP": "Sporting CP",
+    "갈라타사라이": "Galatasaray",
 }
 
 

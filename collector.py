@@ -791,6 +791,18 @@ def _toto14_picks_from_display(display, home_team, away_team):
     return _normalize_toto14_picks(picks)
 
 
+def _toto14_item_has_usable_pick(item, home_team="", away_team=""):
+    """True only for a real pre-kickoff mark, never an empty wait card."""
+    if not isinstance(item, dict):
+        return False
+    picks = _normalize_toto14_picks(item.get("picks"))
+    if not picks and home_team and away_team:
+        picks = _toto14_picks_from_display(
+            item.get("best_pick_display"), home_team, away_team
+        )
+    return bool(picks)
+
+
 def _render_toto14_picks_html(picks):
     picks = set(_normalize_toto14_picks(picks))
     styles = {
@@ -1081,9 +1093,21 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
             and incoming_version == ANALYSIS_VERSION
             and existing_version != ANALYSIS_VERSION
         )
+        can_repair_unavailable = bool(
+            existing
+            and kickoff
+            and datetime.now(KST) < kickoff
+            and incoming_version == ANALYSIS_VERSION
+            and not _toto14_item_has_usable_pick(
+                existing_payload, home_team, away_team
+            )
+            and _toto14_item_has_usable_pick(
+                frozen_payload, home_team, away_team
+            )
+        )
         if existing:
             preserve_history(existing[3], existing[2], existing[4])
-        if not existing or can_migrate:
+        if not existing or can_migrate or can_repair_unavailable:
             preserve_history(
                 frozen_payload, match_time, frozen_payload.get("frozen_at")
             )
@@ -1099,7 +1123,7 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                 str(frozen_payload["frozen_at"]),
             ),
         )
-        if can_migrate:
+        if can_migrate or can_repair_unavailable:
             conn.execute(
                 """
                 UPDATE toto14_prediction_freezes
@@ -1113,10 +1137,16 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                     str(home_team), str(away_team),
                 ),
             )
-            print(
-                f"🔄 시작 전 승무패14 공개경계 교체: {home_team} vs {away_team} · "
-                f"{existing_version or '버전 미기록'} → {ANALYSIS_VERSION}"
-            )
+            if can_repair_unavailable:
+                print(
+                    f"🩹 시작 전 승무패14 빈 동결본 복구: "
+                    f"{home_team} vs {away_team} · 실제 최초픽 저장"
+                )
+            else:
+                print(
+                    f"🔄 시작 전 승무패14 공개경계 교체: {home_team} vs {away_team} · "
+                    f"{existing_version or '버전 미기록'} → {ANALYSIS_VERSION}"
+                )
         conn.commit()
         row = conn.execute(
             "SELECT home_team, away_team, payload_json FROM toto14_prediction_freezes WHERE match_id = ?",
@@ -1215,7 +1245,9 @@ def _unavailable_toto14_item(match):
         "analysis_version": ANALYSIS_VERSION,
         "analysis_confidence": 0.0,
         "analysis_stage": "locked_unavailable",
-        "prediction_frozen": True,
+        # 킥오프 전의 빈 대기 카드는 픽이 아니므로 다음 주기에
+        # 팀·경기 신원을 다시 확인할 수 있어야 한다.
+        "prediction_frozen": False,
         "home_form": "",
         "away_form": "",
         "h_rank_html": "",
@@ -8108,6 +8140,22 @@ def build_dashboard_data():
             frozen_item = dict(frozen_record["payload"])
 
         kickoff_passed = bool(scheduled_dt and now >= scheduled_dt)
+        if (
+            frozen_item is not None
+            and not kickoff_passed
+            and not _toto14_item_has_usable_pick(
+                frozen_item, home_team, away_team
+            )
+        ):
+            # 예전 버전이 빈 `분석 대기` 카드까지 최초픽으로
+            # 동결했던 경우에만 풀어준다. 실제 픽이 있는 13경기는
+            # 같은 버전에서 절대 재산출하지 않는다.
+            frozen_item = None
+            policy_migration = True
+            print(
+                f"🩹 시작 전 승무패14 빈 대기 기록 재분석: "
+                f"{home_team} vs {away_team}"
+            )
         if frozen_item is not None and _needs_current_analysis_refresh(
             frozen_item, scheduled_dt, now, ANALYSIS_VERSION
         ):
@@ -8139,6 +8187,9 @@ def build_dashboard_data():
             frozen_item is None
             and previous_is_pre_kickoff
             and not previous_needs_refresh
+            and _toto14_item_has_usable_pick(
+                previous_item, home_team, away_team
+            )
             and (
                 kickoff_passed
                 or previous_stage in {"T-30-final", "locked"}
