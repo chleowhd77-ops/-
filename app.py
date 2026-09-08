@@ -11,7 +11,10 @@ import re
 import base64
 from pathlib import Path
 from html import escape
-from api_engine import choose_analysis_fallback
+from api_engine import (
+    ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
+    PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION,
+)
 
 from grading_postmortem import (
     build_postmortem,
@@ -139,6 +142,16 @@ def load_grading_snapshot(embedded):
     return embedded
 
 
+def _is_current_robot_public_snapshot(snapshot):
+    """Accept only the explicitly reset public score era in R7.9+."""
+    return bool(
+        isinstance(snapshot, dict)
+        and snapshot.get("public_history_mode") == "current-robot-version-only"
+        and str(snapshot.get("public_score_version") or "")
+            == PUBLIC_SCORE_VERSION
+    )
+
+
 def load_prediction_results(grading_snapshot=None):
     """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
     embedded_rows = []
@@ -160,6 +173,10 @@ def load_prediction_results(grading_snapshot=None):
             for row in embedded_rows
             if row.get("match_id") is not None
         }
+    # A valid empty reset feed means exactly 0-0. Never fall back to the local
+    # legacy DB, because that would briefly republish the hidden old history.
+    if _is_current_robot_public_snapshot(grading_snapshot):
+        return {}
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=5)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(predictions)")}
@@ -1650,6 +1667,24 @@ if isinstance(dashboard_data, dict):
             if _is_displayable_match_item(item)
         ]
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
+if not _is_current_robot_public_snapshot(grading_snapshot):
+    # App deployment can precede the collector's first R7.9 publish by a few
+    # moments. Hide every legacy feed immediately instead of displaying it
+    # during that transition. The SQLite rows themselves remain untouched.
+    grading_snapshot = {
+        "schema_version": "grading-results.v1",
+        "analysis_version": ANALYSIS_VERSION,
+        "system_version": SYSTEM_VERSION,
+        "public_history_mode": "current-robot-version-only",
+        "public_score_version": PUBLIC_SCORE_VERSION,
+        "public_score_label": "새 로봇 독립픽 공개 성적",
+        "legacy_rows_hidden": len(
+            (dashboard_data.get("grading", {}) or {}).get("finished", []) or []
+        ),
+        "finished": [],
+        "pending": [],
+        "generated_at": "",
+    }
 prediction_results_data = load_prediction_results(grading_snapshot)
 
 proto_total = len(dashboard_data.get("proto", []))
@@ -1940,6 +1975,18 @@ def _world_live_item(world_item, proto_by_fixture):
         else:
             categories[key] = None
     selected = categories.get("high_probability") or {}
+    robot_pick = analysis.get("robot_pick") or raw_categories.get("robot_independent") or {}
+    if isinstance(robot_pick, dict) and robot_pick:
+        robot_pick = dict(
+            robot_pick,
+            raw_pick=localize(robot_pick.get("raw_pick")),
+            prob=robot_pick.get("prob", robot_pick.get("probability", 0)),
+            fair_prob=robot_pick.get(
+                "fair_prob", robot_pick.get("fair_probability")
+            ),
+        )
+    else:
+        robot_pick = {}
     odds = analysis.get("odds_snapshot") or {}
     for market, mapping in [
         ("1x2",{"home":"odd_h","draw":"odd_d","away":"odd_a"}),
@@ -1954,14 +2001,21 @@ def _world_live_item(world_item, proto_by_fixture):
     if missing:
         report += "\n\n[미확보 자료] " + ", ".join(map(str,missing))
     lineup = inputs.get("lineup_learning") or {}
-    if lineup:
+    if lineup and "[예상 선발]" not in report:
         report += "\n\n[선발 학습·확인]"
         for side,name in (("home",home),("away",away)):
-            core = lineup.get(side+"_predicted_core") or []
+            predicted = (
+                lineup.get(side+"_predicted_starting_xi")
+                or lineup.get(side+"_predicted_core") or []
+            )
             starters = lineup.get(side+"_official_starters") or []
-            report += f"\n{name}: 예상 핵심 후보 {', '.join(map(str,core)) or '자료 없음'} / 공식 선발 {', '.join(map(str,starters)) or '미수신'}"
+            report += (
+                f"\n{name}: 예상 선발 {', '.join(map(str,predicted)) or '자료 없음'}"
+                f" / 공식 선발 {', '.join(map(str,starters)) or '미수신'}"
+            )
     item = dict(world_item,match=match,pick_categories=categories,
                 ev_sorted_picks=[selected] if selected.get("raw_pick") else [],
+                robot_pick=robot_pick,
                 display_candidates=[dict(candidate, raw_pick=localize(candidate.get("raw_pick")))
                                     for candidate in (analysis.get("candidates") or []) if isinstance(candidate, dict)],
                 display_candidates_saved_at=analysis.get("analyzed_at"),
@@ -2902,7 +2956,7 @@ def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
 ):
-    """Show one official pick; value and VIP are badges on the same answer."""
+    """Show the official pick plus the separately frozen robot answer."""
     if isinstance(analysis_item, dict):
         display_item = _with_analysis_pick(analysis_item)
         if display_item.get("display_only_pick"):
@@ -2994,7 +3048,40 @@ def generate_pred_boxes(
         f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{' · '.join(meta_parts)}</span>"
         f"{grade_html}<span class='pred-prob'>{prob_pct}%</span></div>"
     )
-    return pick_html + _final_pick_validation_html(
+    robot_html = ""
+    robot = analysis_item.get("robot_pick") if isinstance(analysis_item, dict) else None
+    if isinstance(robot, dict) and str(robot.get("raw_pick") or "").strip():
+        robot_raw = escape(_human_pick_label(robot.get("raw_pick"), home_team))
+        robot_probability = float(
+            robot.get("prob", robot.get("probability", 0)) or 0
+        )
+        robot_odd = float(robot.get("odd") or 0)
+        robot_market = {
+            "1x2": "승무패", "handicap": "3방향 핸디캡", "totals": "언더오버",
+        }.get(str(robot.get("market_key") or ""), "통합 시장")
+        robot_meta = [robot_market]
+        if robot_odd > 1:
+            robot_meta.append(f"실제 배당 {robot_odd:.2f}배")
+        if robot.get("fair_prob", robot.get("fair_probability")) is not None:
+            robot_meta.append(
+                f"보수 가치차 {float(robot.get('robust_edge') or 0) * 100:+.1f}%p"
+            )
+        if robot.get("is_true_underdog"):
+            robot_meta.append("역배 방향")
+        if robot.get("robot_fallback"):
+            robot_meta.append("배당가치 미확인·확률 대체")
+        robot_html = (
+            "<div class='pred-box' style='background:rgba(167,139,250,.07);"
+            "border-color:#A78BFA;'>"
+            "<div class='pred-label' style='color:#C4B5FD;'>🤖 로봇 독립픽</div>"
+            f"<span class='pred-value'>{robot_raw}</span>"
+            "<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>"
+            "승무패 우선 제한 없이 전체 실배당 후보 비교</span>"
+            f"<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
+            f"{' · '.join(robot_meta)}</span>"
+            f"<span class='pred-prob'>{robot_probability * 100:.1f}%</span></div>"
+        )
+    return pick_html + robot_html + _final_pick_validation_html(
         analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
 
@@ -3314,7 +3401,11 @@ with main_tab4:
         try:
             finished_rows = list(grading_snapshot.get("finished", []) or [])
             pending_rows = list(grading_snapshot.get("pending", []) or [])
-            if not finished_rows and not pending_rows:
+            public_robot_history = (
+                grading_snapshot.get("public_history_mode")
+                == "current-robot-version-only"
+            )
+            if not finished_rows and not pending_rows and not public_robot_history:
                 conn = sqlite3.connect("ai_predictions.db")
                 conn.row_factory = sqlite3.Row
                 columns = [col[1] for col in conn.execute("PRAGMA table_info(predictions)")]
@@ -3356,6 +3447,8 @@ with main_tab4:
                 "match_time", "home_team", "away_team", "league", "actual_score",
                 "prob_pick", "ev_pick", "ai_note", "match_id", "analysis_version",
                 "api_fixture_id",
+                "robot_pick", "robot_pick_prob", "robot_pick_odd",
+                "robot_pick_market", "robot_pick_version", "is_correct_robot",
             ]
             df_finished = pd.DataFrame(finished_rows)
             df_pending = pd.DataFrame(pending_rows)
@@ -3404,6 +3497,16 @@ with main_tab4:
             
             proto_prob_acc = round((proto_prob_hit / proto_total) * 100, 1) if proto_total > 0 else 0.0
             proto_ev_acc = round((proto_ev_hit / proto_ev_total) * 100, 1) if proto_ev_total > 0 else 0.0
+            robot_rows = df_proto[
+                df_proto['robot_pick'].fillna('').astype(str).str.strip().ne('')
+            ]
+            robot_total = len(robot_rows)
+            robot_hit = int(
+                pd.to_numeric(
+                    robot_rows['is_correct_robot'], errors='coerce'
+                ).fillna(0).sum()
+            ) if robot_total > 0 else 0
+            robot_acc = round(robot_hit / robot_total * 100, 1) if robot_total else 0.0
 
             toto_total = len(df_toto)
             toto_hit = int(pd.to_numeric(df_toto['is_correct_prob'], errors='coerce').fillna(0).sum()) if toto_total > 0 else 0
@@ -3424,18 +3527,26 @@ with main_tab4:
             today_hit_count = sum(
                 int(row.get("is_correct_prob") or 0) for row in today_finished
             )
+            today_robot_hit_count = sum(
+                int(row.get("is_correct_robot") or 0) for row in today_finished
+            )
             
             return {
                 "proto": {"total": proto_total, "prob_hit": proto_prob_hit, "ev_hit": proto_ev_hit, "ev_total": proto_ev_total, "prob_acc": proto_prob_acc, "ev_acc": proto_ev_acc},
+                "robot": {"total": robot_total, "hit": robot_hit, "acc": robot_acc},
                 "toto": {"total": toto_total, "hit": toto_hit, "acc": toto_acc},
                 "current_version": current_version,
                 "current_model_count": len(df_proto_current) + len(df_toto_current),
-                "legacy_count": max(0, len(df_proto_all) - len(df_proto_current)) + max(0, len(df_toto_all) - len(df_toto_current)),
+                "legacy_count": int(grading_snapshot.get("legacy_rows_hidden") or 0),
+                "public_history_mode": grading_snapshot.get("public_history_mode") or "legacy-cumulative",
+                "public_score_version": grading_snapshot.get("public_score_version") or "",
                 "today_finished_count": len(today_finished),
                 "today_hit_count": today_hit_count,
+                "today_robot_hit_count": today_robot_hit_count,
                 "today_versions": today_versions,
-                # 오답노트는 회원 등급과 관계없이 전체 기록을 공개한다.
-                "history": df_proto_all.to_dict('records'),
+                # 새 로봇 버전 이후 공개 행만 제공한다. 이전 기록은 DB에서
+                # 지우지 않고 학습·감사용으로만 보존한다.
+                "history": df_proto.to_dict('records'),
                 "pending": df_pending.to_dict('records')
             }
         except Exception as e:
@@ -3447,10 +3558,16 @@ with main_tab4:
         st.warning("⚠️ 백그라운드 로봇이 V3 듀얼 엔진으로 업그레이드 중입니다. 잠시 후 다시 확인해주세요!")
     else:
         p_stats = stats['proto']
+        r_stats = stats['robot']
         t_stats = stats['toto']
         current_version_label = escape(stats.get('current_version') or '버전 정보 없음')
         prob_value = f"{p_stats['prob_acc']}%" if p_stats['total'] else "채점 대기"
         prob_note = f"({p_stats['prob_hit']}건 적중)" if p_stats['total'] else "종료 경기 결과를 기다리는 중"
+        robot_value = f"{r_stats['acc']}%" if r_stats['total'] else "0승 0패"
+        robot_note = (
+            f"{r_stats['hit']}승 {r_stats['total'] - r_stats['hit']}패"
+            if r_stats['total'] else "새 버전 공개 채점 시작 전"
+        )
         toto_value = f"{t_stats['acc']}%" if t_stats['total'] else "채점 대기"
         toto_note = f"총 {t_stats['total']}경기 중 {t_stats['hit']}경기 적중" if t_stats['total'] else "종료 경기 없음"
         
@@ -3464,6 +3581,11 @@ with main_tab4:
                         <span class='grade-metric-value probability'>{prob_value}</span>
                         <span class='grade-metric-note'>{prob_note}</span>
                     </div>
+                    <div class='grade-metric'>
+                        <span class='grade-metric-label'>🤖 로봇 독립픽</span>
+                        <span class='grade-metric-value probability'>{robot_value}</span>
+                        <span class='grade-metric-note'>{robot_note}</span>
+                    </div>
                 </div>
             </div>
             <div class='grade-summary-card grade-toto'>
@@ -3473,7 +3595,7 @@ with main_tab4:
             </div>
         </div>
         <div style='color:#64748B;font-size:12px;margin:-3px 0 20px 2px;'>
-            누적 집계 · 경기 전 동결 당시의 픽과 분석 버전을 그대로 보존 · 현재 분석모델 {current_version_label} 표본 {stats['current_model_count']}건 · 과거 모델 표본 {stats['legacy_count']}건
+            새 로봇 버전 공개성적만 집계 · 이전 채점 {stats['legacy_count']}건은 삭제하지 않고 학습·감사용으로 비공개 보존 · 현재 분석모델 {current_version_label}
         </div>
         """, unsafe_allow_html=True)
 
@@ -3487,6 +3609,7 @@ with main_tab4:
                 "color:#D1FAE5;font-size:13px;font-weight:800;'>"
                 f"✅ 오늘 종료 경기 {stats['today_finished_count']}경기 채점 완료"
                 f" · 공식 최종픽 {stats.get('today_hit_count', 0)}/{stats['today_finished_count']} 적중"
+                f" · 로봇 독립픽 {stats.get('today_robot_hit_count', 0)}/{stats['today_finished_count']} 적중"
                 f"<span style='display:block;margin-top:4px;color:#94A3B8;font-size:11px;'>"
                 f"당시 경기 전 동결 버전: {today_versions}. 분석 확률과 픽은 그대로 두고 결과만 연결했습니다."
                 "</span></div>",
@@ -3509,6 +3632,11 @@ with main_tab4:
             prob_pick_raw = str(row.get('prob_pick') or '')
             prob_pick = escape(_human_pick_label(prob_pick_raw, row.get('home_team', '')))
             prob_ok = row.get('is_correct_prob', 0) == 1
+            robot_pick_raw = str(row.get('robot_pick') or '')
+            robot_pick = escape(_human_pick_label(
+                robot_pick_raw, row.get('home_team', '')
+            ))
+            robot_ok = row.get('is_correct_robot', 0) == 1
             note = _clean_grading_note(
                 row.get('ai_note', ''), prob_ok, False, False, row=row
             )
@@ -3521,6 +3649,9 @@ with main_tab4:
                 note_style = "real-ai-note" if prob_ok else "real-ai-note-fail"
 
             prob_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if prob_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
+            robot_badge = "<span style='background:#10B981; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>적중</span>" if robot_ok else "<span style='background:#EF4444; color:#fff; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:5px;'>실패</span>"
+            robot_odd = float(row.get('robot_pick_odd') or 0)
+            robot_price = f" · {robot_odd:.2f}배" if robot_odd > 1 else ""
 
             html = (
                 f"<div class='report-card'>"
@@ -3538,6 +3669,10 @@ with main_tab4:
                 f"<div class='report-pick-box'>"
                 f"<span style='color:#94A3B8; font-size:11px; display:block; margin-bottom:4px;'>🎯 공식 최종픽</span>"
                 f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{prob_badge} {prob_pick}</div>"
+                f"</div>"
+                f"<div class='report-pick-box'>"
+                f"<span style='color:#C4B5FD; font-size:11px; display:block; margin-bottom:4px;'>🤖 로봇 독립픽</span>"
+                f"<div style='font-size:14px; font-weight:900; color:#F8FAFC;'>{robot_badge} {robot_pick}{robot_price}</div>"
                 f"</div>"
                 f"</div>"
                 f"<div class='{note_style}'>{note}</div>"
@@ -3621,12 +3756,16 @@ with main_tab4:
                 safe_home = escape(str(row.get('home_team', '')))
                 safe_away = escape(str(row.get('away_team', '')))
                 safe_score = escape(str(temp_score))
+                safe_robot_pick = escape(_human_pick_label(
+                    row.get('robot_pick', ''), row.get('home_team', '')
+                ))
                  
                 html_str = (
                     f"<div class='pending-report-card'>"
                     f"<div class='pending-report-match'>"
                     f"<div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{safe_time}</div>"
                     f"<div class='pending-report-teams'>{safe_home} <span style='color:#64748B;'>VS</span> {safe_away}</div>"
+                    f"<div style='color:#C4B5FD;font-size:11px;font-weight:800;margin-top:4px;'>🤖 로봇 독립픽: {safe_robot_pick}</div>"
                     f"{event_html}"
                     f"</div>"
                     f"<div class='pending-report-status'>"

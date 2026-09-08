@@ -8,6 +8,7 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "independent-all-market-kelly-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
@@ -45,33 +46,208 @@ def _selection_key(pick):
             float(pick.get("robust_ev") or 0), str(pick.get("raw_pick") or ""))
 
 
-def wdl_centered_choice(picks, confidence, policy=None, return_reason=False):
-    """일반 승무패 및 핸디캡 승무패를 최우선으로, 압도적 적중 확률(승률) 중심 선택."""
-    available = [p for p in picks if p.get("settlement_supported", True)]
+def autonomous_robot_choice(picks, confidence, return_reason=False):
+    """Choose one independent pre-match pick across every supported market.
+
+    Unlike the official W/D/L-centred selector, this challenger is allowed to
+    choose a regulation-time W/D/L outcome, a three-way handicap outcome or a
+    total. Cross-market comparison is based on conservative price value
+    (Kelly/edge/EV), not on raw probability alone, so a two-way total does not
+    win merely because it naturally has a larger percentage.
+
+    Only already attached, pre-kickoff learning diagnostics may influence the
+    tie-break. Their effect is bounded and requires a chronological calibration
+    improvement. The function never changes code or old rows.
+    """
+    available = [
+        dict(pick) for pick in (picks or [])
+        if isinstance(pick, dict)
+        and pick.get("settlement_supported", True)
+        and 0 < float(pick.get("prob") or 0) <= 1
+    ]
     if not available:
         raise ValueError("no settlement-compatible candidate")
 
-    # 1. 일반 승무패(1x2)와 핸디캡(handicap)을 핵심 평가 대상으로 묶음
-    core_picks = [p for p in available if p.get("market_key") in ("1x2", "handicap")]
-    other_picks = [p for p in available if p.get("market_key") not in ("1x2", "handicap")]
+    confidence = max(0.0, min(1.0, float(confidence or 0)))
+    priced = []
+    for pick in available:
+        probability = max(
+            0.0,
+            min(1.0, float(
+                pick.get("robust_probability")
+                or pick.get("prob")
+                or 0
+            )),
+        )
+        odd = float(pick.get("odd") or 0)
+        fair = pick.get("fair_prob")
+        try:
+            fair = float(fair) if fair is not None else None
+        except (TypeError, ValueError):
+            fair = None
+        if odd <= 1.0 or fair is None or not 0 < fair < 1:
+            continue
 
-    if core_picks:
-        # 적중 확률(prob) 최우선. 배당 가치(EV)는 무시하고 오직 맞추는 것에 집중.
-        chosen = max(core_picks, key=lambda p: (
-            float(p.get("prob") or 0),              # 1순위: 무조건 적중 확률 높은 것
-            p.get("market_key") == "1x2",           # 2순위: 동률일 경우 핸디캡보다 일반 승무패 우선
-            float(p.get("odd") or 0)                # 3순위: 배당 (확률이 완벽히 같을 때만 비교)
-        ))
-        reason = "승무패 및 핸디캡 시장에서 적중 확률 최우선 선택"
-    elif other_picks:
-        # 코어 픽이 아예 없는 비정상 상황에서만 언더/오버 등으로 빠짐
-        chosen = max(other_picks, key=lambda p: float(p.get("prob") or 0))
-        reason = "승무패/핸디캡 후보 부재로 보조 시장 선택"
+        expected_return = float(pick.get("robust_ev") or probability * odd)
+        edge = float(pick.get("robust_edge") or (probability - fair))
+        kelly = (probability * odd - 1.0) / max(odd - 1.0, 1e-9)
+        kelly = max(-0.25, min(0.50, kelly))
+
+        diagnostics = pick.get("learning_diagnostics") or {}
+        validated = bool(
+            diagnostics.get("calibration_validated")
+            and int(diagnostics.get("validation_fixtures") or 0) >= 30
+            and diagnostics.get("baseline_brier") is not None
+            and diagnostics.get("corrected_brier") is not None
+            and float(diagnostics["corrected_brier"])
+                < float(diagnostics["baseline_brier"])
+        )
+        learning_bonus = 0.0
+        if validated:
+            improvement = max(
+                0.0,
+                float(diagnostics["baseline_brier"])
+                - float(diagnostics["corrected_brier"]),
+            )
+            learning_bonus = min(0.025, improvement * 0.50)
+            samples = int(diagnostics.get("candidate_samples") or 0)
+            unit_roi = diagnostics.get("unit_roi")
+            if samples >= 80 and unit_roi is not None:
+                learning_bonus += max(
+                    -0.015, min(0.015, float(unit_roi) * 0.05)
+                )
+
+        support_bonus = min(
+            0.015,
+            int(pick.get("independent_support_count") or 0) * 0.004,
+        )
+        # Value terms dominate. Probability is a small stability term only;
+        # this makes 40%@3.20 capable of beating 85%@1.20 when its conservative
+        # expected growth is genuinely better.
+        score = (
+            max(-0.10, kelly) * 0.55
+            + max(-0.10, min(0.20, edge)) * 0.25
+            + max(-0.10, min(0.50, expected_return - 1.0)) * 0.12
+            + probability * 0.08
+            + learning_bonus
+            + support_bonus
+        ) * (0.75 + confidence * 0.25)
+        pick.update({
+            "robot_score": round(score, 6),
+            "robot_kelly": round(kelly, 6),
+            "robot_learning_bonus": round(learning_bonus, 6),
+            "robot_learning_validated": validated,
+            "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
+            "robot_selection_axis": "all_markets_conservative_value",
+            "robot_price_verified": True,
+            "robot_fallback": expected_return < 1.0,
+        })
+        priced.append(pick)
+
+    if priced:
+        chosen = max(
+            priced,
+            key=lambda pick: (
+                float(pick.get("robot_score") or 0),
+                float(pick.get("robot_kelly") or 0),
+                float(pick.get("robust_edge") or 0),
+                float(pick.get("robust_probability") or pick.get("prob") or 0),
+                str(pick.get("raw_pick") or ""),
+            ),
+        )
+        reason = "all_market_conservative_value"
     else:
-        chosen = max(available, key=lambda p: float(p.get("prob") or 0))
-        reason = "전체 시장 중 최고 확률 선택"
+        chosen = max(available, key=_selection_key)
+        chosen.update({
+            "robot_score": round(float(chosen.get("robust_probability") or chosen.get("prob") or 0), 6),
+            "robot_kelly": None,
+            "robot_learning_bonus": 0.0,
+            "robot_learning_validated": False,
+            "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
+            "robot_selection_axis": "all_markets_probability_fallback",
+            "robot_price_verified": False,
+            "robot_fallback": True,
+        })
+        reason = "no_verified_price_probability_fallback"
 
+    chosen["recommendation_status"] = "SELECTED"
+    chosen["selection_reason"] = (
+        "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당을 "
+        "보수확률, 손익분기점, 기대수익, Kelly와 시간순 검증 학습으로 함께 비교했습니다."
+        if reason == "all_market_conservative_value" else
+        "검증 가능한 실배당 세트가 없어도 픽을 비우지 않고 정산 가능한 후보 중 "
+        "보수확률이 가장 높은 방향을 선택했습니다."
+    )
     return (chosen, reason) if return_reason else chosen
+
+
+def wdl_centered_choice(picks, confidence, policy=None, return_reason=False):
+    """Choose W/D/L first; cross-market probability is never a direct rank.
+
+    Handicap and totals describe different events, so their raw probability is
+    not comparable with a three-way outcome.  They may replace the W/D/L anchor
+    only when no W/D/L candidate has verified price value, or when a
+    chronological policy has proved a clearly larger robust edge.
+    """
+    available = [p for p in picks if p.get("settlement_supported", True)]
+    if not available:
+        raise ValueError("no settlement-compatible candidate")
+    wdl = [p for p in available if (p.get("market_key") or "1x2") == "1x2"]
+    alternatives = [p for p in available if (p.get("market_key") or "1x2") != "1x2"]
+    wdl_priced = [p for p in wdl if price_eligible(p, confidence)]
+    alt_priced = [p for p in alternatives if price_eligible(p, confidence)]
+    anchor_pool = wdl_priced or wdl
+    if not anchor_pool:
+        pool = alt_priced or alternatives
+        chosen = max(pool, key=_selection_key)
+        reason = "wdl_unavailable"
+        return (chosen, reason) if return_reason else chosen
+    anchor = max(anchor_pool, key=_selection_key)
+    if not wdl_priced and alt_priced:
+        # A W/D/L direction above 50% is already more likely than the other
+        # two regulation-time outcomes combined.  Do not discard that strong
+        # base call merely because a composite handicap/total has a nicer
+        # price.  Other markets become the fallback when the W/D/L direction
+        # itself is also uncertain.
+        best_alternative = max(
+            alt_priced,
+            key=lambda p: (
+                float(p.get("robust_probability") or p.get("prob") or 0),
+                float(p.get("robust_edge") or 0),
+                float(p.get("robust_ev") or 0),
+            ),
+        )
+        anchor_probability = float(
+            anchor.get("robust_probability") or anchor.get("prob") or 0
+        )
+        alternative_probability = float(
+            best_alternative.get("robust_probability")
+            or best_alternative.get("prob") or 0
+        )
+        if anchor_probability >= .50 and anchor_probability >= alternative_probability + .03:
+            reason = "wdl_probability_strong"
+            return (anchor, reason) if return_reason else anchor
+        chosen = max(alt_priced, key=lambda p: (
+            float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
+            float(p.get("robust_probability") or p.get("prob") or 0)))
+        reason = "wdl_price_unqualified"
+        return (chosen, reason) if return_reason else chosen
+
+    policy = policy or {}
+    compatible = bool(policy.get("active") and int(policy.get("validation_fixtures") or 0) >= MIN_VALIDATION)
+    if compatible and wdl_priced and alt_priced:
+        edge_gap = max(.01, min(.08, float(policy.get("minimum_edge_advantage") or .025)))
+        ev_gap = max(0.0, min(.20, float(policy.get("minimum_ev_advantage") or .03)))
+        overrides = [p for p in alt_priced
+                     if float(p.get("robust_edge") or 0) >= float(anchor.get("robust_edge") or 0) + edge_gap
+                     and float(p.get("robust_ev") or 0) >= float(anchor.get("robust_ev") or 0) + ev_gap]
+        if overrides:
+            chosen = max(overrides, key=lambda p: (
+                float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
+                float(p.get("robust_probability") or p.get("prob") or 0)))
+            reason = "validated_cross_market_override"
+            return (chosen, reason) if return_reason else chosen
+    return (anchor, "wdl_anchor") if return_reason else anchor
 
 
 def validate_price_policy(groups):

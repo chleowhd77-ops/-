@@ -57,7 +57,7 @@ STATUS_FILE = APP_DIR / "collector_status.json"
 WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
-PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v1"
+PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
@@ -1183,6 +1183,159 @@ def get_expected_core_players(team_id, league_id, season):
     return core_players[:8]
 
 
+def predict_starting_xi(team_id, league_id=None, season=None, unavailable_names=None):
+    """Predict an XI from recent official lineups and the current squad.
+
+    The result is explicitly a pre-match estimate. Confirmed lineups are never
+    invented: callers replace this list with ``fetch_lineups_api`` once eleven
+    official starters are available. Historical lineup calls are cached for a
+    day and their confirmed responses remain in the long-lived API cache.
+    """
+    if not team_id:
+        return [], {
+            "method": "recent-official-lineup-frequency-v1",
+            "sample_lineups": 0,
+            "confidence": 0.0,
+            "reason": "팀 ID 없음",
+        }
+
+    squad = [
+        player for player in fetch_team_squad_cached(team_id)
+        if isinstance(player, dict) and str(player.get("name") or "").strip()
+    ]
+    unavailable = [
+        _normalize_player_name(name)
+        for name in (unavailable_names or []) if str(name or "").strip()
+    ]
+
+    def excluded(name):
+        target = _normalize_player_name(name)
+        return any(
+            target == missing
+            or (len(target) >= 6 and len(missing) >= 6
+                and (target in missing or missing in target))
+            for missing in unavailable if target and missing
+        )
+
+    recent = fetch_team_recent_fixtures_api(team_id, 24)[-4:]
+    fixture_ids = [
+        int((fixture.get("fixture") or {}).get("id") or 0)
+        for fixture in recent if isinstance(fixture, dict)
+    ]
+    fixture_ids = [fixture_id for fixture_id in fixture_ids if fixture_id > 0]
+    usage_key = "lineup_usage_v1_{}_{}".format(
+        int(team_id), "-".join(map(str, fixture_ids)) or "none"
+    )
+    cached_usage = get_db_cache(usage_key, 24)
+    usage = dict(cached_usage or {}) if isinstance(cached_usage, dict) else {}
+    sample_lineups = int(usage.pop("_sample_lineups", 0) or 0)
+    if not cached_usage:
+        usage = {}
+        sample_lineups = 0
+        # Newer lineups receive more weight. Only confirmed historical XI rows
+        # are used, and the API helper caches them permanently once confirmed.
+        for recency, fixture_id in enumerate(fixture_ids, start=1):
+            lineups = fetch_lineups_api(fixture_id, 24 * 365 * 5)
+            starters = list(lineups.get(str(team_id), []) or [])
+            if not lineups.get("confirmed") or len(starters) < 11:
+                continue
+            sample_lineups += 1
+            weight = float(recency)
+            for name in starters:
+                clean_name = str(name or "").strip()
+                if clean_name:
+                    usage[clean_name] = float(usage.get(clean_name, 0)) + weight
+        set_db_cache(usage_key, {**usage, "_sample_lineups": sample_lineups})
+
+    core = get_expected_core_players(team_id, league_id, season)
+    core_normalized = {_normalize_player_name(name) for name in core}
+    usage_by_normalized = {
+        _normalize_player_name(name): float(score or 0)
+        for name, score in usage.items() if _normalize_player_name(name)
+    }
+    players = []
+    seen = set()
+    for player in squad:
+        name = str(player.get("name") or "").strip()
+        normalized = _normalize_player_name(name)
+        if not normalized or normalized in seen or excluded(name):
+            continue
+        seen.add(normalized)
+        position = str(player.get("position") or "Unknown")
+        appearances = usage_by_normalized.get(normalized, 0.0)
+        core_bonus = 4.0 if normalized in core_normalized else 0.0
+        try:
+            shirt_number = int(player.get("number") or 99)
+        except (TypeError, ValueError):
+            shirt_number = 99
+        players.append({
+            "name": name,
+            "position": position,
+            "score": appearances + core_bonus,
+            "recent_weight": appearances,
+            "shirt_number": shirt_number,
+        })
+
+    # If the current squad endpoint is temporarily empty, retain confirmed
+    # recent starters as a bounded fallback instead of fabricating names.
+    if not players:
+        for name, appearances in usage.items():
+            if str(name).startswith("_") or excluded(name):
+                continue
+            normalized = _normalize_player_name(name)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                players.append({
+                    "name": str(name), "position": "Unknown",
+                    "score": float(appearances or 0),
+                    "recent_weight": float(appearances or 0),
+                    "shirt_number": 99,
+                })
+
+    def rank_key(player):
+        return (
+            float(player.get("score") or 0),
+            float(player.get("recent_weight") or 0),
+            -int(player.get("shirt_number") or 99),
+            str(player.get("name") or ""),
+        )
+
+    remaining = sorted(players, key=rank_key, reverse=True)
+    selected = []
+    # A neutral 4-3-3 positional shell is used only to stop a squad-list
+    # fallback from selecting eleven attackers. It is not a formation claim.
+    quotas = {
+        "Goalkeeper": 1, "Defender": 4,
+        "Midfielder": 3, "Attacker": 3,
+    }
+    for position, quota in quotas.items():
+        for player in [p for p in remaining if p["position"] == position][:quota]:
+            selected.append(player)
+            remaining.remove(player)
+    for player in remaining:
+        if len(selected) >= 11:
+            break
+        selected.append(player)
+
+    names = [player["name"] for player in selected[:11]]
+    method = (
+        "recent-official-lineup-frequency-v1"
+        if sample_lineups else "current-squad-core-positional-fallback-v1"
+    )
+    confidence = min(
+        0.82,
+        (0.42 + sample_lineups * 0.09 + (0.05 if len(names) == 11 else 0.0)),
+    ) if names else 0.0
+    return names, {
+        "method": method,
+        "sample_lineups": sample_lineups,
+        "confidence": round(confidence, 3),
+        "predicted_count": len(names),
+        "excluded_unavailable_count": len(unavailable),
+        "formation_note": "포지션 균형용 4-3-3 틀 · 실제 포메이션 예측 아님",
+    }
+
+
 def find_missing_core_players(core_players, starters):
     normalized_starters = [_normalize_player_name(name) for name in starters]
     missing = []
@@ -2294,7 +2447,9 @@ def _audit_number(value, default=None):
         return default
 
 
-def build_pick_selection_audit(candidates, categories, confidence):
+def build_pick_selection_audit(
+    candidates, categories, confidence, robot_pick=None, lineup_prediction=None,
+):
     """Create one deterministic, machine-readable record of the full decision.
 
     Customer HTML is intentionally excluded.  The learning robot needs the
@@ -2311,7 +2466,8 @@ def build_pick_selection_audit(candidates, categories, confidence):
             compact_categories[category_key] = None
             continue
         raw_pick = str(selected.get("raw_pick") or "")
-        category_membership.setdefault(raw_pick, []).append(category_key)
+        identity = (infer_pick_market(selected), raw_pick)
+        category_membership.setdefault(identity, []).append(category_key)
         compact_categories[category_key] = {
             "raw_pick": raw_pick,
             "market_key": infer_pick_market(selected),
@@ -2330,6 +2486,47 @@ def build_pick_selection_audit(candidates, categories, confidence):
                 selected.get("independent_support_count", 0) or 0
             ),
         }
+
+    compact_robot = None
+    if isinstance(robot_pick, dict) and str(robot_pick.get("raw_pick") or "").strip():
+        robot_raw_pick = str(robot_pick.get("raw_pick") or "")
+        robot_market = infer_pick_market(robot_pick)
+        category_membership.setdefault(
+            (robot_market, robot_raw_pick), []
+        ).append("robot_independent")
+        compact_robot = {
+            "raw_pick": robot_raw_pick,
+            "market_key": robot_market,
+            "probability": _audit_number(robot_pick.get("prob"), 0.0),
+            "odd": _audit_number(robot_pick.get("odd"), 0.0),
+            "fair_probability": _audit_number(robot_pick.get("fair_prob")),
+            "robust_probability": _audit_number(
+                robot_pick.get("robust_probability"), 0.0
+            ),
+            "robust_edge": _audit_number(robot_pick.get("robust_edge"), 0.0),
+            "robust_ev": _audit_number(robot_pick.get("robust_ev"), 0.0),
+            "robot_score": _audit_number(robot_pick.get("robot_score"), 0.0),
+            "robot_kelly": _audit_number(robot_pick.get("robot_kelly")),
+            "robot_learning_bonus": _audit_number(
+                robot_pick.get("robot_learning_bonus"), 0.0
+            ),
+            "robot_learning_validated": bool(
+                robot_pick.get("robot_learning_validated")
+            ),
+            "robot_pick_version": ROBOT_PICK_VERSION,
+            "robot_policy_version": str(
+                robot_pick.get("robot_policy_version")
+                or AUTONOMOUS_ROBOT_POLICY_VERSION
+            ),
+            "robot_selection_axis": str(
+                robot_pick.get("robot_selection_axis") or "all_markets"
+            ),
+            "selection_reason": str(robot_pick.get("selection_reason") or ""),
+            "recommendation_status": "SELECTED",
+            "robot_fallback": bool(robot_pick.get("robot_fallback")),
+            "is_true_underdog": bool(robot_pick.get("is_true_underdog")),
+        }
+    compact_categories["robot_independent"] = compact_robot
 
     selected_identity = None
     selected_for_rank = categories.get("high_probability")
@@ -2372,7 +2569,7 @@ def build_pick_selection_audit(candidates, categories, confidence):
     for item in candidates:
         raw_pick = str(item.get("raw_pick") or "")
         market_key = infer_pick_market(item)
-        selected_as = list(category_membership.get(raw_pick, []))
+        selected_as = list(category_membership.get((market_key, raw_pick), []))
         rank = rank_by_identity.get((market_key, raw_pick))
         candidate_rows.append({
             "market_key": market_key,
@@ -2479,6 +2676,13 @@ def build_pick_selection_audit(candidates, categories, confidence):
             "mode": "controlled_adviser", "influence_cap": 0.18,
             "history_rewrite": False, "self_modifying": False,
         }),
+        "robot_pick_version": ROBOT_PICK_VERSION,
+        "robot_pick": compact_robot,
+        "robot_selector": AUTONOMOUS_ROBOT_POLICY_VERSION,
+        "robot_uses_prekickoff_inputs_only": True,
+        "robot_history_rewrite": False,
+        "robot_self_modifying_code": False,
+        "lineup_prediction": dict(lineup_prediction or {}),
     }
     return candidate_rows, compact_categories, decision
 
@@ -2588,7 +2792,7 @@ def _ensure_prediction_analysis_tables(conn):
 def save_prediction_analysis(
     match_id, pick, confidence, evidence, candidates, report,
     categories=None, analysis_stage="regular", odds_source="",
-    analysis_version=None,
+    analysis_version=None, robot_pick=None, lineup_prediction=None,
 ):
     """Freeze every market candidate and the exact pre-kickoff decision path."""
     if not pick or str(analysis_stage or "").startswith("locked"):
@@ -2613,7 +2817,9 @@ def save_prediction_analysis(
         target_analysis_version = str(analysis_version or ANALYSIS_VERSION)
         interval = pick.get("probability_interval") or {}
         candidate_rows, compact_categories, decision = build_pick_selection_audit(
-            candidates, categories or {"high_probability": pick}, confidence
+            candidates, categories or {"high_probability": pick}, confidence,
+            robot_pick=robot_pick,
+            lineup_prediction=lineup_prediction,
         )
         evidence_json = json.dumps(evidence or [], ensure_ascii=False, sort_keys=True)
         candidates_json = json.dumps(
@@ -2921,6 +3127,74 @@ def select_pick_categories(picks, confidence):
     return categories, [categories["high_probability"]]
 
 
+def select_autonomous_robot_pick(picks, confidence):
+    """Return the separate robot answer without changing the official pick."""
+    available = valid_analysis_candidates(picks)
+    if not available:
+        return None
+    selected, reason = autonomous_robot_choice(
+        available, confidence, return_reason=True
+    )
+    selected = dict(selected)
+    selected.update({
+        "category_key": "robot_independent",
+        "category_label": "로봇 독립픽",
+        "robot_pick_version": ROBOT_PICK_VERSION,
+        "robot_decision_reason": reason,
+        "official_final_pick": False,
+        "pre_match_only": True,
+        "history_rewrite": False,
+        "self_modifying": False,
+    })
+    return selected
+
+
+def robot_pick_report(robot_pick, home_team=""):
+    if not isinstance(robot_pick, dict):
+        return ""
+    probability = float(robot_pick.get("prob") or 0)
+    odd = float(robot_pick.get("odd") or 0)
+    fair = robot_pick.get("fair_prob")
+    edge_text = "시장 공정확률 미확인"
+    if fair is not None:
+        edge_text = (
+            f"시장 공정확률 {float(fair) * 100:.1f}% · "
+            f"보수적 가치차 {float(robot_pick.get('robust_edge') or 0) * 100:+.1f}%p"
+        )
+    value_text = f"실제 배당 {odd:.2f}배" if odd > 1 else "실제 배당 미수신"
+    learning_text = (
+        "시간순 검증 학습 반영"
+        if robot_pick.get("robot_learning_validated")
+        else "검증된 학습 보정만 허용 · 추가 보정 없음"
+    )
+    return (
+        "[로봇 독립픽] "
+        f"{_human_pick_label(robot_pick.get('raw_pick'), home_team)} · "
+        f"모델 {probability * 100:.1f}% · {value_text} · {edge_text}. "
+        "공식 최종픽과 별도로 승무패 우선 제한 없이 8개 실배당 후보를 비교한 답입니다. "
+        f"{learning_text}. 경기 시작 뒤 자료는 사용하지 않습니다."
+    )
+
+
+def lineup_prediction_report(
+    home_team, away_team, home_prediction, away_prediction,
+    home_official=None, away_official=None,
+):
+    home_official = list(home_official or [])
+    away_official = list(away_official or [])
+    confirmed = len(home_official) >= 11 and len(away_official) >= 11
+    home_active = home_official if confirmed else list(home_prediction or [])
+    away_active = away_official if confirmed else list(away_prediction or [])
+    status = "공식 선발 발표 반영·재분석" if confirmed else "최근 공식 선발 빈도 기반 예상"
+    return (
+        f"[예상 선발] {status}. "
+        f"{home_team}: {', '.join(map(str, home_active)) or '확보 자료 부족'}. "
+        f"{away_team}: {', '.join(map(str, away_active)) or '확보 자료 부족'}. "
+        "예상 명단은 확정 발표가 아니며, 공식 11명이 수신되면 예상 명단 대신 공식 명단으로 교체해 "
+        "킥오프 전에만 다시 계산합니다."
+    )
+
+
 _PLACEHOLDER_TEAM_NAMES = {
     "", "-", "미정", "미확정", "tbd", "unknown", "홈팀", "원정팀",
     "home", "away", "team1", "team2",
@@ -2974,48 +3248,114 @@ def _prefer_canonical_prediction_rows(rows):
 
 
 def _build_grading_snapshot():
-    """Publish lightweight grading rows so the web never downloads the full DB."""
+    """Publish only the new robot-era public scorecard.
+
+    Legacy rows remain untouched in SQLite for audit and learning. They are not
+    copied into the customer JSON after the explicitly requested 0-0 reset.
+    """
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.row_factory = sqlite3.Row
+        _ensure_prediction_analysis_tables(conn)
         columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)")]
         if "ev_pick" not in columns:
-            return {"finished": [], "pending": [], "generated_at": _utc_iso()}
+            return {
+                "schema_version": "grading-results.v1",
+                "public_history_mode": "current-robot-version-only",
+                "public_score_version": PUBLIC_SCORE_VERSION,
+                "finished": [], "pending": [], "generated_at": _utc_iso(),
+            }
         all_rows = [
             dict(row) for row in conn.execute(
                 "SELECT * FROM predictions WHERE actual_result IN ('FINISHED', 'PENDING')"
             ).fetchall()
         ]
         all_rows = _prefer_canonical_prediction_rows(all_rows)
-        finished = [row for row in all_rows if row.get("actual_result") == "FINISHED" and str(row.get("prob_pick") or "").strip()]
-        pending = [
-            row for row in all_rows
-            if row.get("actual_result") == "PENDING" and int(row.get("is_toto14") or 0) == 0
+
+        robot_by_match = {}
+        for analysis_row in conn.execute(
+            "SELECT match_id, analysis_version, decision_json "
+            "FROM prediction_analysis"
+        ).fetchall():
+            try:
+                decision = json.loads(analysis_row["decision_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            robot = decision.get("robot_pick") or {}
+            if (
+                not isinstance(robot, dict)
+                or str(decision.get("robot_pick_version") or robot.get("robot_pick_version") or "")
+                    != ROBOT_PICK_VERSION
+                or not str(robot.get("raw_pick") or "").strip()
+            ):
+                continue
+            robot_by_match[str(analysis_row["match_id"])] = {
+                **robot,
+                "analysis_version": str(analysis_row["analysis_version"] or ""),
+            }
+
+        robot_grade_by_match = {}
+        for result in conn.execute(
+            """
+            SELECT id, match_id, analysis_version, market_key, raw_pick,
+                   is_correct, actual_score, selected_as
+            FROM prediction_candidate_results
+            ORDER BY id DESC
+            """
+        ).fetchall():
+            match_id = str(result["match_id"])
+            if match_id in robot_grade_by_match or match_id not in robot_by_match:
+                continue
+            try:
+                selected_as = json.loads(result["selected_as"] or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                selected_as = []
+            robot = robot_by_match[match_id]
+            if (
+                "robot_independent" not in selected_as
+                or str(result["market_key"] or "") != str(robot.get("market_key") or "")
+                or str(result["raw_pick"] or "") != str(robot.get("raw_pick") or "")
+            ):
+                continue
+            robot_grade_by_match[match_id] = {
+                "is_correct_robot": int(result["is_correct"] or 0),
+                "robot_actual_score": str(result["actual_score"] or ""),
+            }
+
+        public_rows = []
+        for source in all_rows:
+            match_id = str(source.get("match_id") or "")
+            robot = robot_by_match.get(match_id)
+            if not robot or int(source.get("is_toto14") or 0) != 0:
+                continue
+            row = dict(source)
+            row.update({
+                "analysis_version": robot.get("analysis_version") or row.get("analysis_version") or "",
+                "robot_pick": robot.get("raw_pick") or "",
+                "robot_pick_market": robot.get("market_key") or "",
+                "robot_pick_prob": float(robot.get("probability") or 0) * 100.0,
+                "robot_pick_odd": float(robot.get("odd") or 0),
+                "robot_pick_version": ROBOT_PICK_VERSION,
+                "robot_pick_reason": robot.get("selection_reason") or "",
+            })
+            row.update(robot_grade_by_match.get(match_id) or {})
+            public_rows.append(row)
+
+        finished = [
+            row for row in public_rows
+            if row.get("actual_result") == "FINISHED"
+            and row.get("is_correct_robot") in (0, 1)
+            and str(row.get("prob_pick") or "").strip()
         ]
-        snapshot_versions = {
-            str(row["match_id"]): str(row["analysis_version"] or "")
-            for row in conn.execute(
-                """
-                SELECT ps.match_id, ps.analysis_version
-                FROM prediction_snapshots ps
-                INNER JOIN (
-                    SELECT match_id, MAX(id) AS latest_id
-                    FROM prediction_snapshots
-                    GROUP BY match_id
-                ) latest ON latest.latest_id = ps.id
-                """
-            ).fetchall()
-        }
+        pending = [
+            row for row in public_rows
+            if row.get("actual_result") == "PENDING"
+        ]
         queue_exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='scoring_queue'").fetchone()
         reasons = {r[0]:r[1] for r in conn.execute("SELECT match_id,reason FROM scoring_queue")} if queue_exists else {}
         for row in pending:
             row["grading_wait_reason"] = reasons.get(str(row.get("match_id")),"경기 종료/결과 확인 대기")
-        for row in finished + pending:
-            stored_version = str(row.get("analysis_version") or "").strip()
-            row["analysis_version"] = stored_version or snapshot_versions.get(
-                str(row.get("match_id")), ""
-            )
 
         def sort_timestamp(row):
             parsed = _parse_kst_match_time(row.get("match_time"))
@@ -3024,8 +3364,13 @@ def _build_grading_snapshot():
         finished.sort(key=sort_timestamp, reverse=True)
         pending.sort(key=sort_timestamp, reverse=True)
         return {
+            "schema_version": "grading-results.v1",
             "analysis_version": ANALYSIS_VERSION,
             "system_version": SYSTEM_VERSION,
+            "public_history_mode": "current-robot-version-only",
+            "public_score_version": PUBLIC_SCORE_VERSION,
+            "public_score_label": "새 로봇 독립픽 공개 성적",
+            "legacy_rows_hidden": max(0, len(all_rows) - len(public_rows)),
             "finished": finished,
             "pending": pending,
             "generated_at": _utc_iso(),
@@ -4276,13 +4621,14 @@ def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, seaso
     default = {
         str(team_id): {
             "count": 0, "ace_missing": False, "ace_names": [],
-            "missing_goals": 0, "available": False, "source": "none",
+            "all_names": [], "missing_goals": 0,
+            "available": False, "source": "none",
         }
         for team_id in team_ids if team_id > 0
     }
     if fixture_id <= 0 or len(default) != 2:
         return default
-    cache_key = f"world_injuries_v1_{fixture_id}"
+    cache_key = f"world_injuries_v2_all_names_{fixture_id}"
     cached = get_db_cache(cache_key, ttl_h)
     if isinstance(cached, dict):
         return cached
@@ -4329,6 +4675,7 @@ def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, seaso
                 "count": len(names),
                 "ace_missing": bool(ace_names),
                 "ace_names": ace_names,
+                "all_names": names,
                 "missing_goals": missing_goals,
                 "available": True,
                 "source": "target_fixture",
@@ -4656,6 +5003,12 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
         )
         if str((categories.get(key) or {}).get("raw_pick") or "") == raw_pick
     ]
+    robot_pick = dict(proto_item.get("robot_pick") or {})
+    if robot_pick:
+        robot_pick["display"] = _human_pick_label(
+            robot_pick.get("raw_pick"),
+            (proto_item.get("match") or {}).get("home", ""),
+        )
     try:
         quality_score = int(round(float(proto_item.get("data_coverage") or 0) * 100))
     except (TypeError, ValueError):
@@ -4672,6 +5025,7 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
         "lineup_confirmed": bool(proto_item.get("lineup_confirmed")),
         "categories": categories,
         "selected": selected,
+        "robot_pick": robot_pick,
         "report": str(
             proto_item.get("detailed_report")
             or proto_item.get("analysis_detail")
@@ -4731,6 +5085,14 @@ def _save_world_learning_record(match, analysis):
             str(summary.get("raw_pick") or ""),
         ))
         categories[key] = ({**source, **summary} if source else None)
+    robot_summary = analysis.get("robot_pick") or (
+        (analysis.get("categories") or {}).get("robot_independent") or {}
+    )
+    robot_source = by_pick.get((
+        str(robot_summary.get("market_key") or ""),
+        str(robot_summary.get("raw_pick") or ""),
+    ))
+    robot_pick = ({**robot_source, **robot_summary} if robot_source else None)
     selected = categories.get("high_probability")
     if not selected and (analysis.get("selected") or {}).get("recommendation_status") == "WITHHELD":
         selected = dict(analysis["selected"], prob=0.0, raw_pick="")
@@ -4771,6 +5133,8 @@ def _save_world_learning_record(match, analysis):
         analysis_stage=str(analysis.get("analysis_stage") or "regular"),
         odds_source="world_bookmaker_median",
         analysis_version=str(analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION),
+        robot_pick=robot_pick,
+        lineup_prediction=(analysis.get("decision") or {}).get("lineup_prediction"),
     )
 
 
@@ -4828,8 +5192,16 @@ def _analyze_world_match(item, now, market_performance):
     # 선발 예측의 첫 단계: 공식 명단을 지어내지 않고, 실제 스쿼드/출전
     # 기록에서 확인된 핵심 후보만 동결 저장한다. 공식 선발이 발표되면 같은
     # 스냅샷에서 일치/누락을 비교해 다음 분석의 학습 자료로 사용한다.
-    h_core = get_expected_core_players(home_id, league_id, season) if diff_hours <= 3.0 else []
-    a_core = get_expected_core_players(away_id, league_id, season) if diff_hours <= 3.0 else []
+    h_core = get_expected_core_players(home_id, league_id, season) if diff_hours <= 24.0 else []
+    a_core = get_expected_core_players(away_id, league_id, season) if diff_hours <= 24.0 else []
+    h_predicted_xi, h_lineup_prediction = predict_starting_xi(
+        home_id, league_id, season,
+        h_inj.get("all_names") or h_inj.get("ace_names") or [],
+    )
+    a_predicted_xi, a_lineup_prediction = predict_starting_xi(
+        away_id, league_id, season,
+        a_inj.get("all_names") or a_inj.get("ace_names") or [],
+    )
     lineup_data = {"confirmed": False}
     h_missing = []
     a_missing = []
@@ -5020,6 +5392,7 @@ def _analyze_world_match(item, now, market_performance):
     })
     annotate_pick_metrics(candidates, confidence)
     categories, _ = select_pick_categories(candidates, confidence)
+    robot_pick = select_autonomous_robot_pick(candidates, confidence)
     # World VIP is a future paid-grade candidate.  A strong price alone cannot
     # bypass the separately agreed 90/100 input-quality gate.
     if quality_score < 90:
@@ -5062,8 +5435,28 @@ def _analyze_world_match(item, now, market_performance):
         "name": "데이터 품질", "weight": 0.0,
         "value": f"{quality_score}/100 ({quality_grade})",
     })
+    lineup_learning = {
+        "mode": "predicted-xi-then-official-reassessment-v1",
+        "not_full_starting_xi": len(h_predicted_xi) < 11 or len(a_predicted_xi) < 11,
+        "home_predicted_core": list(h_core),
+        "away_predicted_core": list(a_core),
+        "home_predicted_starting_xi": list(h_predicted_xi),
+        "away_predicted_starting_xi": list(a_predicted_xi),
+        "home_official_starters": list(lineup_data.get(str(home_id), []) or []),
+        "away_official_starters": list(lineup_data.get(str(away_id), []) or []),
+        "home_active_starting_xi": list(lineup_data.get(str(home_id), []) or h_predicted_xi),
+        "away_active_starting_xi": list(lineup_data.get(str(away_id), []) or a_predicted_xi),
+        "home_prediction_audit": h_lineup_prediction,
+        "away_prediction_audit": a_lineup_prediction,
+        "official_replaced_prediction": lineup_confirmed,
+        "home_confirmed_core": [name for name in h_core if name not in h_missing]
+        if lineup_confirmed else [],
+        "away_confirmed_core": [name for name in a_core if name not in a_missing]
+        if lineup_confirmed else [],
+    }
     candidate_rows, compact_categories, decision = build_pick_selection_audit(
-        candidates, categories, confidence
+        candidates, categories, confidence, robot_pick=robot_pick,
+        lineup_prediction=lineup_learning,
     )
     report = build_detailed_report(
         selected, evidence, confidence, candidates, categories,
@@ -5072,6 +5465,9 @@ def _analyze_world_match(item, now, market_performance):
             "weather": weather_condition,
         },
     )
+    robot_report = robot_pick_report(robot_pick, home)
+    if robot_report:
+        report += "\n\n" + robot_report
     analyzed_at = datetime.now(KST).isoformat()
     frozen_at = analyzed_at if analysis_stage == "T-30-final" else None
     selected_summary = dict(compact_categories.get("high_probability") or {})
@@ -5097,18 +5493,7 @@ def _analyze_world_match(item, now, market_performance):
             "confirmed": lineup_confirmed,
             "home_missing_core": h_missing, "away_missing_core": a_missing,
         },
-        "lineup_learning": {
-            "mode": "expected_core_foundation",
-            "not_full_starting_xi": True,
-            "home_predicted_core": list(h_core),
-            "away_predicted_core": list(a_core),
-            "home_official_starters": list(lineup_data.get(str(home_id), []) or []),
-            "away_official_starters": list(lineup_data.get(str(away_id), []) or []),
-            "home_confirmed_core": [name for name in h_core if name not in h_missing]
-            if lineup_confirmed else [],
-            "away_confirmed_core": [name for name in a_core if name not in a_missing]
-            if lineup_confirmed else [],
-        },
+        "lineup_learning": lineup_learning,
         "rest_days": {"home": h_rest, "away": a_rest},
         "next_fixture": {"home": h_next, "away": a_next},
         "manager": {"home": h_manager, "away": a_manager},
@@ -5144,6 +5529,7 @@ def _analyze_world_match(item, now, market_performance):
         "candidates": candidate_rows,
         "categories": compact_categories,
         "selected": selected_summary,
+        "robot_pick": dict(compact_categories.get("robot_independent") or {}),
         "alternative": {},
         "learning_robot": dict(decision.get("learning_robot") or {}),
         "decision": decision,
@@ -5818,6 +6204,22 @@ def build_dashboard_data():
         h_lineup_penalty, a_lineup_penalty = 0.0, 0.0
         h_lineup_msg, a_lineup_msg = "", ""
         lineup_confirmed = False
+        lineup_data = {"confirmed": False}
+        h_starters, a_starters = [], []
+        h_core = get_expected_core_players(
+            home_info.get("id"), h_stand.get("league_id"), h_stand.get("season")
+        )
+        a_core = get_expected_core_players(
+            away_info.get("id"), a_stand.get("league_id"), a_stand.get("season")
+        )
+        h_predicted_xi, h_lineup_prediction = predict_starting_xi(
+            home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"),
+            h_inj_data.get("all_names") or h_inj_data.get("ace_names") or [],
+        )
+        a_predicted_xi, a_lineup_prediction = predict_starting_xi(
+            away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"),
+            a_inj_data.get("all_names") or a_inj_data.get("ace_names") or [],
+        )
         if diff_hours <= 1.5:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
             h_starters = lineup_data.get(str(home_info.get("id")), [])
@@ -5825,8 +6227,6 @@ def build_dashboard_data():
             lineup_confirmed = bool(lineup_data.get("confirmed"))
 
             if lineup_confirmed:
-                h_core = get_expected_core_players(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-                a_core = get_expected_core_players(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
                 h_missing = find_missing_core_players(sorted(set(h_core + h_inj_data.get("ace_names", []))), h_starters)
                 a_missing = find_missing_core_players(sorted(set(a_core + a_inj_data.get("ace_names", []))), a_starters)
 
@@ -6065,6 +6465,23 @@ def build_dashboard_data():
         pick_categories, ev_sorted_picks = select_pick_categories(
             valid_all_picks, analysis_confidence
         )
+        robot_pick = select_autonomous_robot_pick(
+            valid_all_picks, analysis_confidence
+        )
+        lineup_learning = {
+            "mode": "predicted-xi-then-official-reassessment-v1",
+            "home_predicted_core": list(h_core),
+            "away_predicted_core": list(a_core),
+            "home_predicted_starting_xi": list(h_predicted_xi),
+            "away_predicted_starting_xi": list(a_predicted_xi),
+            "home_official_starters": list(h_starters),
+            "away_official_starters": list(a_starters),
+            "home_active_starting_xi": list(h_starters or h_predicted_xi),
+            "away_active_starting_xi": list(a_starters or a_predicted_xi),
+            "home_prediction_audit": h_lineup_prediction,
+            "away_prediction_audit": a_lineup_prediction,
+            "official_replaced_prediction": bool(lineup_confirmed),
+        }
         highest_prob_pick = pick_categories["high_probability"]
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
@@ -6086,6 +6503,13 @@ def build_dashboard_data():
                 "weather": weather_condition,
             },
         )
+        detailed_report += "\n\n" + lineup_prediction_report(
+            home_team, away_team, h_predicted_xi, a_predicted_xi,
+            h_starters, a_starters,
+        )
+        independent_robot_report = robot_pick_report(robot_pick, home_team)
+        if independent_robot_report:
+            detailed_report += "\n\n" + independent_robot_report
 
         badge_templates = {
             "high_probability": "<span style='background:#10B981;color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;margin-right:4px;'>🎯 최종 추천픽</span>",
@@ -6148,6 +6572,8 @@ def build_dashboard_data():
             categories=pick_categories,
             analysis_stage=analysis_stage,
             odds_source=analysis_odds_source,
+            robot_pick=robot_pick,
+            lineup_prediction=lineup_learning,
         )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
@@ -6225,6 +6651,7 @@ def build_dashboard_data():
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks,
             "pick_categories": pick_categories,
+            "robot_pick": robot_pick,
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
@@ -6233,6 +6660,7 @@ def build_dashboard_data():
             "betman_odds_pending": bool(m.get("betman_odds_pending")),
             "data_coverage": data_coverage,
             "lineup_confirmed": bool(lineup_confirmed),
+            "lineup_learning": lineup_learning,
             "probability_error_margin": highest_prob_pick.get("error_margin"),
             "probability_interval": highest_prob_pick.get("probability_interval"),
             "model_probability": highest_prob_pick.get("prob"),
@@ -7259,6 +7687,9 @@ def _grade_prediction_candidates(
     selected = [
         item for item in result_rows if "high_probability" in item["selected_as"]
     ]
+    robot_selected = [
+        item for item in result_rows if "robot_independent" in item["selected_as"]
+    ]
     unselected_hits = [
         item for item in hits if "high_probability" not in item["selected_as"]
     ]
@@ -7278,6 +7709,10 @@ def _grade_prediction_candidates(
         "hit_candidate_count": len(hits),
         "selected_pick_hit": bool(selected and selected[0]["is_correct"] == 1),
         "selected_pick": selected[0] if selected else None,
+        "robot_pick_hit": bool(
+            robot_selected and robot_selected[0]["is_correct"] == 1
+        ),
+        "robot_pick": robot_selected[0] if robot_selected else None,
         "market_answers": hits,
         "highest_probability_unselected_answer": (
             unselected_hits[0] if unselected_hits else None
@@ -7296,8 +7731,14 @@ def _candidate_review_text(review):
     )
     movement = str(review.get("odds_movement_evidence") or "").strip()
     movement_note = f" 당시 확인된 해외배당 흐름: {movement}." if movement else ""
+    robot_pick = review.get("robot_pick") or {}
+    robot_note = (
+        f" 로봇 독립픽 {robot_pick.get('market_label')} · {robot_pick.get('raw_pick')}은 "
+        f"{'적중' if review.get('robot_pick_hit') else '미적중'}했습니다."
+        if robot_pick else ""
+    )
     if review.get("selected_pick_hit"):
-        return base + " 최종 확률픽이 실제 결과 조건을 충족했습니다." + movement_note
+        return base + " 최종 확률픽이 실제 결과 조건을 충족했습니다." + robot_note + movement_note
     if answer:
         return (
             base
@@ -7305,11 +7746,13 @@ def _candidate_review_text(review):
             f"최상위 방향은 {answer.get('market_label')} · "
             f"{answer.get('raw_pick')}({float(answer.get('model_probability') or 0) * 100:.1f}%)였습니다. "
             "이는 경기 후 확인한 복기 자료이며 과거 예측을 소급 변경하지 않습니다."
+            + robot_note
             + movement_note
         )
     return (
         base
         + " 미선택 후보까지 포함해 원인을 다음 도전자 모델의 학습 자료로 보존했습니다."
+        + robot_note
         + movement_note
     )
 
