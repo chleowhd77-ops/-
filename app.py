@@ -13,7 +13,8 @@ from pathlib import Path
 from html import escape
 from api_engine import (
     ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
-    PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION,
+    PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION, extract_robot_pick,
+    toto14_display_meta,
 )
 
 from grading_postmortem import (
@@ -3049,7 +3050,7 @@ def generate_pred_boxes(
         f"{grade_html}<span class='pred-prob'>{prob_pct}%</span></div>"
     )
     robot_html = ""
-    robot = analysis_item.get("robot_pick") if isinstance(analysis_item, dict) else None
+    robot = extract_robot_pick(analysis_item)
     if isinstance(robot, dict) and str(robot.get("raw_pick") or "").strip():
         robot_raw = escape(_human_pick_label(robot.get("raw_pick"), home_team))
         robot_probability = float(
@@ -3167,6 +3168,16 @@ with main_tab6:
         if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
         and _proto_is_recent_or_active(item)
     ]
+    world_pick_ready = {
+        id(item): bool(
+            (_world_analysis_for_display(item, proto_by_fixture)[0].get("selected") or {}).get("raw_pick")
+        )
+        for item in eligible_world_matches
+    }
+    missed_prekickoff_world = [
+        item for item in eligible_world_matches
+        if not world_pick_ready[id(item)] and not _recommendation_is_upcoming(item)
+    ]
     # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
     world_actual_analyzed = sum(
         1 for item in eligible_world_matches
@@ -3189,11 +3200,14 @@ with main_tab6:
         if str(item.get("visibility_status") or "").upper() == "PUBLIC"
     )
     world_matches = (
-        eligible_world_matches
+        [
+            item for item in eligible_world_matches
+            if item not in missed_prekickoff_world
+        ]
         if has_full_access
         else [
             item for item in eligible_world_matches
-            if (_world_analysis_for_display(item, proto_by_fixture)[0].get("selected") or {}).get("raw_pick")
+            if world_pick_ready[id(item)]
         ]
     )
     if is_world_admin:
@@ -3216,6 +3230,13 @@ with main_tab6:
         if rejected_text:
             with st.expander("세계경기 제외 사유 확인"):
                 st.write(rejected_text)
+        if missed_prekickoff_world:
+            st.warning(
+                f"경기 전 동결픽이 없었던 {len(missed_prekickoff_world)}경기는 "
+                "시작 후 결과를 보고 픽을 만드는 일을 막기 위해 추천 카드에서 제외했습니다. "
+                "현재 목록에서도 아직 시작하지 않은 경기부터 정밀분석 전 시장 선픽과 "
+                "로봇 독립픽을 즉시 함께 저장합니다."
+            )
     if not world_matches:
         shadow_count = int(world_source_meta.get("eligible_shadow_count") or 0)
         readiness_text = (
@@ -3252,23 +3273,48 @@ with main_tab2:
     toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
-        total_combinations = dashboard_data.get("toto14_meta", {}).get("total_combinations", 1)
-        single_pick_count = dashboard_data.get("toto14_meta", {}).get("single_pick_count", 0)
-        double_pick_count = dashboard_data.get("toto14_meta", {}).get("double_pick_count", 0)
-        total_price = dashboard_data.get("toto14_meta", {}).get("budget", total_combinations * 1000)
-        max_budget = dashboard_data.get("toto14_meta", {}).get("max_budget", 8000)
-        cap_exceeded_by_frozen = dashboard_data.get("toto14_meta", {}).get("cost_cap_exceeded_by_frozen", False)
-        ticket_complete = bool(dashboard_data.get("toto14_meta", {}).get("ticket_complete", False))
-        unavailable_pick_count = int(dashboard_data.get("toto14_meta", {}).get("unavailable_pick_count", 0) or 0)
+        # The cards are the source of truth.  A partially published/stale meta
+        # object must never turn 10 singles + 3 doubles into 0 won.
+        toto14_meta = toto14_display_meta(
+            toto14_list, dashboard_data.get("toto14_meta", {})
+        )
+        total_combinations = toto14_meta["total_combinations"]
+        single_pick_count = toto14_meta["single_pick_count"]
+        double_pick_count = toto14_meta["double_pick_count"]
+        total_price = toto14_meta["budget"]
+        max_budget = toto14_meta["max_budget"]
+        cap_exceeded_by_frozen = toto14_meta["cost_cap_exceeded_by_frozen"]
+        ticket_complete = toto14_meta["ticket_complete"]
+        unavailable_pick_count = toto14_meta["unavailable_pick_count"]
         combination_label = "최종" if ticket_complete else "현재 계산"
         
         summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 · 소액 상한 {max_budget:,}원</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
         if not ticket_complete:
-            st.warning(
+            warning_text = (
                 f"아직 픽이 확정되지 않은 경기가 {unavailable_pick_count}경기 있습니다. "
                 "위 금액은 현재 마킹된 경기 기준이며, 14경기 완성 전에는 최종 구매표가 아닙니다."
             )
+            if active_role == ROLE_ADMIN:
+                unresolved = []
+                for unresolved_item in toto14_list:
+                    if unresolved_item.get("picks"):
+                        continue
+                    unresolved_match = unresolved_item.get("match") or {}
+                    matchup = (
+                        f"{unresolved_match.get('home') or '홈팀 미확인'} vs "
+                        f"{unresolved_match.get('away') or '원정팀 미확인'}"
+                    )
+                    reason = str(
+                        unresolved_item.get("data_warning")
+                        or unresolved_item.get("unavailable_reason")
+                        or unresolved_item.get("best_pick_display")
+                        or "팀·경기 신원 확인 대기"
+                    )
+                    unresolved.append(f"{matchup} — {reason}")
+                if unresolved:
+                    warning_text += "\n관리자 확인: " + " / ".join(unresolved[:3])
+            st.warning(warning_text)
         if cap_exceeded_by_frozen:
             st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
 
@@ -3335,7 +3381,8 @@ with main_tab3:
     """, unsafe_allow_html=True)
     honey_combo = dashboard_data.get("honey_two_pick") or {}
     combo_rows = honey_combo.get("picks") or []
-    if len(combo_rows) == 2:
+    can_view_honey_combo = active_role in {ROLE_SUPPORTER, ROLE_ADMIN}
+    if len(combo_rows) == 2 and can_view_honey_combo:
         combo_lines = "".join(
             "<div style='padding:5px 0;color:#E2E8F0;'>"
             f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))} · "
@@ -3349,6 +3396,15 @@ with main_tab3:
             + combo_lines
             + f"<div style='margin-top:7px;color:#94A3B8;font-size:12px;'>두 경기 모두 개별 최종픽의 꿀픽 기준 통과 · 조합 배당 {float(honey_combo.get('combined_odd') or 0):.2f}배</div>"
             "</div>", unsafe_allow_html=True,
+        )
+    elif len(combo_rows) == 2:
+        st.markdown(
+            "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;"
+            "margin-bottom:18px;text-align:center;'>"
+            "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🔒 후원회원 꿀 2픽</div>"
+            "<div style='color:#94A3B8;font-size:13px;'>기본 추천 3픽 외 추가 조합은 "
+            "후원회원에게만 공개됩니다.</div></div>",
+            unsafe_allow_html=True,
         )
     top3_list = [
         item for item in dashboard_data.get("top3", [])

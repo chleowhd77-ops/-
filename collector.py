@@ -3714,15 +3714,31 @@ def _world_market_preview_analysis(item, now=None):
     selected = dict(max(candidates_by_market[selected_market], key=lambda row: row["probability"]))
     selected["display"] = _human_pick_label(selected["raw_pick"], home)
     selected["badges"] = []
-    compact_selected = {
-        key: selected.get(key)
-        for key in (
-            "market_key", "label", "raw_pick", "selection_side", "handicap_base",
-            "prob", "probability", "fair_prob", "fair_probability", "odd",
-            "probability_interval", "selection_warning", "data_confidence",
-        )
-    }
-    compact_selected.update(display=selected["display"], badges=[])
+    preview_confidence = float(selected["data_confidence"])
+    robot_pick = select_autonomous_robot_pick(candidate_rows, preview_confidence)
+    audited_candidates, compact_categories, decision = build_pick_selection_audit(
+        candidate_rows,
+        {
+            "high_probability": selected,
+            "honey": None,
+            "vip_underdog": None,
+        },
+        preview_confidence,
+        robot_pick=robot_pick,
+    )
+    compact_selected = dict(compact_categories.get("high_probability") or {})
+    compact_selected.update(
+        display=selected["display"],
+        badges=[],
+        probability_interval=dict(selected.get("probability_interval") or {}),
+        data_confidence=preview_confidence,
+    )
+    decision.update({
+        "decision_axis": "wdl_first",
+        "selected_market": selected_market,
+        "data_confidence": preview_confidence,
+        "market_preview": True,
+    })
     analyzed_at = (now or datetime.now(KST)).astimezone(KST).isoformat()
     quality_score = min(58, 38 + bookmaker_count * 3)
     market_name = {"1x2": "승무패", "handicap": "3방향 핸디캡", "totals": "언더오버"}[selected_market]
@@ -3736,6 +3752,9 @@ def _world_market_preview_analysis(item, now=None):
         "정밀분석이 완료되면 같은 경기의 최종픽과 확률로 교체되며, 승무패 시장이 있으면 "
         "언더오버의 2지선다 숫자와 직접 비교하지 않고 승무패를 먼저 선택합니다."
     )
+    robot_report = robot_pick_report(robot_pick, home)
+    if robot_report:
+        report += "\n\n" + robot_report
     return {
         "analysis_version": WORLD_MARKET_PREVIEW_VERSION,
         "system_version": SYSTEM_VERSION,
@@ -3752,34 +3771,35 @@ def _world_market_preview_analysis(item, now=None):
             "title": "해외시장 선픽",
             "value": f"{bookmaker_count}개 업체 중앙배당 · {market_name} 마진 제거",
         }],
-        "candidates": candidate_rows,
-        "categories": {
-            "high_probability": compact_selected,
-            "honey": None,
-            "vip_underdog": None,
-        },
+        "candidates": audited_candidates,
+        "categories": compact_categories,
         "selected": compact_selected,
+        "robot_pick": dict(compact_categories.get("robot_independent") or {}),
         "alternative": {},
         "learning_robot": {"applied": False, "reason": "정밀분석 대기"},
-        "decision": {
-            "decision_axis": "wdl_first",
-            "selected_market": selected_market,
-            "data_confidence": selected["data_confidence"],
-            "market_preview": True,
-        },
+        "decision": decision,
         "report": report,
     }
 
 
 def _ensure_world_market_previews(payload, now=None):
     """Attach a preview only to valid empty cards; never overwrite an analysis."""
+    current = (now or datetime.now(KST)).astimezone(KST)
     changed = []
     for item in (payload or {}).get("matches", []) if isinstance(payload, dict) else []:
         analysis = item.get("analysis") if isinstance(item, dict) else None
         selected = (analysis or {}).get("selected") if isinstance(analysis, dict) else None
         if isinstance(selected, dict) and str(selected.get("raw_pick") or "").strip():
             continue
-        preview = _world_market_preview_analysis(item, now=now)
+        match = item.get("match") or {}
+        kickoff = _parse_kst_match_time(
+            match.get("match_time") or item.get("final_match_time")
+        )
+        # Every still-upcoming item in the current saved schedule is eligible
+        # immediately.  Started fixtures are never backfilled retrospectively.
+        if not kickoff or current >= kickoff:
+            continue
+        preview = _world_market_preview_analysis(item, now=current)
         if not preview:
             continue
         item["analysis"] = preview
@@ -7894,34 +7914,12 @@ def _finalize_toto14_round(items):
 
 def _build_toto14_ticket_meta(items, cost_cap_exceeded_by_frozen=False):
     """Keep calculated cost visible while reporting purchase readiness separately."""
-    items = list(items or [])
-    single_pick_count = sum(len(item.get("picks") or []) == 1 for item in items)
-    double_pick_count = sum(len(item.get("picks") or []) == 2 for item in items)
-    unavailable_pick_count = sum(not item.get("picks") for item in items)
-    total_combinations = math.prod(
-        max(1, len(item.get("picks") or [])) for item in items
-    )
-    ticket_complete = len(items) == 14 and unavailable_pick_count == 0
-    purchase_ready_combinations = total_combinations if ticket_complete else 0
-    return {
-        "total_combinations": total_combinations,
-        "single_pick_count": single_pick_count,
-        "double_pick_count": double_pick_count,
-        "unavailable_pick_count": unavailable_pick_count,
-        "suppressed_double_count": sum(bool(item.get("double_suppressed")) for item in items),
-        "frozen_prediction_count": sum(bool(item.get("prediction_frozen")) for item in items),
-        "ticket_complete": ticket_complete,
-        "purchase_ready_combinations": purchase_ready_combinations,
+    return toto14_display_meta(items, {
         "max_combinations": TOTO14_MAX_COMBINATIONS,
         "unit_price": TOTO14_UNIT_PRICE,
-        "budget": total_combinations * TOTO14_UNIT_PRICE,
-        "purchase_ready_budget": purchase_ready_combinations * TOTO14_UNIT_PRICE,
         "max_budget": TOTO14_MAX_COMBINATIONS * TOTO14_UNIT_PRICE,
-        "cost_cap_exceeded_by_frozen": bool(
-            cost_cap_exceeded_by_frozen
-            or total_combinations > TOTO14_MAX_COMBINATIONS
-        ),
-    }
+        "cost_cap_exceeded_by_frozen": cost_cap_exceeded_by_frozen,
+    })
 
 
 def build_honey_two_pick(items):

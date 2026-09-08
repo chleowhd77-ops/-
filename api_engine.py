@@ -44,7 +44,7 @@ ROBOT_PICK_VERSION = "robot-independent-v1-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.9.1-large-db-nonblocking-publish"
+SYSTEM_VERSION = "R7.9.2-public-card-completeness"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -108,6 +108,104 @@ def valid_analysis_candidates(picks):
             pick[key] = number(pick.get(key), 0.0)
         valid.append(pick)
     return valid
+
+
+def extract_robot_pick(item):
+    """Recover one frozen robot pick from every supported publication shape.
+
+    Collector versions have published the robot alongside the card, inside
+    category data, and inside the nested WORLD analysis.  The public app must
+    not silently hide the same frozen answer merely because its container
+    changed.  A copy is returned so display localization cannot mutate the
+    saved pre-kickoff record.
+    """
+    if not isinstance(item, dict):
+        return None
+    analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    containers = [
+        item.get("robot_pick"),
+        (item.get("pick_categories") or {}).get("robot_independent")
+        if isinstance(item.get("pick_categories"), dict) else None,
+        (item.get("categories") or {}).get("robot_independent")
+        if isinstance(item.get("categories"), dict) else None,
+        analysis.get("robot_pick"),
+        (analysis.get("categories") or {}).get("robot_independent")
+        if isinstance(analysis.get("categories"), dict) else None,
+        (item.get("decision") or {}).get("robot_pick")
+        if isinstance(item.get("decision"), dict) else None,
+        (analysis.get("decision") or {}).get("robot_pick")
+        if isinstance(analysis.get("decision"), dict) else None,
+    ]
+    for source in containers:
+        if not isinstance(source, dict):
+            continue
+        raw_pick = str(source.get("raw_pick") or source.get("pick") or "").strip()
+        if not raw_pick:
+            continue
+        recovered = dict(source)
+        recovered["raw_pick"] = raw_pick
+        recovered["prob"] = recovered.get(
+            "prob", recovered.get("probability", 0)
+        )
+        recovered["fair_prob"] = recovered.get(
+            "fair_prob", recovered.get("fair_probability")
+        )
+        return recovered
+    return None
+
+
+def toto14_display_meta(items, source_meta=None):
+    """Derive ticket cost from the visible markings, never from stale totals."""
+    items = [item for item in (items or []) if isinstance(item, dict)]
+    source_meta = source_meta if isinstance(source_meta, dict) else {}
+    try:
+        unit_price = max(1, int(source_meta.get("unit_price") or 1000))
+    except (TypeError, ValueError):
+        unit_price = 1000
+    try:
+        max_combinations = max(
+            1, int(source_meta.get("max_combinations") or 8)
+        )
+    except (TypeError, ValueError):
+        max_combinations = 8
+
+    pick_counts = [
+        len(item.get("picks") or [])
+        if isinstance(item.get("picks") or [], (list, tuple, set))
+        else 0
+        for item in items
+    ]
+    unavailable_pick_count = sum(count == 0 for count in pick_counts)
+    total_combinations = (
+        math.prod(max(1, count) for count in pick_counts) if items else 0
+    )
+    ticket_complete = len(items) == 14 and unavailable_pick_count == 0
+    purchase_ready_combinations = total_combinations if ticket_complete else 0
+    return {
+        "total_combinations": total_combinations,
+        "single_pick_count": sum(count == 1 for count in pick_counts),
+        "double_pick_count": sum(count == 2 for count in pick_counts),
+        "unavailable_pick_count": unavailable_pick_count,
+        "suppressed_double_count": sum(
+            bool(item.get("double_suppressed")) for item in items
+        ),
+        "frozen_prediction_count": sum(
+            bool(item.get("prediction_frozen")) for item in items
+        ),
+        "ticket_complete": ticket_complete,
+        "purchase_ready_combinations": purchase_ready_combinations,
+        "max_combinations": max_combinations,
+        "unit_price": unit_price,
+        "budget": total_combinations * unit_price,
+        "purchase_ready_budget": purchase_ready_combinations * unit_price,
+        "max_budget": int(
+            source_meta.get("max_budget") or max_combinations * unit_price
+        ),
+        "cost_cap_exceeded_by_frozen": bool(
+            source_meta.get("cost_cap_exceeded_by_frozen")
+            or total_combinations > max_combinations
+        ),
+    }
 
 
 def choose_analysis_fallback(picks):
@@ -1730,6 +1828,76 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 f"[팀검증 재시도] 실제 경기표에서 팀 쌍을 확정하지 못함: "
                 f"{home_name} vs {away_name} ({date_str})"
             )
+
+            # API-Football의 date 필터는 공급사 기준일/UTC 경계 때문에 한국
+            # 자정 근처 경기가 전날 또는 다음날 목록에 들어갈 수 있다. 같은
+            # 날짜에서 실패한 경우에만 인접 이틀을 캐시 조회하고, 양 팀 이름과
+            # 실제 timestamp가 모두 엄격히 맞는 한 쌍만 채택한다.
+            for offset in (-1, 1):
+                adjacent_date = (match_dt + timedelta(days=offset)).strftime("%Y-%m-%d")
+                adjacent_fixtures = _fetch_date_fixtures_api(adjacent_date, ttl_h)
+                if adjacent_fixtures is None:
+                    continue
+                adjacent_candidates = []
+                for fixture_data in adjacent_fixtures:
+                    home_api = _fixture_team_payload(fixture_data, "home")
+                    away_api = _fixture_team_payload(fixture_data, "away")
+                    home_id = int(home_api.get("id") or 0)
+                    away_id = int(away_api.get("id") or 0)
+                    if not home_id or not away_id or (different_teams and home_id == away_id):
+                        continue
+                    home_score = _team_name_match_score(home_name, home_api.get("name"))
+                    away_score = _team_name_match_score(away_name, away_api.get("name"))
+                    timestamp = int(fixture_data.get("fixture", {}).get("timestamp") or 0)
+                    time_delta = (
+                        abs(timestamp - int(match_dt.timestamp())) / 3600.0
+                        if timestamp else 99.0
+                    )
+                    time_bonus = max(0.0, 0.18 - min(time_delta, 12.0) * 0.015)
+                    adjacent_candidates.append((
+                        home_score + away_score + time_bonus,
+                        home_score, away_score, time_delta,
+                        fixture_data, home_api, away_api,
+                    ))
+                adjacent_candidates.sort(key=lambda item: item[0], reverse=True)
+                if not adjacent_candidates:
+                    continue
+                best = adjacent_candidates[0]
+                different_runner_up = (
+                    len(adjacent_candidates) > 1
+                    and (
+                        int(adjacent_candidates[1][5].get("id") or 0),
+                        int(adjacent_candidates[1][6].get("id") or 0),
+                    ) != (
+                        int(best[5].get("id") or 0),
+                        int(best[6].get("id") or 0),
+                    )
+                )
+                ambiguous = bool(
+                    different_runner_up
+                    and best[0] - adjacent_candidates[1][0] < 0.08
+                )
+                if (
+                    min(best[1], best[2]) < 0.72
+                    or best[1] + best[2] < 1.52
+                    or best[3] > 4.5
+                    or ambiguous
+                ):
+                    continue
+                _, home_score, away_score, _, fixture_data, home_api, away_api = best
+                verified_home = _remember_verified_team(home_name, home_api)
+                verified_away = _remember_verified_team(away_name, away_api)
+                if (
+                    verified_home and verified_away
+                    and int(verified_home["id"]) != int(verified_away["id"])
+                ):
+                    print(
+                        f"[팀검증 성공] 인접 날짜 경기표 팀 확정: "
+                        f"{home_name}({verified_home['id']}) vs "
+                        f"{away_name}({verified_away['id']}) "
+                        f"[{adjacent_date}, 이름 점수 {home_score:.2f}/{away_score:.2f}]"
+                    )
+                    return verified_home, verified_away, fixture_data
 
     # 날짜 정보가 없거나 공급사 경기표가 잠시 실패하면 기존 개별 검색을
     # 사용하되, 서로 다른 팀이 같은 ID가 되는 순간 결과를 폐기한다.
