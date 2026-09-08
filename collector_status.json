@@ -59,20 +59,20 @@
     },
     "world": {
       "child_pid": 334737,
-      "state": "running",
-      "heartbeat_at": "2026-09-08T13:05:50+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-08T13:06:16+00:00",
       "pid": 334737,
       "last_started_at": "2026-09-08T13:05:49+00:00",
       "elapsed_seconds": 0.0,
       "overlap_skips": 0,
-      "duration_seconds": 18.24,
-      "last_success_at": "2026-09-08T12:51:08+00:00",
+      "duration_seconds": 25.61,
+      "last_success_at": "2026-09-08T13:06:16+00:00",
       "last_failure_at": "2026-09-08T10:35:01+00:00",
       "last_stage": "world_published_backup_pending",
       "db_backup_ok": false
     }
   },
-  "updated_at": "2026-09-08T13:06:04+00:00",
+  "updated_at": "2026-09-08T13:06:16+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -157,16 +157,16 @@
         "count": 56
       },
       {
-        "metric": "cache_hit",
-        "purpose": "world",
-        "endpoint": "/fixtures/statistics",
-        "count": 45
-      },
-      {
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 44
+        "count": 55
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "count": 50
       },
       {
         "metric": "cache_hit",
@@ -205,10 +205,22 @@
         "count": 5
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/fixtures/lineups",
+        "count": 5
+      },
+      {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures",
         "count": 4
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "count": 1
       }
     ],
     "accounting": "local-preflight-reservation-v2",
