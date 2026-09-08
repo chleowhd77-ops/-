@@ -46,72 +46,32 @@ def _selection_key(pick):
 
 
 def wdl_centered_choice(picks, confidence, policy=None, return_reason=False):
-    """Choose W/D/L first; cross-market probability is never a direct rank.
-
-    Handicap and totals describe different events, so their raw probability is
-    not comparable with a three-way outcome.  They may replace the W/D/L anchor
-    only when no W/D/L candidate has verified price value, or when a
-    chronological policy has proved a clearly larger robust edge.
-    """
+    """일반 승무패 및 핸디캡 승무패를 최우선으로, 압도적 적중 확률(승률) 중심 선택."""
     available = [p for p in picks if p.get("settlement_supported", True)]
     if not available:
         raise ValueError("no settlement-compatible candidate")
-    wdl = [p for p in available if (p.get("market_key") or "1x2") == "1x2"]
-    alternatives = [p for p in available if (p.get("market_key") or "1x2") != "1x2"]
-    wdl_priced = [p for p in wdl if price_eligible(p, confidence)]
-    alt_priced = [p for p in alternatives if price_eligible(p, confidence)]
-    anchor_pool = wdl_priced or wdl
-    if not anchor_pool:
-        pool = alt_priced or alternatives
-        chosen = max(pool, key=_selection_key)
-        reason = "wdl_unavailable"
-        return (chosen, reason) if return_reason else chosen
-    anchor = max(anchor_pool, key=_selection_key)
-    if not wdl_priced and alt_priced:
-        # A W/D/L direction above 50% is already more likely than the other
-        # two regulation-time outcomes combined.  Do not discard that strong
-        # base call merely because a composite handicap/total has a nicer
-        # price.  Other markets become the fallback when the W/D/L direction
-        # itself is also uncertain.
-        best_alternative = max(
-            alt_priced,
-            key=lambda p: (
-                float(p.get("robust_probability") or p.get("prob") or 0),
-                float(p.get("robust_edge") or 0),
-                float(p.get("robust_ev") or 0),
-            ),
-        )
-        anchor_probability = float(
-            anchor.get("robust_probability") or anchor.get("prob") or 0
-        )
-        alternative_probability = float(
-            best_alternative.get("robust_probability")
-            or best_alternative.get("prob") or 0
-        )
-        if anchor_probability >= .50 and anchor_probability >= alternative_probability + .03:
-            reason = "wdl_probability_strong"
-            return (anchor, reason) if return_reason else anchor
-        chosen = max(alt_priced, key=lambda p: (
-            float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
-            float(p.get("robust_probability") or p.get("prob") or 0)))
-        reason = "wdl_price_unqualified"
-        return (chosen, reason) if return_reason else chosen
 
-    policy = policy or {}
-    compatible = bool(policy.get("active") and int(policy.get("validation_fixtures") or 0) >= MIN_VALIDATION)
-    if compatible and wdl_priced and alt_priced:
-        edge_gap = max(.01, min(.08, float(policy.get("minimum_edge_advantage") or .025)))
-        ev_gap = max(0.0, min(.20, float(policy.get("minimum_ev_advantage") or .03)))
-        overrides = [p for p in alt_priced
-                     if float(p.get("robust_edge") or 0) >= float(anchor.get("robust_edge") or 0) + edge_gap
-                     and float(p.get("robust_ev") or 0) >= float(anchor.get("robust_ev") or 0) + ev_gap]
-        if overrides:
-            chosen = max(overrides, key=lambda p: (
-                float(p.get("robust_edge") or 0), float(p.get("robust_ev") or 0),
-                float(p.get("robust_probability") or p.get("prob") or 0)))
-            reason = "validated_cross_market_override"
-            return (chosen, reason) if return_reason else chosen
-    return (anchor, "wdl_anchor") if return_reason else anchor
+    # 1. 일반 승무패(1x2)와 핸디캡(handicap)을 핵심 평가 대상으로 묶음
+    core_picks = [p for p in available if p.get("market_key") in ("1x2", "handicap")]
+    other_picks = [p for p in available if p.get("market_key") not in ("1x2", "handicap")]
+
+    if core_picks:
+        # 적중 확률(prob) 최우선. 배당 가치(EV)는 무시하고 오직 맞추는 것에 집중.
+        chosen = max(core_picks, key=lambda p: (
+            float(p.get("prob") or 0),              # 1순위: 무조건 적중 확률 높은 것
+            p.get("market_key") == "1x2",           # 2순위: 동률일 경우 핸디캡보다 일반 승무패 우선
+            float(p.get("odd") or 0)                # 3순위: 배당 (확률이 완벽히 같을 때만 비교)
+        ))
+        reason = "승무패 및 핸디캡 시장에서 적중 확률 최우선 선택"
+    elif other_picks:
+        # 코어 픽이 아예 없는 비정상 상황에서만 언더/오버 등으로 빠짐
+        chosen = max(other_picks, key=lambda p: float(p.get("prob") or 0))
+        reason = "승무패/핸디캡 후보 부재로 보조 시장 선택"
+    else:
+        chosen = max(available, key=lambda p: float(p.get("prob") or 0))
+        reason = "전체 시장 중 최고 확률 선택"
+
+    return (chosen, reason) if return_reason else chosen
 
 
 def validate_price_policy(groups):
