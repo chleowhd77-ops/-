@@ -58,6 +58,16 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
+# GitHub Contents API cannot accept an arbitrarily large object.  Leave a
+# little headroom below the repository file ceiling and retry a deferred DB
+# backup slowly instead of rebuilding/base64-encoding it in every worker.
+GITHUB_DB_SNAPSHOT_MAX_BYTES = min(
+    95 * 1024 * 1024,
+    max(1024 * 1024, int(os.getenv("GITHUB_DB_SNAPSHOT_MAX_BYTES", str(95 * 1024 * 1024)))),
+)
+DB_BACKUP_DEFER_HOURS = max(
+    1, min(24, int(os.getenv("DB_BACKUP_DEFER_HOURS", "6")))
+)
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
 LIVE_LOOKAROUND_HOURS = max(2, int(os.getenv("LIVE_LOOKAROUND_HOURS", "6")))
@@ -514,9 +524,14 @@ def _github_upload_error_detail(response):
 def _github_upload_is_retryable(response, detail):
     """Retry only conflicts and explicitly transient GitHub failures."""
     status = int(getattr(response, "status_code", 0) or 0)
+    detail_text = json.dumps(detail, ensure_ascii=False).lower()
+    if status == 422 and (
+        "file is too large" in detail_text
+        or "too large to be processed" in detail_text
+    ):
+        return False
     if status in {409, 422, 429} or 500 <= status < 600:
         return True
-    detail_text = json.dumps(detail, ensure_ascii=False).lower()
     return status == 403 and (
         "timed out validating rule" in detail_text
         or ("please try again" in detail_text and "validating rule" in detail_text)
@@ -596,6 +611,23 @@ def upload_sqlite_to_github(db_path="ai_predictions.db"):
     if not _validate_sqlite_file(source_path):
         print("❌ 로컬 DB 검증 실패로 업로드하지 않습니다.")
         return False
+    defer_path = APP_DIR / ".db-backup-deferred.json"
+    deferred = _read_json(defer_path, {})
+    try:
+        retry_at = datetime.fromisoformat(
+            str((deferred or {}).get("next_retry_at") or "").replace("Z", "+00:00")
+        )
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < retry_at:
+            print(
+                "⚠️ GitHub 용량 제한으로 DB 백업 보류 중입니다. "
+                f"다음 확인: {retry_at.astimezone(KST).isoformat(timespec='minutes')} · "
+                "화면 결과 게시는 계속합니다."
+            )
+            return False
+    except (TypeError, ValueError):
+        pass
     publish_fd, publish_lock = _try_acquire_lock(
         "db-publish", stale_after=300, wait_seconds=90
     )
@@ -629,7 +661,35 @@ def upload_sqlite_to_github(db_path="ai_predictions.db"):
         if not _validate_sqlite_file(temp_path):
             print("❌ DB 스냅샷 검증 실패로 업로드하지 않습니다.")
             return False
-        return upload_to_github(temp_path, remote_path=Path(db_path).name)
+        snapshot_size = temp_path.stat().st_size
+        if snapshot_size > GITHUB_DB_SNAPSHOT_MAX_BYTES:
+            now = datetime.now(timezone.utc)
+            next_retry = now + timedelta(hours=DB_BACKUP_DEFER_HOURS)
+            _atomic_write_json(
+                defer_path,
+                {
+                    "reason": "github_contents_size_limit",
+                    "deferred_at": now.isoformat(timespec="seconds"),
+                    "next_retry_at": next_retry.isoformat(timespec="seconds"),
+                    "snapshot_size_bytes": snapshot_size,
+                    "safe_limit_bytes": GITHUB_DB_SNAPSHOT_MAX_BYTES,
+                    "source_name": source_path.name,
+                },
+                indent=2,
+            )
+            print(
+                "⚠️ DB 스냅샷이 GitHub 안전 용량을 넘어서 백업만 보류합니다: "
+                f"{snapshot_size / (1024 * 1024):.1f}MB · "
+                "로컬 DB와 화면 결과 게시는 그대로 유지합니다."
+            )
+            return False
+        uploaded = upload_to_github(temp_path, remote_path=Path(db_path).name)
+        if uploaded:
+            try:
+                defer_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return uploaded
     except Exception as error:
         print(f"❌ DB 스냅샷 업로드 실패: {error}")
         return False
@@ -9835,11 +9895,21 @@ def run_master_job():
         return False
     if not build_dashboard_data():
         return False
-    # Publish the DB snapshot first. If it cannot be published, keep the remote
-    # dashboard at its last-known-good version instead of exposing unmatched JSON.
-    if not upload_sqlite_to_github("ai_predictions.db"):
+    # Customer JSON is the live product output.  A private DB backup warning
+    # must not suppress a freshly completed analysis from the website.
+    if not upload_to_github("dashboard_data.json"):
+        _update_collector_status(
+            "master", "running", last_stage="dashboard_publish_failed"
+        )
         return False
-    return upload_to_github("dashboard_data.json")
+    backup_ok = upload_sqlite_to_github("ai_predictions.db")
+    _update_collector_status(
+        "master",
+        "running",
+        db_backup_ok=backup_ok,
+        last_stage="complete" if backup_ok else "dashboard_published_backup_pending",
+    )
+    return True
 
 
 def run_score_job():
@@ -9898,12 +9968,21 @@ def run_world_job():
     if not analysis_ok:
         return False
 
-    # Store the private learning snapshot before publishing its matching admin JSON.
-    if analysis_changed and not upload_sqlite_to_github("ai_predictions.db"):
-        return False
     if schedule_refreshed or analysis_changed:
-        return upload_to_github(
+        if not upload_to_github(
             WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name
+        ):
+            _update_collector_status(
+                "world", "running", last_stage="world_dashboard_publish_failed"
+            )
+            return False
+    if analysis_changed:
+        backup_ok = upload_sqlite_to_github("ai_predictions.db")
+        _update_collector_status(
+            "world",
+            "running",
+            db_backup_ok=backup_ok,
+            last_stage="complete" if backup_ok else "world_published_backup_pending",
         )
     return True
 
