@@ -2019,13 +2019,23 @@ def _world_live_item(world_item, proto_by_fixture):
                 robot_pick=robot_pick,
                 display_candidates=[dict(candidate, raw_pick=localize(candidate.get("raw_pick")))
                                     for candidate in (analysis.get("candidates") or []) if isinstance(candidate, dict)],
-                display_candidates_saved_at=analysis.get("analyzed_at"),
+                display_candidates_saved_at=(
+                    analysis.get("public_pick_frozen_at") or analysis.get("analyzed_at")
+                ),
                 detailed_report=report,story="",
-                analysis_stage=analysis.get("analysis_stage"),
-                analysis_version=analysis.get("analysis_version"),
+                analysis_stage=(
+                    analysis.get("public_pick_analysis_stage")
+                    or analysis.get("analysis_stage")
+                ),
+                analysis_version=(
+                    analysis.get("public_pick_analysis_version")
+                    or analysis.get("analysis_version")
+                ),
                 data_coverage=float(analysis.get("data_quality_score") or 0)/100,
                 analysis_confidence=(analysis.get("decision") or {}).get("data_confidence"),
                 lineup_confirmed=bool(analysis.get("lineup_confirmed")),
+                public_pick_frozen=bool(analysis.get("public_pick_frozen")),
+                public_pick_frozen_at=analysis.get("public_pick_frozen_at"),
                 odds_source="world_bookmaker_median",
                 home_logo=match.get("home_logo"),away_logo=match.get("away_logo"))
     for side,prefix in (("home","h"),("away","a")):
@@ -2922,6 +2932,7 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
         "T-60-lineup": "경기 전 선발 확인",
         "T-30-final": "경기 전 최종 동결",
     }.get(stage_value, stage_value or "분석 단계 확인 중"))
+    freeze_text = " · 최초 공개픽 고정" if item.get("public_pick_frozen") else ""
     source_text = {
         "betman": "베트맨 배당 반영",
         "overseas_fallback": "해외배당 임시 반영",
@@ -2946,7 +2957,7 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
         "<div class='pred-box' style='border-color:#334155;background:#0B1220;'>"
         "<div class='pred-label' style='color:#A78BFA;'>검증 정보</div>"
         f"<span class='pred-value' style='font-size:15px;'>{coverage_text} · {confidence_text}</span>"
-        f"<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:7px;'>{escape(lineup_text)} · {stage_text}</span>"
+        f"<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:7px;'>{escape(lineup_text)} · {stage_text}{freeze_text}</span>"
         f"<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>{escape(source_text)}{fair_text}</span>"
         f"<span style='display:block;color:#F59E0B;font-size:11px;font-weight:900;margin-top:7px;'>{grade_text}</span>"
         "</div>"

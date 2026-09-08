@@ -1093,15 +1093,16 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return True
 
             final_fix_id = int(fixture_id or 0) or int(existing_fix_id or 0)
+            # The first row is the public recommendation. Later pre-kickoff
+            # calculations remain append-only snapshots for audit/learning, but
+            # may only improve fixture identity and schedule metadata. This keeps
+            # a pick already shown to a customer from changing later.
             cursor.execute("""
                 UPDATE predictions
-                SET api_fixture_id = ?, match_time = ?, league = ?,
-                    prob_pick = ?, prob_pick_prob = ?, ev_pick = ?, ev_pick_prob = ?,
-                    analysis_version = ?
+                SET api_fixture_id = ?, match_time = ?, league = ?
                 WHERE match_id = ?
             """, (
-                final_fix_id, match_time, league, prob_pick, prob_val,
-                ev_pick, ev_val, target_analysis_version, m_id,
+                final_fix_id, match_time, league, m_id,
             ))
 
         current = (
@@ -2943,6 +2944,336 @@ def save_prediction_analysis(
             conn.close()
 
 
+def _snapshot_existed_before_kickoff(created_at, kickoff):
+    """Accept only timestamped evidence that existed before the stored kickoff."""
+    if kickoff is None or not created_at:
+        return False
+    try:
+        saved_at = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if saved_at.tzinfo is None:
+        saved_at = saved_at.replace(tzinfo=timezone.utc)
+    return saved_at.astimezone(timezone.utc) <= kickoff.astimezone(timezone.utc)
+
+
+def _json_object(value):
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_rows(value):
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [dict(row) for row in parsed if isinstance(row, dict)] if isinstance(parsed, list) else []
+
+
+def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time=""):
+    """Recover the first provable pre-kickoff public answer without rewriting it.
+
+    ``prediction_snapshots`` is append-only. Its first timestamped row is the
+    strongest historical proof available for installations that predate the
+    explicit public-freeze marker. The first matching analysis snapshot keeps
+    the report/categories consistent, while the robot is independently taken
+    from the first snapshot that actually contains the current robot version.
+    """
+    try:
+        identity = conn.execute(
+            "SELECT home_team, away_team, match_time FROM predictions WHERE match_id = ?",
+            (str(match_id),),
+        ).fetchone()
+        if (
+            not identity
+            or str(identity[0]) != str(home_team)
+            or str(identity[1]) != str(away_team)
+        ):
+            return None
+        kickoff = _parse_kst_match_time(identity[2] or match_time)
+        if kickoff is None:
+            return None
+        prediction_rows = conn.execute(
+            """
+            SELECT id, analysis_version, stage, confidence, prob_pick,
+                   prob_pick_prob, ev_pick, ev_pick_prob, odd_h, odd_d, odd_a,
+                   api_fixture_id, created_at
+            FROM prediction_snapshots
+            WHERE match_id = ? ORDER BY id ASC
+            """,
+            (str(match_id),),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+
+    public_row = next(
+        (
+            row for row in prediction_rows
+            if str(row[4] or "").strip()
+            and _snapshot_existed_before_kickoff(row[12], kickoff)
+        ),
+        None,
+    )
+    if public_row is None:
+        return None
+
+    official_pick = str(public_row[4] or "").strip()
+    try:
+        official_probability = max(0.0, min(1.0, float(public_row[5] or 0) / 100.0))
+    except (TypeError, ValueError):
+        official_probability = 0.0
+    ev_pick = str(public_row[6] or "").strip()
+    try:
+        ev_probability = max(0.0, min(1.0, float(public_row[7] or 0) / 100.0))
+    except (TypeError, ValueError):
+        ev_probability = 0.0
+
+    analysis_rows = []
+    try:
+        analysis_rows = conn.execute(
+            """
+            SELECT id, analysis_version, stage, odds_source, confidence,
+                   selected_market, selected_pick, candidates_json,
+                   categories_json, decision_json, report_text, created_at
+            FROM prediction_analysis_snapshots
+            WHERE match_id = ? ORDER BY id ASC
+            """,
+            (str(match_id),),
+        ).fetchall()
+    except sqlite3.Error:
+        analysis_rows = []
+
+    official_analysis = next(
+        (
+            row for row in analysis_rows
+            if str(row[6] or "").strip() == official_pick
+            and _snapshot_existed_before_kickoff(row[11], kickoff)
+        ),
+        None,
+    )
+    categories = _json_object(official_analysis[8]) if official_analysis else {}
+    candidates = _json_rows(official_analysis[7]) if official_analysis else []
+    decision = _json_object(official_analysis[9]) if official_analysis else {}
+    selected = dict(categories.get("high_probability") or {})
+    if str(selected.get("raw_pick") or "") != official_pick:
+        selected = next(
+            (dict(row) for row in candidates if str(row.get("raw_pick") or "") == official_pick),
+            {},
+        )
+    selected.update({
+        "raw_pick": official_pick,
+        "prob": official_probability,
+        "probability": official_probability,
+        "official_final_pick": True,
+        "recommendation_status": "SELECTED",
+        "public_pick_frozen": True,
+    })
+    if not selected.get("market_key"):
+        selected["market_key"] = (
+            str(official_analysis[5] or "") if official_analysis
+            else infer_pick_market(selected)
+        )
+    if float(_audit_number(selected.get("odd"), 0.0) or 0) <= 1:
+        normalized = official_pick.casefold()
+        if "무승부" in normalized or normalized.strip() in {"무", "draw"}:
+            selected["odd"] = float(public_row[9] or 0)
+        elif str(home_team).casefold() in normalized and "승" in official_pick:
+            selected["odd"] = float(public_row[8] or 0)
+        elif str(away_team).casefold() in normalized and "승" in official_pick:
+            selected["odd"] = float(public_row[10] or 0)
+
+    frozen_categories = {
+        "high_probability": selected,
+        "honey": None,
+        "vip_underdog": None,
+    }
+    for key in ("honey", "vip_underdog"):
+        value = categories.get(key)
+        if isinstance(value, dict) and str(value.get("raw_pick") or "") == official_pick:
+            frozen_categories[key] = dict(value, public_pick_frozen=True)
+
+    robot_pick = None
+    robot_analysis_id = None
+    for row in analysis_rows:
+        if not _snapshot_existed_before_kickoff(row[11], kickoff):
+            continue
+        robot_categories = _json_object(row[8])
+        robot_decision = _json_object(row[9])
+        candidate_robot = robot_decision.get("robot_pick") or robot_categories.get("robot_independent")
+        if not isinstance(candidate_robot, dict):
+            continue
+        robot_version = str(
+            robot_decision.get("robot_pick_version")
+            or candidate_robot.get("robot_pick_version")
+            or ""
+        )
+        if robot_version != ROBOT_PICK_VERSION or not str(candidate_robot.get("raw_pick") or "").strip():
+            continue
+        robot_pick = dict(candidate_robot)
+        robot_pick["prob"] = robot_pick.get("prob", robot_pick.get("probability", 0))
+        robot_pick["probability"] = robot_pick.get("probability", robot_pick.get("prob", 0))
+        robot_pick["public_pick_frozen"] = True
+        robot_analysis_id = int(row[0])
+        frozen_categories["robot_independent"] = robot_pick
+        break
+
+    if not candidates:
+        candidates = [dict(selected)]
+    elif not any(str(row.get("raw_pick") or "") == official_pick for row in candidates):
+        candidates.insert(0, dict(selected))
+    report = str(official_analysis[10] or "") if official_analysis else ""
+    return {
+        "match_id": str(match_id),
+        "snapshot_id": int(public_row[0]),
+        "analysis_snapshot_id": int(official_analysis[0]) if official_analysis else None,
+        "robot_analysis_snapshot_id": robot_analysis_id,
+        "analysis_version": str(
+            (official_analysis[1] if official_analysis else None)
+            or public_row[1]
+            or ""
+        ),
+        "analysis_stage": str(
+            (official_analysis[2] if official_analysis else None)
+            or public_row[2]
+            or "regular"
+        ),
+        "odds_source": str(official_analysis[3] or "") if official_analysis else "",
+        "confidence": float(
+            (official_analysis[4] if official_analysis else None)
+            or public_row[3]
+            or 0
+        ),
+        "selected": selected,
+        "ev_pick": ev_pick,
+        "ev_probability": ev_probability,
+        "categories": frozen_categories,
+        "robot_pick": robot_pick,
+        "candidates": candidates,
+        "decision": decision,
+        "report": report,
+        "frozen_at": str(public_row[12] or ""),
+    }
+
+
+def _load_first_public_pick_bundle(match_id, home_team, away_team, match_time=""):
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=10)
+        conn.execute("PRAGMA busy_timeout = 10000")
+        _ensure_prediction_analysis_tables(conn)
+        return _first_public_pick_bundle(
+            conn, match_id, home_team, away_team, match_time
+        )
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
+    """Overlay the first public official/robot answer onto a current card copy."""
+    current = dict(current or {})
+    bundle = _load_first_public_pick_bundle(
+        str(match.get("id") or ""),
+        str(match.get("home") or ""),
+        str(match.get("away") or ""),
+        str(match.get("match_time") or current.get("final_match_time") or ""),
+    )
+    if not bundle:
+        return current
+    current_pick = str(
+        ((current.get("pick_categories") or {}).get("high_probability") or {}).get("raw_pick")
+        or ""
+    )
+    report = bundle.get("report") or (
+        "처음 공개된 경기 전 최종픽을 그대로 유지합니다. "
+        "이후 재분석과 경기 결과는 공개 픽을 변경하지 않습니다."
+    )
+    current.update({
+        "match": dict(match),
+        "final_match_time": current.get("final_match_time") or match.get("match_time"),
+        "pick_categories": bundle["categories"],
+        "robot_pick": bundle.get("robot_pick") or {},
+        "ev_sorted_picks": bundle["candidates"],
+        "display_candidates": bundle["candidates"],
+        "display_candidates_saved_at": bundle["frozen_at"],
+        "detailed_report": report,
+        "story": "<br><br>".join(
+            paragraph.replace("\n", "<br>") for paragraph in report.split("\n\n")
+        ),
+        "analysis_version": bundle["analysis_version"],
+        "analysis_stage": "locked" if locked else bundle["analysis_stage"],
+        "analysis_confidence": bundle["confidence"],
+        "odds_source": bundle["odds_source"] or current.get("odds_source") or "",
+        "model_probability": bundle["selected"].get("prob"),
+        "fair_market_probability": bundle["selected"].get("fair_prob"),
+        "probability_error_margin": bundle["selected"].get("error_margin"),
+        "probability_interval": bundle["selected"].get("probability_interval"),
+        "prediction_frozen": True,
+        "public_pick_frozen": True,
+        "public_pick_frozen_at": bundle["frozen_at"],
+        "public_pick_snapshot_id": bundle["snapshot_id"],
+        "public_pick_change_suppressed": bool(
+            current_pick and current_pick != bundle["selected"]["raw_pick"]
+        ),
+    })
+    return current
+
+
+def _public_world_analysis_from_first_snapshot(match, current_analysis):
+    """Keep WORLD's official and robot boxes on their first public answers."""
+    current_analysis = dict(current_analysis or {})
+    bundle = _load_first_public_pick_bundle(
+        str(match.get("id") or ""),
+        str(match.get("home") or ""),
+        str(match.get("away") or ""),
+        str(match.get("match_time") or ""),
+    )
+    if not bundle:
+        return current_analysis
+    selected = dict(bundle["selected"])
+    selected["display"] = _human_pick_label(
+        selected.get("raw_pick"), str(match.get("home") or "")
+    )
+    selected["probability"] = float(selected.get("prob") or 0)
+    decision = dict(bundle.get("decision") or {})
+    if bundle.get("robot_pick"):
+        decision["robot_pick"] = dict(bundle["robot_pick"])
+        decision["robot_pick_version"] = ROBOT_PICK_VERSION
+    current_analysis.update({
+        "selected": selected,
+        "categories": bundle["categories"],
+        "robot_pick": dict(bundle.get("robot_pick") or {}),
+        "candidates": bundle["candidates"],
+        "decision": decision,
+        "report": bundle.get("report") or current_analysis.get("report") or "",
+        "public_pick_frozen": True,
+        "public_pick_frozen_at": bundle["frozen_at"],
+        "public_pick_analysis_version": bundle["analysis_version"],
+        "public_pick_analysis_stage": bundle["analysis_stage"],
+        "public_pick_snapshot_id": bundle["snapshot_id"],
+    })
+    return current_analysis
+
+
+def _scoring_row_from_first_public_snapshot(conn, row):
+    """Replace tuple pick fields only in memory; the stored history stays intact."""
+    values = list(row)
+    if len(values) < 7:
+        return tuple(values)
+    bundle = _first_public_pick_bundle(
+        conn, values[0], values[1], values[2], values[5]
+    )
+    if bundle:
+        values[3] = bundle["selected"]["raw_pick"]
+        values[4] = bundle.get("ev_pick") or ""
+    return tuple(values)
+
+
 def annotate_pick_metrics(picks, confidence):
     for pick in picks:
         probability = float(pick.get("prob", 0) or 0)
@@ -3333,7 +3664,10 @@ def _build_grading_snapshot():
         ]
         all_rows = _prefer_canonical_prediction_rows(all_rows)
 
-        robot_by_match = {}
+        # Compatibility fallback for rows created before append-only analysis
+        # snapshots existed. New rows always use the first timestamped public
+        # snapshot selected below.
+        fallback_robot_by_match = {}
         for analysis_row in conn.execute(
             "SELECT match_id, analysis_version, decision_json "
             "FROM prediction_analysis"
@@ -3350,56 +3684,71 @@ def _build_grading_snapshot():
                 or not str(robot.get("raw_pick") or "").strip()
             ):
                 continue
-            robot_by_match[str(analysis_row["match_id"])] = {
+            fallback_robot_by_match[str(analysis_row["match_id"])] = {
                 **robot,
                 "analysis_version": str(analysis_row["analysis_version"] or ""),
-            }
-
-        robot_grade_by_match = {}
-        for result in conn.execute(
-            """
-            SELECT id, match_id, analysis_version, market_key, raw_pick,
-                   is_correct, actual_score, selected_as
-            FROM prediction_candidate_results
-            ORDER BY id DESC
-            """
-        ).fetchall():
-            match_id = str(result["match_id"])
-            if match_id in robot_grade_by_match or match_id not in robot_by_match:
-                continue
-            try:
-                selected_as = json.loads(result["selected_as"] or "[]")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                selected_as = []
-            robot = robot_by_match[match_id]
-            if (
-                "robot_independent" not in selected_as
-                or str(result["market_key"] or "") != str(robot.get("market_key") or "")
-                or str(result["raw_pick"] or "") != str(robot.get("raw_pick") or "")
-            ):
-                continue
-            robot_grade_by_match[match_id] = {
-                "is_correct_robot": int(result["is_correct"] or 0),
-                "robot_actual_score": str(result["actual_score"] or ""),
             }
 
         public_rows = []
         for source in all_rows:
             match_id = str(source.get("match_id") or "")
-            robot = robot_by_match.get(match_id)
+            bundle = _first_public_pick_bundle(
+                conn, match_id, source.get("home_team"), source.get("away_team"),
+                source.get("match_time"),
+            )
+            robot = (
+                (bundle or {}).get("robot_pick")
+                or fallback_robot_by_match.get(match_id)
+            )
             if not robot or int(source.get("is_toto14") or 0) != 0:
                 continue
             row = dict(source)
+            if bundle:
+                selected = bundle["selected"]
+                row.update({
+                    "prob_pick": selected.get("raw_pick") or "",
+                    "prob_pick_prob": float(selected.get("prob") or 0) * 100.0,
+                    "ev_pick": bundle.get("ev_pick") or "",
+                    "ev_pick_prob": float(bundle.get("ev_probability") or 0) * 100.0,
+                    "public_pick_frozen": True,
+                    "public_pick_frozen_at": bundle.get("frozen_at") or "",
+                    "public_pick_snapshot_id": bundle.get("snapshot_id"),
+                })
             row.update({
-                "analysis_version": robot.get("analysis_version") or row.get("analysis_version") or "",
+                "analysis_version": (
+                    (bundle or {}).get("analysis_version")
+                    or robot.get("analysis_version")
+                    or row.get("analysis_version")
+                    or ""
+                ),
                 "robot_pick": robot.get("raw_pick") or "",
                 "robot_pick_market": robot.get("market_key") or "",
-                "robot_pick_prob": float(robot.get("probability") or 0) * 100.0,
+                "robot_pick_prob": float(
+                    robot.get("probability", robot.get("prob", 0)) or 0
+                ) * 100.0,
                 "robot_pick_odd": float(robot.get("odd") or 0),
                 "robot_pick_version": ROBOT_PICK_VERSION,
                 "robot_pick_reason": robot.get("selection_reason") or "",
             })
-            row.update(robot_grade_by_match.get(match_id) or {})
+            score_match = re.match(
+                r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(row.get("actual_score") or "")
+            )
+            if row.get("actual_result") == "FINISHED" and score_match:
+                goals_h, goals_a = int(score_match.group(1)), int(score_match.group(2))
+                row["is_correct_robot"] = int(evaluate_single_pick(
+                    row["robot_pick"], row.get("home_team"), row.get("away_team"),
+                    goals_h, goals_a,
+                ))
+                row["robot_actual_score"] = str(row.get("actual_score") or "")
+                if bundle:
+                    row["is_correct_prob"] = int(evaluate_single_pick(
+                        row["prob_pick"], row.get("home_team"), row.get("away_team"),
+                        goals_h, goals_a,
+                    ))
+                    row["is_correct_ev"] = int(evaluate_single_pick(
+                        row.get("ev_pick") or "", row.get("home_team"),
+                        row.get("away_team"), goals_h, goals_a,
+                    ))
             public_rows.append(row)
 
         finished = [
@@ -5639,8 +5988,8 @@ def analyze_world_schedule():
     due_items = []
 
     # Persist every pre-kickoff preview once so the public pick can later be
-    # graded.  It is still replaceable by the full-context analysis until
-    # kickoff, and it does not consume the deep-analysis daily quota.
+    # graded. Later calculations are still retained for learning, but the
+    # first customer-visible official/robot answers remain immutable.
     for item in payload.get("matches", []):
         analysis = item.get("analysis") or {}
         if (
@@ -5650,6 +5999,9 @@ def analyze_world_schedule():
             match = item.get("match") or {}
             kickoff = _parse_kst_match_time(match.get("match_time"))
             if kickoff and now < kickoff and _save_world_learning_record(match, analysis):
+                item["analysis"] = _public_world_analysis_from_first_snapshot(
+                    match, analysis
+                )
                 item["preview_learning_saved"] = True
                 changed = True
 
@@ -5676,6 +6028,13 @@ def analyze_world_schedule():
             if _sync_world_item_from_proto(item, canonical_proto):
                 changed = True
             continue
+        if item.get("analysis"):
+            public_analysis = _public_world_analysis_from_first_snapshot(
+                match, item.get("analysis") or {}
+            )
+            if public_analysis != item.get("analysis"):
+                item["analysis"] = public_analysis
+                changed = True
         try:
             kickoff = datetime.fromisoformat(str(match.get("kickoff_at") or "").replace("Z", "+00:00"))
             if kickoff.tzinfo is None:
@@ -5777,6 +6136,7 @@ def analyze_world_schedule():
                     raise RuntimeError("세계경기 분석 스냅샷 저장 실패")
                 if not _save_world_learning_record(match, analysis):
                     raise RuntimeError("세계경기 통합 채점 기록 저장 실패")
+                analysis = _public_world_analysis_from_first_snapshot(match, analysis)
                 item["analysis"] = analysis
                 item["analysis_version"] = str(
                     analysis.get("analysis_version") or WORLD_ANALYSIS_VERSION
@@ -6048,7 +6408,7 @@ def _locked_proto_item(match, previous=None):
                     analysis_version=row.get("analysis_version"),
                     pick_categories=categories,ev_sorted_picks=[selected] if selected["raw_pick"] else [],
                     detailed_report=report,story="",prediction_frozen=True)
-        return item
+        return _public_proto_item_from_first_snapshot(match, item, locked=True)
     finally:
         conn.close()
 
@@ -6766,6 +7126,23 @@ def build_dashboard_data():
             "h_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if h_rest_days <= 3 else "", "a_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if a_rest_days <= 3 else "",
             "h_rank_html": f"<div class='rank-badge'>🏆 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 순위: {a_rank}위</div>" if a_rank != 99 else ""
         })
+
+    # Every card now leaves the collector through the same first-public
+    # snapshot gate. Fresh calculations still feed the append-only audit trail,
+    # but cannot replace the official or robot answer already shown.
+    immutable_proto = []
+    public_now = datetime.now(KST)
+    for item in dashboard_proto:
+        match = item.get("match") or {}
+        kickoff = _parse_kst_match_time(
+            item.get("final_match_time") or match.get("match_time")
+        )
+        immutable_proto.append(
+            _public_proto_item_from_first_snapshot(
+                match, item, locked=bool(kickoff and public_now >= kickoff)
+            )
+        )
+    dashboard_proto = immutable_proto
 
     double_pick_count = 0
     single_pick_count = 0
@@ -8024,7 +8401,10 @@ def auto_score_matches():
             FROM predictions
             WHERE actual_result = 'PENDING'
         """)
-        pending_matches = cursor.fetchall()
+        pending_matches = [
+            _scoring_row_from_first_public_snapshot(conn, row)
+            for row in cursor.fetchall()
+        ]
         api_call_count = 0
         graded_count, result_error_count = 0, 0
         now = datetime.now(KST)
