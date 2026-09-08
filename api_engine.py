@@ -48,14 +48,17 @@ ROBOT_PICK_VERSION = "robot-self-learning-v1-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.11.1-finished-card-and-toto14-identity-hotfix"
+SYSTEM_VERSION = "R7.11.2-provider-aware-world-budget"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
 API_DAILY_TOTAL_LIMIT = max(100, int(os.getenv("API_DAILY_TOTAL_LIMIT", "7500")))
 API_LIVE_RESERVE = max(50, int(os.getenv("API_LIVE_RESERVE", "1500")))
 API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
-API_WORLD_DAILY_LIMIT = max(10, int(os.getenv("API_WORLD_DAILY_LIMIT", "1500")))
+# WORLD만의 내부 상한이 공급사 실제 잔여량보다 먼저 닫히지 않도록 한다.
+# 전체 7,500회 중 최대 4,000회까지만 WORLD에 허용하며, 아래의 전체 한도와
+# 1,500회 LIVE/채점 보호량 검사는 이 값보다 우선해 계속 적용된다.
+API_WORLD_DAILY_LIMIT = max(10, int(os.getenv("API_WORLD_DAILY_LIMIT", "4000")))
 API_WORLD_MIN_REMAINING = max(100, int(os.getenv("API_WORLD_MIN_REMAINING", "1000")))
 API_MIN_REQUEST_INTERVAL = max(0.0, float(os.getenv("API_MIN_REQUEST_INTERVAL", "0.22")))
 API_RATE_LIMIT_RETRIES = max(0, int(os.getenv("API_RATE_LIMIT_RETRIES", "2")))
