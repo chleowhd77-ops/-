@@ -27934,7 +27934,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
+      "analysis_status": "DEFERRED_DAILY_CAP",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -28009,7 +28009,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
+      "analysis_status": "DEFERRED_DAILY_CAP",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -28080,7 +28080,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
+      "analysis_status": "DEFERRED_DAILY_CAP",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -28155,7 +28155,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "WAITING_T24_ANALYSIS",
+      "analysis_status": "DEFERRED_DAILY_CAP",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -41997,7 +41997,12 @@
         {
           "purpose": "live",
           "endpoint": "/fixtures",
-          "calls": 12
+          "calls": 17
+        },
+        {
+          "purpose": "analysis",
+          "endpoint": "/fixtures",
+          "calls": 1
         },
         {
           "purpose": "scoring",
@@ -42010,20 +42015,20 @@
           "metric": "cache_hit",
           "purpose": "analysis",
           "endpoint": "/coachs",
-          "count": 1
+          "count": 2
         }
       ],
       "accounting": "local-preflight-reservation-v2",
       "usage_day": "2026-09-08",
       "reset_timezone": "UTC",
-      "local_calls": 43,
-      "provider_remaining": 7457,
+      "local_calls": 49,
+      "provider_remaining": 7451,
       "analysis_soft_limit": 6000,
       "daily_limit": 7500,
       "live_reserve": 1500,
       "world_calls": 30,
-      "analysis_calls": 0,
-      "live_calls": 12,
+      "analysis_calls": 1,
+      "live_calls": 17,
       "scoring_calls": 1,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
@@ -42039,5 +42044,5 @@
     "analysis_per_league_limit": 5,
     "quota_paused": false
   },
-  "last_analysis_at": "2026-09-08T09:27:12.787285+09:00"
+  "last_analysis_at": "2026-09-08T09:41:50.024141+09:00"
 }
