@@ -3295,6 +3295,43 @@ with main_tab2:
     toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
+        if active_role == ROLE_ADMIN:
+            robot_panel_key = "admin_toto14_robot_pick_open"
+            if st.button(
+                "🤖 로봇픽 닫기" if st.session_state.get(robot_panel_key) else "🤖 로봇픽 보기",
+                key="admin-toto14-robot-pick-button",
+                use_container_width=True,
+            ):
+                st.session_state[robot_panel_key] = not st.session_state.get(robot_panel_key, False)
+            if st.session_state.get(robot_panel_key):
+                robot_ready = sum(
+                    1 for item in toto14_list if str(item.get("robot_mark") or "") in {"승", "무", "패"}
+                )
+                st.markdown(
+                    f"<div style='background:#071827;border:1px solid #00F2FE;border-radius:12px;padding:18px;margin:12px 0 18px;'>"
+                    f"<div style='color:#00F2FE;font-weight:900;font-size:18px;'>🤖 관리자 전용 로봇 승무패14 단독표</div>"
+                    f"<div style='color:#94A3B8;margin-top:6px;'>공식 조합과 별개 · 로봇 자체 확률 · 준비 {robot_ready}/{len(toto14_list)}경기 · 경기 전 최초값 고정</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                for robot_index, robot_item in enumerate(toto14_list, 1):
+                    robot_match = robot_item.get("match") or {}
+                    robot_mark = str(robot_item.get("robot_mark") or "")
+                    robot_display = str(robot_item.get("robot_pick_display") or "분석 대기")
+                    robot_probability = float(robot_item.get("robot_pick_probability") or 0)
+                    mark_color = {"승": "#00F2FE", "무": "#10B981", "패": "#EF4444"}.get(robot_mark, "#64748B")
+                    st.markdown(
+                        f"<div style='display:grid;grid-template-columns:70px 1fr 180px 90px;gap:12px;align-items:center;"
+                        f"background:#0B1220;border:1px solid #1E293B;border-radius:9px;padding:11px 14px;margin-bottom:8px;'>"
+                        f"<b style='color:#94A3B8;'>제 {robot_index} 경기</b>"
+                        f"<span style='color:#F8FAFC;font-weight:800;'>{escape(str(robot_match.get('home') or ''))} vs {escape(str(robot_match.get('away') or ''))}</span>"
+                        f"<span style='color:{mark_color};font-weight:900;'>{escape(robot_display)}</span>"
+                        f"<span style='color:#CBD5E1;text-align:right;'>{robot_probability:.1f}%</span>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.caption("이 로봇표는 관리자에게만 보이며 공식 8조합 마킹과 섞이지 않습니다.")
+
         # The cards are the source of truth.  A partially published/stale meta
         # object must never turn 10 singles + 3 doubles into 0 won.
         toto14_meta = toto14_display_meta(

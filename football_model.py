@@ -8,11 +8,15 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "independent-all-evidence-kelly-v2"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-full-market-v1"
 OFFICIAL_PICK_POLICY_VERSION = "all-evidence-best-one-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
+ROBOT_MODEL_VERSION = "autonomous-pre-match-goals-v1"
+ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v1"
+ROBOT_MIN_TRAIN = 60
+ROBOT_MIN_VALIDATION = 20
 
 
 def price_eligible(pick, confidence):
@@ -205,6 +209,61 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
         raise ValueError("no settlement-compatible candidate")
 
     confidence = max(0.0, min(1.0, float(confidence or 0)))
+    # The self-learning path already owns every candidate probability.  It
+    # therefore needs no official W/D/L priority, market quota, arbitrary
+    # minimum odds or hand-tuned evidence weights.  Positive expected return
+    # is a mathematical break-even comparison; when no priced direction clears
+    # break-even the robot protects its own hit probability and says so.
+    if any(pick.get("robot_probability") is not None for pick in available):
+        priced = []
+        for pick in available:
+            probability = max(0.0, min(1.0, _finite_number(
+                pick.get("robot_probability"), pick.get("prob") or 0
+            )))
+            odd = _finite_number(pick.get("odd"))
+            expected_return = probability * odd if odd > 1.0 else 0.0
+            pick.update({
+                "prob": probability,
+                "robust_probability": probability,
+                "robot_score": round(expected_return if odd > 1.0 else probability, 6),
+                "robot_kelly": (
+                    round((expected_return - 1.0) / max(odd - 1.0, 1e-9), 6)
+                    if odd > 1.0 else None
+                ),
+                "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
+                "robot_price_verified": odd > 1.0,
+            })
+            if odd > 1.0:
+                priced.append(pick)
+        positive = [pick for pick in priced if _finite_number(pick.get("robot_score")) >= 1.0]
+        if positive:
+            chosen = max(positive, key=lambda pick: (
+                _finite_number(pick.get("robot_score")),
+                _finite_number(pick.get("robot_probability")),
+                str(pick.get("raw_pick") or ""),
+            ))
+            reason = "robot_probability_maximum_expected_return"
+            chosen["robot_selection_axis"] = "learned_probability_expected_return"
+            chosen["robot_fallback"] = False
+        else:
+            chosen = max(available, key=lambda pick: (
+                _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
+                _finite_number(pick.get("robot_score")),
+                str(pick.get("raw_pick") or ""),
+            ))
+            reason = "robot_probability_hit_rate_fallback"
+            chosen["robot_selection_axis"] = "learned_probability_no_positive_price"
+            chosen["robot_fallback"] = True
+        chosen["recommendation_status"] = "SELECTED"
+        chosen["selection_reason"] = (
+            "로봇이 경기 전 원자료로 자체 득점·전 시장 확률을 만든 뒤 시장 구분이나 "
+            "승무패 우선순서 없이 실제 배당의 기대값이 가장 큰 한 방향을 골랐습니다."
+            if not chosen.get("robot_fallback") else
+            "로봇 자체 확률에서 손익분기점을 넘은 실배당 후보가 없어 시장 구분 없이 "
+            "자체 적중확률이 가장 높은 한 방향을 골랐습니다."
+        )
+        return (chosen, reason) if return_reason else chosen
+
     priced = []
     for pick in available:
         probability = max(
@@ -662,3 +721,484 @@ def train_challenger(records, priors, wdl_function):
             final_model["rho"] = -.15
         artifact["parameters"] = final_model
     return artifact
+
+
+def _finite_number(value, default=0.0):
+    try:
+        value = float(value)
+        return value if math.isfinite(value) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def build_autonomous_robot_features(
+    goal_audit, context_audit, candidates, confidence, extra=None,
+):
+    """Freeze a numeric pre-match feature map for the autonomous learner.
+
+    The map is deliberately wider than the current fitted model.  Feature
+    coverage, usefulness and interactions are selected again at training time;
+    a human-authored weight or a W/D/L-first rule is not stored here.
+    """
+    goal_audit = goal_audit if isinstance(goal_audit, dict) else {}
+    context_audit = context_audit if isinstance(context_audit, dict) else {}
+    base = context_audit.get("base_expected_goals") or goal_audit.get("expected_goals") or {}
+    adjusted = context_audit.get("adjusted_expected_goals") or goal_audit.get("expected_goals") or base
+    features = {
+        "base_home_goals": _finite_number(base.get("home"), 1.35),
+        "base_away_goals": _finite_number(base.get("away"), 1.15),
+        "context_home_goals": _finite_number(adjusted.get("home"), 1.35),
+        "context_away_goals": _finite_number(adjusted.get("away"), 1.15),
+        "data_confidence": max(0.0, min(1.0, _finite_number(confidence))),
+        "rho": max(-.75, min(.50, _finite_number(goal_audit.get("rho"), -.15))),
+    }
+    for side, value in (context_audit.get("side_alignment") or {}).items():
+        if side in {"home", "draw", "away"}:
+            features[f"alignment_{side}"] = _finite_number(value)
+    for component in context_audit.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        name = "".join(
+            character if character.isalnum() else "_"
+            for character in str(component.get("name") or "component").casefold()
+        ).strip("_")[:48]
+        if not name:
+            continue
+        for side in ("home", "draw", "away"):
+            if component.get(side) is not None:
+                features[f"context_{name}_{side}"] = _finite_number(component.get(side))
+
+    for pick in candidates or []:
+        if not isinstance(pick, dict):
+            continue
+        market = str(pick.get("market_key") or "")
+        side = str(pick.get("selection_side") or "")
+        if market not in {"1x2", "handicap", "totals"} or not side:
+            continue
+        prefix = f"market_{market.replace('1x2', 'wdl')}_{side}"
+        features[prefix + "_odd"] = _finite_number(pick.get("odd"))
+        features[prefix + "_fair"] = _finite_number(
+            pick.get("fair_prob"), _finite_number(pick.get("market_prob"))
+        )
+        if market == "handicap":
+            features["handicap_line"] = _finite_number(pick.get("handicap_base"))
+        elif market == "totals":
+            features["totals_line"] = _finite_number(pick.get("totals_base"), 2.5)
+
+    for key, value in (extra or {}).items():
+        if isinstance(value, bool):
+            features[str(key)] = float(value)
+        elif isinstance(value, (int, float)):
+            features[str(key)] = _finite_number(value)
+    return {
+        key: round(value, 8)
+        for key, value in sorted(features.items())
+        if math.isfinite(value)
+    }
+
+
+def _robot_score_matrix(home_rate, away_rate, rho=-.15, limit=16):
+    home_rate = max(.15, min(4.5, _finite_number(home_rate, 1.35)))
+    away_rate = max(.15, min(4.5, _finite_number(away_rate, 1.15)))
+    lower, upper = _rho_bounds(home_rate, away_rate)
+    rho = max(lower, min(upper, _finite_number(rho, -.15)))
+    hp, ap = _poisson_values(home_rate, limit), _poisson_values(away_rate, limit)
+    matrix = []
+    total = 0.0
+    for home_score, ph in enumerate(hp):
+        row = []
+        for away_score, pa in enumerate(ap):
+            value = max(
+                0.0,
+                ph * pa * _dc_tau(
+                    home_score, away_score, home_rate, away_rate, rho
+                ),
+            )
+            row.append(value)
+            total += value
+        matrix.append(row)
+    if total <= 0:
+        raise ValueError("robot score distribution is empty")
+    return [[value / total for value in row] for row in matrix]
+
+
+def _robot_market_probability(matrix, market, side, line=0.0):
+    probability = 0.0
+    for home_score, row in enumerate(matrix):
+        for away_score, value in enumerate(row):
+            if market == "1x2":
+                outcome = "home" if home_score > away_score else (
+                    "draw" if home_score == away_score else "away"
+                )
+            elif market == "handicap":
+                margin = home_score + line - away_score
+                outcome = "home" if margin > 1e-9 else (
+                    "draw" if abs(margin) <= 1e-9 else "away"
+                )
+            elif market == "totals":
+                total = home_score + away_score
+                outcome = "under" if total < line else (
+                    "over" if total > line else "push"
+                )
+            else:
+                continue
+            if outcome == side:
+                probability += value
+    return max(0.0, min(1.0, probability))
+
+
+def _robot_expand_features(features, names, interactions):
+    values = [_finite_number(features.get(name)) for name in names]
+    lookup = dict(zip(names, values))
+    values.extend(
+        lookup.get(left, 0.0) * lookup.get(right, 0.0)
+        for left, right in interactions
+    )
+    return values
+
+
+def _robot_feature_candidates(rows):
+    numeric = {}
+    for row in rows:
+        features = row.get("features") or {}
+        for key, value in features.items():
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                numeric.setdefault(str(key), []).append(number)
+    required = {"base_home_goals", "base_away_goals"}
+    minimum_coverage = max(8, int(len(rows) * .50))
+    variable = []
+    for key, values in numeric.items():
+        if len(values) < minimum_coverage and key not in required:
+            continue
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        if variance > 1e-8 or key in required:
+            variable.append(key)
+    return sorted(set(variable) | required)
+
+
+def _robot_correlation(rows, key, target):
+    pairs = []
+    for row in rows:
+        features = row.get("features") or {}
+        if key not in features:
+            continue
+        x = _finite_number(features.get(key))
+        y = _finite_number(row.get(target))
+        pairs.append((x, y))
+    if len(pairs) < 8:
+        return 0.0
+    mx = sum(x for x, _ in pairs) / len(pairs)
+    my = sum(y for _, y in pairs) / len(pairs)
+    numerator = sum((x - mx) * (y - my) for x, y in pairs)
+    dx = sum((x - mx) ** 2 for x, _ in pairs)
+    dy = sum((y - my) ** 2 for _, y in pairs)
+    return numerator / math.sqrt(dx * dy) if dx > 0 and dy > 0 else 0.0
+
+
+def _fit_robot_linear(rows, names, interactions, target, ridge, half_life_days):
+    raw = [_robot_expand_features(row.get("features") or {}, names, interactions) for row in rows]
+    dimension = len(raw[0]) if raw else 0
+    means = [sum(vector[index] for vector in raw) / len(raw) for index in range(dimension)]
+    scales = []
+    for index in range(dimension):
+        variance = sum((vector[index] - means[index]) ** 2 for vector in raw) / len(raw)
+        scales.append(max(.05, math.sqrt(variance)))
+    design = [
+        [(vector[index] - means[index]) / scales[index] for index in range(dimension)]
+        for vector in raw
+    ]
+    latest = max(_finite_number(row.get("kickoff")) for row in rows)
+    sample_weights = [
+        2 ** (-(latest - _finite_number(row.get("kickoff"))) / (half_life_days * 86400.0))
+        for row in rows
+    ]
+    targets = [_finite_number(row.get(target)) for row in rows]
+    intercept = sum(y * weight for y, weight in zip(targets, sample_weights)) / max(1e-9, sum(sample_weights))
+    weights = [0.0] * dimension
+    # The collector can run on a small EC2 instance.  A bounded optimizer keeps
+    # retraining responsive while every completed sample remains in the audit DB.
+    for iteration in range(160):
+        grad_intercept = 0.0
+        gradients = [ridge * weight for weight in weights]
+        weight_sum = max(1e-9, sum(sample_weights))
+        for vector, y, sample_weight in zip(design, targets, sample_weights):
+            error = intercept + sum(w * x for w, x in zip(weights, vector)) - y
+            grad_intercept += sample_weight * error
+            for index, value in enumerate(vector):
+                gradients[index] += sample_weight * error * value
+        rate = .08 / math.sqrt(1.0 + iteration / 35.0)
+        intercept -= rate * grad_intercept / weight_sum
+        for index in range(dimension):
+            weights[index] -= rate * gradients[index] / weight_sum
+    return {
+        "intercept": intercept, "weights": weights,
+        "means": means, "scales": scales,
+    }
+
+
+def _predict_robot_linear(model, vector):
+    standardized = [
+        (value - mean) / scale
+        for value, mean, scale in zip(vector, model["means"], model["scales"])
+    ]
+    return model["intercept"] + sum(
+        weight * value for weight, value in zip(model["weights"], standardized)
+    )
+
+
+def _robot_rates_from_parameters(features, parameters=None):
+    # Before enough results exist for promotion, use the verified full-context
+    # pre-match goal prior so home/H2H/form/availability evidence is not ignored.
+    # The learner then estimates its own residuals and interactions around this
+    # transparent starting point; it never copies the official final W/D/L.
+    base_h = max(.15, min(4.5, _finite_number(
+        features.get("context_home_goals"),
+        _finite_number(features.get("base_home_goals"), 1.35),
+    )))
+    base_a = max(.15, min(4.5, _finite_number(
+        features.get("context_away_goals"),
+        _finite_number(features.get("base_away_goals"), 1.15),
+    )))
+    if not parameters:
+        return base_h, base_a
+    names = parameters.get("feature_names") or []
+    interactions = [tuple(pair) for pair in parameters.get("interactions") or []]
+    vector = _robot_expand_features(features, names, interactions)
+    residual_h = max(-1.1, min(1.1, _predict_robot_linear(parameters["home"], vector)))
+    residual_a = max(-1.1, min(1.1, _predict_robot_linear(parameters["away"], vector)))
+    return (
+        max(.15, min(4.5, (base_h + .35) * math.exp(residual_h) - .35)),
+        max(.15, min(4.5, (base_a + .35) * math.exp(residual_a) - .35)),
+    )
+
+
+def _robot_loss(rows, parameters=None):
+    brier = log_loss = goal_mae = 0.0
+    for row in rows:
+        rates = _robot_rates_from_parameters(row.get("features") or {}, parameters)
+        probs = dixon_coles_wdl(*rates, -.15)
+        result = 0 if row["home_goals"] > row["away_goals"] else (
+            1 if row["home_goals"] == row["away_goals"] else 2
+        )
+        brier += sum((probability - int(index == result)) ** 2 for index, probability in enumerate(probs))
+        log_loss -= math.log(max(1e-12, probs[result]))
+        goal_mae += (abs(rates[0] - row["home_goals"]) + abs(rates[1] - row["away_goals"])) / 2.0
+    count = max(1, len(rows))
+    return {
+        "brier": brier / count,
+        "log_loss": log_loss / count,
+        "goal_mae": goal_mae / count,
+    }
+
+
+def _clean_robot_examples(examples):
+    unique = {}
+    conflicts = set()
+    for example in examples or []:
+        if not isinstance(example, dict):
+            continue
+        fixture_key = str(example.get("fixture_key") or "").strip()
+        kickoff = _finite_number(example.get("kickoff"), -1)
+        captured_at = _finite_number(example.get("captured_at"), kickoff + 1)
+        known_at = _finite_number(example.get("known_at"), kickoff)
+        home_goals = _finite_number(example.get("home_goals"), -1)
+        away_goals = _finite_number(example.get("away_goals"), -1)
+        features = example.get("features") or {}
+        if (
+            not fixture_key or kickoff <= 0 or captured_at >= kickoff
+            or known_at <= kickoff or not isinstance(features, dict)
+            or home_goals < 0 or away_goals < 0
+            or home_goals > 20 or away_goals > 20
+        ):
+            continue
+        row = {
+            "fixture_key": fixture_key, "kickoff": kickoff,
+            "features": features, "home_goals": int(home_goals),
+            "away_goals": int(away_goals),
+        }
+        if fixture_key in unique and unique[fixture_key] != row:
+            conflicts.add(fixture_key)
+        unique.setdefault(fixture_key, row)
+    return sorted(
+        (row for key, row in unique.items() if key not in conflicts),
+        key=lambda row: (row["kickoff"], row["fixture_key"]),
+    )
+
+
+def train_autonomous_robot(examples):
+    """Train and promote only on a strictly later chronological holdout."""
+    rows = _clean_robot_examples(examples)
+    artifact = {
+        "model_version": ROBOT_MODEL_VERSION,
+        "feature_schema_version": ROBOT_FEATURE_SCHEMA_VERSION,
+        "active": False,
+        "samples": len(rows),
+        "train_fixtures": 0,
+        "validation_fixtures": 0,
+        "reason": "종료된 경기 전 로봇 표본 수집 중",
+        "validation_scope": "chronological_unseen_fixtures",
+        "history_rewrite": False,
+        "uses_post_kickoff_features": False,
+    }
+    if len(rows) < ROBOT_MIN_TRAIN + ROBOT_MIN_VALIDATION:
+        return artifact
+    split = max(ROBOT_MIN_TRAIN, int(len(rows) * .75))
+    split = min(split, len(rows) - ROBOT_MIN_VALIDATION)
+    boundary = rows[split]["kickoff"]
+    train = [row for row in rows if row["kickoff"] < boundary]
+    validation = [row for row in rows if row["kickoff"] >= boundary]
+    if len(train) < ROBOT_MIN_TRAIN or len(validation) < ROBOT_MIN_VALIDATION:
+        return artifact
+
+    candidate_names = _robot_feature_candidates(train)
+    ranked_names = sorted(
+        candidate_names,
+        key=lambda key: max(
+            abs(_robot_correlation(train, key, "home_goals")),
+            abs(_robot_correlation(train, key, "away_goals")),
+        ),
+        reverse=True,
+    )[:24]
+    for required in ("base_home_goals", "base_away_goals"):
+        if required not in ranked_names:
+            ranked_names.append(required)
+    interaction_sources = ranked_names[:7]
+    all_interactions = [
+        (left, right)
+        for index, left in enumerate(interaction_sources)
+        for right in interaction_sources[index + 1:]
+    ]
+    baseline = _robot_loss(validation)
+    trials = []
+    for ridge in (.03, .12):
+        for interaction_count in (0, 8):
+            for half_life in (180.0, 420.0):
+                interactions = all_interactions[:interaction_count]
+                fitted_rows = []
+                for row in train:
+                    copy = dict(row)
+                    base_h, base_a = _robot_rates_from_parameters(row["features"])
+                    copy["target_h"] = math.log((row["home_goals"] + .35) / (base_h + .35))
+                    copy["target_a"] = math.log((row["away_goals"] + .35) / (base_a + .35))
+                    fitted_rows.append(copy)
+                parameters = {
+                    "feature_names": ranked_names,
+                    "interactions": interactions,
+                    "home": _fit_robot_linear(fitted_rows, ranked_names, interactions, "target_h", ridge, half_life),
+                    "away": _fit_robot_linear(fitted_rows, ranked_names, interactions, "target_a", ridge, half_life),
+                    "rho": -.15,
+                }
+                loss = _robot_loss(validation, parameters)
+                trials.append((
+                    loss["brier"] + .35 * loss["log_loss"] + .10 * loss["goal_mae"],
+                    ridge, interaction_count, half_life, parameters, loss,
+                ))
+    _, ridge, interaction_count, half_life, best_parameters, fitted = min(trials, key=lambda row: row[0])
+    passed = bool(
+        fitted["brier"] < baseline["brier"]
+        and fitted["log_loss"] < baseline["log_loss"]
+        and fitted["goal_mae"] <= baseline["goal_mae"] + .02
+    )
+    artifact.update({
+        "active": passed,
+        "train_fixtures": len(train),
+        "validation_fixtures": len(validation),
+        "train_before": boundary,
+        "baseline_brier": round(baseline["brier"], 6),
+        "fitted_brier": round(fitted["brier"], 6),
+        "baseline_log_loss": round(baseline["log_loss"], 6),
+        "fitted_log_loss": round(fitted["log_loss"], 6),
+        "baseline_goal_mae": round(baseline["goal_mae"], 6),
+        "fitted_goal_mae": round(fitted["goal_mae"], 6),
+        "selected_ridge": ridge,
+        "selected_half_life_days": half_life,
+        "selected_interaction_count": interaction_count,
+        "selected_features": list(ranked_names),
+        "selected_interactions": [list(pair) for pair in best_parameters["interactions"]],
+        "reason": (
+            "시간순 미사용 경기에서 기초 자율모형보다 확률·득점 오차 감소"
+            if passed else
+            "도전자 학습은 완료했으나 시간순 미사용 경기 개선 미확인 · 기초 자율모형 유지"
+        ),
+    })
+    if passed:
+        full_rows = []
+        for row in rows:
+            copy = dict(row)
+            base_h, base_a = _robot_rates_from_parameters(row["features"])
+            copy["target_h"] = math.log((row["home_goals"] + .35) / (base_h + .35))
+            copy["target_a"] = math.log((row["away_goals"] + .35) / (base_a + .35))
+            full_rows.append(copy)
+        interactions = [tuple(pair) for pair in artifact["selected_interactions"]]
+        parameters = {
+            "feature_names": ranked_names,
+            "interactions": interactions,
+            "home": _fit_robot_linear(full_rows, ranked_names, interactions, "target_h", ridge, half_life),
+            "away": _fit_robot_linear(full_rows, ranked_names, interactions, "target_a", ridge, half_life),
+            "rho": -.15,
+        }
+        labels = ranked_names + [f"{left}×{right}" for left, right in interactions]
+        importance = []
+        for index, label in enumerate(labels):
+            importance.append((
+                abs(parameters["home"]["weights"][index]) + abs(parameters["away"]["weights"][index]),
+                label,
+            ))
+        artifact["feature_importance"] = [
+            {"feature": label, "importance": round(value, 6)}
+            for value, label in sorted(importance, reverse=True)[:15]
+        ]
+        artifact["parameters"] = parameters
+    return artifact
+
+
+def build_autonomous_robot_candidates(picks, features, artifact=None):
+    """Calculate robot-owned probabilities for every supported market."""
+    artifact = artifact if isinstance(artifact, dict) else {}
+    active = bool(artifact.get("active") and artifact.get("parameters"))
+    parameters = artifact.get("parameters") if active else None
+    home_rate, away_rate = _robot_rates_from_parameters(features or {}, parameters)
+    rho = _finite_number((parameters or {}).get("rho"), -.15)
+    matrix = _robot_score_matrix(home_rate, away_rate, rho)
+    result = []
+    for original in picks or []:
+        if not isinstance(original, dict) or not original.get("settlement_supported", True):
+            continue
+        pick = dict(original)
+        market = str(pick.get("market_key") or "1x2")
+        side = str(pick.get("selection_side") or "")
+        line = (
+            _finite_number(pick.get("handicap_base")) if market == "handicap"
+            else _finite_number(pick.get("totals_base"), 2.5) if market == "totals"
+            else 0.0
+        )
+        probability = _robot_market_probability(matrix, market, side, line)
+        fair = pick.get("fair_prob")
+        fair = _finite_number(fair, _finite_number(pick.get("market_prob")))
+        odd = _finite_number(pick.get("odd"))
+        pick.update({
+            "official_probability": _finite_number(pick.get("prob")),
+            "prob": probability,
+            "probability": probability,
+            "model_probability": probability,
+            "robust_probability": probability,
+            "robot_probability": probability,
+            "robot_expected_goals": {"home": round(home_rate, 4), "away": round(away_rate, 4)},
+            "robot_model_version": ROBOT_MODEL_VERSION,
+            "robot_feature_schema_version": ROBOT_FEATURE_SCHEMA_VERSION,
+            "robot_model_active": active,
+            "robot_training_samples": int(artifact.get("samples") or 0),
+            "robot_validation_fixtures": int(artifact.get("validation_fixtures") or 0),
+            "robot_learning_reason": str(artifact.get("reason") or "종료된 경기 전 표본 수집 중"),
+            "robot_edge": probability - fair if 0 < fair < 1 else 0.0,
+            "robot_ev": probability * odd if odd > 1 else 0.0,
+            "robust_edge": probability - fair if 0 < fair < 1 else 0.0,
+            "robust_ev": probability * odd if odd > 1 else 0.0,
+        })
+        result.append(pick)
+    return result

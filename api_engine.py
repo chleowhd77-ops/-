@@ -13,8 +13,11 @@ from dotenv import load_dotenv
 from football_model import (clean_records, train_challenger, predict_goals,
                             price_eligible, probability_price_choice, validate_price_policy,
                             wdl_centered_choice, all_evidence_choice,
-                            autonomous_robot_choice, OFFICIAL_PICK_POLICY_VERSION,
-                            AUTONOMOUS_ROBOT_POLICY_VERSION)
+                            autonomous_robot_choice, build_autonomous_robot_features,
+                            build_autonomous_robot_candidates, train_autonomous_robot,
+                            OFFICIAL_PICK_POLICY_VERSION,
+                            AUTONOMOUS_ROBOT_POLICY_VERSION, ROBOT_MODEL_VERSION,
+                            ROBOT_FEATURE_SCHEMA_VERSION)
 
 from grading_postmortem import (
     build_postmortem,
@@ -37,15 +40,15 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.10.0-all-evidence-official-plus-robot"
+ANALYSIS_VERSION = "V7.11.0-autonomous-self-learning-robot"
 FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
 CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
 PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
-ROBOT_PICK_VERSION = "robot-independent-all-evidence-v2-prekickoff"
+ROBOT_PICK_VERSION = "robot-self-learning-v1-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.10.0-full-evidence-best-one"
+SYSTEM_VERSION = "R7.11.0-autonomous-learning-loop"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.

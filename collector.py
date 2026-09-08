@@ -899,6 +899,42 @@ def _toto14_from_canonical_proto(match, proto_items):
                   p_h=pct_h, p_d=pct_d, p_a=round(100-pct_h-pct_d, 1),
                   goal_model_audit=item.get("goal_model_audit"),
                   wdl_forecast=dict(item["wdl_forecast"]), probability_source="canonical_proto_same_fixture")
+    frozen_robot = _load_frozen_autonomous_robot_sample(
+        "TOTO14_" + str(match.get("id") or ""), item.get("api_fixture_id") or 0
+    )
+    frozen_wdl = {
+        str(candidate.get("selection_side")): float(
+            candidate.get("robot_probability")
+            if candidate.get("robot_probability") is not None
+            else candidate.get("prob") or 0
+        )
+        for candidate in ((frozen_robot or {}).get("candidates") or [])
+        if isinstance(candidate, dict)
+        and str(candidate.get("market_key") or "") == "1x2"
+        and str(candidate.get("selection_side") or "") in {"home", "draw", "away"}
+    }
+    robot_wdl = (
+        frozen_wdl if set(frozen_wdl) == {"home", "draw", "away"}
+        else dict(item.get("robot_wdl_probabilities") or {})
+    )
+    if all(side in robot_wdl for side in ("home", "draw", "away")):
+        robot_side = max(
+            ("home", "draw", "away"),
+            key=lambda side: float(robot_wdl.get(side) or 0),
+        )
+        robot_mark = {"home": "승", "draw": "무", "away": "패"}[robot_side]
+        result.update(
+            robot_wdl_probabilities=robot_wdl,
+            robot_mark=robot_mark,
+            robot_pick_display=(
+                match["home"] + " 승" if robot_mark == "승" else
+                match["away"] + " 승" if robot_mark == "패" else "무승부"
+            ),
+            robot_pick_probability=round(float(robot_wdl[robot_side]) * 100, 1),
+            robot_pick_version=ROBOT_PICK_VERSION,
+            robot_first_pick_frozen=bool(frozen_robot),
+            robot_frozen_at=str((frozen_robot or {}).get("captured_at") or ""),
+        )
     picks, _, _ = _choose_toto14_picks({"승":pct_h, "무":pct_d, "패":result["p_a"]}, 1)
     result.update(picks=picks, picks_html=_render_toto14_picks_html(picks),
                   best_pick_display=", ".join("무승부" if p == "무" else f"{match['home'] if p == '승' else match['away']} 승" for p in picks))
@@ -2843,6 +2879,14 @@ def build_pick_selection_audit(
             "robot_learning_validated": bool(
                 robot_pick.get("robot_learning_validated")
             ),
+            "robot_probability": _audit_number(robot_pick.get("robot_probability")),
+            "robot_expected_goals": dict(robot_pick.get("robot_expected_goals") or {}),
+            "robot_model_version": str(robot_pick.get("robot_model_version") or ""),
+            "robot_feature_schema_version": str(robot_pick.get("robot_feature_schema_version") or ""),
+            "robot_model_active": bool(robot_pick.get("robot_model_active")),
+            "robot_training_samples": int(robot_pick.get("robot_training_samples") or 0),
+            "robot_validation_fixtures": int(robot_pick.get("robot_validation_fixtures") or 0),
+            "robot_learning_reason": str(robot_pick.get("robot_learning_reason") or ""),
             "robot_pick_version": ROBOT_PICK_VERSION,
             "robot_policy_version": str(
                 robot_pick.get("robot_policy_version")
@@ -2934,6 +2978,12 @@ def build_pick_selection_audit(
             "context_alignment": _audit_number(item.get("context_alignment"), 0.0),
             "official_score": _audit_number(item.get("official_score"), 0.0),
             "robot_score": _audit_number(item.get("robot_score"), 0.0),
+            "robot_probability": _audit_number(item.get("robot_probability")),
+            "robot_expected_goals": dict(item.get("robot_expected_goals") or {}),
+            "robot_model_version": str(item.get("robot_model_version") or ""),
+            "robot_model_active": bool(item.get("robot_model_active")),
+            "robot_training_samples": int(item.get("robot_training_samples") or 0),
+            "robot_validation_fixtures": int(item.get("robot_validation_fixtures") or 0),
             "market_hit_rate": _audit_number(item.get("market_hit_rate"), 0.5),
             "market_history_samples": int(
                 item.get("market_history_samples", 0) or 0
@@ -3812,11 +3862,417 @@ def select_pick_categories(picks, confidence):
     return categories, [categories["high_probability"]]
 
 
-def select_autonomous_robot_pick(picks, confidence):
-    """Return the separate robot answer without changing the official pick."""
+_AUTONOMOUS_ROBOT_CACHE = {"signature": None, "artifact": None}
+
+
+def _ensure_autonomous_robot_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS robot_learning_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            match_id TEXT NOT NULL,
+            api_fixture_id INTEGER DEFAULT 0,
+            league TEXT DEFAULT '',
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            kickoff_at TEXT NOT NULL,
+            kickoff_timestamp REAL NOT NULL,
+            captured_at TEXT NOT NULL,
+            captured_timestamp REAL NOT NULL,
+            robot_pick_version TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            features_json TEXT NOT NULL,
+            candidates_json TEXT NOT NULL,
+            robot_pick_json TEXT NOT NULL,
+            actual_home_goals INTEGER,
+            actual_away_goals INTEGER,
+            result_known_at TEXT,
+            result_known_timestamp REAL,
+            robot_pick_correct INTEGER,
+            candidate_results_json TEXT DEFAULT '[]',
+            UNIQUE(fixture_key, robot_pick_version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_robot_samples_result "
+        "ON robot_learning_samples(robot_pick_version, result_known_timestamp, kickoff_timestamp)"
+    )
+    robot_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(robot_learning_samples)")
+    }
+    if "robot_pick_correct" not in robot_columns:
+        conn.execute("ALTER TABLE robot_learning_samples ADD COLUMN robot_pick_correct INTEGER")
+    if "candidate_results_json" not in robot_columns:
+        conn.execute(
+            "ALTER TABLE robot_learning_samples ADD COLUMN candidate_results_json TEXT DEFAULT '[]'"
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS robot_model_promotions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            robot_pick_version TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            sample_signature TEXT NOT NULL,
+            artifact_json TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(robot_pick_version, sample_signature)
+        )
+        """
+    )
+
+
+def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff):
+    if int(fixture_id or 0) > 0:
+        return f"fixture:{int(fixture_id)}"
+    normalized = lambda value: re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").casefold())
+    return "scheduled:" + "|".join((
+        normalized(home_team), normalized(away_team),
+        kickoff.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M"),
+        normalized(match_id),
+    ))
+
+
+def _load_autonomous_robot_artifact():
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_autonomous_robot_tables(conn)
+        signature_row = conn.execute(
+            """
+            SELECT COUNT(*), COALESCE(MAX(result_known_timestamp), 0)
+            FROM robot_learning_samples
+            WHERE actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
+            """
+        ).fetchone()
+        signature = f"{int(signature_row[0] or 0)}:{float(signature_row[1] or 0):.3f}"
+        if (
+            _AUTONOMOUS_ROBOT_CACHE.get("signature") == signature
+            and isinstance(_AUTONOMOUS_ROBOT_CACHE.get("artifact"), dict)
+        ):
+            return _AUTONOMOUS_ROBOT_CACHE["artifact"]
+        examples = []
+        rows = conn.execute(
+            """
+            SELECT fixture_key,kickoff_timestamp,captured_timestamp,
+                   result_known_timestamp,features_json,
+                   actual_home_goals,actual_away_goals
+            FROM (
+                SELECT id,fixture_key,kickoff_timestamp,captured_timestamp,
+                       result_known_timestamp,features_json,
+                       actual_home_goals,actual_away_goals
+                FROM robot_learning_samples
+                WHERE actual_home_goals IS NOT NULL
+                  AND actual_away_goals IS NOT NULL
+                  AND feature_schema_version=?
+                ORDER BY kickoff_timestamp DESC,id DESC
+                LIMIT 600
+            )
+            ORDER BY kickoff_timestamp,id
+            """
+            , (ROBOT_FEATURE_SCHEMA_VERSION,)
+        ).fetchall()
+        for fixture_key, kickoff, captured, known, features_json, goals_h, goals_a in rows:
+            try:
+                features = json.loads(features_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            examples.append({
+                "fixture_key": str(fixture_key), "kickoff": float(kickoff),
+                "captured_at": float(captured), "known_at": float(known),
+                "features": features, "home_goals": int(goals_h),
+                "away_goals": int(goals_a),
+            })
+        artifact = train_autonomous_robot(examples)
+        safe_artifact = {key: value for key, value in artifact.items() if key != "parameters"}
+        fingerprint = hashlib.sha256(
+            json.dumps(safe_artifact, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO robot_model_promotions (
+                robot_pick_version,model_version,sample_signature,
+                artifact_json,active,created_at
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            (
+                ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION,
+                signature + ":" + fingerprint[:16],
+                json.dumps(safe_artifact, ensure_ascii=False, sort_keys=True),
+                int(bool(artifact.get("active"))), _utc_iso(),
+            ),
+        )
+        conn.commit()
+        _AUTONOMOUS_ROBOT_CACHE.update(signature=signature, artifact=artifact)
+        return artifact
+    except Exception as error:
+        print(f"⚠️ 자율학습 로봇 모델 준비 실패 · 기초 자율모형 유지: {type(error).__name__}")
+        return {
+            "model_version": ROBOT_MODEL_VERSION, "active": False, "samples": 0,
+            "validation_fixtures": 0, "reason": "학습표본 저장소 확인 대기",
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_autonomous_robot_sample(
+    source, match_id, fixture_id, league, home_team, away_team, kickoff,
+    features, candidates, robot_pick,
+):
+    """Persist the first verified pre-kickoff robot input without later edits."""
+    if not isinstance(kickoff, datetime):
+        raw_kickoff = kickoff
+        kickoff = _parse_kst_match_time(raw_kickoff)
+        if kickoff is None:
+            try:
+                kickoff = datetime.fromisoformat(
+                    str(raw_kickoff or "").replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                kickoff = None
+    if kickoff is None:
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    now = datetime.now(timezone.utc)
+    kickoff_utc = kickoff.astimezone(timezone.utc)
+    if now >= kickoff_utc or not isinstance(features, dict) or not robot_pick:
+        return False
+    fixture_key = _robot_fixture_key(
+        match_id, fixture_id, home_team, away_team, kickoff_utc
+    )
+    compact_candidates = []
+    for candidate in candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        compact_candidates.append({
+            key: candidate.get(key) for key in (
+                "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
+                "market_prob", "handicap_base", "totals_base", "robot_probability",
+                "robot_expected_goals", "robot_model_version",
+            )
+        })
+    compact_pick = {
+        key: robot_pick.get(key) for key in (
+            "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
+            "handicap_base", "totals_base", "prob", "robot_probability",
+            "robot_expected_goals", "robot_model_version", "robot_model_active",
+            "robot_training_samples", "robot_validation_fixtures",
+            "robot_decision_reason", "robot_selection_axis",
+        )
+    }
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_autonomous_robot_tables(conn)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO robot_learning_samples (
+                fixture_key,source,match_id,api_fixture_id,league,home_team,away_team,
+                kickoff_at,kickoff_timestamp,captured_at,captured_timestamp,
+                robot_pick_version,feature_schema_version,features_json,
+                candidates_json,robot_pick_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                fixture_key, str(source or "UNKNOWN"), str(match_id), int(fixture_id or 0),
+                str(league or ""), str(home_team), str(away_team), kickoff_utc.isoformat(),
+                kickoff_utc.timestamp(), now.isoformat(), now.timestamp(),
+                ROBOT_PICK_VERSION, ROBOT_FEATURE_SCHEMA_VERSION,
+                json.dumps(features, ensure_ascii=False, sort_keys=True),
+                json.dumps(compact_candidates, ensure_ascii=False, sort_keys=True),
+                json.dumps(compact_pick, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as error:
+        print(f"⚠️ 자율학습 로봇 경기 전 표본 저장 실패({match_id}): {error}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0):
+    """Read the first robot decision for one physical fixture without mutation."""
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_autonomous_robot_tables(conn)
+        if int(fixture_id or 0) > 0:
+            row = conn.execute(
+                """
+                SELECT features_json,candidates_json,robot_pick_json,captured_at
+                FROM robot_learning_samples
+                WHERE api_fixture_id=? AND robot_pick_version=?
+                ORDER BY id ASC LIMIT 1
+                """,
+                (int(fixture_id), ROBOT_PICK_VERSION),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT features_json,candidates_json,robot_pick_json,captured_at
+                FROM robot_learning_samples
+                WHERE match_id=? AND robot_pick_version=?
+                ORDER BY id ASC LIMIT 1
+                """,
+                (str(match_id), ROBOT_PICK_VERSION),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return {
+                "features": json.loads(row[0] or "{}"),
+                "candidates": json.loads(row[1] or "[]"),
+                "pick": json.loads(row[2] or "{}"),
+                "captured_at": str(row[3] or ""),
+            }
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _apply_frozen_toto14_robot(item, match_id):
+    """Overlay the immutable first robot W/D/L table onto one TOTO14 card."""
+    if not isinstance(item, dict):
+        return item
+    match = item.get("match") or {}
+    frozen = _load_frozen_autonomous_robot_sample(
+        match_id, item.get("api_fixture_id") or 0
+    )
+    if not frozen:
+        return item
+    candidates = [
+        candidate for candidate in frozen.get("candidates") or []
+        if isinstance(candidate, dict)
+        and str(candidate.get("market_key") or "") == "1x2"
+        and str(candidate.get("selection_side") or "") in {"home", "draw", "away"}
+    ]
+    probabilities = {
+        str(candidate.get("selection_side")): float(
+            candidate.get("robot_probability")
+            if candidate.get("robot_probability") is not None
+            else candidate.get("prob") or 0
+        )
+        for candidate in candidates
+    }
+    if set(probabilities) != {"home", "draw", "away"}:
+        return item
+    side = max(("home", "draw", "away"), key=lambda key: probabilities[key])
+    mark = {"home": "승", "draw": "무", "away": "패"}[side]
+    display = (
+        str(match.get("home") or "") + " 승" if mark == "승" else
+        str(match.get("away") or "") + " 승" if mark == "패" else "무승부"
+    )
+    item.update({
+        "robot_features": frozen.get("features") or {},
+        "robot_candidates": candidates,
+        "robot_pick": frozen.get("pick") or {},
+        "robot_wdl_probabilities": probabilities,
+        "robot_mark": mark,
+        "robot_pick_display": display,
+        "robot_pick_probability": round(probabilities[side] * 100, 1),
+        "robot_pick_version": ROBOT_PICK_VERSION,
+        "robot_frozen_at": frozen.get("captured_at") or "",
+        "robot_first_pick_frozen": True,
+    })
+    return item
+
+
+def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a):
+    _ensure_autonomous_robot_tables(conn)
+    known = datetime.now(timezone.utc)
+    if int(fixture_id or 0) > 0:
+        rows = conn.execute(
+            """
+            SELECT id,home_team,away_team,robot_pick_json,candidates_json
+            FROM robot_learning_samples
+            WHERE api_fixture_id=? AND actual_home_goals IS NULL AND kickoff_timestamp < ?
+            """,
+            (int(fixture_id), known.timestamp()),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id,home_team,away_team,robot_pick_json,candidates_json
+            FROM robot_learning_samples
+            WHERE match_id=? AND actual_home_goals IS NULL AND kickoff_timestamp < ?
+            """,
+            (str(match_id), known.timestamp()),
+        ).fetchall()
+    graded = 0
+    for sample_id, home_team, away_team, robot_json, candidates_json in rows:
+        try:
+            robot_pick = json.loads(robot_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            robot_pick = {}
+        try:
+            candidates = json.loads(candidates_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            candidates = []
+        robot_hit = evaluate_single_pick(
+            robot_pick.get("raw_pick"), home_team, away_team,
+            int(goals_h), int(goals_a),
+        )
+        candidate_results = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_results.append({
+                "market_key": candidate.get("market_key"),
+                "selection_side": candidate.get("selection_side"),
+                "raw_pick": candidate.get("raw_pick"),
+                "robot_probability": candidate.get("robot_probability"),
+                "odd": candidate.get("odd"),
+                "is_correct": evaluate_single_pick(
+                    candidate.get("raw_pick"), home_team, away_team,
+                    int(goals_h), int(goals_a),
+                ),
+            })
+        cursor = conn.execute(
+            """
+            UPDATE robot_learning_samples
+            SET actual_home_goals=?,actual_away_goals=?,result_known_at=?,
+                result_known_timestamp=?,robot_pick_correct=?,candidate_results_json=?
+            WHERE id=? AND actual_home_goals IS NULL
+            """,
+            (
+                int(goals_h), int(goals_a), known.isoformat(), known.timestamp(),
+                int(bool(robot_hit)),
+                json.dumps(candidate_results, ensure_ascii=False, sort_keys=True),
+                int(sample_id),
+            ),
+        )
+        graded += int(cursor.rowcount or 0)
+    if graded:
+        _AUTONOMOUS_ROBOT_CACHE.update(signature=None, artifact=None)
+    return graded
+
+
+def select_autonomous_robot_pick(picks, confidence, robot_features=None):
+    """Return one robot-owned forecast without changing the official pick."""
     available = valid_analysis_candidates(picks)
     if not available:
         return None
+    robot_artifact = _load_autonomous_robot_artifact()
+    has_robot_probabilities = any(
+        pick.get("robot_probability") is not None for pick in available
+    )
+    if isinstance(robot_features, dict) and not has_robot_probabilities:
+        available = build_autonomous_robot_candidates(
+            available, robot_features, robot_artifact
+        )
     selected, reason = autonomous_robot_choice(
         available, confidence, return_reason=True
     )
@@ -3830,6 +4286,9 @@ def select_autonomous_robot_pick(picks, confidence):
         "pre_match_only": True,
         "history_rewrite": False,
         "self_modifying": False,
+        "self_learning": bool(isinstance(robot_features, dict) or has_robot_probabilities),
+        "robot_learning_active": bool(robot_artifact.get("active")),
+        "robot_learning_reason": str(robot_artifact.get("reason") or ""),
     })
     return selected
 
@@ -3848,15 +4307,15 @@ def robot_pick_report(robot_pick, home_team=""):
         )
     value_text = f"실제 배당 {odd:.2f}배" if odd > 1 else "실제 배당 미수신"
     learning_text = (
-        "시간순 검증 학습 반영"
-        if robot_pick.get("robot_learning_validated")
-        else "검증된 학습 보정만 허용 · 추가 보정 없음"
+        f"자체 학습모형 승격 적용 · 종료표본 {int(robot_pick.get('robot_training_samples') or 0)}경기"
+        if robot_pick.get("robot_model_active")
+        else f"전체 경기 전 근거 기초모형 · 종료표본 {int(robot_pick.get('robot_training_samples') or 0)}경기 수집 중"
     )
     return (
         "[로봇 독립픽] "
         f"{_human_pick_label(robot_pick.get('raw_pick'), home_team)} · "
-        f"모델 {probability * 100:.1f}% · {value_text} · {edge_text}. "
-        "공식 최종픽과 별도로 전체 시장과 경기 전 전체 지표를 독립적으로 비교한 답입니다. "
+        f"로봇 자체확률 {probability * 100:.1f}% · {value_text} · {edge_text}. "
+        "공식 확률을 재정렬한 값이 아니라 경기 전 원자료에서 로봇이 만든 득점·전 시장 확률로 비교한 답입니다. "
         f"{learning_text}. 경기 시작 뒤 자료는 사용하지 않습니다."
     )
 
@@ -5851,7 +6310,7 @@ def _save_world_learning_record(match, analysis):
     )
     if not prediction_saved:
         return False
-    return save_prediction_analysis(
+    analysis_saved = save_prediction_analysis(
         str(match.get("id") or ""), selected, confidence,
         analysis.get("evidence") or [], candidates,
         str(analysis.get("report") or ""), categories=categories,
@@ -5861,6 +6320,18 @@ def _save_world_learning_record(match, analysis):
         robot_pick=robot_pick,
         lineup_prediction=(analysis.get("decision") or {}).get("lineup_prediction"),
     )
+    kickoff = _parse_kst_match_time(
+        match.get("match_time") or match.get("kickoff_at")
+    )
+    if analysis_saved and kickoff is not None:
+        save_autonomous_robot_sample(
+            "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
+            str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
+            str(match.get("home") or "홈팀"), str(match.get("away") or "원정팀"),
+            kickoff, analysis.get("robot_features") or {},
+            analysis.get("robot_candidates") or [], robot_pick,
+        )
+    return analysis_saved
 
 
 def _analyze_world_match(item, now, market_performance):
@@ -6169,7 +6640,38 @@ def _analyze_world_match(item, now, market_performance):
     })
     annotate_pick_metrics(candidates, confidence)
     categories, _ = select_pick_categories(candidates, confidence)
-    robot_pick = select_autonomous_robot_pick(candidates, confidence)
+    robot_features = build_autonomous_robot_features(
+        goal_model_audit, context_audit, candidates, confidence,
+        {
+            "source_world": 1.0,
+            "home_rank": 0 if h_rank == 99 else h_rank,
+            "away_rank": 0 if a_rank == 99 else a_rank,
+            "home_rank_known": h_rank != 99,
+            "away_rank_known": a_rank != 99,
+            "home_recent_strength": h_recent.get("strength", 0.0),
+            "away_recent_strength": a_recent.get("strength", 0.0),
+            "home_rest_days": 0 if h_rest >= 90 else h_rest,
+            "away_rest_days": 0 if a_rest >= 90 else a_rest,
+            "home_rest_known": h_rest < 90,
+            "away_rest_known": a_rest < 90,
+            "home_absence": h_total_penalty,
+            "away_absence": a_total_penalty,
+            "home_lineup_penalty": h_lineup_penalty,
+            "away_lineup_penalty": a_lineup_penalty,
+            "lineup_confirmed": lineup_confirmed,
+            "h2h_total": h2h_total,
+            "h2h_home_wins": h2h.get("h_wins", 0),
+            "h2h_draws": h2h.get("draws", 0),
+            "h2h_away_wins": h2h.get("a_wins", 0),
+            "is_derby": is_derby,
+        },
+    )
+    robot_candidates = build_autonomous_robot_candidates(
+        candidates, robot_features, _load_autonomous_robot_artifact()
+    )
+    robot_pick = select_autonomous_robot_pick(
+        robot_candidates, confidence, robot_features
+    )
     # World VIP is a future paid-grade candidate.  A strong price alone cannot
     # bypass the separately agreed 90/100 input-quality gate.
     if quality_score < 90:
@@ -6317,6 +6819,13 @@ def _analyze_world_match(item, now, market_performance):
         "categories": compact_categories,
         "selected": selected_summary,
         "robot_pick": dict(compact_categories.get("robot_independent") or {}),
+        "robot_features": robot_features,
+        "robot_candidates": robot_candidates,
+        "robot_wdl_probabilities": {
+            str(candidate.get("selection_side")): round(float(candidate.get("robot_probability") or 0), 8)
+            for candidate in robot_candidates
+            if candidate.get("market_key") == "1x2"
+        },
         "alternative": {},
         "learning_robot": dict(decision.get("learning_robot") or {}),
         "decision": decision,
@@ -7291,8 +7800,38 @@ def build_dashboard_data():
         pick_categories, ev_sorted_picks = select_pick_categories(
             valid_all_picks, analysis_confidence
         )
+        robot_features = build_autonomous_robot_features(
+            goal_model_audit, context_audit, valid_all_picks,
+            analysis_confidence,
+            {
+                "source_proto": 1.0,
+                "home_rank": 0 if h_rank == 99 else h_rank,
+                "away_rank": 0 if a_rank == 99 else a_rank,
+                "home_rank_known": h_rank != 99,
+                "away_rank_known": a_rank != 99,
+                "home_recent_strength": h_recent.get("strength", 0.0),
+                "away_recent_strength": a_recent.get("strength", 0.0),
+                "home_rest_days": 0 if h_rest_days >= 90 else h_rest_days,
+                "away_rest_days": 0 if a_rest_days >= 90 else a_rest_days,
+                "home_rest_known": h_rest_days < 90,
+                "away_rest_known": a_rest_days < 90,
+                "home_absence": h_total_penalty,
+                "away_absence": a_total_penalty,
+                "home_lineup_penalty": h_lineup_penalty,
+                "away_lineup_penalty": a_lineup_penalty,
+                "lineup_confirmed": lineup_confirmed,
+                "h2h_total": h2h_total,
+                "h2h_home_wins": h_wins,
+                "h2h_draws": h2h_draws,
+                "h2h_away_wins": a_wins,
+                "is_derby": is_derby,
+            },
+        )
+        robot_candidates = build_autonomous_robot_candidates(
+            valid_all_picks, robot_features, _load_autonomous_robot_artifact()
+        )
         robot_pick = select_autonomous_robot_pick(
-            valid_all_picks, analysis_confidence
+            robot_candidates, analysis_confidence, robot_features
         )
         lineup_learning = {
             "mode": "predicted-xi-then-official-reassessment-v1",
@@ -7401,6 +7940,11 @@ def build_dashboard_data():
             robot_pick=robot_pick,
             lineup_prediction=lineup_learning,
         )
+        save_autonomous_robot_sample(
+            "PROTO", m["id"], api_fixture_id, league_n,
+            home_team, away_team, m_dt, robot_features,
+            robot_candidates, robot_pick,
+        )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
         a_form = fetch_team_form_api(away_info.get("id"), heavy_ttl)
@@ -7478,6 +8022,11 @@ def build_dashboard_data():
             "story": story, "ev_sorted_picks": ev_sorted_picks,
             "pick_categories": pick_categories,
             "robot_pick": robot_pick,
+            "robot_wdl_probabilities": {
+                str(candidate.get("selection_side")): round(float(candidate.get("robot_probability") or 0), 8)
+                for candidate in robot_candidates
+                if candidate.get("market_key") == "1x2"
+            },
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
@@ -7885,6 +8434,74 @@ def build_dashboard_data():
         pct_a = round(100.0 - pct_h - pct_d, 1)
 
         probs_dict = {"승": pct_h, "무": pct_d, "패": pct_a}
+        robot_wdl_market = (
+            normalize_probabilities([
+                1.0 / float(market_odds[0]), 1.0 / float(market_odds[1]),
+                1.0 / float(market_odds[2]),
+            ]) if len(market_odds) == 3 else [0.0, 0.0, 0.0]
+        )
+        robot_wdl_candidates = [
+            {
+                "market_key": "1x2", "selection_side": "home",
+                "raw_pick": f"{home_team} 승", "prob": h_win,
+                "odd": float(market_odds[0]) if len(market_odds) == 3 else 0.0,
+                "market_prob": robot_wdl_market[0], "fair_prob": robot_wdl_market[0],
+                "settlement_supported": True,
+            },
+            {
+                "market_key": "1x2", "selection_side": "draw",
+                "raw_pick": "무승부", "prob": draw,
+                "odd": float(market_odds[1]) if len(market_odds) == 3 else 0.0,
+                "market_prob": robot_wdl_market[1], "fair_prob": robot_wdl_market[1],
+                "settlement_supported": True,
+            },
+            {
+                "market_key": "1x2", "selection_side": "away",
+                "raw_pick": f"{away_team} 승", "prob": a_win,
+                "odd": float(market_odds[2]) if len(market_odds) == 3 else 0.0,
+                "market_prob": robot_wdl_market[2], "fair_prob": robot_wdl_market[2],
+                "settlement_supported": True,
+            },
+        ]
+        robot_features = build_autonomous_robot_features(
+            goal_model_audit, toto_context_audit, robot_wdl_candidates,
+            analysis_confidence,
+            {
+                "source_toto14": 1.0,
+                "home_rank": 0 if h_rank == 99 else h_rank,
+                "away_rank": 0 if a_rank == 99 else a_rank,
+                "home_rank_known": h_rank != 99,
+                "away_rank_known": a_rank != 99,
+                "home_recent_strength": h_recent.get("strength", 0.0),
+                "away_recent_strength": a_recent.get("strength", 0.0),
+                "home_rest_days": 0 if h_rest_days >= 90 else h_rest_days,
+                "away_rest_days": 0 if a_rest_days >= 90 else a_rest_days,
+                "home_rest_known": h_rest_days < 90,
+                "away_rest_known": a_rest_days < 90,
+                "home_absence": h_total_penalty,
+                "away_absence": a_total_penalty,
+                "home_lineup_penalty": h_lineup_penalty,
+                "away_lineup_penalty": a_lineup_penalty,
+                "lineup_confirmed": lineup_confirmed,
+                "h2h_total": h2h_total,
+                "h2h_home_wins": h_wins,
+                "h2h_away_wins": a_wins,
+                "is_derby": is_derby,
+            },
+        )
+        robot_candidates = build_autonomous_robot_candidates(
+            robot_wdl_candidates, robot_features,
+            _load_autonomous_robot_artifact(),
+        )
+        robot_pick = select_autonomous_robot_pick(
+            robot_candidates, analysis_confidence, robot_features
+        )
+        robot_wdl_probabilities = {
+            str(candidate.get("selection_side")): float(candidate.get("robot_probability") or 0)
+            for candidate in robot_candidates
+        }
+        robot_side = str((robot_pick or {}).get("selection_side") or "")
+        robot_mark = {"home": "승", "draw": "무", "away": "패"}.get(robot_side, "")
         picks, first_pct, double_suppressed = _choose_toto14_picks(
             probs_dict, total_combinations
         )
@@ -7921,6 +8538,16 @@ def build_dashboard_data():
                 "goal_model_audit": goal_model_audit,
                 "analysis_stage": analysis_stage,
                 "survival_motivation": {"home": h_survival, "away": a_survival},
+                "robot_features": robot_features,
+                "robot_candidates": robot_candidates,
+                "robot_wdl_probabilities": robot_wdl_probabilities,
+                "robot_pick": robot_pick,
+                "robot_mark": robot_mark,
+                "robot_pick_display": _human_pick_label(
+                    (robot_pick or {}).get("raw_pick"), home_team
+                ),
+                "robot_pick_probability": round(float((robot_pick or {}).get("prob") or 0) * 100, 1),
+                "robot_pick_version": ROBOT_PICK_VERSION,
                 "picks": picks,
                 "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
                 "h_inj_html": h_inj_html, "a_inj_html": a_inj_html,
@@ -8227,10 +8854,14 @@ def _grade_pending_from_saved_score(conn, row, goals_h, goals_a):
         review = _grade_prediction_candidates(
             conn, match_id, home_team, away_team, goals_h, goals_a
         )
+        robot_samples_graded = _grade_autonomous_robot_sample(
+            conn, match_id, fixture_id, goals_h, goals_a
+        )
         if review:
             try:
                 payload = json.loads(postmortem_data or "{}")
                 payload["candidate_review"] = review
+                payload["autonomous_robot_samples_graded"] = robot_samples_graded
                 postmortem_data = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             except (TypeError, ValueError, json.JSONDecodeError):
                 pass
@@ -8716,6 +9347,14 @@ def _finalize_toto14_round(items):
             item.get('api_fixture_id') or 0, item.get('analysis_stage') or 'regular',
             item.get('analysis_confidence') or 0)
         kickoff = _parse_kst_match_time(match.get('match_time'))
+        if saved and kickoff and item.get("robot_pick"):
+            save_autonomous_robot_sample(
+                "TOTO14", match_id, item.get("api_fixture_id") or 0,
+                "승무패 14경기", match["home"], match["away"], kickoff,
+                item.get("robot_features") or {},
+                item.get("robot_candidates") or [], item.get("robot_pick") or {},
+            )
+            _apply_frozen_toto14_robot(item, match_id)
         if not saved or not kickoff or datetime.now(KST) >= kickoff:
             items[index] = _locked_toto14_fallback(match) or _unavailable_toto14_item(match)
         elif item.get('analysis_stage') == 'T-30-final' or policy_migration:
@@ -8957,9 +9596,13 @@ def auto_score_matches():
                         """, (score_str, is_corr_prob, is_corr_ev, ai_note, postmortem_data, match_id))
                         conn.commit()
                         candidate_review = None
+                        robot_samples_graded = 0
                         try:
                             candidate_review = _grade_prediction_candidates(
                                 conn, match_id, h_team, a_team, eval_h, eval_a
+                            )
+                            robot_samples_graded = _grade_autonomous_robot_sample(
+                                conn, match_id, fixture_id, eval_h, eval_a
                             )
                             conn.commit()
                         except Exception as review_error:
@@ -8969,6 +9612,7 @@ def auto_score_matches():
                             try:
                                 postmortem_payload = json.loads(postmortem_data or "{}")
                                 postmortem_payload["candidate_review"] = candidate_review
+                                postmortem_payload["autonomous_robot_samples_graded"] = robot_samples_graded
                                 postmortem_data = json.dumps(
                                     postmortem_payload,
                                     ensure_ascii=False,
