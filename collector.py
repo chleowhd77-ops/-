@@ -590,7 +590,12 @@ def upload_to_github(file_path, remote_path=None):
 
 
 def upload_sqlite_to_github(db_path="ai_predictions.db"):
-    """Upload a consistent SQLite snapshot rather than a file mid-transaction."""
+    """GitHub DB 업로드 영구 중단 (용량 초과 및 409/422 에러 방지)"""
+    print("✅ DB 깃허브 백업 생략 (로컬 AWS 서버에 안전하게 보관 중)")
+    return True
+
+def _disabled_upload_sqlite(db_path="ai_predictions.db"):
+    """Old code disabled"""
     source_path = _local_path(db_path)
     if not _validate_sqlite_file(source_path):
         print("❌ 로컬 DB 검증 실패로 업로드하지 않습니다.")
@@ -5423,14 +5428,9 @@ def build_dashboard_data():
     # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
     market_performance_cache = {}
       
-for m in proto_matches:
+    for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
-        # 🔥 배당을 먼저 읽어옵니다.
-        odd_h = float(m.get("odd_h") or 0)
-        odd_d = float(m.get("odd_d") or 0)
-        odd_a = float(m.get("odd_a") or 0)
-        
         m_dt = parse_match_time(final_match_time)
         scheduled = _parse_kst_match_time(final_match_time)
         if scheduled is not None and datetime.now(KST) >= scheduled:
@@ -5438,10 +5438,8 @@ for m in proto_matches:
             if frozen_item:
                 dashboard_proto.append(frozen_item)
             continue  # No odds/injuries/lineups/form API calls after kickoff.
-            
-        # 🔥 배당 정보를 파라미터로 같이 넘겨서 모르는 팀의 지문을 찾게 만듭니다.
         home_info, away_info, _ = resolve_match_team_pair(
-            home_team, away_team, final_match_time, odd_h, odd_d, odd_a, ttl_h=2
+            home_team, away_team, final_match_time, ttl_h=2
         )
 
         now = datetime.now(timezone(timedelta(hours=9)))
@@ -6164,8 +6162,8 @@ for m in proto_matches:
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
             continue
 
-home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, match_time, 0.0, 0.0, 0.0, ttl_h=2
+        home_info, away_info, identity_fixture = resolve_match_team_pair(
+            home_team, away_team, match_time, ttl_h=2
         )
         if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
             unavailable = _unavailable_toto14_item(m)
@@ -9087,8 +9085,7 @@ def run_master_job():
         return False
     # Publish the DB snapshot first. If it cannot be published, keep the remote
     # dashboard at its last-known-good version instead of exposing unmatched JSON.
-    if not upload_sqlite_to_github("ai_predictions.db"):
-        return False
+    upload_sqlite_to_github("ai_predictions.db")
     return upload_to_github("dashboard_data.json")
 
 
@@ -9149,8 +9146,8 @@ def run_world_job():
         return False
 
     # Store the private learning snapshot before publishing its matching admin JSON.
-    if analysis_changed and not upload_sqlite_to_github("ai_predictions.db"):
-        return False
+    if analysis_changed:
+        upload_sqlite_to_github("ai_predictions.db")
     if schedule_refreshed or analysis_changed:
         return upload_to_github(
             WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name
