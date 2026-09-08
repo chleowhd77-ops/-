@@ -3,13 +3,12 @@
     "scheduler": {
       "supervisor_pid": 330028,
       "state": "running",
-      "heartbeat_at": "2026-09-08T09:57:48+00:00",
+      "heartbeat_at": "2026-09-08T09:58:48+00:00",
       "pid": 330028,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 330177,
         "world": 330178,
-        "live": 330181,
         "score": 330182
       }
     },
@@ -28,29 +27,30 @@
     "score": {
       "child_pid": 330182,
       "state": "running",
-      "heartbeat_at": "2026-09-08T09:57:48+00:00",
-      "pid": 330182,
-      "last_started_at": "2026-09-08T09:57:48+00:00",
-      "elapsed_seconds": 0.0,
+      "heartbeat_at": "2026-09-08T09:58:48+00:00",
+      "pid": 330028,
+      "last_started_at": "2026-09-08T09:58:48+00:00",
+      "elapsed_seconds": 60.3,
       "overlap_skips": 0,
-      "duration_seconds": 89.4,
+      "duration_seconds": 42.74,
       "last_success_at": "2026-09-08T09:54:18+00:00",
-      "last_failure_at": "2026-09-08T08:20:38+00:00",
+      "last_failure_at": "2026-09-08T09:58:31+00:00",
       "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published_backup_pending",
+      "last_stage": "grading_publish_failed",
       "grading_published_at": "2026-09-08T09:52:57+00:00",
-      "db_backup_ok": false
+      "db_backup_ok": false,
+      "last_error": "RuntimeError: score 작업이 정상 결과를 게시하지 못함"
     },
     "master": {
       "child_pid": 330177,
       "state": "running",
-      "heartbeat_at": "2026-09-08T09:57:48+00:00",
+      "heartbeat_at": "2026-09-08T09:58:48+00:00",
       "pid": 330028,
       "last_started_at": "2026-09-08T09:57:44+00:00",
-      "elapsed_seconds": 4.1,
+      "elapsed_seconds": 64.3,
       "overlap_skips": 0,
       "duration_seconds": 162.2,
       "last_failure_at": "2026-09-08T09:40:26+00:00",
@@ -60,10 +60,10 @@
     "world": {
       "child_pid": 330178,
       "state": "running",
-      "heartbeat_at": "2026-09-08T09:57:48+00:00",
+      "heartbeat_at": "2026-09-08T09:58:48+00:00",
       "pid": 330028,
       "last_started_at": "2026-09-08T09:57:46+00:00",
-      "elapsed_seconds": 2.0,
+      "elapsed_seconds": 62.3,
       "overlap_skips": 0,
       "duration_seconds": 80.4,
       "last_success_at": "2026-09-08T08:50:48+00:00",
@@ -71,7 +71,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-08T09:57:58+00:00",
+  "updated_at": "2026-09-08T09:58:48+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -88,12 +88,12 @@
       {
         "purpose": "analysis",
         "endpoint": "/odds",
-        "calls": 47
+        "calls": 49
       },
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 34
+        "calls": 35
       },
       {
         "purpose": "scoring",
@@ -118,12 +118,12 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 4
+        "calls": 6
       },
       {
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "calls": 4
+        "calls": 6
       },
       {
         "purpose": "analysis",
@@ -141,19 +141,19 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 31
+        "count": 32
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 8
+        "count": 12
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 4
+        "count": 6
       },
       {
         "metric": "cache_hit",
@@ -165,13 +165,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-08",
     "reset_timezone": "UTC",
-    "local_calls": 400,
-    "provider_remaining": 7100,
+    "local_calls": 407,
+    "provider_remaining": 7093,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 62,
-    "analysis_calls": 123,
+    "analysis_calls": 130,
     "live_calls": 203,
     "scoring_calls": 12,
     "world_daily_limit": 1500,
