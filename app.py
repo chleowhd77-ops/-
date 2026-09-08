@@ -2895,7 +2895,7 @@ def _top3_strategy_html(item):
     elif isinstance(honey, dict) and str(honey.get("raw_pick") or "") == str(high.get("raw_pick") or ""):
         support_text = "같은 최종픽이 보수적 배당가치 기준도 통과했습니다."
     else:
-        support_text = "승무패를 먼저 판단하고, 검증된 기준을 통과한 경우에만 다른 시장으로 전환한 한 방향입니다."
+        support_text = "승무패·핸디캡·언더오버와 홈·원정·맞대결·순위·선수 지표를 함께 비교한 한 방향입니다."
 
     return (
         "<div class='top3-strategy' style='margin-top:14px;padding:13px 15px;"
@@ -3088,7 +3088,7 @@ def generate_pred_boxes(
             "<div class='pred-label' style='color:#C4B5FD;'>🤖 로봇 독립픽</div>"
             f"<span class='pred-value'>{robot_raw}</span>"
             "<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>"
-            "승무패 우선 제한 없이 전체 실배당 후보 비교</span>"
+            "경기 전 전체 지표·전체 실배당 후보 독립 비교</span>"
             f"<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
             f"{' · '.join(robot_meta)}</span>"
             f"<span class='pred-prob'>{robot_probability * 100:.1f}%</span></div>"

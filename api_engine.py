@@ -12,7 +12,8 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from football_model import (clean_records, train_challenger, predict_goals,
                             price_eligible, probability_price_choice, validate_price_policy,
-                            wdl_centered_choice, autonomous_robot_choice,
+                            wdl_centered_choice, all_evidence_choice,
+                            autonomous_robot_choice, OFFICIAL_PICK_POLICY_VERSION,
                             AUTONOMOUS_ROBOT_POLICY_VERSION)
 
 from grading_postmortem import (
@@ -36,15 +37,15 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.9.0-official-wdl-plus-autonomous-robot"
-FORECAST_MODEL_VERSION = "goals-v3-learned-dc-movement-wdl-v1"
-CALIBRATION_VERSION = "fixture-time-wdl-movement-projection-v2"
-PICK_POLICY_VERSION = "wdl-first-validated-market-override-v2"
-ROBOT_PICK_VERSION = "robot-independent-v1-prekickoff"
+ANALYSIS_VERSION = "V7.10.0-all-evidence-official-plus-robot"
+FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
+CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
+PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
+ROBOT_PICK_VERSION = "robot-independent-all-evidence-v2-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.9.4-world-full-analysis-grade"
+SYSTEM_VERSION = "R7.10.0-full-evidence-best-one"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -2055,24 +2056,79 @@ def fetch_overseas_odds_and_fixture_api(
     return None
 
 def fetch_fixture_details_api(home_id, away_id, ttl_h):
-    default_res = {"match_time": None, "last_h2h_date": "-", "h_wins": 0, "draws": 0, "a_wins": 0, "total": 0}
+    default_res = {
+        "match_time": None, "last_h2h_date": "-", "h_wins": 0,
+        "draws": 0, "a_wins": 0, "total": 0,
+        "weighted_h_wins": 0.0, "weighted_draws": 0.0,
+        "weighted_a_wins": 0.0, "weight_total": 0.0,
+        "home_venue_h_wins": 0, "home_venue_draws": 0,
+        "home_venue_a_wins": 0, "home_venue_total": 0,
+        "weighting": "two-year-half-life",
+    }
     if not home_id or not away_id: return default_res
-    cache_key = f"app_h2h_{home_id}_{away_id}"
+    cache_key = f"app_h2h_v2_{home_id}_{away_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
         response = api_get("/fixtures/headtohead", params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
         matches = response.json().get("response", [])
+        selected = matches[:10]
+        timestamps = [
+            int((m.get("fixture") or {}).get("timestamp") or 0)
+            for m in selected
+            if int((m.get("fixture") or {}).get("timestamp") or 0) > 0
+        ]
+        latest_timestamp = max(timestamps, default=0)
         h_wins, draws, a_wins = 0, 0, 0
-        for m in matches[:10]:
+        weighted_h, weighted_draw, weighted_a, weight_total = 0.0, 0.0, 0.0, 0.0
+        venue_h, venue_draw, venue_a, venue_total = 0, 0, 0, 0
+        last_h2h_date = "-"
+        fixture_ids = []
+        for m in selected:
+            fixture = m.get("fixture") or {}
+            timestamp = int(fixture.get("timestamp") or 0)
+            if timestamp and timestamp == latest_timestamp:
+                last_h2h_date = str(fixture.get("date") or "-")[:10]
+            fixture_id = fixture.get("id")
+            if fixture_id:
+                fixture_ids.append(int(fixture_id))
+            age_seconds = max(0, latest_timestamp - timestamp) if timestamp else 0
+            weight = 2 ** (-age_seconds / (730.0 * 86400.0)) if timestamp else 0.5
+            outcome = "draw"
             if m.get("teams", {}).get("home", {}).get("winner"):
-                if m.get("teams", {}).get("home", {}).get("id") == home_id: h_wins += 1
-                else: a_wins += 1
+                outcome = "home" if m.get("teams", {}).get("home", {}).get("id") == home_id else "away"
             elif m.get("teams", {}).get("away", {}).get("winner"):
-                if m.get("teams", {}).get("home", {}).get("id") == home_id: a_wins += 1
-                else: h_wins += 1
-            else: draws += 1
-        res_val = {"match_time": None, "last_h2h_date": "-", "h_wins": h_wins, "draws": draws, "a_wins": a_wins, "total": len(matches[:10])}
+                outcome = "away" if m.get("teams", {}).get("home", {}).get("id") == home_id else "home"
+            if outcome == "home":
+                h_wins += 1
+                weighted_h += weight
+            elif outcome == "away":
+                a_wins += 1
+                weighted_a += weight
+            else:
+                draws += 1
+                weighted_draw += weight
+            weight_total += weight
+            if m.get("teams", {}).get("home", {}).get("id") == home_id:
+                venue_total += 1
+                if outcome == "home": venue_h += 1
+                elif outcome == "away": venue_a += 1
+                else: venue_draw += 1
+        res_val = {
+            "match_time": None, "last_h2h_date": last_h2h_date,
+            "h_wins": h_wins, "draws": draws, "a_wins": a_wins,
+            "total": len(selected),
+            "weighted_h_wins": round(weighted_h, 6),
+            "weighted_draws": round(weighted_draw, 6),
+            "weighted_a_wins": round(weighted_a, 6),
+            "weight_total": round(weight_total, 6),
+            "home_venue_h_wins": venue_h,
+            "home_venue_draws": venue_draw,
+            "home_venue_a_wins": venue_a,
+            "home_venue_total": venue_total,
+            "sample_fixture_ids": fixture_ids,
+            "weighting": "two-year-half-life",
+        }
         set_db_cache(cache_key, res_val)
         return res_val
     except: return default_res
@@ -2724,8 +2780,182 @@ def project_score_matrix_wdl(matrix, target):
              for a, p in enumerate(row)] for h, row in enumerate(matrix)]
 
 
+def integrate_pre_match_context(exp_h, exp_a, context, goal_audit=None):
+    """Apply every usable pre-match factor once and return an auditable signal.
+
+    Goal-shaped information changes expected goals. Directional information
+    such as rank and head-to-head changes the W/D/L weights later, preserving
+    one coherent score distribution for W/D/L, handicap and totals. Context
+    with no honest goal or result direction (for example only a referee name)
+    is explicitly recorded as neutral instead of being fabricated.
+    """
+    context = context if isinstance(context, dict) else {}
+    audit = dict(goal_audit or {})
+
+    def number(value, default=0.0):
+        try:
+            value = float(value)
+            return value if math.isfinite(value) else default
+        except (TypeError, ValueError):
+            return default
+
+    components = []
+    neutral = []
+    home_goal_delta = 0.0
+    away_goal_delta = 0.0
+    home_score = 0.0
+    draw_score = 0.0
+    away_score = 0.0
+
+    def goal_component(name, home_delta, away_delta, source):
+        nonlocal home_goal_delta, away_goal_delta
+        home_goal_delta += home_delta
+        away_goal_delta += away_delta
+        components.append({
+            "name": name, "mode": "expected_goals", "home": round(home_delta, 6),
+            "away": round(away_delta, 6), "source": source,
+        })
+
+    def result_component(name, home_value, draw_value, away_value, source):
+        nonlocal home_score, draw_score, away_score
+        home_score += home_value
+        draw_score += draw_value
+        away_score += away_value
+        components.append({
+            "name": name, "mode": "wdl_log_weight", "home": round(home_value, 6),
+            "draw": round(draw_value, 6), "away": round(away_value, 6),
+            "source": source,
+        })
+
+    home_absence = max(0.0, min(.30, number(context.get("home_absence"))))
+    away_absence = max(0.0, min(.30, number(context.get("away_absence"))))
+    goal_component(
+        "opponent_availability",
+        min(.12, away_absence * .35), min(.12, home_absence * .35),
+        "confirmed injury/lineup/fatigue penalty cross-effect",
+    )
+
+    home_survival = context.get("home_survival") or {}
+    away_survival = context.get("away_survival") or {}
+    goal_component(
+        "survival_motivation",
+        max(0.0, number(home_survival.get("attack_boost")))
+        + max(0.0, number(away_survival.get("opponent_risk_boost"))),
+        max(0.0, number(away_survival.get("attack_boost")))
+        + max(0.0, number(home_survival.get("opponent_risk_boost"))),
+        "standings zone and season progress",
+    )
+
+    home_title = max(0.0, min(.08, number(context.get("home_title"))))
+    away_title = max(0.0, min(.08, number(context.get("away_title"))))
+    home_manager = max(0.0, min(.08, number(context.get("home_manager"))))
+    away_manager = max(0.0, min(.08, number(context.get("away_manager"))))
+    home_vacation = max(0.0, min(.12, number(context.get("home_vacation"))))
+    away_vacation = max(0.0, min(.12, number(context.get("away_vacation"))))
+    goal_component(
+        "motivation_and_manager",
+        home_title * .65 + home_manager * .45 - home_vacation,
+        away_title * .65 + away_manager * .45 - away_vacation,
+        "title race/new manager/mid-table late-season state",
+    )
+
+    weather = str(context.get("weather") or "").casefold()
+    weather_multiplier = .94 if any(token in weather for token in ("rain", "snow", "비", "눈")) else 1.0
+    if weather_multiplier < 1.0:
+        before_h = exp_h + home_goal_delta
+        before_a = exp_a + away_goal_delta
+        goal_component(
+            "weather_total",
+            before_h * (weather_multiplier - 1.0),
+            before_a * (weather_multiplier - 1.0),
+            str(context.get("weather") or "weather"),
+        )
+    elif context.get("weather"):
+        neutral.append({"name": "weather", "reason": "normal condition; no extra direction"})
+
+    h2h = context.get("h2h") or {}
+    total = max(0, int(number(h2h.get("total"))))
+    weight_total = max(0.0, number(h2h.get("weight_total")))
+    weighted_h = number(h2h.get("weighted_h_wins"), number(h2h.get("h_wins")))
+    weighted_a = number(h2h.get("weighted_a_wins"), number(h2h.get("a_wins")))
+    weighted_d = number(h2h.get("weighted_draws"), number(h2h.get("draws")))
+    effective_total = weight_total if weight_total > 0 else float(total)
+    if total >= 3 and effective_total > 0:
+        dominance = (weighted_h - weighted_a) / effective_total
+        reliability = min(1.0, total / 8.0)
+        dominance_score = max(-.52, min(.52, dominance * .70 * reliability))
+        smoothed_draw = (weighted_d + .75) / (effective_total + 2.25)
+        draw_context = max(-.12, min(.12, (smoothed_draw - .27) * .90 * reliability))
+        result_component(
+            "head_to_head",
+            dominance_score, draw_context, -dominance_score,
+            f"{int(h2h.get('h_wins') or 0)}-{int(h2h.get('draws') or 0)}-{int(h2h.get('a_wins') or 0)}; {h2h.get('weighting') or 'unweighted'}",
+        )
+    else:
+        neutral.append({"name": "head_to_head", "reason": "fewer than 3 verified meetings"})
+
+    home_rank = int(number(context.get("home_rank"), 99))
+    away_rank = int(number(context.get("away_rank"), 99))
+    if 0 < home_rank < 99 and 0 < away_rank < 99:
+        rank_score = max(-.18, min(.18, (away_rank - home_rank) * .018))
+        result_component("league_rank", rank_score, 0.0, -rank_score,
+                         f"home {home_rank}, away {away_rank}")
+    else:
+        neutral.append({"name": "league_rank", "reason": "rank unavailable"})
+
+    recent_diff = number(context.get("home_recent_strength")) - number(context.get("away_recent_strength"))
+    if context.get("recent_available", True):
+        recent_score = max(-.12, min(.12, recent_diff * .30))
+        result_component("recent_points_form", recent_score, 0.0, -recent_score,
+                         "bounded recent strength difference")
+
+    home_market = max(0.0, min(.08, number(context.get("home_market"))))
+    away_market = max(0.0, min(.08, number(context.get("away_market"))))
+    if home_market or away_market:
+        result_component("verified_market_movement", home_market, 0.0, away_market,
+                         "multi-snapshot bookmaker direction")
+    else:
+        neutral.append({"name": "market_movement", "reason": "no verified directional move"})
+
+    if context.get("is_derby"):
+        result_component("derby_variance", -.025, .05, -.025,
+                         "verified rivalry; draw uncertainty only")
+    referee = str(context.get("referee") or "").strip()
+    if referee:
+        neutral.append({
+            "name": "referee", "reason": "identified but no validated WDL/goal direction",
+            "value": referee,
+        })
+
+    adjusted_h = round(max(.30, min(3.40, exp_h + home_goal_delta)), 4)
+    adjusted_a = round(max(.30, min(3.40, exp_a + away_goal_delta)), 4)
+    home_score = max(-.85, min(.85, home_score))
+    draw_score = max(-.20, min(.20, draw_score))
+    away_score = max(-.85, min(.85, away_score))
+    context_audit = {
+        "version": "full-pre-match-context-v1",
+        "base_expected_goals": {"home": round(exp_h, 4), "away": round(exp_a, 4)},
+        "adjusted_expected_goals": {"home": adjusted_h, "away": adjusted_a},
+        "wdl_log_adjustment": [round(home_score, 6), round(draw_score, 6), round(away_score, 6)],
+        "side_alignment": {
+            "home": round(home_score - away_score, 6),
+            "draw": round(draw_score - (home_score + away_score) / 2.0, 6),
+            "away": round(away_score - home_score, 6),
+        },
+        "components": components,
+        "neutral_components": neutral,
+        "home_advantage": "embedded_once_in_venue_goal_model",
+        "recent_goals_xg": "embedded_once_in_base_goal_model",
+        "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
+    }
+    audit["context_integration"] = context_audit
+    audit["expected_goals"] = {"home": adjusted_h, "away": adjusted_a}
+    return adjusted_h, adjusted_a, context_audit, audit
+
+
 def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
-                            history=None, rho=-.15, movement_adjustment=None):
+                            history=None, rho=-.15, movement_adjustment=None,
+                            context_adjustment=None):
     """All markets and refund contracts come from ONE final score distribution.
 
     Only WDL is market/learning calibrated. Independent handicap/totals
@@ -2746,6 +2976,20 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
         target = normalize_probabilities([
             max(1e-9, probability + adjustment)
             for probability, adjustment in zip(target, movement_adjustment)
+        ])
+    context_adjustment = list(context_adjustment or [0.0, 0.0, 0.0])
+    if len(context_adjustment) != 3:
+        context_adjustment = [0.0, 0.0, 0.0]
+    context_adjustment = [
+        max(-.85, min(.85, float(value or 0))) for value in context_adjustment
+    ]
+    context_applied = any(abs(value) > 1e-12 for value in context_adjustment)
+    if context_applied:
+        # Log weighting lets a strong, repeated directional signal overcome a
+        # marginal market/model favourite without creating invalid probabilities.
+        target = normalize_probabilities([
+            max(1e-9, probability * math.exp(adjustment))
+            for probability, adjustment in zip(target, context_adjustment)
         ])
     matrix = project_score_matrix_wdl(matrix, target)
     before = calculate_poisson_probs(exp_h, exp_a, handicap, total, matrix)
@@ -2776,6 +3020,8 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
         "rho_source": "learned" if abs(float(rho) + .15) > 1e-9 else "validated_fallback",
         "movement_adjustment": movement_adjustment,
         "movement_learning_active": movement_applied,
+        "context_adjustment": context_adjustment,
+        "context_integration_active": context_applied,
     }
     # Matrix is transient; only the small audit is persisted for each candidate.
     return probabilities, audit, matrix

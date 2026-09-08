@@ -8,7 +8,8 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "independent-all-market-kelly-v1"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "independent-all-evidence-kelly-v2"
+OFFICIAL_PICK_POLICY_VERSION = "all-evidence-best-one-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
@@ -44,6 +45,141 @@ def _selection_key(pick):
     return (float(pick.get("robust_probability") or pick.get("prob") or 0),
             float(pick.get("prob") or 0), float(pick.get("robust_edge") or 0),
             float(pick.get("robust_ev") or 0), str(pick.get("raw_pick") or ""))
+
+
+def _market_neutral_probability(pick):
+    """Return the natural neutral point for cross-market conviction."""
+    return .5 if (pick.get("market_key") or "1x2") == "totals" else 1.0 / 3.0
+
+
+def _evidence_alignment(pick):
+    try:
+        return max(-1.0, min(1.0, float(pick.get("context_alignment") or 0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def all_evidence_choice(picks, confidence, return_reason=False):
+    """Choose one official pick across every supported market.
+
+    The old policy selected W/D/L first and allowed handicap or totals only as
+    a narrow exception.  This selector puts all settlement-compatible markets
+    on a comparable conviction scale, then combines probability, verified
+    price value and independently attached pre-match evidence.  It always
+    returns exactly one candidate and never mutates the caller's list.
+    """
+    available = [
+        dict(pick) for pick in (picks or [])
+        if isinstance(pick, dict)
+        and pick.get("settlement_supported", True)
+        and 0 < float(pick.get("prob") or 0) <= 1
+    ]
+    if not available:
+        raise ValueError("no settlement-compatible candidate")
+
+    confidence = max(0.0, min(1.0, float(confidence or 0)))
+    verified_value_exists = any(
+        float(pick.get("odd") or 0) > 1.0
+        and pick.get("fair_prob") is not None
+        and float(pick.get("robust_edge") or 0) > 0
+        and float(
+            pick.get("robust_ev")
+            or float(pick.get("robust_probability") or pick.get("prob") or 0)
+            * float(pick.get("odd") or 0)
+        ) >= 1.0
+        for pick in available
+    )
+    for pick in available:
+        probability = max(0.0, min(1.0, float(
+            pick.get("robust_probability") or pick.get("prob") or 0
+        )))
+        neutral = _market_neutral_probability(pick)
+        conviction = max(-1.0, min(1.0, (probability - neutral) / (1.0 - neutral)))
+        odd = float(pick.get("odd") or 0)
+        fair = pick.get("fair_prob")
+        try:
+            fair = float(fair) if fair is not None else None
+        except (TypeError, ValueError):
+            fair = None
+        priced = bool(odd > 1.0 and fair is not None and 0 < fair < 1)
+        edge = float(pick.get("robust_edge") or 0) if priced else 0.0
+        expected_return = float(pick.get("robust_ev") or probability * odd) if priced else 1.0
+        kelly = ((probability * odd - 1.0) / max(odd - 1.0, 1e-9)) if priced else 0.0
+        kelly = max(-.25, min(.50, kelly))
+        edge_standardized = (
+            edge / max((fair * (1.0 - fair)) ** .5, .10)
+            if priced else 0.0
+        )
+        edge_standardized = max(-.50, min(.50, edge_standardized))
+        ev_margin = max(-.50, min(.50, expected_return - 1.0)) if priced else 0.0
+        price_score = (
+            kelly * .50
+            + edge_standardized * .25
+            + ev_margin * .25
+        )
+        context = _evidence_alignment(pick)
+        support = min(.06, int(pick.get("independent_support_count") or 0) * .012)
+        if priced and verified_value_exists:
+            # When at least one candidate has a verified positive conservative
+            # return, compare every market on value, hit probability and full
+            # pre-match context.  No market receives a hard first right.
+            score = (
+                probability * .34
+                + conviction * .10
+                + price_score * .38
+                + context * .24
+                + support
+            )
+        elif priced:
+            # A mandatory answer is still required when every available price
+            # is unattractive.  In that case protect hit probability instead of
+            # sacrificing it merely to choose the least-bad negative return.
+            score = (
+                probability * .55
+                + conviction * .15
+                + price_score * .08
+                + context * .24
+                + support
+            )
+        else:
+            score = (
+                probability * .52
+                + conviction * .20
+                + context * .28
+                + support
+            )
+        score *= (.78 + confidence * .22)
+        pick.update({
+            "official_score": round(score, 6),
+            "official_conviction": round(conviction, 6),
+            "official_price_score": round(price_score, 6),
+            "official_kelly": round(kelly, 6) if priced else None,
+            "official_standardized_edge": round(edge_standardized, 6),
+            "official_context_score": round(context, 6),
+            "official_price_verified": priced,
+            "official_positive_value_pool": verified_value_exists,
+            "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
+            "selection_axis": "all_evidence_best_one",
+        })
+
+    chosen = max(
+        available,
+        key=lambda pick: (
+            float(pick.get("official_score") or 0),
+            float(pick.get("context_alignment") or 0),
+            float(pick.get("robust_probability") or pick.get("prob") or 0),
+            float(pick.get("robust_edge") or 0),
+            str(pick.get("raw_pick") or ""),
+        ),
+    )
+    chosen["recommendation_status"] = "SELECTED"
+    chosen["selection_reason"] = (
+        "승무패를 먼저 고정하지 않고 승무패·3방향 핸디캡·언더오버를 같은 "
+        "확신도 척도로 비교한 뒤, 경기 전 전체 지표와 보수확률·실제 배당가치를 "
+        "함께 반영해 가장 강한 한 방향을 선택했습니다."
+    )
+    reason = "all_evidence_best_one"
+    return (chosen, reason) if return_reason else chosen
 
 
 def autonomous_robot_choice(picks, confidence, return_reason=False):
@@ -118,17 +254,19 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
                 )
 
         support_bonus = min(
-            0.015,
-            int(pick.get("independent_support_count") or 0) * 0.004,
+            0.035,
+            int(pick.get("independent_support_count") or 0) * 0.008,
         )
+        context_bonus = _evidence_alignment(pick) * 0.12
         # Value terms dominate. Probability is a small stability term only;
         # this makes 40%@3.20 capable of beating 85%@1.20 when its conservative
         # expected growth is genuinely better.
         score = (
-            max(-0.10, kelly) * 0.55
-            + max(-0.10, min(0.20, edge)) * 0.25
+            max(-0.10, kelly) * 0.44
+            + max(-0.10, min(0.20, edge)) * 0.22
             + max(-0.10, min(0.50, expected_return - 1.0)) * 0.12
-            + probability * 0.08
+            + probability * 0.10
+            + context_bonus
             + learning_bonus
             + support_bonus
         ) * (0.75 + confidence * 0.25)
@@ -136,9 +274,10 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
             "robot_score": round(score, 6),
             "robot_kelly": round(kelly, 6),
             "robot_learning_bonus": round(learning_bonus, 6),
+            "robot_context_bonus": round(context_bonus, 6),
             "robot_learning_validated": validated,
             "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
-            "robot_selection_axis": "all_markets_conservative_value",
+            "robot_selection_axis": "all_markets_all_evidence_value",
             "robot_price_verified": True,
             "robot_fallback": expected_return < 1.0,
         })
@@ -155,7 +294,7 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
                 str(pick.get("raw_pick") or ""),
             ),
         )
-        reason = "all_market_conservative_value"
+        reason = "all_market_all_evidence_value"
     else:
         chosen = max(available, key=_selection_key)
         chosen.update({
@@ -172,9 +311,10 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
 
     chosen["recommendation_status"] = "SELECTED"
     chosen["selection_reason"] = (
-        "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당을 "
-        "보수확률, 손익분기점, 기대수익, Kelly와 시간순 검증 학습으로 함께 비교했습니다."
-        if reason == "all_market_conservative_value" else
+        "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당과 "
+        "홈·원정, 맞대결, 순위, 최근 경기력, 결장·선발, 휴식·동기 지표를 "
+        "보수확률, 손익분기점, 기대수익, Kelly와 함께 독립적으로 비교했습니다."
+        if reason == "all_market_all_evidence_value" else
         "검증 가능한 실배당 세트가 없어도 픽을 비우지 않고 정산 가능한 후보 중 "
         "보수확률이 가장 높은 방향을 선택했습니다."
     )

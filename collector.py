@@ -136,7 +136,7 @@ WORLD_ODDS_MAX_PAGES_PER_DAY = max(
 )
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
-WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v3"
+WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v4"
 WORLD_MARKET_PREVIEW_VERSION = f"{ANALYSIS_VERSION}-world-market-preview-v1"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Bucheon FC 1995": "부천 FC 1995",
@@ -916,6 +916,24 @@ def _ensure_toto14_freeze_table(conn):
             frozen_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS toto14_prediction_freeze_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            match_time TEXT,
+            analysis_version TEXT DEFAULT '',
+            payload_json TEXT NOT NULL,
+            frozen_at TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            UNIQUE(match_id, fingerprint)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_toto14_freeze_history_match "
+        "ON toto14_prediction_freeze_snapshots(match_id, id)"
+    )
 
 
 def _load_toto14_freezes():
@@ -950,7 +968,11 @@ def _load_toto14_freezes():
 
 
 def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payload):
-    """Persist the first final recommendation; INSERT OR IGNORE makes it immutable."""
+    """Persist a final ticket, allowing only the approved pre-kickoff version migration.
+
+    Every former and replacement payload is copied into an append-only history
+    table.  Once kickoff has passed, the primary frozen ticket is immutable.
+    """
     conn = None
     try:
         frozen_payload = dict(payload)
@@ -965,6 +987,70 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_toto14_freeze_table(conn)
+        existing = conn.execute(
+            """
+            SELECT home_team, away_team, match_time, payload_json, frozen_at
+            FROM toto14_prediction_freezes WHERE match_id = ?
+            """,
+            (str(match_id),),
+        ).fetchone()
+        if existing and (
+            str(existing[0]) != str(home_team)
+            or str(existing[1]) != str(away_team)
+        ):
+            return None
+
+        def preserve_history(payload_value, stored_match_time, stored_frozen_at):
+            if isinstance(payload_value, str):
+                payload_text = payload_value
+                try:
+                    payload_object = json.loads(payload_value)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload_object = {"unreadable_legacy_payload": True}
+            else:
+                payload_object = dict(payload_value or {})
+                payload_text = json.dumps(
+                    payload_object, ensure_ascii=False, sort_keys=True
+                )
+            canonical = json.dumps(payload_object, ensure_ascii=False, sort_keys=True)
+            fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO toto14_prediction_freeze_snapshots (
+                    match_id, home_team, away_team, match_time,
+                    analysis_version, payload_json, frozen_at, fingerprint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(match_id), str(home_team), str(away_team),
+                    str(stored_match_time or ""),
+                    str(payload_object.get("analysis_version") or ""),
+                    payload_text, str(stored_frozen_at or _utc_iso()), fingerprint,
+                ),
+            )
+
+        incoming_version = str(frozen_payload.get("analysis_version") or "")
+        existing_payload = {}
+        if existing:
+            try:
+                existing_payload = json.loads(existing[3])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                existing_payload = {}
+        existing_version = str(existing_payload.get("analysis_version") or "")
+        kickoff = _parse_kst_match_time((existing[2] if existing else None) or match_time)
+        can_migrate = bool(
+            existing
+            and kickoff
+            and datetime.now(KST) < kickoff
+            and incoming_version == ANALYSIS_VERSION
+            and existing_version != ANALYSIS_VERSION
+        )
+        if existing:
+            preserve_history(existing[3], existing[2], existing[4])
+        if not existing or can_migrate:
+            preserve_history(
+                frozen_payload, match_time, frozen_payload.get("frozen_at")
+            )
         conn.execute(
             """
             INSERT OR IGNORE INTO toto14_prediction_freezes
@@ -977,6 +1063,24 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                 str(frozen_payload["frozen_at"]),
             ),
         )
+        if can_migrate:
+            conn.execute(
+                """
+                UPDATE toto14_prediction_freezes
+                SET match_time = ?, payload_json = ?, frozen_at = ?
+                WHERE match_id = ? AND home_team = ? AND away_team = ?
+                """,
+                (
+                    str(match_time or ""),
+                    json.dumps(frozen_payload, ensure_ascii=False),
+                    str(frozen_payload["frozen_at"]), str(match_id),
+                    str(home_team), str(away_team),
+                ),
+            )
+            print(
+                f"🔄 시작 전 승무패14 공개경계 교체: {home_team} vs {away_team} · "
+                f"{existing_version or '버전 미기록'} → {ANALYSIS_VERSION}"
+            )
         conn.commit()
         row = conn.execute(
             "SELECT home_team, away_team, payload_json FROM toto14_prediction_freezes WHERE match_id = ?",
@@ -1134,6 +1238,15 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return False
             stored_kickoff = _parse_kst_match_time(stored_match_time)
             kickoff_passed = bool(stored_kickoff and datetime.now(KST) >= stored_kickoff)
+            previous_version = str(previous[6] or "") if previous else ""
+            toto_policy_migration = bool(
+                int(is_toto14 or 0) == 1
+                and stored_kickoff
+                and datetime.now(KST) < stored_kickoff
+                and str(actual_result or "PENDING") == "PENDING"
+                and target_analysis_version == ANALYSIS_VERSION
+                and previous_version != ANALYSIS_VERSION
+            )
             prediction_locked = (
                 analysis_stage == "locked"
                 or str(actual_result or "PENDING") != "PENDING"
@@ -1142,6 +1255,7 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                     int(is_toto14 or 0) == 1
                     and previous
                     and str(previous[0]) in {"T-30-final", "locked"}
+                    and not toto_policy_migration
                 )
             )
             if prediction_locked:
@@ -1161,17 +1275,31 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return True
 
             final_fix_id = int(fixture_id or 0) or int(existing_fix_id or 0)
-            # The first row is the public recommendation. Later pre-kickoff
-            # calculations remain append-only snapshots for audit/learning, but
-            # may only improve fixture identity and schedule metadata. This keeps
-            # a pick already shown to a customer from changing later.
-            cursor.execute("""
-                UPDATE predictions
-                SET api_fixture_id = ?, match_time = ?, league = ?
-                WHERE match_id = ?
-            """, (
-                final_fix_id, match_time, league, m_id,
-            ))
+            if toto_policy_migration:
+                # The user explicitly approved one R7.10 reset for the current
+                # not-started Toto round.  The old value remains in the append-
+                # only snapshots; only the current public row moves to R7.10.
+                cursor.execute("""
+                    UPDATE predictions
+                    SET prob_pick = ?, prob_pick_prob = ?, ev_pick = ?,
+                        ev_pick_prob = ?, odd_h = ?, odd_d = ?, odd_a = ?,
+                        api_fixture_id = ?, match_time = ?, league = ?,
+                        analysis_version = ?
+                    WHERE match_id = ?
+                """, (
+                    prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a,
+                    final_fix_id, match_time, league, target_analysis_version, m_id,
+                ))
+            else:
+                # Within one public policy version the first recommendation is
+                # immutable. Later calculations are append-only audit snapshots.
+                cursor.execute("""
+                    UPDATE predictions
+                    SET api_fixture_id = ?, match_time = ?, league = ?
+                    WHERE match_id = ?
+                """, (
+                    final_fix_id, match_time, league, m_id,
+                ))
 
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
@@ -2252,6 +2380,12 @@ def build_analysis_evidence(context):
         f"{context['h_wins']}승-{context['draws']}무-{context['a_wins']}승",
     )
     add(
+        "리그 순위", 0.06,
+        0 < int(context.get("home_rank") or 99) < 99
+        and 0 < int(context.get("away_rank") or 99) < 99,
+        f"{context.get('home_rank')}위/{context.get('away_rank')}위",
+    )
+    add(
         "선수 결장", 0.11,
         bool(h_inj.get("available") and a_inj.get("available")),
         f"결장 {h_inj.get('count', 0)}명/{a_inj.get('count', 0)}명",
@@ -2263,6 +2397,7 @@ def build_analysis_evidence(context):
     )
     add("날씨", 0.05, bool(context.get("weather")), context.get("weather"))
     add("심판", 0.05, bool(context.get("referee")), context.get("referee"))
+    add("동기·감독", 0.05, bool(context.get("motivation_text")), context.get("motivation_text"))
     tactical_text = context.get("tactical_text")
     add("전술 상성", 0.05, bool(tactical_text), tactical_text)
     movement_text = context.get("movement_text")
@@ -2311,6 +2446,26 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
         pick["independent_support_count"] = 0
         market = infer_pick_market(pick)
         side = str(pick.get("selection_side") or "")
+        context_audit = metrics.get("context_audit") or {}
+        alignments = context_audit.get("side_alignment") or {}
+        if side in {"home", "draw", "away"}:
+            raw_alignment = float(alignments.get(side) or 0)
+        elif side in {"under", "over"}:
+            base_goals = context_audit.get("base_expected_goals") or {}
+            adjusted_goals = context_audit.get("adjusted_expected_goals") or {}
+            total_delta = (
+                float(adjusted_goals.get("home") or 0)
+                + float(adjusted_goals.get("away") or 0)
+                - float(base_goals.get("home") or 0)
+                - float(base_goals.get("away") or 0)
+            )
+            raw_alignment = total_delta / .40
+            if side == "under":
+                raw_alignment *= -1
+        else:
+            raw_alignment = 0.0
+        pick["context_alignment"] = round(max(-1.0, min(1.0, raw_alignment)), 6)
+        pick["context_model_version"] = str(context_audit.get("version") or "")
         pick["is_true_underdog"] = bool(
             market in {"1x2", "handicap"}
             and side in {"home", "away"}
@@ -2350,9 +2505,14 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
         if confirmed:
             add_signal("market", "다중 업체 배당 지속 하락·교차시장 동방향")
 
+        if market == "totals":
+            weather_component = next(
+                (item for item in context_audit.get("components") or []
+                 if item.get("name") == "weather_total"), None,
+            )
+            if weather_component:
+                add_signal("weather", "날씨·득점 환경 반영")
         # Team-specific evidence cannot be honestly mapped to draw/totals.
-        # Those markets may still retain a verified movement signal, but no
-        # team evidence is fabricated merely to award a badge.
         if side not in {"home", "away"}:
             pick["support_signals"] = signals
             pick["support_signal_groups"] = signal_groups
@@ -2360,12 +2520,28 @@ def attach_underdog_signals(picks, home_team, away_team, metrics):
             continue
 
         opponent = "away" if side == "home" else "home"
+        if side == "home" and metrics.get("home_venue_model"):
+            add_signal("venue", "홈·원정 분리 성적과 홈 어드밴티지")
+        if int(metrics.get(f"{side}_rank") or 99) < int(metrics.get(f"{opponent}_rank") or 99):
+            add_signal("rank", "리그 순위 우위")
         if float(metrics.get(f"{opponent}_absence") or 0) - float(
             metrics.get(f"{side}_absence") or 0
         ) >= 0.05:
             add_signal("squad", "상대 핵심 결장·선발 누수")
         if float(metrics.get(f"{side}_tactical") or 0) > 0:
             add_signal("matchup", "상대 전적·전술 상성 우위")
+        if float(metrics.get(f"{side}_title") or 0) > float(
+            metrics.get(f"{opponent}_title") or 0
+        ):
+            add_signal("motivation", "우승·상위권 경쟁 동기")
+        if float(metrics.get(f"{side}_manager") or 0) > float(
+            metrics.get(f"{opponent}_manager") or 0
+        ):
+            add_signal("manager", "감독 변경 동기 신호")
+        side_survival = metrics.get(f"{side}_survival") or {}
+        opponent_survival = metrics.get(f"{opponent}_survival") or {}
+        if side_survival.get("active") and not opponent_survival.get("active"):
+            add_signal("motivation", "강등권 생존 동기")
         if float(metrics.get(f"{side}_recent") or 0) - float(
             metrics.get(f"{opponent}_recent") or 0
         ) >= 0.035:
@@ -2459,7 +2635,8 @@ def build_detailed_report(
     }
     expected_names = (
         "최근 성적", "xG", "슈팅 품질", "홈·원정", "상대 전적", "선수 결장",
-        "휴식일", "날씨", "심판", "전술 상성", "배당 변동", "팀 신원·경기 연결",
+        "리그 순위", "휴식일", "날씨", "심판", "동기·감독", "전술 상성",
+        "배당 변동", "팀 신원·경기 연결",
     )
     missing_names = [name for name in expected_names if name not in evidence_by_name]
     evidence_text = ", ".join(
@@ -2514,7 +2691,7 @@ def build_detailed_report(
     elif honey:
         final_parts.append("이 최종픽은 실제 배당과 보수적 우위까지 확인되어 배당가치 우수 등급입니다.")
     elif not withheld:
-        final_parts.append("승무패를 먼저 판단한 뒤 검증된 시장전환 기준을 적용했으며, 별도 가치·VIP 등급은 부여하지 않았습니다.")
+        final_parts.append("승무패·핸디캡·언더오버와 경기 전 전체 지표를 동시 비교했으며, 별도 가치·VIP 등급은 부여하지 않았습니다.")
     missing_text = (
         f"확보하지 못한 항목({', '.join(missing_names)})은 임의로 추측하지 않고 신뢰도에서 감점했습니다."
         if missing_names else "요구된 핵심 데이터 항목이 모두 연결되어 있습니다."
@@ -2543,6 +2720,15 @@ def build_detailed_report(
         if opponent_model.get("active") else
         "득점 계산은 홈·원정 득실, 표본 수, 최근 득점, 확인된 xG·상대 xGA, 중복을 제거한 결장·일정 보정을 사용합니다. "
     )
+    context_audit = goal_audit.get("context_integration") or {}
+    context_components = [
+        str(item.get("name")) for item in context_audit.get("components") or []
+        if item.get("name")
+    ]
+    context_text = (
+        "실제 확률 반영 항목: " + ", ".join(context_components) + ". "
+        if context_components else "별도 방향성 지표는 없어 기초 득점모형을 유지했습니다. "
+    )
     return "\n\n".join([
         (
             f"[종합 경기 흐름] 예상 정규시간 득점은 {home} {exp_h:.2f}골, "
@@ -2554,8 +2740,11 @@ def build_detailed_report(
         f"[언더오버 분석] {_report_pick_line(market_best.get('totals'), home)}.",
         f"[역배 판단] {underdog_text}",
         f"[확인 자료와 계산 기준] {evidence_text}. {missing_text} "
-        + formula_text + "순위·맞대결·감독·날씨는 참고 자료이며 "
-        "별도 득점 가산을 하지 않습니다. 시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.",
+        + formula_text + context_text
+        + "순위·맞대결·동기·감독·검증된 배당 흐름은 방향 확률에, "
+        "날씨·결장·선발·휴식은 득점 분포와 신뢰도에 적용합니다. "
+        "심판처럼 검증된 승무패 방향이 없는 항목은 임의 가산하지 않고 중립으로 기록합니다. "
+        "시장 배당은 득점으로 바꾸지 않고 확률 비교·보정에 사용합니다.",
         f"[학습 상태] {learning_text}",
         (
             ("[최종 선택과 신뢰도] " + " ".join(final_parts) +
@@ -2607,6 +2796,9 @@ def build_pick_selection_audit(
             "odd": _audit_number(selected.get("odd"), 0.0),
             "fair_probability": _audit_number(selected.get("fair_prob")),
             "robust_edge": _audit_number(selected.get("robust_edge"), 0.0),
+            "context_alignment": _audit_number(selected.get("context_alignment"), 0.0),
+            "official_score": _audit_number(selected.get("official_score"), 0.0),
+            "official_policy_version": str(selected.get("official_policy_version") or PICK_POLICY_VERSION),
             "value_pick_tier": str(selected.get("value_pick_tier") or ""),
             "final_pick_grade": str(selected.get("final_pick_grade") or "standard"),
             "learning_robot": dict(selected.get("learning_robot") or {}),
@@ -2641,6 +2833,12 @@ def build_pick_selection_audit(
             "robot_kelly": _audit_number(robot_pick.get("robot_kelly")),
             "robot_learning_bonus": _audit_number(
                 robot_pick.get("robot_learning_bonus"), 0.0
+            ),
+            "robot_context_bonus": _audit_number(
+                robot_pick.get("robot_context_bonus"), 0.0
+            ),
+            "context_alignment": _audit_number(
+                robot_pick.get("context_alignment"), 0.0
             ),
             "robot_learning_validated": bool(
                 robot_pick.get("robot_learning_validated")
@@ -2733,6 +2931,9 @@ def build_pick_selection_audit(
             "recommendation_score": _audit_number(
                 item.get("recommendation_score"), 0.0
             ),
+            "context_alignment": _audit_number(item.get("context_alignment"), 0.0),
+            "official_score": _audit_number(item.get("official_score"), 0.0),
+            "robot_score": _audit_number(item.get("robot_score"), 0.0),
             "market_hit_rate": _audit_number(item.get("market_hit_rate"), 0.5),
             "market_history_samples": int(
                 item.get("market_history_samples", 0) or 0
@@ -2762,7 +2963,7 @@ def build_pick_selection_audit(
             "market_rank": market_rank_by_identity.get((market_key, raw_pick)),
             "selected_as": selected_as,
             "selection_reason": (
-                "승무패 우선·검증된 시장전환 최종 추천픽"
+                "경기 전 전체 지표·전체 시장 통합 최종 추천픽"
                 if "high_probability" in selected_as
                 else (
                     "최종 추천픽의 배당가치 등급"
@@ -2780,12 +2981,11 @@ def build_pick_selection_audit(
     decision = {
         "schema_version": PICK_AUDIT_SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
-        "selector": "wdl-first-required-pick-v5",
+        "selector": "all-evidence-best-one-v1",
         "score_order": [
-            "settlement_eligibility", "wdl_anchor", "wdl_price_eligibility",
-            "wdl_probability_majority_protection",
-            "validated_cross_market_override", "robust_edge", "robust_ev",
-            "mandatory_wdl_probability_fallback",
+            "settlement_eligibility", "cross_market_conviction",
+            "full_context_alignment", "robust_probability", "robust_edge",
+            "robust_ev", "independent_support", "mandatory_probability_fallback",
         ],
         "candidate_count": len(candidate_rows),
         "market_candidate_counts": market_counts,
@@ -3044,14 +3244,20 @@ def _json_rows(value):
     return [dict(row) for row in parsed if isinstance(row, dict)] if isinstance(parsed, list) else []
 
 
+def _is_current_public_analysis_version(value):
+    """Identify a complete R7.10 public analysis, excluding market previews."""
+    return str(value or "") in {ANALYSIS_VERSION, WORLD_ANALYSIS_VERSION}
+
+
 def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time=""):
-    """Recover the first provable pre-kickoff public answer without rewriting it.
+    """Recover the active policy's first provable pre-kickoff public answer.
 
     ``prediction_snapshots`` is append-only. Its first timestamped row is the
     strongest historical proof available for installations that predate the
-    explicit public-freeze marker. The first matching analysis snapshot keeps
-    the report/categories consistent, while the robot is independently taken
-    from the first snapshot that actually contains the current robot version.
+    explicit public-freeze marker.  For the one user-approved R7.10 migration,
+    a complete R7.10 snapshot made before kickoff becomes the new public
+    boundary; old rows remain untouched for audit.  LIVE/past games cannot gain
+    such a row because every writer rejects calculations at or after kickoff.
     """
     try:
         identity = conn.execute(
@@ -3080,13 +3286,17 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
     except sqlite3.Error:
         return None
 
+    eligible_public_rows = [
+        row for row in prediction_rows
+        if str(row[4] or "").strip()
+        and _snapshot_existed_before_kickoff(row[12], kickoff)
+    ]
     public_row = next(
         (
-            row for row in prediction_rows
-            if str(row[4] or "").strip()
-            and _snapshot_existed_before_kickoff(row[12], kickoff)
+            row for row in eligible_public_rows
+            if _is_current_public_analysis_version(row[1])
         ),
-        None,
+        eligible_public_rows[0] if eligible_public_rows else None,
     )
     if public_row is None:
         return None
@@ -3121,10 +3331,20 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         (
             row for row in analysis_rows
             if str(row[6] or "").strip() == official_pick
+            and str(row[1] or "") == str(public_row[1] or "")
             and _snapshot_existed_before_kickoff(row[11], kickoff)
         ),
         None,
     )
+    if official_analysis is None:
+        official_analysis = next(
+            (
+                row for row in analysis_rows
+                if str(row[6] or "").strip() == official_pick
+                and _snapshot_existed_before_kickoff(row[11], kickoff)
+            ),
+            None,
+        )
     categories = _json_object(official_analysis[8]) if official_analysis else {}
     candidates = _json_rows(official_analysis[7]) if official_analysis else []
     decision = _json_object(official_analysis[9]) if official_analysis else {}
@@ -3481,12 +3701,7 @@ def picks_can_coexist(primary, alternative):
 
 
 def select_pick_categories(picks, confidence):
-    """Select one official pick with W/D/L as the decision axis.
-
-    Totals and handicap are not allowed to win merely because their composite
-    event has a larger raw probability.  They are considered only when the
-    W/D/L price is unqualified or a time-ordered override policy is active.
-    """
+    """Select exactly one official pick from all supported pre-match markets."""
     categories = {
         "high_probability": None,
         "honey": None,
@@ -3501,13 +3716,8 @@ def select_pick_categories(picks, confidence):
         return categories, []
 
     policy = available[0].get("price_policy") or {}
-    compatible_policy = dict(policy) if (
-        policy.get("active")
-        and policy.get("forecast_model_version") == FORECAST_MODEL_VERSION
-        and int(policy.get("validation_fixtures") or 0) >= 40
-    ) else {"active": False}
-    high_source, choice_reason = wdl_centered_choice(
-        available, confidence, compatible_policy, return_reason=True
+    high_source, choice_reason = all_evidence_choice(
+        available, confidence, return_reason=True
     )
     high_source = dict(high_source)
     value_qualified = price_eligible(high_source, confidence)
@@ -3518,14 +3728,8 @@ def select_pick_categories(picks, confidence):
     )
     high_source["official_final_pick"] = True
     high_source["recommendation_status"] = "SELECTED"
-    reason_text = {
-        "wdl_anchor": "승무패 세 방향을 먼저 판단하고 그중 확률과 보수적 배당가치가 가장 좋은 방향을 선택",
-        "wdl_probability_strong": "승무패 방향이 다른 두 결과를 합친 것보다 강해 복합시장 배당만으로 바꾸지 않고 확률 방향을 유지",
-        "wdl_price_unqualified": "승무패의 보수적 배당가치가 부족해 다른 시장의 검증된 가치 방향을 선택",
-        "validated_cross_market_override": "승무패 우선보다 개선됨이 시간순 검증된 경우에만 다른 시장으로 전환",
-        "wdl_unavailable": "승무패 후보가 없어 정산 가능한 다른 시장에서 선택",
-    }.get(choice_reason, "승무패 중심 기준으로 선택")
-    high_source["selection_axis"] = "wdl_first"
+    reason_text = "경기 전 전체 지표와 승무패·핸디캡·언더오버의 확신도·실제 배당가치를 동시 비교해 최적의 한 방향을 선택"
+    high_source["selection_axis"] = "all_evidence_best_one"
     high_source["cross_market_decision"] = choice_reason
     high_source["selection_reason"] = (
         f"{reason_text}했습니다. 선택 배당 "
@@ -3537,24 +3741,23 @@ def select_pick_categories(picks, confidence):
         if confidence < .50:
             high_source["selection_warning"] += " · 데이터 신뢰도 낮음"
         high_source["selection_reason"] = (
-            "승무패 방향의 확률을 우선해 경기당 최종픽을 제공했습니다. "
-            "검증되지 않은 +1승·-1패·언더의 높은 합성확률로 대신 고르지 않았습니다. "
-            + high_source["selection_warning"] + "."
+            "경기 전 전체 지표와 세 시장을 모두 비교해 가장 강한 한 픽을 선택했습니다. "
+            "다만 " + high_source["selection_warning"] + "."
         )
     else:
         high_source["probability_fallback"] = False
         high_source["selection_warning"] = ""
     high_source["selection_policy"] = {"minimum_odds": None,
                                        "policy_version": PICK_POLICY_VERSION,
-                                       "decision_axis": "wdl_first",
+                                       "decision_axis": "all_evidence_best_one",
                                        "cross_market_decision": choice_reason,
-                                       "minimum_edge_advantage": compatible_policy.get("minimum_edge_advantage"),
-                                       "price_tradeoff_validated": choice_reason == "validated_cross_market_override",
+                                       "minimum_edge_advantage": None,
+                                       "price_tradeoff_validated": False,
                                        "price_validation": policy,
                                        "valid_decimal_odds_above": 1.0,
                                        "conservative_gross_return_floor": 1.01,
-                                       "compare_all_markets": False,
-                                       "compare_other_markets_after_wdl": True,
+                                       "compare_all_markets": True,
+                                       "compare_other_markets_after_wdl": False,
                                        "provide_pick_when_analyzable": True,
                                        "value_failure_action": "probability_pick_with_warning",
                                        "force_underdog": False}
@@ -3568,7 +3771,7 @@ def select_pick_categories(picks, confidence):
         "influence_cap": 0.18,
         "history_rewrite": False,
         "self_modifying": False,
-        "objective": "wdl_first_probability_calibration_and_validated_price_value_without_empty_pick",
+        "objective": "all_pre_match_evidence_best_single_pick_without_empty_pick",
         "value_failure_action": "probability_pick_with_warning",
         "calibration_model_version": FORECAST_MODEL_VERSION,
         "calibration_version": CALIBRATION_VERSION,
@@ -3653,7 +3856,7 @@ def robot_pick_report(robot_pick, home_team=""):
         "[로봇 독립픽] "
         f"{_human_pick_label(robot_pick.get('raw_pick'), home_team)} · "
         f"모델 {probability * 100:.1f}% · {value_text} · {edge_text}. "
-        "공식 최종픽과 별도로 승무패 우선 제한 없이 8개 실배당 후보를 비교한 답입니다. "
+        "공식 최종픽과 별도로 전체 시장과 경기 전 전체 지표를 독립적으로 비교한 답입니다. "
         f"{learning_text}. 경기 시작 뒤 자료는 사용하지 않습니다."
     )
 
@@ -4067,9 +4270,8 @@ def _world_market_preview_analysis(item, now=None):
     """Give every verified bettable WORLD fixture a transparent pre-analysis pick.
 
     This is not presented as a Dixon-Coles forecast.  It uses only the already
-    collected full-time market median, removes the margin within that same
-    market, and always prefers 1X2 when it exists.  A later full-context run
-    replaces this preview before kickoff.
+    collected full-time market median and removes the margin within each
+    market. A later full-context run replaces this preview before kickoff.
     """
     item = item if isinstance(item, dict) else {}
     match = item.get("match") or {}
@@ -4143,16 +4345,11 @@ def _world_market_preview_analysis(item, now=None):
             candidate_rows.append(row)
         candidates_by_market[market_key] = rows
 
-    # Product rule: 1X2 is the decision axis.  Only if it is absent do we use
-    # one complete fallback market, without comparing binary raw probabilities
-    # directly against a three-way market.
-    selected_market = next(
-        (key for key in ("1x2", "handicap", "totals") if candidates_by_market.get(key)),
-        "",
-    )
-    if not selected_market:
+    if not candidate_rows:
         return None
-    selected = dict(max(candidates_by_market[selected_market], key=lambda row: row["probability"]))
+    preview_confidence = min(0.58, 0.38 + bookmaker_count * 0.03)
+    selected = all_evidence_choice(candidate_rows, preview_confidence)
+    selected_market = infer_pick_market(selected)
     selected["display"] = _human_pick_label(selected["raw_pick"], home)
     selected["badges"] = []
     preview_confidence = float(selected["data_confidence"])
@@ -4175,7 +4372,7 @@ def _world_market_preview_analysis(item, now=None):
         data_confidence=preview_confidence,
     )
     decision.update({
-        "decision_axis": "wdl_first",
+        "decision_axis": "all_evidence_best_one",
         "selected_market": selected_market,
         "data_confidence": preview_confidence,
         "market_preview": True,
@@ -4190,8 +4387,8 @@ def _world_market_preview_analysis(item, now=None):
         f"[현재 선픽] {selected['display']} · 시장 공정확률 {selected['probability'] * 100:.1f}% · "
         f"중앙배당 {selected['odd']:.2f}배.\n\n"
         "[주의] 이 값은 딕슨-콜스·최근성적·결장·선발을 모두 반영한 정밀 모델 확률이 아닙니다. "
-        "정밀분석이 완료되면 같은 경기의 최종픽과 확률로 교체되며, 승무패 시장이 있으면 "
-        "언더오버의 2지선다 숫자와 직접 비교하지 않고 승무패를 먼저 선택합니다."
+        "정밀분석이 완료되면 같은 경기의 최종픽과 확률로 교체됩니다. "
+        "시장 선픽도 2지선다·3지선다 차이를 보정한 확신도 척도로 한 픽만 선택합니다."
     )
     robot_report = robot_pick_report(robot_pick, home)
     if robot_report:
@@ -5583,6 +5780,11 @@ def _sync_world_item_from_proto(item, proto_item):
 
 def _save_world_learning_record(match, analysis):
     """Feed WORLD forecasts into the same immutable grading/learning pipeline."""
+    # A price-only market preview is a provisional display while the complete
+    # pre-match pass is pending.  Freezing or grading it would prevent the
+    # first full-context official/robot answers from becoming the public picks.
+    if str((analysis or {}).get("analysis_stage") or "") == "market-preview":
+        return False
     fixture_id = int(match.get("fixture_id") or 0)
     canonical_match_id = _canonical_proto_prediction_match_id(fixture_id)
     if canonical_match_id:
@@ -5684,7 +5886,7 @@ def _analyze_world_match(item, now, market_performance):
 
     heavy_ttl = 24
     # Initial coverage for the complete two-day board uses the same model but
-    # defers the most call-heavy context (per-fixture stats, coach, next match,
+    # defers the most call-heavy context (per-fixture stats, next match,
     # historical XI endpoints) to the T-3/T-1 refresh. Recent results,
     # standings, injuries, squad-based predicted XI and all three odds markets
     # are still real pre-kickoff inputs; nothing is fabricated.
@@ -5720,20 +5922,11 @@ def _analyze_world_match(item, now, market_performance):
     a_stand = fetch_team_standing_api(away_id, heavy_ttl, league_id, season)
     h_survival = calculate_survival_motivation(h_stand)
     a_survival = calculate_survival_motivation(a_stand)
-    h2h = (
-        fetch_fixture_details_api(home_id, away_id, heavy_ttl)
-        if near_kickoff_context
-        else {"match_time": None, "last_h2h_date": "-", "h_wins": 0,
-              "draws": 0, "a_wins": 0, "total": 0}
-    )
-    h_manager = (
-        fetch_new_manager_status(home_id, heavy_ttl)
-        if near_kickoff_context else {"is_new_manager": False, "days_since_hired": 999}
-    )
-    a_manager = (
-        fetch_new_manager_status(away_id, heavy_ttl)
-        if near_kickoff_context else {"is_new_manager": False, "days_since_hired": 999}
-    )
+    # 맞대결·감독은 첫 공개픽에서 발견되어야 한다. 이후 경기직전
+    # 정보를 알게 되어도 이미 공개된 픽은 바꾸지 않기 때문이다.
+    h2h = fetch_fixture_details_api(home_id, away_id, heavy_ttl)
+    h_manager = fetch_new_manager_status(home_id, heavy_ttl)
+    a_manager = fetch_new_manager_status(away_id, heavy_ttl)
     is_derby = check_derby_match(raw_home, raw_away)
     injury_map = fetch_world_injuries_snapshot(
         fixture_id, home_id, away_id, league_id, season, injury_ttl
@@ -5882,6 +6075,24 @@ def _analyze_world_match(item, now, market_performance):
         exp_h, exp_a, goal_model_audit, home_id, away_id, league_id, kickoff,
         h_total_penalty, a_total_penalty,
     )
+    exp_h, exp_a, context_audit, goal_model_audit = integrate_pre_match_context(
+        exp_h, exp_a,
+        {
+            "h2h": h2h, "home_rank": h_rank, "away_rank": a_rank,
+            "home_recent_strength": float(h_recent.get("strength") or 0),
+            "away_recent_strength": float(a_recent.get("strength") or 0),
+            "recent_available": min(int(h_recent.get("matches") or 0), int(a_recent.get("matches") or 0)) >= 3,
+            "home_absence": h_total_penalty, "away_absence": a_total_penalty,
+            "home_title": h_title, "away_title": a_title,
+            "home_manager": h_manager_buff, "away_manager": a_manager_buff,
+            "home_vacation": h_vacation, "away_vacation": a_vacation,
+            "home_survival": h_survival, "away_survival": a_survival,
+            "home_market": h_market_bonus, "away_market": a_market_bonus,
+            "weather": weather_condition, "referee": referee,
+            "is_derby": is_derby,
+        },
+        goal_model_audit,
+    )
 
     totals_odds = odds.get("totals") or {}
     uo_base = float(totals_odds.get("line") or 2.5)
@@ -5899,7 +6110,7 @@ def _analyze_world_match(item, now, market_performance):
         exp_h, exp_a, handi_base, uo_base,
         [wdl_odds.get(side) for side in ("home", "draw", "away")], confidence,
         market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
-        movement_adjustment,
+        movement_adjustment, context_audit.get("wdl_log_adjustment"),
     )
     joint_audit["movement_policy"] = {
         key: movement_policy.get(key) for key in
@@ -5947,6 +6158,12 @@ def _analyze_world_match(item, now, market_performance):
         "away_rest": a_rest if a_rest < 90 else 0,
         "home_lineup": h_lineup_penalty,
         "away_lineup": a_lineup_penalty,
+        "home_rank": h_rank, "away_rank": a_rank,
+        "home_title": h_title, "away_title": a_title,
+        "home_manager": h_manager_buff, "away_manager": a_manager_buff,
+        "home_survival": h_survival, "away_survival": a_survival,
+        "home_venue_model": True,
+        "context_audit": context_audit,
         "underdog_side": underdog_side,
         "movement": odds_movement,
     })
@@ -5973,15 +6190,24 @@ def _analyze_world_match(item, now, market_performance):
         tactical_parts.append(f"{home} 강등권 생존 동기")
     if a_survival.get("active"):
         tactical_parts.append(f"{away} 강등권 생존 동기")
+    motivation_parts = []
+    if h_title: motivation_parts.append(f"{home} 상위권 경쟁")
+    if a_title: motivation_parts.append(f"{away} 상위권 경쟁")
+    if h_manager_buff: motivation_parts.append(f"{home} 새 감독")
+    if a_manager_buff: motivation_parts.append(f"{away} 새 감독")
+    if h_vacation: motivation_parts.append(f"{home} 말기 중위권 동기 저하")
+    if a_vacation: motivation_parts.append(f"{away} 말기 중위권 동기 저하")
     evidence, coverage = build_analysis_evidence({
         "h_recent": h_recent, "a_recent": a_recent,
         "h_stats": h_stats, "a_stats": a_stats, "h_long": h_long, "a_long": a_long,
         "h_inj": h_inj, "a_inj": a_inj,
         "h2h_total": h2h_total, "h_wins": int(h2h.get("h_wins") or 0),
         "draws": int(h2h.get("draws") or 0), "a_wins": int(h2h.get("a_wins") or 0),
+        "home_rank": h_rank, "away_rank": a_rank,
         "h_rest_days": h_rest, "a_rest_days": a_rest,
         "weather": weather_condition,
         "referee": referee,
+        "motivation_text": ", ".join(motivation_parts),
         "tactical_text": ", ".join(tactical_parts),
         "movement_text": odds_movement.get("summary") or None,
         "home_id": home_id, "away_id": away_id, "fixture_id": fixture_id,
@@ -6122,24 +6348,6 @@ def analyze_world_schedule():
     }
     due_items = []
 
-    # Persist every pre-kickoff preview once so the public pick can later be
-    # graded. Later calculations are still retained for learning, but the
-    # first customer-visible official/robot answers remain immutable.
-    for item in payload.get("matches", []):
-        analysis = item.get("analysis") or {}
-        if (
-            str(analysis.get("analysis_stage") or "") == "market-preview"
-            and not item.get("preview_learning_saved")
-        ):
-            match = item.get("match") or {}
-            kickoff = _parse_kst_match_time(match.get("match_time"))
-            if kickoff and now < kickoff and _save_world_learning_record(match, analysis):
-                item["analysis"] = _public_world_analysis_from_first_snapshot(
-                    match, analysis
-                )
-                item["preview_learning_saved"] = True
-                changed = True
-
     for item in payload.get("matches", []):
         match = item.get("match") or {}
         home_ko = _world_team_display_name(
@@ -6188,9 +6396,8 @@ def analyze_world_schedule():
             continue
         if stage == "LOCKED_AFTER_KICKOFF":
             if str((item.get("analysis") or {}).get("analysis_stage") or "") == "market-preview":
-                item["frozen_at"] = str((item.get("analysis") or {}).get("analyzed_at") or "")
-                item["analysis_status"] = "FROZEN_MARKET_PREVIEW"
-                item["pick_status"] = "MARKET_PREVIEW_FROZEN"
+                item["analysis_status"] = "MISSED_PREKICKOFF"
+                item["pick_status"] = "PROVISIONAL_PREVIEW_EXPIRED"
                 changed = True
             elif not item.get("analysis") and item.get("analysis_status") not in {
                 "MISSED_PREKICKOFF", "FROZEN_SHADOW"
@@ -6890,6 +7097,24 @@ def build_dashboard_data():
             exp_h, exp_a, goal_model_audit, home_info.get("id"), away_info.get("id"),
             (os_data or {}).get("league_id"), m_dt, h_total_penalty, a_total_penalty,
         )
+        exp_h, exp_a, context_audit, goal_model_audit = integrate_pre_match_context(
+            exp_h, exp_a,
+            {
+                "h2h": fixture_details, "home_rank": h_rank, "away_rank": a_rank,
+                "home_recent_strength": float(h_recent.get("strength") or 0),
+                "away_recent_strength": float(a_recent.get("strength") or 0),
+                "recent_available": min(int(h_recent.get("matches") or 0), int(a_recent.get("matches") or 0)) >= 3,
+                "home_absence": h_total_penalty, "away_absence": a_total_penalty,
+                "home_title": h_title_buff, "away_title": a_title_buff,
+                "home_manager": h_manager_buff, "away_manager": a_manager_buff,
+                "home_vacation": h_vacation, "away_vacation": a_vacation,
+                "home_survival": h_survival, "away_survival": a_survival,
+                "home_market": h_market_bonus, "away_market": a_market_bonus,
+                "weather": weather_condition, "referee": referee,
+                "is_derby": is_derby,
+            },
+            goal_model_audit,
+        )
 
         base_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
@@ -6910,6 +7135,13 @@ def build_dashboard_data():
             tactical_parts.append(f"{home_team} 잔류 경쟁({h_survival['reason']})")
         if a_survival.get("active"):
             tactical_parts.append(f"{away_team} 잔류 경쟁({a_survival['reason']})")
+        motivation_parts = []
+        if h_title_buff: motivation_parts.append(f"{home_team} 상위권 경쟁")
+        if a_title_buff: motivation_parts.append(f"{away_team} 상위권 경쟁")
+        if h_manager_buff: motivation_parts.append(f"{home_team} 새 감독")
+        if a_manager_buff: motivation_parts.append(f"{away_team} 새 감독")
+        if h_vacation: motivation_parts.append(f"{home_team} 말기 중위권 동기 저하")
+        if a_vacation: motivation_parts.append(f"{away_team} 말기 중위권 동기 저하")
         evidence, data_coverage = build_analysis_evidence({
             "h_recent": h_recent,
             "a_recent": a_recent,
@@ -6923,10 +7155,13 @@ def build_dashboard_data():
             "h_wins": h_wins,
             "draws": h2h_draws,
             "a_wins": a_wins,
+            "home_rank": h_rank,
+            "away_rank": a_rank,
             "h_rest_days": h_rest_days,
             "a_rest_days": a_rest_days,
             "weather": weather_condition if weather_condition not in (None, "", "Unknown") else None,
             "referee": referee,
+            "motivation_text": ", ".join(motivation_parts),
             "tactical_text": ", ".join(tactical_parts),
             "movement_text": ", ".join(movement_parts),
             "home_id": home_info.get("id"),
@@ -6950,7 +7185,7 @@ def build_dashboard_data():
         probabilities, joint_audit, joint_matrix = coherent_match_forecast(
             exp_h, exp_a, handi_base, uo_base, [odd_h, odd_d, odd_a],
             analysis_confidence, market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
-            movement_adjustment,
+            movement_adjustment, context_audit.get("wdl_log_adjustment"),
         )
         joint_audit["movement_policy"] = {
             key: movement_policy.get(key) for key in
@@ -7038,6 +7273,16 @@ def build_dashboard_data():
                 "away_rest": a_rest_days if a_rest_days < 90 else 0,
                 "home_lineup": h_lineup_penalty,
                 "away_lineup": a_lineup_penalty,
+                "home_rank": h_rank,
+                "away_rank": a_rank,
+                "home_title": h_title_buff,
+                "away_title": a_title_buff,
+                "home_manager": h_manager_buff,
+                "away_manager": a_manager_buff,
+                "home_survival": h_survival,
+                "away_survival": a_survival,
+                "home_venue_model": True,
+                "context_audit": context_audit,
                 "underdog_side": underdog_side,
                 "movement": proto_movement,
             },
@@ -7302,6 +7547,8 @@ def build_dashboard_data():
         m_dt = parse_match_time(match_time)
         diff_hours = (m_dt - now).total_seconds() / 3600.0
         frozen_item = None
+        migration_fallback = None
+        policy_migration = False
         frozen_record = frozen_toto14.get(match_id)
         if (
             isinstance(frozen_record, dict)
@@ -7312,6 +7559,18 @@ def build_dashboard_data():
             frozen_item = dict(frozen_record["payload"])
 
         kickoff_passed = bool(scheduled_dt and now >= scheduled_dt)
+        if frozen_item is not None and _needs_current_analysis_refresh(
+            frozen_item, scheduled_dt, now, ANALYSIS_VERSION
+        ):
+            migration_fallback = dict(frozen_item)
+            frozen_item = None
+            policy_migration = True
+            print(
+                f"🔄 시작 전 구버전 승무패14 재분석: "
+                f"{home_team} vs {away_team} · "
+                f"{migration_fallback.get('analysis_version') or '버전 미기록'} "
+                f"→ {ANALYSIS_VERSION}"
+            )
         freeze_needs_persist = False
         previous_item = previous_toto14.get(str(m.get("id", "")))
         previous_match = previous_item.get("match", {}) if isinstance(previous_item, dict) else {}
@@ -7324,9 +7583,13 @@ def build_dashboard_data():
             and previous_generated_at <= scheduled_dt
         )
         previous_stage = str(previous_item.get("analysis_stage", "")) if isinstance(previous_item, dict) else ""
+        previous_needs_refresh = _needs_current_analysis_refresh(
+            previous_item, scheduled_dt, now, ANALYSIS_VERSION
+        )
         if (
             frozen_item is None
             and previous_is_pre_kickoff
+            and not previous_needs_refresh
             and (
                 kickoff_passed
                 or previous_stage in {"T-30-final", "locked"}
@@ -7346,7 +7609,10 @@ def build_dashboard_data():
                 and str(snapshot_item.get("frozen_from_stage", ""))
                 in {"T-30-final", "locked"}
             )
-            if snapshot_item and (kickoff_passed or snapshot_is_final):
+            snapshot_needs_refresh = _needs_current_analysis_refresh(
+                snapshot_item, scheduled_dt, now, ANALYSIS_VERSION
+            )
+            if snapshot_item and not snapshot_needs_refresh and (kickoff_passed or snapshot_is_final):
                 frozen_item = snapshot_item
                 if not kickoff_passed and snapshot_is_final:
                     frozen_item["analysis_stage"] = snapshot_item["frozen_from_stage"]
@@ -7397,6 +7663,7 @@ def build_dashboard_data():
 
         canonical_toto = _toto14_from_canonical_proto(m, dashboard_proto)
         if canonical_toto is not None:
+            canonical_toto["_policy_migration"] = policy_migration
             dashboard_toto14.append(canonical_toto)
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
             continue
@@ -7405,8 +7672,13 @@ def build_dashboard_data():
             home_team, away_team, match_time, ttl_h=2
         )
         if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
-            unavailable = _unavailable_toto14_item(m)
-            unavailable['data_warning'] = '양 팀 신원 확인 대기 · 기본값으로 예측하지 않음'
+            unavailable = dict(migration_fallback or _unavailable_toto14_item(m))
+            unavailable["match"] = dict(m)
+            unavailable['data_warning'] = (
+                '새 버전 팀 신원 확인 대기 · 구버전 시작 전 동결값을 임시 보존'
+                if migration_fallback
+                else '양 팀 신원 확인 대기 · 기본값으로 예측하지 않음'
+            )
             dashboard_toto14.append(unavailable)
             continue
         heavy_ttl = 24
@@ -7573,6 +7845,24 @@ def build_dashboard_data():
             (os_data or {}).get("league_id"), m_dt, h_total_penalty, a_total_penalty,
         )
 
+        exp_h, exp_a, toto_context_audit, goal_model_audit = integrate_pre_match_context(
+            exp_h, exp_a,
+            {
+                "h2h": fixture_details, "home_rank": h_rank, "away_rank": a_rank,
+                "home_recent_strength": float(h_recent.get("strength") or 0),
+                "away_recent_strength": float(a_recent.get("strength") or 0),
+                "recent_available": min(int(h_recent.get("matches") or 0), int(a_recent.get("matches") or 0)) >= 3,
+                "home_absence": h_total_penalty, "away_absence": a_total_penalty,
+                "home_title": h_title_buff, "away_title": a_title_buff,
+                "home_manager": h_manager_buff, "away_manager": a_manager_buff,
+                "home_vacation": h_vacation, "away_vacation": a_vacation,
+                "home_survival": h_survival, "away_survival": a_survival,
+                "weather": weather_condition, "referee": referee,
+                "is_derby": is_derby,
+            },
+            goal_model_audit,
+        )
+
         analysis_confidence = calculate_data_confidence(
             home_info, away_info, api_fixture_id, h_stand, a_stand, h_long, a_long,
             h_recent, a_recent, h_stats, a_stats, h_inj_data, a_inj_data,
@@ -7585,6 +7875,7 @@ def build_dashboard_data():
         probabilities, joint_audit, _ = coherent_match_forecast(
             exp_h, exp_a, 0, 2.5, market_odds, analysis_confidence,
             market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
+            None, toto_context_audit.get("wdl_log_adjustment"),
         )
         h_win, draw, a_win = probabilities[:3]
         goal_model_audit["joint_forecast"] = joint_audit
@@ -7623,6 +7914,7 @@ def build_dashboard_data():
         else:
             toto_item = {
                 "_pending_toto_save": True, "api_fixture_id": api_fixture_id,
+                "_policy_migration": policy_migration,
                 "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
                 "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
                 "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
@@ -8410,6 +8702,7 @@ def _finalize_toto14_round(items):
     for index, item in enumerate(items):
         if not item.pop('_pending_toto_save', False):
             continue
+        policy_migration = bool(item.pop('_policy_migration', False))
         match = item['match']
         marks = item['picks']
         display = ', '.join(match['home']+' 승' if mark=='승' else match['away']+' 승' if mark=='패' else '무승부' for mark in marks)
@@ -8425,7 +8718,7 @@ def _finalize_toto14_round(items):
         kickoff = _parse_kst_match_time(match.get('match_time'))
         if not saved or not kickoff or datetime.now(KST) >= kickoff:
             items[index] = _locked_toto14_fallback(match) or _unavailable_toto14_item(match)
-        elif item.get('analysis_stage') == 'T-30-final':
+        elif item.get('analysis_stage') == 'T-30-final' or policy_migration:
             items[index] = _freeze_toto14_prediction(match_id, match['home'], match['away'], match.get('match_time'), item) or item
     return items
 
