@@ -3,11 +3,10 @@
     "scheduler": {
       "supervisor_pid": 332263,
       "state": "running",
-      "heartbeat_at": "2026-09-08T10:33:42+00:00",
+      "heartbeat_at": "2026-09-08T10:34:43+00:00",
       "pid": 332263,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "live": 332265,
         "score": 332266,
         "master": 332267,
         "world": 332268
@@ -28,10 +27,10 @@
     "score": {
       "child_pid": 332266,
       "state": "running",
-      "heartbeat_at": "2026-09-08T10:33:51+00:00",
-      "pid": 332266,
+      "heartbeat_at": "2026-09-08T10:34:43+00:00",
+      "pid": 332263,
       "last_started_at": "2026-09-08T10:33:42+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 60.3,
       "overlap_skips": 0,
       "duration_seconds": 73.2,
       "last_success_at": "2026-09-08T10:32:16+00:00",
@@ -47,31 +46,33 @@
     "master": {
       "child_pid": 332267,
       "state": "running",
-      "heartbeat_at": "2026-09-08T10:33:44+00:00",
-      "pid": 332267,
-      "last_started_at": "2026-09-08T10:33:42+00:00",
-      "elapsed_seconds": 0.0,
+      "heartbeat_at": "2026-09-08T10:34:43+00:00",
+      "pid": 332263,
+      "last_started_at": "2026-09-08T10:34:43+00:00",
+      "elapsed_seconds": 60.3,
       "overlap_skips": 0,
-      "duration_seconds": 146.5,
-      "last_failure_at": "2026-09-08T10:33:26+00:00",
+      "duration_seconds": 45.36,
+      "last_failure_at": "2026-09-08T10:34:29+00:00",
       "last_success_at": "2026-09-08T08:45:54+00:00",
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: master 작업이 정상 결과를 게시하지 못함",
+      "last_stage": "dashboard_publish_failed"
     },
     "world": {
       "child_pid": 332268,
       "state": "running",
-      "heartbeat_at": "2026-09-08T10:33:44+00:00",
-      "pid": 332268,
-      "last_started_at": "2026-09-08T10:33:42+00:00",
-      "elapsed_seconds": 0.0,
+      "heartbeat_at": "2026-09-08T10:34:43+00:00",
+      "pid": 332263,
+      "last_started_at": "2026-09-08T10:34:43+00:00",
+      "elapsed_seconds": 60.3,
       "overlap_skips": 0,
-      "duration_seconds": 86.3,
+      "duration_seconds": 52.42,
       "last_success_at": "2026-09-08T08:50:48+00:00",
-      "last_failure_at": "2026-09-08T10:27:27+00:00",
-      "last_error": "worker exited with code 1"
+      "last_failure_at": "2026-09-08T10:34:36+00:00",
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함",
+      "last_stage": "world_dashboard_publish_failed"
     }
   },
-  "updated_at": "2026-09-08T10:33:51+00:00",
+  "updated_at": "2026-09-08T10:34:43+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -141,7 +142,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 34
+        "count": 35
       },
       {
         "metric": "cache_hit",
@@ -153,7 +154,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 20
+        "count": 24
       },
       {
         "metric": "cache_hit",
