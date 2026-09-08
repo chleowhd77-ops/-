@@ -2024,12 +2024,12 @@ def _world_live_item(world_item, proto_by_fixture):
                 ),
                 detailed_report=report,story="",
                 analysis_stage=(
-                    analysis.get("public_pick_analysis_stage")
-                    or analysis.get("analysis_stage")
+                    analysis.get("analysis_stage")
+                    or analysis.get("public_pick_analysis_stage")
                 ),
                 analysis_version=(
-                    analysis.get("public_pick_analysis_version")
-                    or analysis.get("analysis_version")
+                    analysis.get("analysis_version")
+                    or analysis.get("public_pick_analysis_version")
                 ),
                 data_coverage=float(analysis.get("data_quality_score") or 0)/100,
                 analysis_confidence=(analysis.get("decision") or {}).get("data_confidence"),
@@ -3178,6 +3178,7 @@ with main_tab6:
         item for item in raw_world_matches
         if str(item.get("visibility_status") or "SHADOW").upper() != "QUARANTINED"
         and _proto_is_recent_or_active(item)
+        and _item_api_fixture_id(item) not in proto_by_fixture
     ]
     world_pick_ready = {
         id(item): bool(
@@ -3190,12 +3191,20 @@ with main_tab6:
         if not world_pick_ready[id(item)] and not _recommendation_is_upcoming(item)
     ]
     # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
-    world_actual_analyzed = sum(
+    world_market_previews = sum(
+        1 for item in eligible_world_matches
+        if str(
+            ((item.get("analysis") or {}).get("analysis_stage")
+             or item.get("analysis_stage") or "")
+        ) == "market-preview"
+    )
+    world_detailed_analyzed = sum(
         1 for item in eligible_world_matches
         if item.get("analysis")
-        or str(item.get("analysis_status") or "").upper() in {
-            "ANALYZED_SHADOW", "FROZEN_SHADOW"
-        }
+        and str(
+            ((item.get("analysis") or {}).get("analysis_stage")
+             or item.get("analysis_stage") or "")
+        ) not in {"", "market-preview"}
     )
     world_actual_frozen = sum(
         1 for item in eligible_world_matches
@@ -3232,7 +3241,9 @@ with main_tab6:
             "관리자 세계경기 관제 · "
             f"수집 목록 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
             f"배당확인 대상 {len(eligible_world_matches)}경기 · "
-            f"분석 {world_actual_analyzed}경기 · "
+            f"시장선픽 {world_market_previews}경기 · "
+            f"정밀분석 {world_detailed_analyzed}경기 · "
+            f"프로토 중복 제외 {int(world_source_meta.get('proto_overlap_excluded_count') or 0)}경기 · "
             f"최종동결 {world_actual_frozen}경기 · "
             f"오류 {world_actual_errors}경기 · "
             f"공개 {world_actual_public}경기 · "
@@ -3516,6 +3527,7 @@ with main_tab4:
                 "api_fixture_id",
                 "robot_pick", "robot_pick_prob", "robot_pick_odd",
                 "robot_pick_market", "robot_pick_version", "is_correct_robot",
+                "source_type",
             ]
             df_finished = pd.DataFrame(finished_rows)
             df_pending = pd.DataFrame(pending_rows)
@@ -3641,7 +3653,7 @@ with main_tab4:
         st.markdown(f"""
         <div class='grade-summary-grid'>
             <div class='grade-summary-card'>
-                <span class='grade-summary-title'>📊 누적 승부식 채점 (총 {p_stats['total']}경기)</span>
+                <span class='grade-summary-title'>📊 누적 공식픽 채점 · 프로토+전체경기 (총 {p_stats['total']}경기)</span>
                 <div class='grade-dual-row'>
                     <div class='grade-metric'>
                         <span class='grade-metric-label'>공식 최종픽</span>
@@ -3695,6 +3707,12 @@ with main_tab4:
             score = escape(str(row.get('actual_score', '-:-')))
             league_name = escape(str(row.get('league', '')))
             row_version = escape(str(row.get('analysis_version') or '구버전 기록'))
+            source_label = (
+                "WORLD 전체경기"
+                if str(row.get("source_type") or "").upper() == "WORLD"
+                or str(row.get("match_id") or "").startswith("WORLD_")
+                else "프로토"
+            )
             
             prob_pick_raw = str(row.get('prob_pick') or '')
             prob_pick = escape(_human_pick_label(prob_pick_raw, row.get('home_team', '')))
@@ -3724,7 +3742,7 @@ with main_tab4:
                 f"<div class='report-card'>"
                 f"<div class='report-head'>"
                 f"<div class='report-match'>"
-                f"<span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {league_name} • {row_version}</span>"
+                f"<span style='color:#64748B; font-size:12px; display:block; margin-bottom:4px;'>{m_time} • {escape(source_label)} • {league_name} • {row_version}</span>"
                 f"<span class='report-team'>{h_team} <span style='color:#475569;'>VS</span> {a_team}</span>"
                 f"</div>"
                 f"<div class='report-result'>"
@@ -3826,11 +3844,17 @@ with main_tab4:
                 safe_robot_pick = escape(_human_pick_label(
                     row.get('robot_pick', ''), row.get('home_team', '')
                 ))
+                pending_source_label = (
+                    "WORLD 전체경기"
+                    if str(row.get("source_type") or "").upper() == "WORLD"
+                    or str(row.get("match_id") or "").startswith("WORLD_")
+                    else "프로토"
+                )
                  
                 html_str = (
                     f"<div class='pending-report-card'>"
                     f"<div class='pending-report-match'>"
-                    f"<div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{safe_time}</div>"
+                    f"<div style='color:#64748B; font-size:12px; margin-bottom:4px; font-weight:900;'>{safe_time} · {escape(pending_source_label)}</div>"
                     f"<div class='pending-report-teams'>{safe_home} <span style='color:#64748B;'>VS</span> {safe_away}</div>"
                     f"<div style='color:#C4B5FD;font-size:11px;font-weight:800;margin-top:4px;'>🤖 로봇 독립픽: {safe_robot_pick}</div>"
                     f"{event_html}"

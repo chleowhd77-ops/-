@@ -110,14 +110,20 @@ WORLD_SCHEDULE_DAYS = max(1, min(3, int(os.getenv("WORLD_SCHEDULE_DAYS", "2"))))
 WORLD_MAX_SCHEDULE_MATCHES = max(
     20, min(300, int(os.getenv("WORLD_MAX_SCHEDULE_MATCHES", "160")))
 )
+# WORLD 공개 목록에 실은 경기는 특정 리그나 앞의 30경기만 상세분석하고
+# 나머지를 시장 프리뷰에 남겨두지 않는다. 실제 공급사 호출은 공통 일일
+# 예산/보호 잔량에서 계속 중단되며 다음 주기에 킥오프순으로 재개된다.
 WORLD_MAX_DEEP_ANALYSES_DAILY = max(
-    1, min(30, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_DAILY", "30")))
+    WORLD_MAX_SCHEDULE_MATCHES,
+    min(300, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_DAILY", str(WORLD_MAX_SCHEDULE_MATCHES)))),
 )
 WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE = max(
-    1, min(5, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE", "5")))
+    WORLD_MAX_SCHEDULE_MATCHES,
+    min(300, int(os.getenv("WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE", str(WORLD_MAX_SCHEDULE_MATCHES)))),
 )
 WORLD_ANALYSIS_HORIZON_HOURS = max(
-    3, min(36, int(os.getenv("WORLD_ANALYSIS_HORIZON_HOURS", "24")))
+    WORLD_SCHEDULE_DAYS * 24,
+    min(72, int(os.getenv("WORLD_ANALYSIS_HORIZON_HOURS", str(WORLD_SCHEDULE_DAYS * 24)))),
 )
 WORLD_SCHEDULE_REFRESH_HOURS = max(
     2, min(12, int(os.getenv("WORLD_SCHEDULE_REFRESH_HOURS", "6")))
@@ -130,7 +136,7 @@ WORLD_ODDS_MAX_PAGES_PER_DAY = max(
 )
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
-WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v2"
+WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v3"
 WORLD_MARKET_PREVIEW_VERSION = f"{ANALYSIS_VERSION}-world-market-preview-v1"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Bucheon FC 1995": "부천 FC 1995",
@@ -214,10 +220,28 @@ def _refresh_world_source_meta(payload):
             "ANALYZED_SHADOW", "FROZEN_SHADOW"
         }
     ]
+    market_previews = [
+        item for item in eligible
+        if str(
+            ((item.get("analysis") or {}).get("analysis_stage")
+             or item.get("analysis_stage") or "")
+        ) == "market-preview"
+    ]
+    detailed = [
+        item for item in eligible
+        if item.get("analysis")
+        and str(
+            ((item.get("analysis") or {}).get("analysis_stage")
+             or item.get("analysis_stage") or "")
+        ) not in {"", "market-preview"}
+        and str((item.get("analysis") or {}).get("canonical_source") or "") != "PROTO"
+    ]
     source_meta = payload.setdefault("source_meta", {})
     source_meta.update({
         "eligible_shadow_count": len(eligible),
         "analyzed_shadow_count": len(analyzed),
+        "market_preview_count": len(market_previews),
+        "detailed_analysis_count": len(detailed),
         "frozen_shadow_count": sum(
             1 for item in eligible
             if item.get("frozen_at")
@@ -236,6 +260,50 @@ def _refresh_world_source_meta(payload):
         "system_version": SYSTEM_VERSION,
     })
     return payload
+
+
+def _exclude_proto_overlaps(payload, proto_by_fixture=None):
+    """Remove verified Proto fixtures from WORLD without deleting stored history."""
+    if not isinstance(payload, dict):
+        return 0
+    proto_by_fixture = (
+        proto_by_fixture if isinstance(proto_by_fixture, dict)
+        else _dashboard_proto_by_fixture()
+    )
+    proto_fixture_ids = set()
+    for raw_fixture_id in proto_by_fixture:
+        try:
+            fixture_id = int(raw_fixture_id or 0)
+        except (TypeError, ValueError):
+            continue
+        if fixture_id > 0:
+            proto_fixture_ids.add(fixture_id)
+    if not proto_fixture_ids:
+        return 0
+    kept = []
+    removed = 0
+    for item in payload.get("matches", []) or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            fixture_id = int(
+                item.get("api_fixture_id")
+                or (item.get("match") or {}).get("fixture_id")
+                or 0
+            )
+        except (TypeError, ValueError):
+            fixture_id = 0
+        if fixture_id in proto_fixture_ids:
+            removed += 1
+            continue
+        kept.append(item)
+    if removed:
+        payload["matches"] = kept
+    source_meta = payload.setdefault("source_meta", {})
+    source_meta["proto_overlap_excluded_count"] = int(
+        source_meta.get("proto_overlap_excluded_count") or 0
+    ) + removed
+    return removed
 
 
 def _local_path(path):
@@ -1244,7 +1312,10 @@ def get_expected_core_players(team_id, league_id, season):
     return core_players[:8]
 
 
-def predict_starting_xi(team_id, league_id=None, season=None, unavailable_names=None):
+def predict_starting_xi(
+    team_id, league_id=None, season=None, unavailable_names=None,
+    historical_lineups=True,
+):
     """Predict an XI from recent official lineups and the current squad.
 
     The result is explicitly a pre-match estimate. Confirmed lineups are never
@@ -1290,7 +1361,7 @@ def predict_starting_xi(team_id, league_id=None, season=None, unavailable_names=
     cached_usage = get_db_cache(usage_key, 24)
     usage = dict(cached_usage or {}) if isinstance(cached_usage, dict) else {}
     sample_lineups = int(usage.pop("_sample_lineups", 0) or 0)
-    if not cached_usage:
+    if not cached_usage and historical_lineups:
         usage = {}
         sample_lineups = 0
         # Newer lineups receive more weight. Only confirmed historical XI rows
@@ -3225,7 +3296,7 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
 
 
 def _public_world_analysis_from_first_snapshot(match, current_analysis):
-    """Keep WORLD's official and robot boxes on their first public answers."""
+    """Freeze public picks while retaining the newest pre-kickoff evidence/report."""
     current_analysis = dict(current_analysis or {})
     bundle = _load_first_public_pick_bundle(
         str(match.get("id") or ""),
@@ -3244,13 +3315,33 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
     if bundle.get("robot_pick"):
         decision["robot_pick"] = dict(bundle["robot_pick"])
         decision["robot_pick_version"] = ROBOT_PICK_VERSION
+    current_stage = str(current_analysis.get("analysis_stage") or "")
+    current_report = str(current_analysis.get("report") or "").strip()
+    frozen_report = str(bundle.get("report") or "").strip()
+    # A market preview can be the first visible pick.  Once the real full-context
+    # pass finishes, keep that richer evidence/report and freeze only the two
+    # public answers.  This prevents the immutable-pick guard from making a
+    # completed detailed analysis continue to look like "정밀분석 대기".
+    report = (
+        current_report
+        if current_stage and current_stage != "market-preview" and current_report
+        else (frozen_report or current_report)
+    )
+    if (
+        current_stage and current_stage != "market-preview"
+        and frozen_report and current_report and frozen_report != current_report
+    ):
+        report += (
+            "\n\n[공개픽 고정] 위 상세자료는 최신 경기 전 정밀분석입니다. "
+            "공식픽과 로봇픽은 처음 공개된 값을 그대로 유지해 경기 뒤 변경되지 않습니다."
+        )
     current_analysis.update({
         "selected": selected,
         "categories": bundle["categories"],
         "robot_pick": dict(bundle.get("robot_pick") or {}),
         "candidates": bundle["candidates"],
         "decision": decision,
-        "report": bundle.get("report") or current_analysis.get("report") or "",
+        "report": report,
         "public_pick_frozen": True,
         "public_pick_frozen_at": bundle["frozen_at"],
         "public_pick_analysis_version": bundle["analysis_version"],
@@ -3715,6 +3806,7 @@ def _build_grading_snapshot():
                     "public_pick_snapshot_id": bundle.get("snapshot_id"),
                 })
             row.update({
+                "source_type": "WORLD" if match_id.startswith("WORLD_") else "PROTO",
                 "analysis_version": (
                     (bundle or {}).get("analysis_version")
                     or robot.get("analysis_version")
@@ -4294,8 +4386,9 @@ def collect_world_schedule():
         market_snapshots_by_fixture=market_snapshots_by_fixture,
     )
     _carry_world_shadow_analyses(payload, previous_payload)
+    proto_overlaps = _exclude_proto_overlaps(payload)
     preview_items = _ensure_world_market_previews(payload, now=now)
-    if preview_items:
+    if preview_items or proto_overlaps:
         _refresh_world_source_meta(payload)
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})
@@ -4304,6 +4397,7 @@ def collect_world_schedule():
         f"수집 목록 {source_meta.get('raw_fixture_count', 0)} / "
         f"배당 확인 {source_meta.get('eligible_shadow_count', 0)} / "
         f"시장 선픽 {len(preview_items)} / 제외 {source_meta.get('rejected_count', 0)}"
+        f" / 프로토 중복 제외 {proto_overlaps}"
     )
     return True
 
@@ -5128,8 +5222,8 @@ def _world_analysis_stage(diff_hours):
     if diff_hours <= 3.0:
         return "T-3-refresh"
     if diff_hours <= WORLD_ANALYSIS_HORIZON_HOURS:
-        return "T-24-initial"
-    return "WAITING_T24_ANALYSIS"
+        return "PREKICKOFF-initial"
+    return "WAITING_ANALYSIS_WINDOW"
 
 
 def _world_data_quality(match, odds, h_recent, a_recent, h_long, a_long,
@@ -5585,10 +5679,16 @@ def _analyze_world_match(item, now, market_performance):
     kickoff = kickoff.astimezone(KST)
     diff_hours = (kickoff - now).total_seconds() / 3600.0
     analysis_stage = _world_analysis_stage(diff_hours)
-    if analysis_stage in {"LOCKED_AFTER_KICKOFF", "WAITING_T24_ANALYSIS"}:
+    if analysis_stage in {"LOCKED_AFTER_KICKOFF", "WAITING_ANALYSIS_WINDOW"}:
         raise ValueError(f"not analyzable in stage {analysis_stage}")
 
     heavy_ttl = 24
+    # Initial coverage for the complete two-day board uses the same model but
+    # defers the most call-heavy context (per-fixture stats, coach, next match,
+    # historical XI endpoints) to the T-3/T-1 refresh. Recent results,
+    # standings, injuries, squad-based predicted XI and all three odds markets
+    # are still real pre-kickoff inputs; nothing is fabricated.
+    near_kickoff_context = diff_hours <= 3.0
     injury_ttl = 0.5 if diff_hours <= 3 else 12
     odds = _world_market_snapshot_for_analysis(
         item, fixture_id, diff_hours, now=now
@@ -5602,15 +5702,38 @@ def _analyze_world_match(item, now, market_performance):
     a_long = fetch_team_long_term_stats_api(away_id, heavy_ttl)
     h_recent = fetch_team_recent_form_metrics(home_id, heavy_ttl)
     a_recent = fetch_team_recent_form_metrics(away_id, heavy_ttl)
-    h_stats = fetch_recent_team_stats_api(home_id, heavy_ttl)
-    a_stats = fetch_recent_team_stats_api(away_id, heavy_ttl)
+    empty_recent_stats = {
+        "possession": 50, "shots_on_goal": 4.0, "corners": 4.5,
+        "yellow_cards": 1.5, "sample_size": 0, "xg": None,
+        "xg_sample_size": 0, "xga": None, "xga_sample_size": 0,
+        "field_samples": {}, "source_fixture_ids": [],
+    }
+    h_stats = (
+        fetch_recent_team_stats_api(home_id, heavy_ttl)
+        if near_kickoff_context else dict(empty_recent_stats)
+    )
+    a_stats = (
+        fetch_recent_team_stats_api(away_id, heavy_ttl)
+        if near_kickoff_context else dict(empty_recent_stats)
+    )
     h_stand = fetch_team_standing_api(home_id, heavy_ttl, league_id, season)
     a_stand = fetch_team_standing_api(away_id, heavy_ttl, league_id, season)
     h_survival = calculate_survival_motivation(h_stand)
     a_survival = calculate_survival_motivation(a_stand)
-    h2h = fetch_fixture_details_api(home_id, away_id, heavy_ttl)
-    h_manager = fetch_new_manager_status(home_id, heavy_ttl)
-    a_manager = fetch_new_manager_status(away_id, heavy_ttl)
+    h2h = (
+        fetch_fixture_details_api(home_id, away_id, heavy_ttl)
+        if near_kickoff_context
+        else {"match_time": None, "last_h2h_date": "-", "h_wins": 0,
+              "draws": 0, "a_wins": 0, "total": 0}
+    )
+    h_manager = (
+        fetch_new_manager_status(home_id, heavy_ttl)
+        if near_kickoff_context else {"is_new_manager": False, "days_since_hired": 999}
+    )
+    a_manager = (
+        fetch_new_manager_status(away_id, heavy_ttl)
+        if near_kickoff_context else {"is_new_manager": False, "days_since_hired": 999}
+    )
     is_derby = check_derby_match(raw_home, raw_away)
     injury_map = fetch_world_injuries_snapshot(
         fixture_id, home_id, away_id, league_id, season, injury_ttl
@@ -5626,10 +5749,12 @@ def _analyze_world_match(item, now, market_performance):
     h_predicted_xi, h_lineup_prediction = predict_starting_xi(
         home_id, league_id, season,
         h_inj.get("all_names") or h_inj.get("ace_names") or [],
+        historical_lineups=near_kickoff_context,
     )
     a_predicted_xi, a_lineup_prediction = predict_starting_xi(
         away_id, league_id, season,
         a_inj.get("all_names") or a_inj.get("ace_names") or [],
+        historical_lineups=near_kickoff_context,
     )
     lineup_data = {"confirmed": False}
     h_missing = []
@@ -5667,8 +5792,14 @@ def _analyze_world_match(item, now, market_performance):
     a_last = fetch_team_last_match_date_api(away_id, heavy_ttl)
     h_rest = calculate_rest_days(h_last.get("date"), match.get("match_time"))
     a_rest = calculate_rest_days(a_last.get("date"), match.get("match_time"))
-    h_next = fetch_team_next_fixture_api(home_id, heavy_ttl)
-    a_next = fetch_team_next_fixture_api(away_id, heavy_ttl)
+    h_next = (
+        fetch_team_next_fixture_api(home_id, heavy_ttl)
+        if near_kickoff_context else {"days_until_next": 99, "is_important": False, "league_name": ""}
+    )
+    a_next = (
+        fetch_team_next_fixture_api(away_id, heavy_ttl)
+        if near_kickoff_context else {"days_until_next": 99, "is_important": False, "league_name": ""}
+    )
     referee = str(match.get("referee") or "").strip() or None
     city = str(match.get("city") or "").strip()
     weather_condition = fetch_weather_api(city, heavy_ttl) if city else None
@@ -5940,6 +6071,7 @@ def _analyze_world_match(item, now, market_performance):
         },
         "h2h": h2h, "evidence_coverage": coverage,
         "odds_movement": odds_movement,
+        "context_pass": "near-kickoff-full" if near_kickoff_context else "board-wide-initial",
     }
     return {
         "analysis_version": WORLD_ANALYSIS_VERSION,
@@ -5973,17 +6105,20 @@ def analyze_world_schedule():
         print("⚠️ 세계경기 일정 정상본이 없어 그림자 분석을 건너뜁니다.")
         return False, False
     now = datetime.now(KST)
+    canonical_proto_by_fixture = _dashboard_proto_by_fixture()
+    proto_overlaps = _exclude_proto_overlaps(
+        payload, canonical_proto_by_fixture
+    )
     preview_items = _ensure_world_market_previews(payload, now=now)
     day_key, today_ids, all_ids, league_counts = _world_analysis_usage()
     market_performance_cache = {}
-    canonical_proto_by_fixture = _dashboard_proto_by_fixture()
-    changed = bool(preview_items)
+    changed = bool(preview_items or proto_overlaps)
     analyzed_now = 0
     errors_now = 0
     quota_paused = False
     stage_priority = {
         "T-30-final": 0, "T-60-lineup": 1,
-        "T-3-refresh": 2, "T-24-initial": 3,
+        "T-3-refresh": 2, "PREKICKOFF-initial": 3,
     }
     due_items = []
 
@@ -6023,10 +6158,9 @@ def analyze_world_schedule():
             fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
         except (TypeError, ValueError):
             fixture_id = 0
-        canonical_proto = canonical_proto_by_fixture.get(fixture_id)
-        if canonical_proto:
-            if _sync_world_item_from_proto(item, canonical_proto):
-                changed = True
+        # Same provider fixture is published and graded only once in Proto.
+        # The overlap filter above removes these before any preview/deep calls.
+        if fixture_id in canonical_proto_by_fixture:
             continue
         if item.get("analysis"):
             public_analysis = _public_world_analysis_from_first_snapshot(
@@ -6047,7 +6181,7 @@ def analyze_world_schedule():
             errors_now += 1
             continue
         stage = _world_analysis_stage((kickoff - now).total_seconds() / 3600.0)
-        if stage == "WAITING_T24_ANALYSIS":
+        if stage == "WAITING_ANALYSIS_WINDOW":
             if item.get("analysis_status") == "PENDING_SHADOW_ANALYSIS":
                 item["analysis_status"] = stage
                 changed = True
@@ -6162,6 +6296,13 @@ def analyze_world_schedule():
                 today_ids.add(fixture_id)
                 all_ids.add(fixture_id)
                 league_counts[league_id] = int(league_counts.get(league_id, 0)) + (0 if is_existing else 1)
+                # A complete board can take many minutes. Keep bounded local
+                # checkpoints so a worker timeout/restart resumes from the last
+                # finished pre-kickoff analysis instead of repeating the board.
+                if analyzed_now % 5 == 0:
+                    _refresh_world_source_meta(payload)
+                    payload["last_analysis_checkpoint_at"] = datetime.now(KST).isoformat()
+                    _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
                 print(
                     f"🧪 세계경기 그림자 분석: {match.get('home')} vs {match.get('away')} · "
                     f"{analysis['selected'].get('display')} "
@@ -10355,6 +10496,21 @@ def run_world_job():
             )
             return False
     if analysis_changed:
+        # WORLD predictions are committed before this point. Publish the common
+        # scorecard now as well as on the five-minute scorer cycle so new WORLD
+        # official/robot picks appear in the grading note immediately.
+        grading_snapshot = _build_grading_snapshot()
+        if grading_snapshot.get("error"):
+            _update_collector_status(
+                "world", "running", last_stage="world_grading_snapshot_failed"
+            )
+            return False
+        _atomic_write_json("grading_results.json", grading_snapshot)
+        if not upload_to_github("grading_results.json"):
+            _update_collector_status(
+                "world", "running", last_stage="world_grading_publish_failed"
+            )
+            return False
         backup_ok = upload_sqlite_to_github("ai_predictions.db")
         _update_collector_status(
             "world",
@@ -10386,7 +10542,7 @@ JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
-    "world": max(600, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "1200"))),
+    "world": max(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "3600"))),
 }
 
 
