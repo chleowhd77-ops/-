@@ -175,7 +175,7 @@
     {
       "source_type": "WORLD",
       "visibility_status": "SHADOW",
-      "analysis_status": "DEFERRED_DAILY_CAP",
+      "analysis_status": "MISSED_PREKICKOFF",
       "pick_status": "NOT_ANALYZED",
       "identity_verified": true,
       "match": {
@@ -41990,14 +41990,14 @@
     "api_usage": {
       "top_endpoints": [
         {
+          "purpose": "live",
+          "endpoint": "/fixtures",
+          "calls": 35
+        },
+        {
           "purpose": "world",
           "endpoint": "/odds",
           "calls": 30
-        },
-        {
-          "purpose": "live",
-          "endpoint": "/fixtures",
-          "calls": 29
         },
         {
           "purpose": "analysis",
@@ -42012,7 +42012,7 @@
         {
           "purpose": "scoring",
           "endpoint": "/fixtures",
-          "calls": 1
+          "calls": 2
         }
       ],
       "runtime_metrics": [
@@ -42020,21 +42020,21 @@
           "metric": "cache_hit",
           "purpose": "analysis",
           "endpoint": "/coachs",
-          "count": 3
+          "count": 4
         }
       ],
       "accounting": "local-preflight-reservation-v2",
       "usage_day": "2026-09-08",
       "reset_timezone": "UTC",
-      "local_calls": 65,
-      "provider_remaining": 7435,
+      "local_calls": 72,
+      "provider_remaining": 7428,
       "analysis_soft_limit": 6000,
       "daily_limit": 7500,
       "live_reserve": 1500,
       "world_calls": 30,
       "analysis_calls": 5,
-      "live_calls": 29,
-      "scoring_calls": 1,
+      "live_calls": 35,
+      "scoring_calls": 2,
       "world_daily_limit": 1500,
       "world_min_remaining": 1000,
       "quota_exhausted": false
@@ -42049,5 +42049,5 @@
     "analysis_per_league_limit": 5,
     "quota_paused": false
   },
-  "last_analysis_at": "2026-09-08T10:11:55.830298+09:00"
+  "last_analysis_at": "2026-09-08T10:26:57.285822+09:00"
 }
