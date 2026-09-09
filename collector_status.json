@@ -3,12 +3,11 @@
     "scheduler": {
       "supervisor_pid": 340729,
       "state": "running",
-      "heartbeat_at": "2026-09-09T12:56:43+00:00",
+      "heartbeat_at": "2026-09-09T12:57:43+00:00",
       "pid": 340729,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "world": 342164,
-        "live": 342167,
         "score": 342168
       }
     },
@@ -26,21 +25,21 @@
     },
     "score": {
       "child_pid": 342168,
-      "state": "running",
-      "heartbeat_at": "2026-09-09T12:56:52+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-09T12:58:03+00:00",
       "pid": 342168,
       "last_started_at": "2026-09-09T12:56:43+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 60.1,
       "overlap_skips": 0,
-      "duration_seconds": 14.64,
-      "last_success_at": "2026-09-09T12:51:59+00:00",
+      "duration_seconds": 78.81,
+      "last_success_at": "2026-09-09T12:58:03+00:00",
       "last_failure_at": "2026-09-08T09:59:08+00:00",
       "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
       "last_stage": "grading_published_backup_pending",
-      "grading_published_at": "2026-09-09T12:51:55+00:00",
+      "grading_published_at": "2026-09-09T12:56:55+00:00",
       "db_backup_ok": false
     },
     "master": {
@@ -60,10 +59,10 @@
     "world": {
       "child_pid": 342164,
       "state": "running",
-      "heartbeat_at": "2026-09-09T12:56:44+00:00",
-      "pid": 342164,
+      "heartbeat_at": "2026-09-09T12:57:43+00:00",
+      "pid": 340729,
       "last_started_at": "2026-09-09T12:56:43+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 60.1,
       "overlap_skips": 0,
       "duration_seconds": 44.66,
       "last_success_at": "2026-09-09T12:42:28+00:00",
@@ -72,7 +71,7 @@
       "db_backup_ok": false
     }
   },
-  "updated_at": "2026-09-09T12:56:57+00:00",
+  "updated_at": "2026-09-09T12:58:03+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -160,7 +159,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "count": 323
+        "count": 327
       },
       {
         "metric": "cache_hit",
@@ -178,7 +177,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/coachs",
-        "count": 58
+        "count": 60
       },
       {
         "metric": "cache_hit",
@@ -215,6 +214,12 @@
         "purpose": "world",
         "endpoint": "/fixtures",
         "count": 6
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 3
       },
       {
         "metric": "cache_hit",
