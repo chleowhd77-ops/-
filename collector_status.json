@@ -3,13 +3,11 @@
     "scheduler": {
       "supervisor_pid": 340729,
       "state": "running",
-      "heartbeat_at": "2026-09-09T11:12:08+00:00",
+      "heartbeat_at": "2026-09-09T11:13:08+00:00",
       "pid": 340729,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "world": 341079,
-        "live": 341080,
-        "score": 341081
+        "world": 341079
       }
     },
     "live": {
@@ -59,27 +57,27 @@
     },
     "world": {
       "child_pid": 341079,
-      "state": "running",
-      "heartbeat_at": "2026-09-09T11:12:08+00:00",
-      "pid": 340729,
+      "state": "success",
+      "heartbeat_at": "2026-09-09T11:13:10+00:00",
+      "pid": 341079,
       "last_started_at": "2026-09-09T11:11:37+00:00",
-      "elapsed_seconds": 30.1,
+      "elapsed_seconds": 90.2,
       "overlap_skips": 0,
-      "duration_seconds": 18.24,
-      "last_success_at": "2026-09-09T10:56:56+00:00",
+      "duration_seconds": 91.26,
+      "last_success_at": "2026-09-09T11:13:10+00:00",
       "last_failure_at": "2026-09-08T21:19:12+00:00",
       "last_stage": "world_published_backup_pending",
       "db_backup_ok": false
     }
   },
-  "updated_at": "2026-09-09T11:12:27+00:00",
+  "updated_at": "2026-09-09T11:13:10+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "world",
         "endpoint": "/fixtures/lineups",
-        "calls": 230
+        "calls": 273
       },
       {
         "purpose": "live",
@@ -89,12 +87,12 @@
       {
         "purpose": "world",
         "endpoint": "/odds",
-        "calls": 177
+        "calls": 182
       },
       {
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "calls": 96
+        "calls": 116
       },
       {
         "purpose": "analysis",
@@ -102,6 +100,11 @@
         "calls": 83
       },
       {
+        "purpose": "world",
+        "endpoint": "/fixtures",
+        "calls": 73
+      },
+      {
         "purpose": "analysis",
         "endpoint": "/players/topassists",
         "calls": 68
@@ -110,30 +113,25 @@
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
         "calls": 68
-      },
-      {
-        "purpose": "world",
-        "endpoint": "/fixtures",
-        "calls": 61
       },
       {
         "purpose": "world",
         "endpoint": "/injuries",
-        "calls": 60
-      },
-      {
-        "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "calls": 47
+        "calls": 66
       },
       {
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "calls": 47
+        "calls": 48
       },
       {
         "purpose": "world",
         "endpoint": "/players/topscorers",
+        "calls": 48
+      },
+      {
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
         "calls": 47
       }
     ],
@@ -148,19 +146,19 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "count": 277
+        "count": 280
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 277
+        "count": 280
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "count": 187
+        "count": 189
       },
       {
         "metric": "cache_hit",
@@ -178,7 +176,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/coachs",
-        "count": 35
+        "count": 37
       },
       {
         "metric": "cache_hit",
@@ -232,12 +230,12 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-09",
     "reset_timezone": "UTC",
-    "local_calls": 1284,
-    "provider_remaining": 1906,
+    "local_calls": 1372,
+    "provider_remaining": 1818,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 719,
+    "world_calls": 807,
     "analysis_calls": 328,
     "live_calls": 206,
     "scoring_calls": 31,
