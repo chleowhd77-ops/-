@@ -3,12 +3,11 @@
     "scheduler": {
       "supervisor_pid": 340729,
       "state": "running",
-      "heartbeat_at": "2026-09-09T14:06:46+00:00",
+      "heartbeat_at": "2026-09-09T14:07:16+00:00",
       "pid": 340729,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 342294,
-        "live": 342295,
         "score": 342296
       }
     },
@@ -27,15 +26,15 @@
     "score": {
       "child_pid": 342296,
       "state": "running",
-      "heartbeat_at": "2026-09-09T14:06:47+00:00",
-      "pid": 342296,
+      "heartbeat_at": "2026-09-09T14:07:16+00:00",
+      "pid": 340729,
       "last_started_at": "2026-09-09T14:06:46+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
       "duration_seconds": 19.19,
       "last_success_at": "2026-09-09T14:02:06+00:00",
       "last_failure_at": "2026-09-08T09:59:08+00:00",
-      "due_count": 7,
+      "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
@@ -45,15 +44,15 @@
     },
     "master": {
       "child_pid": 342294,
-      "state": "running",
-      "heartbeat_at": "2026-09-09T14:06:47+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-09T14:07:21+00:00",
       "pid": 342294,
       "last_started_at": "2026-09-09T14:06:46+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.1,
       "overlap_skips": 0,
-      "duration_seconds": 39.28,
+      "duration_seconds": 33.3,
       "last_failure_at": "2026-09-08T12:27:23+00:00",
-      "last_success_at": "2026-09-09T13:47:26+00:00",
+      "last_success_at": "2026-09-09T14:07:21+00:00",
       "last_stage": "dashboard_published_backup_pending",
       "db_backup_ok": false
     },
@@ -72,7 +71,7 @@
       "db_backup_ok": false
     }
   },
-  "updated_at": "2026-09-09T14:07:06+00:00",
+  "updated_at": "2026-09-09T14:07:21+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -142,7 +141,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 622
+        "count": 628
       },
       {
         "metric": "cache_hit",
@@ -169,6 +168,12 @@
         "count": 84
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 81
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
@@ -179,12 +184,6 @@
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
         "count": 80
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 54
       },
       {
         "metric": "singleflight_block",
@@ -226,7 +225,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 7
+        "count": 8
       },
       {
         "metric": "cache_hit",
