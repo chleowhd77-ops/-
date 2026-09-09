@@ -3,12 +3,10 @@
     "scheduler": {
       "supervisor_pid": 337819,
       "state": "running",
-      "heartbeat_at": "2026-09-08T23:59:48+00:00",
+      "heartbeat_at": "2026-09-09T00:00:18+00:00",
       "pid": 337819,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "world": 339224,
-        "live": 339227,
         "score": 339228
       }
     },
@@ -26,21 +24,21 @@
     },
     "score": {
       "child_pid": 339228,
-      "state": "running",
-      "heartbeat_at": "2026-09-08T23:59:49+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-09T00:00:18+00:00",
       "pid": 339228,
       "last_started_at": "2026-09-08T23:59:48+00:00",
-      "elapsed_seconds": 0.0,
+      "elapsed_seconds": 30.0,
       "overlap_skips": 0,
-      "duration_seconds": 11.15,
-      "last_success_at": "2026-09-08T23:55:00+00:00",
+      "duration_seconds": 29.21,
+      "last_success_at": "2026-09-09T00:00:18+00:00",
       "last_failure_at": "2026-09-08T09:59:08+00:00",
-      "due_count": 1,
-      "graded_count": 1,
+      "due_count": 2,
+      "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
       "last_stage": "grading_published_backup_pending",
-      "grading_published_at": "2026-09-08T23:54:56+00:00",
+      "grading_published_at": "2026-09-09T00:00:15+00:00",
       "db_backup_ok": false
     },
     "master": {
@@ -72,7 +70,7 @@
       "db_backup_ok": false
     }
   },
-  "updated_at": "2026-09-09T00:00:10+00:00",
+  "updated_at": "2026-09-09T00:00:18+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -80,21 +78,26 @@
         "purpose": "live",
         "endpoint": "/fixtures",
         "calls": 2
+      },
+      {
+        "purpose": "scoring",
+        "endpoint": "/fixtures",
+        "calls": 1
       }
     ],
     "runtime_metrics": [],
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-09",
     "reset_timezone": "UTC",
-    "local_calls": 2,
-    "provider_remaining": 3188,
+    "local_calls": 3,
+    "provider_remaining": 3187,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
     "analysis_calls": 0,
     "live_calls": 2,
-    "scoring_calls": 0,
+    "scoring_calls": 1,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
