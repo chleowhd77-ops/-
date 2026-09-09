@@ -8,15 +8,14 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-full-market-v1"
-OFFICIAL_PICK_POLICY_VERSION = "all-evidence-best-one-v1"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-full-market-online-v2"
+OFFICIAL_PICK_POLICY_VERSION = "evidence-ensemble-accuracy-first-v2"
+LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-goals-v1"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-goals-online-v2"
 ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v1"
-ROBOT_MIN_TRAIN = 60
-ROBOT_MIN_VALIDATION = 20
 
 
 def price_eligible(pick, confidence):
@@ -82,23 +81,20 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         raise ValueError("no settlement-compatible candidate")
 
     confidence = max(0.0, min(1.0, float(confidence or 0)))
-    verified_value_exists = any(
-        float(pick.get("odd") or 0) > 1.0
-        and pick.get("fair_prob") is not None
-        and float(pick.get("robust_edge") or 0) > 0
-        and float(
-            pick.get("robust_ev")
-            or float(pick.get("robust_probability") or pick.get("prob") or 0)
-            * float(pick.get("odd") or 0)
-        ) >= 1.0
-        for pick in available
-    )
     for pick in available:
+        raw_probability = max(0.0, min(1.0, float(pick.get("prob") or 0)))
         probability = max(0.0, min(1.0, float(
-            pick.get("robust_probability") or pick.get("prob") or 0
+            pick.get("robust_probability")
+            if pick.get("robust_probability") is not None
+            else raw_probability
         )))
-        neutral = _market_neutral_probability(pick)
-        conviction = max(-1.0, min(1.0, (probability - neutral) / (1.0 - neutral)))
+        interval = pick.get("probability_interval") or {}
+        try:
+            lower_bound = float(interval.get("low"))
+        except (TypeError, ValueError):
+            lower_bound = probability
+        lower_bound = max(0.0, min(probability, lower_bound))
+        uncertainty = max(0.0, raw_probability - lower_bound)
         odd = float(pick.get("odd") or 0)
         fair = pick.get("fair_prob")
         try:
@@ -108,96 +104,251 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         priced = bool(odd > 1.0 and fair is not None and 0 < fair < 1)
         edge = float(pick.get("robust_edge") or 0) if priced else 0.0
         expected_return = float(pick.get("robust_ev") or probability * odd) if priced else 1.0
-        kelly = ((probability * odd - 1.0) / max(odd - 1.0, 1e-9)) if priced else 0.0
-        kelly = max(-.25, min(.50, kelly))
-        edge_standardized = (
-            edge / max((fair * (1.0 - fair)) ** .5, .10)
-            if priced else 0.0
-        )
-        edge_standardized = max(-.50, min(.50, edge_standardized))
-        ev_margin = max(-.50, min(.50, expected_return - 1.0)) if priced else 0.0
-        price_score = (
-            kelly * .50
-            + edge_standardized * .25
-            + ev_margin * .25
-        )
         context = _evidence_alignment(pick)
-        support = min(.06, int(pick.get("independent_support_count") or 0) * .012)
-        if priced and verified_value_exists:
-            # When at least one candidate has a verified positive conservative
-            # return, compare every market on value, hit probability and full
-            # pre-match context.  No market receives a hard first right.
-            score = (
-                probability * .34
-                + conviction * .10
-                + price_score * .38
-                + context * .24
-                + support
-            )
-        elif priced:
-            # A mandatory answer is still required when every available price
-            # is unattractive.  In that case protect hit probability instead of
-            # sacrificing it merely to choose the least-bad negative return.
-            score = (
-                probability * .55
-                + conviction * .15
-                + price_score * .08
-                + context * .24
-                + support
-            )
-        else:
-            score = (
-                probability * .52
-                + conviction * .20
-                + context * .28
-                + support
-            )
-        score *= (.78 + confidence * .22)
+        support_count = int(pick.get("independent_support_count") or 0)
+        support = min(.025, support_count * .005)
+        # The official answer is now an accuracy-first ensemble.  Cross-market
+        # candidates are ranked by their conservative chance of settling as a
+        # win, not by Kelly or a high price.  Price is retained only as a small
+        # calibration-agreement and final tie-break signal.  Context is already
+        # inside the coherent score distribution; the bounded term below only
+        # rewards independent agreement and cannot manufacture a new forecast.
+        market_confirmation = fair if priced else probability
+        market_disagreement = abs(probability - fair) if priced else 0.0
+        context_support = context * .035
+        value_tiebreak = max(-.008, min(.008, (expected_return - 1.0) * .02)) if priced else 0.0
+        score = (
+            probability * .57
+            + lower_bound * .25
+            + raw_probability * .10
+            + market_confirmation * .08
+            + context_support
+            + support
+            + value_tiebreak
+            - uncertainty * .08
+            - market_disagreement * .025
+        ) * (.90 + confidence * .10)
         pick.update({
             "official_score": round(score, 6),
-            "official_conviction": round(conviction, 6),
-            "official_price_score": round(price_score, 6),
-            "official_kelly": round(kelly, 6) if priced else None,
-            "official_standardized_edge": round(edge_standardized, 6),
+            "official_accuracy_probability": round(probability, 6),
+            "official_probability_floor": round(lower_bound, 6),
+            "official_uncertainty": round(uncertainty, 6),
+            "official_market_confirmation": round(market_confirmation, 6),
+            "official_value_tiebreak": round(value_tiebreak, 6),
             "official_context_score": round(context, 6),
             "official_price_verified": priced,
-            "official_positive_value_pool": verified_value_exists,
             "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
-            "selection_axis": "all_evidence_best_one",
+            "selection_axis": "evidence_ensemble_accuracy_first",
         })
 
     chosen = max(
         available,
         key=lambda pick: (
             float(pick.get("official_score") or 0),
-            float(pick.get("context_alignment") or 0),
             float(pick.get("robust_probability") or pick.get("prob") or 0),
+            float(pick.get("context_alignment") or 0),
             float(pick.get("robust_edge") or 0),
             str(pick.get("raw_pick") or ""),
         ),
     )
     chosen["recommendation_status"] = "SELECTED"
     chosen["selection_reason"] = (
-        "승무패를 먼저 고정하지 않고 승무패·3방향 핸디캡·언더오버를 같은 "
-        "확신도 척도로 비교한 뒤, 경기 전 전체 지표와 보수확률·실제 배당가치를 "
-        "함께 반영해 가장 강한 한 방향을 선택했습니다."
+        "경기 전 전체 지표가 반영된 동일 점수분포에서 승무패·3방향 핸디캡·"
+        "언더오버를 모두 비교하고, 배당수익보다 보수적인 실제 적중확률과 "
+        "불확실성·독립근거 합치를 우선해 한 방향을 선택했습니다."
     )
-    reason = "all_evidence_best_one"
+    reason = "evidence_ensemble_accuracy_first"
+    return (chosen, reason) if return_reason else chosen
+
+
+def _legacy_v4_numeric(features, key, default=0.0):
+    return _finite_number((features or {}).get(key), default)
+
+
+def build_legacy_v4_candidates(picks, features):
+    """Reconstruct the aggressive 2026-08-21 V4-style pre-match forecast.
+
+    This comparison engine intentionally keeps the old direct-addition style:
+    venue rates, recent form, ranking, absences, rest, motivation and H2H can
+    move expected goals materially.  It is isolated from the new official and
+    robot models and is never allowed to rewrite an old public prediction.
+    """
+    features = features if isinstance(features, dict) else {}
+    base_h = max(.20, min(4.2, _legacy_v4_numeric(
+        features, "base_home_goals",
+        _legacy_v4_numeric(features, "context_home_goals", 1.35),
+    )))
+    base_a = max(.20, min(4.2, _legacy_v4_numeric(
+        features, "base_away_goals",
+        _legacy_v4_numeric(features, "context_away_goals", 1.15),
+    )))
+
+    rank_h = _legacy_v4_numeric(features, "home_rank")
+    rank_a = _legacy_v4_numeric(features, "away_rank")
+    ranks_known = bool(
+        _legacy_v4_numeric(features, "home_rank_known", rank_h > 0)
+        and _legacy_v4_numeric(features, "away_rank_known", rank_a > 0)
+        and rank_h > 0 and rank_a > 0
+    )
+    depth_h = .5 if ranks_known and rank_h <= 5 else (1.5 if rank_h >= 15 else 1.0)
+    depth_a = .5 if ranks_known and rank_a <= 5 else (1.5 if rank_a >= 15 else 1.0)
+    absence_h = max(0.0, _legacy_v4_numeric(features, "home_absence"))
+    absence_a = max(0.0, _legacy_v4_numeric(features, "away_absence"))
+    lineup_h = max(0.0, _legacy_v4_numeric(features, "home_lineup_penalty"))
+    lineup_a = max(0.0, _legacy_v4_numeric(features, "away_lineup_penalty"))
+    rest_h = _legacy_v4_numeric(features, "home_rest_days", 90)
+    rest_a = _legacy_v4_numeric(features, "away_rest_days", 90)
+    fatigue_h = .12 if 0 < rest_h <= 3 else 0.0
+    fatigue_a = .12 if 0 < rest_a <= 3 else 0.0
+    penalty_h = min(.60, (absence_h + lineup_h + fatigue_h) * depth_h)
+    penalty_a = min(.60, (absence_a + lineup_a + fatigue_a) * depth_a)
+
+    recent_h = _legacy_v4_numeric(features, "home_recent_strength", .5)
+    recent_a = _legacy_v4_numeric(features, "away_recent_strength", .5)
+    recent_h_multiplier = max(.72, min(1.28, 1.0 + (recent_h - .5) * .42))
+    recent_a_multiplier = max(.72, min(1.28, 1.0 + (recent_a - .5) * .42))
+
+    total_h2h = max(0.0, _legacy_v4_numeric(features, "h2h_total"))
+    wins_h = max(0.0, _legacy_v4_numeric(features, "h2h_home_wins"))
+    wins_a = max(0.0, _legacy_v4_numeric(features, "h2h_away_wins"))
+    share_h = wins_h / total_h2h if total_h2h > 0 else 0.0
+    share_a = wins_a / total_h2h if total_h2h > 0 else 0.0
+    h2h_h = share_h * .30 + (.35 if total_h2h >= 3 and share_h >= .65 else 0.0)
+    h2h_a = share_a * .30 + (.35 if total_h2h >= 3 and share_a >= .65 else 0.0)
+
+    rank_bonus_h = rank_bonus_a = 0.0
+    if ranks_known:
+        rank_gap = rank_a - rank_h
+        rank_bonus_h = max(-.30, min(.35, rank_gap * .025))
+        rank_bonus_a = max(-.30, min(.35, -rank_gap * .025))
+    title_h = .25 if ranks_known and rank_h <= 3 else 0.0
+    title_a = .25 if ranks_known and rank_a <= 3 else 0.0
+    survival_h = .25 if _legacy_v4_numeric(features, "home_survival_active") > 0 else 0.0
+    survival_a = .25 if _legacy_v4_numeric(features, "away_survival_active") > 0 else 0.0
+    manager_h = .30 if _legacy_v4_numeric(features, "home_manager_active") > 0 else 0.0
+    manager_a = .30 if _legacy_v4_numeric(features, "away_manager_active") > 0 else 0.0
+    vacation_h = .18 if _legacy_v4_numeric(features, "home_vacation_active") > 0 else 0.0
+    vacation_a = .18 if _legacy_v4_numeric(features, "away_vacation_active") > 0 else 0.0
+    market_h = .35 if _legacy_v4_numeric(features, "home_market_signal") > 0 else 0.0
+    market_a = .35 if _legacy_v4_numeric(features, "away_market_signal") > 0 else 0.0
+
+    exp_h = (
+        base_h * recent_h_multiplier * (1.0 - penalty_h)
+        + penalty_a * .40 + h2h_h + rank_bonus_h + title_h
+        + survival_h + manager_h + market_h - vacation_h
+    )
+    exp_a = (
+        base_a * recent_a_multiplier * (1.0 - penalty_a)
+        + penalty_h * .40 + h2h_a + rank_bonus_a + title_a
+        + survival_a + manager_a + market_a - vacation_a
+    )
+    if _legacy_v4_numeric(features, "adverse_weather") > 0:
+        exp_h *= .80
+        exp_a *= .80
+    if _legacy_v4_numeric(features, "cup_or_international") > 0:
+        exp_h *= .92
+        exp_a *= .92
+    exp_h = max(.30, min(4.5, exp_h))
+    exp_a = max(.30, min(4.5, exp_a))
+    matrix = _robot_score_matrix(exp_h, exp_a, -.15)
+
+    result = []
+    for original in picks or []:
+        if not isinstance(original, dict) or not original.get("settlement_supported", True):
+            continue
+        pick = dict(original)
+        market = str(pick.get("market_key") or "1x2")
+        side = str(pick.get("selection_side") or "")
+        line = (
+            _legacy_v4_numeric(pick, "handicap_base") if market == "handicap"
+            else _legacy_v4_numeric(pick, "totals_base", 2.5) if market == "totals"
+            else 0.0
+        )
+        probability = _robot_market_probability(matrix, market, side, line)
+        if _legacy_v4_numeric(features, "is_derby") > 0:
+            if market == "1x2" and side == "draw":
+                probability *= 1.15
+            if market == "totals" and side == "over":
+                probability *= 1.10
+        odd = _legacy_v4_numeric(pick, "odd")
+        fair = _legacy_v4_numeric(
+            pick, "fair_prob", _legacy_v4_numeric(pick, "market_prob")
+        )
+        pick.update({
+            "official_probability": _legacy_v4_numeric(pick, "prob"),
+            "prob": probability,
+            "probability": probability,
+            "model_probability": probability,
+            "robust_probability": probability,
+            "legacy_v4_probability": probability,
+            "legacy_v4_expected_goals": {
+                "home": round(exp_h, 4), "away": round(exp_a, 4),
+            },
+            "legacy_v4_policy_version": LEGACY_V4_POLICY_VERSION,
+            "legacy_v4_edge": probability - fair if 0 < fair < 1 else 0.0,
+            "legacy_v4_ev": probability * odd if odd > 1 else 0.0,
+            "robust_edge": probability - fair if 0 < fair < 1 else 0.0,
+            "robust_ev": probability * odd if odd > 1 else 0.0,
+        })
+        result.append(pick)
+
+    # The old code compared raw probabilities across every supported market.
+    # Normalize alternatives inside each market after derby boosts so each
+    # individual market remains a valid probability distribution.
+    for market in {str(row.get("market_key") or "1x2") for row in result}:
+        rows = [row for row in result if str(row.get("market_key") or "1x2") == market]
+        total = sum(_legacy_v4_numeric(row, "prob") for row in rows)
+        if total > 0:
+            for row in rows:
+                probability = _legacy_v4_numeric(row, "prob") / total
+                row["prob"] = row["probability"] = row["model_probability"] = probability
+                row["robust_probability"] = row["legacy_v4_probability"] = probability
+                fair = _legacy_v4_numeric(
+                    row, "fair_prob", _legacy_v4_numeric(row, "market_prob")
+                )
+                odd = _legacy_v4_numeric(row, "odd")
+                row["legacy_v4_edge"] = row["robust_edge"] = (
+                    probability - fair if 0 < fair < 1 else 0.0
+                )
+                row["legacy_v4_ev"] = row["robust_ev"] = (
+                    probability * odd if odd > 1 else 0.0
+                )
+    return result
+
+
+def legacy_v4_choice(picks, features, return_reason=False):
+    """Return the reconstructed V4 engine's single highest-probability pick."""
+    candidates = build_legacy_v4_candidates(picks, features)
+    if not candidates:
+        raise ValueError("no settlement-compatible candidate")
+    chosen = max(candidates, key=lambda pick: (
+        _legacy_v4_numeric(pick, "legacy_v4_probability"),
+        _legacy_v4_numeric(pick, "legacy_v4_ev"),
+        str(pick.get("raw_pick") or ""),
+    ))
+    chosen = dict(chosen)
+    chosen.update({
+        "recommendation_status": "SELECTED",
+        "selection_axis": "legacy_v4_raw_probability",
+        "legacy_v4_policy_version": LEGACY_V4_POLICY_VERSION,
+        "selection_reason": (
+            "복원 V4 방식으로 홈·원정, 최근 흐름, 순위, 결장·체력, 동기와 "
+            "맞대결 상성을 기대득점에 직접 반영하고 전 시장에서 가장 높은 "
+            "원시 적중확률 한 방향을 선택했습니다."
+        ),
+    })
+    reason = "legacy_v4_raw_probability"
     return (chosen, reason) if return_reason else chosen
 
 
 def autonomous_robot_choice(picks, confidence, return_reason=False):
     """Choose one independent pre-match pick across every supported market.
 
-    Unlike the official W/D/L-centred selector, this challenger is allowed to
-    choose a regulation-time W/D/L outcome, a three-way handicap outcome or a
-    total. Cross-market comparison is based on conservative price value
-    (Kelly/edge/EV), not on raw probability alone, so a two-way total does not
-    win merely because it naturally has a larger percentage.
-
-    Only already attached, pre-kickoff learning diagnostics may influence the
-    tie-break. Their effect is bounded and requires a chronological calibration
-    improvement. The function never changes code or old rows.
+    The learned path owns both the probabilities and the final answer.  There
+    is no W/D/L anchor, odds floor, value gate, minimum sample count or market
+    quota: it simply selects its highest learned hit probability across every
+    settlement-compatible market.  Price is retained only as a deterministic
+    tie-break and for the public audit.  The function never changes old rows.
     """
     available = [
         dict(pick) for pick in (picks or [])
@@ -209,13 +360,10 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
         raise ValueError("no settlement-compatible candidate")
 
     confidence = max(0.0, min(1.0, float(confidence or 0)))
-    # The self-learning path already owns every candidate probability.  It
-    # therefore needs no official W/D/L priority, market quota, arbitrary
-    # minimum odds or hand-tuned evidence weights.  Positive expected return
-    # is a mathematical break-even comparison; when no priced direction clears
-    # break-even the robot protects its own hit probability and says so.
+    # The self-learning path already owns every candidate probability.  Do not
+    # put a human price/value gate back in front of the answer: the robot's own
+    # learned probability is the decision variable from its very first grade.
     if any(pick.get("robot_probability") is not None for pick in available):
-        priced = []
         for pick in available:
             probability = max(0.0, min(1.0, _finite_number(
                 pick.get("robot_probability"), pick.get("prob") or 0
@@ -233,34 +381,20 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
                 "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
                 "robot_price_verified": odd > 1.0,
             })
-            if odd > 1.0:
-                priced.append(pick)
-        positive = [pick for pick in priced if _finite_number(pick.get("robot_score")) >= 1.0]
-        if positive:
-            chosen = max(positive, key=lambda pick: (
-                _finite_number(pick.get("robot_score")),
-                _finite_number(pick.get("robot_probability")),
-                str(pick.get("raw_pick") or ""),
-            ))
-            reason = "robot_probability_maximum_expected_return"
-            chosen["robot_selection_axis"] = "learned_probability_expected_return"
-            chosen["robot_fallback"] = False
-        else:
-            chosen = max(available, key=lambda pick: (
-                _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
-                _finite_number(pick.get("robot_score")),
-                str(pick.get("raw_pick") or ""),
-            ))
-            reason = "robot_probability_hit_rate_fallback"
-            chosen["robot_selection_axis"] = "learned_probability_no_positive_price"
-            chosen["robot_fallback"] = True
+        chosen = max(available, key=lambda pick: (
+            _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
+            _finite_number(pick.get("robot_score")),
+            _finite_number(pick.get("odd")),
+            str(pick.get("raw_pick") or ""),
+        ))
+        reason = "robot_learned_probability"
+        chosen["robot_selection_axis"] = "learned_probability_all_markets"
+        chosen["robot_fallback"] = False
         chosen["recommendation_status"] = "SELECTED"
         chosen["selection_reason"] = (
-            "로봇이 경기 전 원자료로 자체 득점·전 시장 확률을 만든 뒤 시장 구분이나 "
-            "승무패 우선순서 없이 실제 배당의 기대값이 가장 큰 한 방향을 골랐습니다."
-            if not chosen.get("robot_fallback") else
-            "로봇 자체 확률에서 손익분기점을 넘은 실배당 후보가 없어 시장 구분 없이 "
-            "자체 적중확률이 가장 높은 한 방향을 골랐습니다."
+            "로봇이 경기 전 원자료와 누적 채점에서 자체 득점·전 시장 확률을 만든 뒤 "
+            "승무패 우선순서, 최소 표본, 배당·가치 통과선 없이 자체 적중확률이 가장 "
+            "높은 한 방향을 골랐습니다."
         )
         return (chosen, reason) if return_reason else chosen
 
@@ -869,7 +1003,9 @@ def _robot_feature_candidates(rows):
             if math.isfinite(number):
                 numeric.setdefault(str(key), []).append(number)
     required = {"base_home_goals", "base_away_goals"}
-    minimum_coverage = max(8, int(len(rows) * .50))
+    # A feature may enter from the very first clean result.  Coverage controls
+    # sparse columns, but it is not a minimum learning-match gate.
+    minimum_coverage = max(1, int(math.ceil(len(rows) * .50)))
     variable = []
     for key, values in numeric.items():
         if len(values) < minimum_coverage and key not in required:
@@ -890,7 +1026,7 @@ def _robot_correlation(rows, key, target):
         x = _finite_number(features.get(key))
         y = _finite_number(row.get(target))
         pairs.append((x, y))
-    if len(pairs) < 8:
+    if len(pairs) < 2:
         return 0.0
     mx = sum(x for x, _ in pairs) / len(pairs)
     my = sum(y for _, y in pairs) / len(pairs)
@@ -1031,7 +1167,14 @@ def _clean_robot_examples(examples):
 
 
 def train_autonomous_robot(examples):
-    """Train and promote only on a strictly later chronological holdout."""
+    """Update the robot from every clean completed pre-match sample.
+
+    There is deliberately no 20/60/100-match activation gate.  The first
+    result changes the residual prior by a strongly regularized non-zero
+    amount; more results automatically increase the learned share and permit
+    more features/interactions.  Chronological diagnostics are reported once
+    two or more results exist, but never decide whether learning is allowed.
+    """
     rows = _clean_robot_examples(examples)
     artifact = {
         "model_version": ROBOT_MODEL_VERSION,
@@ -1040,75 +1183,94 @@ def train_autonomous_robot(examples):
         "samples": len(rows),
         "train_fixtures": 0,
         "validation_fixtures": 0,
-        "reason": "종료된 경기 전 로봇 표본 수집 중",
-        "validation_scope": "chronological_unseen_fixtures",
+        "reason": "첫 종료 경기 전 표본 대기",
+        "validation_scope": "online_update_with_chronological_diagnostics",
         "history_rewrite": False,
         "uses_post_kickoff_features": False,
+        "minimum_sample_gate": False,
+        "learning_started_from_first_result": False,
     }
-    if len(rows) < ROBOT_MIN_TRAIN + ROBOT_MIN_VALIDATION:
-        return artifact
-    split = max(ROBOT_MIN_TRAIN, int(len(rows) * .75))
-    split = min(split, len(rows) - ROBOT_MIN_VALIDATION)
-    boundary = rows[split]["kickoff"]
-    train = [row for row in rows if row["kickoff"] < boundary]
-    validation = [row for row in rows if row["kickoff"] >= boundary]
-    if len(train) < ROBOT_MIN_TRAIN or len(validation) < ROBOT_MIN_VALIDATION:
+    if not rows:
         return artifact
 
-    candidate_names = _robot_feature_candidates(train)
+    candidate_names = _robot_feature_candidates(rows)
     ranked_names = sorted(
         candidate_names,
         key=lambda key: max(
-            abs(_robot_correlation(train, key, "home_goals")),
-            abs(_robot_correlation(train, key, "away_goals")),
+            abs(_robot_correlation(rows, key, "home_goals")),
+            abs(_robot_correlation(rows, key, "away_goals")),
         ),
         reverse=True,
-    )[:24]
+    )[:min(24, max(2, int(math.sqrt(len(rows)) * 4)))]
     for required in ("base_home_goals", "base_away_goals"):
         if required not in ranked_names:
             ranked_names.append(required)
-    interaction_sources = ranked_names[:7]
+    interaction_sources = ranked_names[:min(7, len(ranked_names))]
     all_interactions = [
         (left, right)
         for index, left in enumerate(interaction_sources)
         for right in interaction_sources[index + 1:]
     ]
-    baseline = _robot_loss(validation)
-    trials = []
-    for ridge in (.03, .12):
-        for interaction_count in (0, 8):
-            for half_life in (180.0, 420.0):
-                interactions = all_interactions[:interaction_count]
-                fitted_rows = []
-                for row in train:
-                    copy = dict(row)
-                    base_h, base_a = _robot_rates_from_parameters(row["features"])
-                    copy["target_h"] = math.log((row["home_goals"] + .35) / (base_h + .35))
-                    copy["target_a"] = math.log((row["away_goals"] + .35) / (base_a + .35))
-                    fitted_rows.append(copy)
-                parameters = {
-                    "feature_names": ranked_names,
-                    "interactions": interactions,
-                    "home": _fit_robot_linear(fitted_rows, ranked_names, interactions, "target_h", ridge, half_life),
-                    "away": _fit_robot_linear(fitted_rows, ranked_names, interactions, "target_a", ridge, half_life),
-                    "rho": -.15,
-                }
-                loss = _robot_loss(validation, parameters)
-                trials.append((
-                    loss["brier"] + .35 * loss["log_loss"] + .10 * loss["goal_mae"],
-                    ridge, interaction_count, half_life, parameters, loss,
-                ))
-    _, ridge, interaction_count, half_life, best_parameters, fitted = min(trials, key=lambda row: row[0])
-    passed = bool(
-        fitted["brier"] < baseline["brier"]
-        and fitted["log_loss"] < baseline["log_loss"]
-        and fitted["goal_mae"] <= baseline["goal_mae"] + .02
-    )
+    interaction_count = min(len(all_interactions), max(0, len(rows) - 2), 8)
+    interactions = all_interactions[:interaction_count]
+    ridge = max(.04, min(.45, .45 / math.sqrt(len(rows))))
+    half_life = max(30.0, min(420.0, 60.0 * math.sqrt(len(rows))))
+    # The learner's share grows continuously; even sample one has a non-zero
+    # effect while a single outlier cannot fully replace the pre-match prior.
+    learning_strength = len(rows) / (len(rows) + 8.0)
+
+    def fit_parameters(source_rows, strength):
+        fitted_rows = []
+        for row in source_rows:
+            copy = dict(row)
+            base_h, base_a = _robot_rates_from_parameters(row["features"])
+            copy["target_h"] = math.log(
+                (row["home_goals"] + .35) / (base_h + .35)
+            )
+            copy["target_a"] = math.log(
+                (row["away_goals"] + .35) / (base_a + .35)
+            )
+            fitted_rows.append(copy)
+        parameters = {
+            "feature_names": list(ranked_names),
+            "interactions": list(interactions),
+            "home": _fit_robot_linear(
+                fitted_rows, ranked_names, interactions, "target_h", ridge,
+                half_life,
+            ),
+            "away": _fit_robot_linear(
+                fitted_rows, ranked_names, interactions, "target_a", ridge,
+                half_life,
+            ),
+            "rho": -.15,
+            "learning_strength": strength,
+        }
+        for side in ("home", "away"):
+            parameters[side]["intercept"] *= strength
+            parameters[side]["weights"] = [
+                weight * strength for weight in parameters[side]["weights"]
+            ]
+        return parameters
+
+    best_parameters = fit_parameters(rows, learning_strength)
+    baseline = _robot_loss(rows)
+    fitted = _robot_loss(rows, best_parameters)
+    validation = []
+    chronological_baseline = chronological_fitted = None
+    if len(rows) >= 2:
+        split = max(1, min(len(rows) - 1, int(len(rows) * .75)))
+        train = rows[:split]
+        validation = rows[split:]
+        earlier_strength = len(train) / (len(train) + 8.0)
+        chronological_parameters = fit_parameters(train, earlier_strength)
+        chronological_baseline = _robot_loss(validation)
+        chronological_fitted = _robot_loss(validation, chronological_parameters)
+
     artifact.update({
-        "active": passed,
-        "train_fixtures": len(train),
+        "active": True,
+        "learning_started_from_first_result": True,
+        "train_fixtures": len(rows),
         "validation_fixtures": len(validation),
-        "train_before": boundary,
         "baseline_brier": round(baseline["brier"], 6),
         "fitted_brier": round(fitted["brier"], 6),
         "baseline_log_loss": round(baseline["log_loss"], 6),
@@ -1120,45 +1282,46 @@ def train_autonomous_robot(examples):
         "selected_interaction_count": interaction_count,
         "selected_features": list(ranked_names),
         "selected_interactions": [list(pair) for pair in best_parameters["interactions"]],
+        "online_learning_strength": round(learning_strength, 6),
         "reason": (
-            "시간순 미사용 경기에서 기초 자율모형보다 확률·득점 오차 감소"
-            if passed else
-            "도전자 학습은 완료했으나 시간순 미사용 경기 개선 미확인 · 기초 자율모형 유지"
+            f"종료표본 {len(rows)}경기의 오차를 다음 경기 모형에 온라인 반영"
         ),
     })
-    if passed:
-        full_rows = []
-        for row in rows:
-            copy = dict(row)
-            base_h, base_a = _robot_rates_from_parameters(row["features"])
-            copy["target_h"] = math.log((row["home_goals"] + .35) / (base_h + .35))
-            copy["target_a"] = math.log((row["away_goals"] + .35) / (base_a + .35))
-            full_rows.append(copy)
-        interactions = [tuple(pair) for pair in artifact["selected_interactions"]]
-        parameters = {
-            "feature_names": ranked_names,
-            "interactions": interactions,
-            "home": _fit_robot_linear(full_rows, ranked_names, interactions, "target_h", ridge, half_life),
-            "away": _fit_robot_linear(full_rows, ranked_names, interactions, "target_a", ridge, half_life),
-            "rho": -.15,
-        }
-        labels = ranked_names + [f"{left}×{right}" for left, right in interactions]
-        importance = []
-        for index, label in enumerate(labels):
-            importance.append((
-                abs(parameters["home"]["weights"][index]) + abs(parameters["away"]["weights"][index]),
-                label,
-            ))
-        artifact["feature_importance"] = [
-            {"feature": label, "importance": round(value, 6)}
-            for value, label in sorted(importance, reverse=True)[:15]
-        ]
-        artifact["parameters"] = parameters
+    if chronological_baseline and chronological_fitted:
+        artifact.update({
+            "chronological_baseline_brier": round(chronological_baseline["brier"], 6),
+            "chronological_fitted_brier": round(chronological_fitted["brier"], 6),
+            "chronological_baseline_log_loss": round(chronological_baseline["log_loss"], 6),
+            "chronological_fitted_log_loss": round(chronological_fitted["log_loss"], 6),
+            "chronological_improved": bool(
+                chronological_fitted["brier"] < chronological_baseline["brier"]
+                and chronological_fitted["log_loss"] < chronological_baseline["log_loss"]
+            ),
+        })
+    labels = ranked_names + [f"{left}×{right}" for left, right in interactions]
+    importance = []
+    for index, label in enumerate(labels):
+        importance.append((
+            abs(best_parameters["home"]["weights"][index])
+            + abs(best_parameters["away"]["weights"][index]),
+            label,
+        ))
+    artifact["feature_importance"] = [
+        {"feature": label, "importance": round(value, 6)}
+        for value, label in sorted(importance, reverse=True)[:15]
+    ]
+    artifact["parameters"] = best_parameters
     return artifact
 
 
 def build_autonomous_robot_candidates(picks, features, artifact=None):
-    """Calculate robot-owned probabilities for every supported market."""
+    """Calculate robot-owned probabilities for every supported market.
+
+    Newer grading rows with frozen feature snapshots update the goal model.
+    Every older honest grading row can still update probability calibration.
+    Both paths start with their first available result and affect only future
+    picks; no missing historical feature is fabricated.
+    """
     artifact = artifact if isinstance(artifact, dict) else {}
     active = bool(artifact.get("active") and artifact.get("parameters"))
     parameters = artifact.get("parameters") if active else None
@@ -1195,10 +1358,74 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
             "robot_training_samples": int(artifact.get("samples") or 0),
             "robot_validation_fixtures": int(artifact.get("validation_fixtures") or 0),
             "robot_learning_reason": str(artifact.get("reason") or "종료된 경기 전 표본 수집 중"),
+            "robot_grading_experience_samples": int(
+                artifact.get("grading_experience_samples") or 0
+            ),
             "robot_edge": probability - fair if 0 < fair < 1 else 0.0,
             "robot_ev": probability * odd if odd > 1 else 0.0,
             "robust_edge": probability - fair if 0 < fair < 1 else 0.0,
             "robust_ev": probability * odd if odd > 1 else 0.0,
         })
         result.append(pick)
+
+    # Older grading-note rows often predate the detailed robot feature schema,
+    # but their frozen pre-match probability and final hit/miss are still valid
+    # evidence.  Learn a market/probability-bin reliability curve with smooth
+    # shrinkage.  There is no minimum-sample switch: sample one has a small,
+    # non-zero effect and its influence grows naturally with repeated evidence.
+    experience = artifact.get("grading_experience") or {}
+    market_cells = experience.get("markets") or {}
+    grouped = {}
+    for pick in result:
+        market = str(pick.get("market_key") or "1x2")
+        line = (
+            round(_finite_number(pick.get("handicap_base")), 4)
+            if market == "handicap"
+            else round(_finite_number(pick.get("totals_base"), 2.5), 4)
+            if market == "totals"
+            else 0.0
+        )
+        grouped.setdefault((market, line), []).append(pick)
+
+    for (market, _line), group in grouped.items():
+        adjusted = []
+        for pick in group:
+            base_probability = _finite_number(pick.get("robot_probability"))
+            bucket = str(min(9, max(0, int(base_probability * 10))))
+            cell = (market_cells.get(market) or {}).get(bucket) or {}
+            samples = max(0, int(cell.get("samples") or 0))
+            observed = _finite_number(cell.get("observed_rate"), base_probability)
+            learning_weight = samples / (samples + 12.0) if samples else 0.0
+            calibrated = (
+                base_probability * (1.0 - learning_weight)
+                + observed * learning_weight
+            )
+            adjusted.append(max(1e-9, calibrated))
+            pick.update({
+                "robot_pre_grading_probability": base_probability,
+                "robot_grading_calibration_samples": samples,
+                "robot_grading_calibration_weight": round(learning_weight, 8),
+                "robot_grading_observed_rate": observed if samples else None,
+                "robot_minimum_sample_gate": False,
+            })
+        normalization = sum(adjusted)
+        if normalization <= 0:
+            continue
+        for pick, value in zip(group, adjusted):
+            probability = value / normalization
+            fair = _finite_number(
+                pick.get("fair_prob"), _finite_number(pick.get("market_prob"))
+            )
+            odd = _finite_number(pick.get("odd"))
+            pick.update({
+                "prob": probability,
+                "probability": probability,
+                "model_probability": probability,
+                "robust_probability": probability,
+                "robot_probability": probability,
+                "robot_edge": probability - fair if 0 < fair < 1 else 0.0,
+                "robot_ev": probability * odd if odd > 1 else 0.0,
+                "robust_edge": probability - fair if 0 < fair < 1 else 0.0,
+                "robust_ev": probability * odd if odd > 1 else 0.0,
+            })
     return result

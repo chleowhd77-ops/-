@@ -1905,6 +1905,26 @@ def _result_for_item(item):
     return direct
 
 
+def _legacy_v4_pick_for_item(item):
+    """Recover the frozen reconstructed V4 answer from any card shape."""
+    if not isinstance(item, dict):
+        return None
+    analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    for source in (item.get("legacy_v4_pick"), analysis.get("legacy_v4_pick")):
+        if not isinstance(source, dict):
+            continue
+        raw_pick = str(source.get("raw_pick") or source.get("pick") or "").strip()
+        if not raw_pick:
+            continue
+        recovered = dict(source)
+        recovered["raw_pick"] = raw_pick
+        recovered["prob"] = recovered.get(
+            "prob", recovered.get("probability", 0)
+        )
+        return recovered
+    return None
+
+
 def _live_state(item):
     live, result = _live_info_for_item(item), _result_for_item(item)
     if _is_final_status(_status_value(result)):
@@ -1991,6 +2011,17 @@ def _world_live_item(world_item, proto_by_fixture):
         )
     else:
         robot_pick = {}
+    legacy_v4_pick = analysis.get("legacy_v4_pick") or {}
+    if isinstance(legacy_v4_pick, dict) and legacy_v4_pick:
+        legacy_v4_pick = dict(
+            legacy_v4_pick,
+            raw_pick=localize(legacy_v4_pick.get("raw_pick")),
+            prob=legacy_v4_pick.get(
+                "prob", legacy_v4_pick.get("probability", 0)
+            ),
+        )
+    else:
+        legacy_v4_pick = {}
     odds = analysis.get("odds_snapshot") or {}
     for market, mapping in [
         ("1x2",{"home":"odd_h","draw":"odd_d","away":"odd_a"}),
@@ -2019,6 +2050,7 @@ def _world_live_item(world_item, proto_by_fixture):
             )
     item = dict(world_item,match=match,pick_categories=categories,
                 ev_sorted_picks=[selected] if selected.get("raw_pick") else [],
+                legacy_v4_pick=legacy_v4_pick,
                 robot_pick=robot_pick,
                 display_candidates=[dict(candidate, raw_pick=localize(candidate.get("raw_pick")))
                                     for candidate in (analysis.get("candidates") or []) if isinstance(candidate, dict)],
@@ -2972,7 +3004,7 @@ def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
 ):
-    """Show the official pick plus the separately frozen robot answer."""
+    """Show the public pick and the administrator's three-engine comparison."""
     if isinstance(analysis_item, dict):
         display_item = _with_analysis_pick(analysis_item)
         if display_item.get("display_only_pick"):
@@ -3064,9 +3096,43 @@ def generate_pred_boxes(
         f"<span style='display:block;color:#64748B;font-size:11px;margin-top:5px;'>{' · '.join(meta_parts)}</span>"
         f"{grade_html}<span class='pred-prob'>{prob_pct}%</span></div>"
     )
+    legacy_html = ""
+    legacy_lookup = globals().get("_legacy_v4_pick_for_item")
+    legacy = legacy_lookup(analysis_item) if callable(legacy_lookup) else None
+    admin_compare = bool(
+        "ROLE_ADMIN" in globals()
+        and globals().get("active_role") == globals().get("ROLE_ADMIN")
+    )
+    if (
+        admin_compare
+        and isinstance(legacy, dict)
+        and str(legacy.get("raw_pick") or "").strip()
+    ):
+        legacy_raw = escape(_human_pick_label(legacy.get("raw_pick"), home_team))
+        legacy_probability = float(
+            legacy.get("prob", legacy.get("probability", 0)) or 0
+        )
+        legacy_market = {
+            "1x2": "승무패", "handicap": "3방향 핸디캡", "totals": "언더오버",
+        }.get(str(legacy.get("market_key") or ""), "통합 시장")
+        legacy_html = (
+            "<div class='pred-box' style='background:rgba(245,158,11,.07);"
+            "border-color:#F59E0B;'>"
+            "<div class='pred-label' style='color:#FBBF24;'>① 복원 V4 분석픽</div>"
+            f"<span class='pred-value'>{legacy_raw}</span>"
+            "<span style='display:block;color:#FDE68A;font-size:11px;margin-top:6px;'>"
+            "8월 과감형 계산식 독립 재현 · 관리자 비교용</span>"
+            f"<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
+            f"{escape(legacy_market)}</span>"
+            f"<span class='pred-prob'>{legacy_probability * 100:.1f}%</span></div>"
+        )
+        pick_html = pick_html.replace(
+            "🎯 최종 추천픽", "② 새 공식 분석픽", 1
+        )
     robot_html = ""
     robot = extract_robot_pick(analysis_item)
     if isinstance(robot, dict) and str(robot.get("raw_pick") or "").strip():
+        robot_label = "③ 자율학습 로봇픽" if legacy_html else "🤖 로봇 독립픽"
         robot_raw = escape(_human_pick_label(robot.get("raw_pick"), home_team))
         robot_probability = float(
             robot.get("prob", robot.get("probability", 0)) or 0
@@ -3089,7 +3155,7 @@ def generate_pred_boxes(
         robot_html = (
             "<div class='pred-box' style='background:rgba(167,139,250,.07);"
             "border-color:#A78BFA;'>"
-            "<div class='pred-label' style='color:#C4B5FD;'>🤖 로봇 독립픽</div>"
+            f"<div class='pred-label' style='color:#C4B5FD;'>{robot_label}</div>"
             f"<span class='pred-value'>{robot_raw}</span>"
             "<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>"
             "경기 전 전체 지표·전체 실배당 후보 독립 비교</span>"
@@ -3097,7 +3163,7 @@ def generate_pred_boxes(
             f"{' · '.join(robot_meta)}</span>"
             f"<span class='pred-prob'>{robot_probability * 100:.1f}%</span></div>"
         )
-    return pick_html + robot_html + _final_pick_validation_html(
+    return legacy_html + pick_html + robot_html + _final_pick_validation_html(
         analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
 
@@ -3302,7 +3368,7 @@ with main_tab2:
         if active_role == ROLE_ADMIN:
             robot_panel_key = "admin_toto14_robot_pick_open"
             if st.button(
-                "🤖 로봇픽 닫기" if st.session_state.get(robot_panel_key) else "🤖 로봇픽 보기",
+                "🤖 로봇픽·3분석 비교 닫기" if st.session_state.get(robot_panel_key) else "🤖 로봇픽·3분석 비교 보기",
                 key="admin-toto14-robot-pick-button",
                 use_container_width=True,
             ):
@@ -3313,28 +3379,42 @@ with main_tab2:
                 )
                 st.markdown(
                     f"<div style='background:#071827;border:1px solid #00F2FE;border-radius:12px;padding:18px;margin:12px 0 18px;'>"
-                    f"<div style='color:#00F2FE;font-weight:900;font-size:18px;'>🤖 관리자 전용 로봇 승무패14 단독표</div>"
-                    f"<div style='color:#94A3B8;margin-top:6px;'>공식 조합과 별개 · 로봇 자체 확률 · 준비 {robot_ready}/{len(toto14_list)}경기 · 경기 전 최초값 고정</div>"
+                    f"<div style='color:#00F2FE;font-weight:900;font-size:18px;'>관리자 전용 승무패14 세 분석기 단독표</div>"
+                    f"<div style='color:#94A3B8;margin-top:6px;'>① 복원 V4 · ② 새 공식 분석 · ③ 자율학습 로봇 · 로봇 준비 {robot_ready}/{len(toto14_list)}경기 · 각각 경기 전 최초값 고정</div>"
                     "</div>",
                     unsafe_allow_html=True,
                 )
                 for robot_index, robot_item in enumerate(toto14_list, 1):
                     robot_match = robot_item.get("match") or {}
-                    robot_mark = str(robot_item.get("robot_mark") or "")
-                    robot_display = str(robot_item.get("robot_pick_display") or "분석 대기")
-                    robot_probability = float(robot_item.get("robot_pick_probability") or 0)
-                    mark_color = {"승": "#00F2FE", "무": "#10B981", "패": "#EF4444"}.get(robot_mark, "#64748B")
+                    official_compare = robot_item.get("official_comparison_pick") or {}
+                    legacy_compare = robot_item.get("legacy_v4_pick") or {}
+                    robot_compare = robot_item.get("robot_pick") or {}
+
+                    def compare_cell(label, source, color):
+                        source = source if isinstance(source, dict) else {}
+                        raw = str(source.get("raw_pick") or "분석 대기")
+                        probability = float(
+                            source.get("prob", source.get("probability", 0)) or 0
+                        )
+                        return (
+                            f"<span style='min-width:0;color:{color};font-weight:900;'>"
+                            f"<small style='display:block;color:#64748B;margin-bottom:3px;'>{label}</small>"
+                            f"{escape(_human_pick_label(raw, robot_match.get('home', '')))}"
+                            f" <small style='color:#CBD5E1;'>{probability * 100:.1f}%</small></span>"
+                        )
+
                     st.markdown(
-                        f"<div style='display:grid;grid-template-columns:70px 1fr 180px 90px;gap:12px;align-items:center;"
+                        f"<div style='display:grid;grid-template-columns:70px minmax(180px,1fr) repeat(3,minmax(150px,1fr));gap:12px;align-items:center;"
                         f"background:#0B1220;border:1px solid #1E293B;border-radius:9px;padding:11px 14px;margin-bottom:8px;'>"
                         f"<b style='color:#94A3B8;'>제 {robot_index} 경기</b>"
                         f"<span style='color:#F8FAFC;font-weight:800;'>{escape(str(robot_match.get('home') or ''))} vs {escape(str(robot_match.get('away') or ''))}</span>"
-                        f"<span style='color:{mark_color};font-weight:900;'>{escape(robot_display)}</span>"
-                        f"<span style='color:#CBD5E1;text-align:right;'>{robot_probability:.1f}%</span>"
+                        f"{compare_cell('① 복원 V4', legacy_compare, '#F59E0B')}"
+                        f"{compare_cell('② 새 공식', official_compare, '#00F2FE')}"
+                        f"{compare_cell('③ 자율 로봇', robot_compare, '#C4B5FD')}"
                         "</div>",
                         unsafe_allow_html=True,
                     )
-                st.caption("이 로봇표는 관리자에게만 보이며 공식 8조합 마킹과 섞이지 않습니다.")
+                st.caption("이 세 단독픽은 관리자에게만 보이며 실제 공식 복수마킹 조합과 섞이지 않습니다.")
 
         # The cards are the source of truth.  A partially published/stale meta
         # object must never turn 10 singles + 3 doubles into 0 won.
@@ -3515,6 +3595,85 @@ with main_tab3:
 # -----------------------------------------------------------------------------
 # [TAB 4] 🔥 AI 리포트
 # -----------------------------------------------------------------------------
+def _render_three_engine_scorecard(snapshot):
+    """Administrator-only A/B/C scorecard; historical public grades stay intact."""
+    if active_role != ROLE_ADMIN or not isinstance(snapshot, dict):
+        return
+    comparison = snapshot.get("three_engine") or {}
+    if not isinstance(comparison, dict):
+        return
+    summary = comparison.get("summary") or {}
+    finished = list(comparison.get("finished") or [])
+    pending = list(comparison.get("pending") or [])
+    if not summary and not finished and not pending:
+        return
+    labels = {
+        "legacy_v4": "① 복원 V4", "official": "② 새 공식", "robot": "③ 자율 로봇",
+    }
+    colors = {"legacy_v4": "#F59E0B", "official": "#00F2FE", "robot": "#C4B5FD"}
+    cards = []
+    for engine_key in ("legacy_v4", "official", "robot"):
+        value = summary.get(engine_key) or {}
+        graded = int(value.get("graded") or 0)
+        correct = int(value.get("correct") or 0)
+        accuracy = value.get("accuracy")
+        accuracy_text = f"{float(accuracy) * 100:.1f}%" if accuracy is not None else "채점 대기"
+        cards.append(
+            "<div style='background:#0B1220;border:1px solid #1E293B;border-radius:10px;padding:14px;'>"
+            f"<div style='color:{colors[engine_key]};font-weight:900;'>{labels[engine_key]}</div>"
+            f"<div style='color:#F8FAFC;font-size:24px;font-weight:900;margin-top:6px;'>{accuracy_text}</div>"
+            f"<small style='color:#94A3B8;'>{correct}/{graded} 적중</small></div>"
+        )
+    st.markdown(
+        "<h4 style='color:#F8FAFC;font-weight:900;margin-top:26px;'>🧪 세 분석기 독립 채점 대조</h4>"
+        "<p style='color:#64748B;font-size:12px;'>각 경기 시작 전 처음 저장한 세 픽만 결과와 연결합니다. 과거 픽·확률은 바꾸지 않습니다.</p>"
+        "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;'>"
+        + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    def engine_result_line(engine_key, engines):
+        engine = (engines or {}).get(engine_key) or {}
+        raw = _human_pick_label(engine.get("raw_pick"), "")
+        probability = float(engine.get("probability") or 0) * 100
+        hit = engine.get("is_correct")
+        result_label = "적중" if hit == 1 else "실패" if hit == 0 else "대기"
+        result_color = "#10B981" if hit == 1 else "#EF4444" if hit == 0 else "#64748B"
+        return (
+            f"<span style='color:{colors[engine_key]};font-weight:900;'>"
+            f"<small style='display:block;color:#64748B;'>{labels[engine_key]}</small>"
+            f"{escape(str(raw or '분석 대기'))} · {probability:.1f}% "
+            f"<b style='color:{result_color};'>{result_label}</b></span>"
+        )
+
+    for row in finished:
+        engines = row.get("engines") or {}
+        st.markdown(
+            "<div style='background:#0B1220;border:1px solid #1E293B;border-radius:10px;padding:13px 15px;margin-bottom:8px;'>"
+            f"<div style='display:flex;justify-content:space-between;gap:12px;margin-bottom:9px;'>"
+            f"<b style='color:#F8FAFC;'>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
+            f"<b style='color:#F8FAFC;'>{escape(str(next(iter(engines.values()), {}).get('actual_score') or ''))}</b></div>"
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px;'>"
+            f"{engine_result_line('legacy_v4', engines)}"
+            f"{engine_result_line('official', engines)}"
+            f"{engine_result_line('robot', engines)}"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+    if pending:
+        with st.expander(f"세 분석기 채점 대기 {len(pending)}경기"):
+            for row in pending:
+                engines = row.get("engines") or {}
+                st.markdown(
+                    f"**{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}**  "
+                    f"{escape(str(row.get('kickoff_at') or ''))}<br>"
+                    f"① {escape(str((engines.get('legacy_v4') or {}).get('raw_pick') or '대기'))} · "
+                    f"② {escape(str((engines.get('official') or {}).get('raw_pick') or '대기'))} · "
+                    f"③ {escape(str((engines.get('robot') or {}).get('raw_pick') or '대기'))}",
+                    unsafe_allow_html=True,
+                )
+
+
 with main_tab4:
     def get_v3_accuracy_stats():
         try:
@@ -3735,6 +3894,7 @@ with main_tab4:
                 "</span></div>",
                 unsafe_allow_html=True,
             )
+        _render_three_engine_scorecard(grading_snapshot)
         st.markdown("<h4 style='color:#F8FAFC; font-weight:900; margin-top:10px; margin-bottom:20px;'>📜 실제 데이터 채점 기록</h4>", unsafe_allow_html=True)
         
         history_data = stats['history']

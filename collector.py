@@ -911,6 +911,31 @@ def _toto14_from_canonical_proto(match, proto_items):
                   p_h=pct_h, p_d=pct_d, p_a=round(100-pct_h-pct_d, 1),
                   goal_model_audit=item.get("goal_model_audit"),
                   wdl_forecast=dict(item["wdl_forecast"]), probability_source="canonical_proto_same_fixture")
+    official_side = max(
+        (("home", probs[0]), ("draw", probs[1]), ("away", probs[2])),
+        key=lambda row: float(row[1]),
+    )[0]
+    official_raw = (
+        match["home"] + " 승" if official_side == "home" else
+        match["away"] + " 승" if official_side == "away" else "무승부"
+    )
+    result["official_comparison_pick"] = {
+        "market_key": "1x2", "selection_side": official_side,
+        "raw_pick": official_raw,
+        "prob": float(probs[{"home": 0, "draw": 1, "away": 2}[official_side]]),
+        "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
+        "selection_axis": "toto14_single_direction_accuracy",
+    }
+    legacy_rows = [
+        dict(candidate) for candidate in item.get("legacy_v4_candidates") or []
+        if isinstance(candidate, dict)
+        and str(candidate.get("market_key") or "") == "1x2"
+    ]
+    if legacy_rows:
+        result["legacy_v4_candidates"] = legacy_rows
+        result["legacy_v4_pick"] = max(
+            legacy_rows, key=lambda candidate: float(candidate.get("prob") or 0)
+        )
     frozen_robot = _load_frozen_autonomous_robot_sample(
         "TOTO14_" + str(match.get("id") or ""), item.get("api_fixture_id") or 0
     )
@@ -947,6 +972,17 @@ def _toto14_from_canonical_proto(match, proto_items):
             robot_first_pick_frozen=bool(frozen_robot),
             robot_frozen_at=str((frozen_robot or {}).get("captured_at") or ""),
         )
+        robot_raw = (
+            match["home"] + " 승" if robot_side == "home" else
+            match["away"] + " 승" if robot_side == "away" else "무승부"
+        )
+        result["robot_pick"] = {
+            "market_key": "1x2", "selection_side": robot_side,
+            "raw_pick": robot_raw, "prob": float(robot_wdl[robot_side]),
+            "robot_probability": float(robot_wdl[robot_side]),
+            "robot_pick_version": ROBOT_PICK_VERSION,
+            "robot_model_version": ROBOT_MODEL_VERSION,
+        }
     picks, _, _ = _choose_toto14_picks({"승":pct_h, "무":pct_d, "패":result["p_a"]}, 1)
     result.update(picks=picks, picks_html=_render_toto14_picks_html(picks),
                   best_pick_display=", ".join("무승부" if p == "무" else f"{match['home'] if p == '승' else match['away']} 승" for p in picks))
@@ -1016,7 +1052,7 @@ def _load_toto14_freezes():
 
 
 def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payload):
-    """Persist a final ticket, allowing only the approved pre-kickoff version migration.
+    """Persist the first valid final ticket without a version rewrite.
 
     Every former and replacement payload is copied into an append-only history
     table.  Once kickoff has passed, the primary frozen ticket is immutable.
@@ -1086,13 +1122,9 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                 existing_payload = {}
         existing_version = str(existing_payload.get("analysis_version") or "")
         kickoff = _parse_kst_match_time((existing[2] if existing else None) or match_time)
-        can_migrate = bool(
-            existing
-            and kickoff
-            and datetime.now(KST) < kickoff
-            and incoming_version == ANALYSIS_VERSION
-            and existing_version != ANALYSIS_VERSION
-        )
+        # R7.10 used a one-time approved migration.  That exception is over:
+        # three-engine testing must not overwrite an already published answer.
+        can_migrate = False
         can_repair_unavailable = bool(
             existing
             and kickoff
@@ -1307,14 +1339,7 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
             stored_kickoff = _parse_kst_match_time(stored_match_time)
             kickoff_passed = bool(stored_kickoff and datetime.now(KST) >= stored_kickoff)
             previous_version = str(previous[6] or "") if previous else ""
-            toto_policy_migration = bool(
-                int(is_toto14 or 0) == 1
-                and stored_kickoff
-                and datetime.now(KST) < stored_kickoff
-                and str(actual_result or "PENDING") == "PENDING"
-                and target_analysis_version == ANALYSIS_VERSION
-                and previous_version != ANALYSIS_VERSION
-            )
+            toto_policy_migration = False
             prediction_locked = (
                 analysis_stage == "locked"
                 or str(actual_result or "PENDING") != "PENDING"
@@ -3203,6 +3228,238 @@ def _ensure_prediction_analysis_tables(conn):
         )
 
 
+def _ensure_three_engine_tables(conn):
+    """Create an append-only scorecard for official, restored V4 and robot."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS three_engine_pick_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comparison_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            match_id TEXT NOT NULL,
+            api_fixture_id INTEGER DEFAULT 0,
+            league TEXT DEFAULT '',
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            kickoff_at TEXT NOT NULL,
+            kickoff_timestamp REAL NOT NULL,
+            engine_key TEXT NOT NULL,
+            engine_version TEXT NOT NULL,
+            market_key TEXT DEFAULT '',
+            selection_side TEXT DEFAULT '',
+            raw_pick TEXT NOT NULL,
+            probability REAL DEFAULT 0,
+            odd REAL DEFAULT 0,
+            pick_json TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            captured_timestamp REAL NOT NULL,
+            actual_home_goals INTEGER,
+            actual_away_goals INTEGER,
+            is_correct INTEGER,
+            graded_at TEXT,
+            UNIQUE(comparison_key, engine_key, engine_version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_three_engine_grade "
+        "ON three_engine_pick_snapshots(is_correct,kickoff_timestamp)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_three_engine_first_answer "
+        "ON three_engine_pick_snapshots(comparison_key,engine_key)"
+    )
+
+
+def _three_engine_compact_pick(pick):
+    if not isinstance(pick, dict):
+        return {}
+    return {
+        key: pick.get(key) for key in (
+            "market_key", "selection_side", "raw_pick", "prob", "probability",
+            "odd", "fair_prob", "handicap_base", "totals_base",
+            "selection_reason", "selection_axis", "official_policy_version",
+            "legacy_v4_policy_version", "legacy_v4_expected_goals",
+            "robot_pick_version", "robot_model_version", "robot_expected_goals",
+            "robot_training_samples", "robot_learning_reason",
+        )
+    }
+
+
+def save_three_engine_picks(
+    source, match_id, fixture_id, league, home_team, away_team, kickoff,
+    official_pick, legacy_v4_pick, robot_pick,
+):
+    """Freeze the first three independent pre-kickoff answers for one source."""
+    if not isinstance(kickoff, datetime):
+        kickoff = _parse_kst_match_time(kickoff)
+    if kickoff is None:
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    kickoff_utc = kickoff.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if now >= kickoff_utc:
+        return False
+    engines = (
+        ("official", ANALYSIS_VERSION, official_pick),
+        ("legacy_v4", LEGACY_V4_POLICY_VERSION, legacy_v4_pick),
+        ("robot", ROBOT_PICK_VERSION, robot_pick),
+    )
+    if any(not str((pick or {}).get("raw_pick") or "").strip() for _, _, pick in engines):
+        return False
+    comparison_key = f"{str(source or 'UNKNOWN').upper()}:{str(match_id)}"
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        _ensure_three_engine_tables(conn)
+        for engine_key, engine_version, pick in engines:
+            compact = _three_engine_compact_pick(pick)
+            probability = float(
+                pick.get("probability")
+                if pick.get("probability") is not None
+                else pick.get("prob") or 0
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO three_engine_pick_snapshots (
+                    comparison_key,source,match_id,api_fixture_id,league,
+                    home_team,away_team,kickoff_at,kickoff_timestamp,
+                    engine_key,engine_version,market_key,selection_side,
+                    raw_pick,probability,odd,pick_json,captured_at,captured_timestamp
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    comparison_key, str(source or "UNKNOWN").upper(), str(match_id),
+                    int(fixture_id or 0), str(league or ""), str(home_team),
+                    str(away_team), kickoff_utc.isoformat(), kickoff_utc.timestamp(),
+                    engine_key, engine_version, str(pick.get("market_key") or ""),
+                    str(pick.get("selection_side") or ""),
+                    str(pick.get("raw_pick") or ""), probability,
+                    float(pick.get("odd") or 0),
+                    json.dumps(compact, ensure_ascii=False, sort_keys=True),
+                    now.isoformat(), now.timestamp(),
+                ),
+            )
+        conn.commit()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM three_engine_pick_snapshots WHERE comparison_key=?",
+            (comparison_key,),
+        ).fetchone()[0]
+        return int(count or 0) >= 3
+    except Exception as error:
+        print(f"⚠️ 세 분석기 최초픽 저장 실패({match_id}): {error}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _grade_three_engine_picks(conn):
+    """Grade each frozen engine answer from an already stored final score."""
+    _ensure_three_engine_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT id,match_id,api_fixture_id,home_team,away_team,raw_pick
+        FROM three_engine_pick_snapshots WHERE is_correct IS NULL
+        ORDER BY id
+        """
+    ).fetchall()
+    graded = 0
+    now = _utc_iso()
+    for row_id, match_id, fixture_id, home_team, away_team, raw_pick in rows:
+        result = conn.execute(
+            """
+            SELECT actual_score FROM predictions
+            WHERE actual_result='FINISHED'
+              AND home_team=? AND away_team=?
+              AND (match_id=? OR (? > 0 AND api_fixture_id=?))
+            ORDER BY CASE WHEN match_id=? THEN 0 ELSE 1 END, rowid
+            LIMIT 1
+            """,
+            (
+                str(home_team), str(away_team), str(match_id), int(fixture_id or 0),
+                int(fixture_id or 0), str(match_id),
+            ),
+        ).fetchone()
+        score = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(result[0] if result else ""))
+        if not score:
+            continue
+        goals_h, goals_a = int(score.group(1)), int(score.group(2))
+        hit = int(evaluate_single_pick(
+            raw_pick, home_team, away_team, goals_h, goals_a,
+        ))
+        cursor = conn.execute(
+            """
+            UPDATE three_engine_pick_snapshots
+            SET actual_home_goals=?,actual_away_goals=?,is_correct=?,graded_at=?
+            WHERE id=? AND is_correct IS NULL
+            """,
+            (goals_h, goals_a, hit, now, int(row_id)),
+        )
+        graded += int(cursor.rowcount or 0)
+    if graded:
+        conn.commit()
+    return graded
+
+
+def _three_engine_grading_payload(conn):
+    """Return per-match rows and honest aggregate accuracy for all three engines."""
+    _ensure_three_engine_tables(conn)
+    _grade_three_engine_picks(conn)
+    cursor = conn.execute(
+        "SELECT * FROM three_engine_pick_snapshots ORDER BY kickoff_timestamp DESC,id"
+    )
+    columns = [str(description[0]) for description in cursor.description]
+    rows = [
+        dict(row) if isinstance(row, sqlite3.Row) else dict(zip(columns, row))
+        for row in cursor.fetchall()
+    ]
+    grouped = {}
+    for row in rows:
+        group = grouped.setdefault(row["comparison_key"], {
+            "comparison_key": row["comparison_key"], "source": row["source"],
+            "match_id": row["match_id"], "api_fixture_id": row["api_fixture_id"],
+            "league": row["league"], "home_team": row["home_team"],
+            "away_team": row["away_team"], "kickoff_at": row["kickoff_at"],
+            "engines": {},
+        })
+        group["engines"][row["engine_key"]] = {
+            "engine_version": row["engine_version"], "market_key": row["market_key"],
+            "selection_side": row["selection_side"], "raw_pick": row["raw_pick"],
+            "probability": float(row["probability"] or 0),
+            "odd": float(row["odd"] or 0), "is_correct": row["is_correct"],
+            "actual_score": (
+                f"{row['actual_home_goals']}:{row['actual_away_goals']}"
+                if row["actual_home_goals"] is not None else ""
+            ),
+        }
+    matches = list(grouped.values())
+    finished = [
+        row for row in matches
+        if len(row["engines"]) == 3
+        and all(engine.get("is_correct") in (0, 1) for engine in row["engines"].values())
+    ]
+    pending = [row for row in matches if row not in finished]
+    summary = {}
+    for engine_key in ("official", "legacy_v4", "robot"):
+        values = [row["engines"][engine_key]["is_correct"] for row in finished]
+        summary[engine_key] = {
+            "graded": len(values), "correct": sum(values),
+            "accuracy": (sum(values) / len(values) if values else None),
+        }
+    return {
+        "schema_version": "three-engine-grading.v1",
+        "engine_versions": {
+            "official": ANALYSIS_VERSION,
+            "legacy_v4": LEGACY_V4_POLICY_VERSION,
+            "robot": ROBOT_PICK_VERSION,
+        },
+        "summary": summary, "finished": finished, "pending": pending,
+    }
+
+
 def save_prediction_analysis(
     match_id, pick, confidence, evidence, candidates, report,
     categories=None, analysis_stage="regular", odds_source="",
@@ -3332,14 +3589,14 @@ def _is_current_public_analysis_version(value):
 
 
 def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time=""):
-    """Recover the active policy's first provable pre-kickoff public answer.
+    """Recover the first provable pre-kickoff public answer without migration.
 
     ``prediction_snapshots`` is append-only. Its first timestamped row is the
     strongest historical proof available for installations that predate the
-    explicit public-freeze marker.  For the one user-approved R7.10 migration,
-    a complete R7.10 snapshot made before kickoff becomes the new public
-    boundary; old rows remain untouched for audit.  LIVE/past games cannot gain
-    such a row because every writer rejects calculations at or after kickoff.
+    explicit public-freeze marker.  Later software versions never replace that
+    boundary; old rows and their original public pick remain untouched for
+    audit. LIVE/past games cannot gain such a row because every writer rejects
+    calculations at or after kickoff.
     """
     try:
         identity = conn.execute(
@@ -3373,13 +3630,7 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         if str(row[4] or "").strip()
         and _snapshot_existed_before_kickoff(row[12], kickoff)
     ]
-    public_row = next(
-        (
-            row for row in eligible_public_rows
-            if _is_current_public_analysis_version(row[1])
-        ),
-        eligible_public_rows[0] if eligible_public_rows else None,
-    )
+    public_row = eligible_public_rows[0] if eligible_public_rows else None
     if public_row is None:
         return None
 
@@ -3810,8 +4061,8 @@ def select_pick_categories(picks, confidence):
     )
     high_source["official_final_pick"] = True
     high_source["recommendation_status"] = "SELECTED"
-    reason_text = "경기 전 전체 지표와 승무패·핸디캡·언더오버의 확신도·실제 배당가치를 동시 비교해 최적의 한 방향을 선택"
-    high_source["selection_axis"] = "all_evidence_best_one"
+    reason_text = "경기 전 전체 지표와 승무패·핸디캡·언더오버를 함께 계산하고 실제 적중 가능성을 우선해 가장 강한 한 방향을 선택"
+    high_source["selection_axis"] = "evidence_ensemble_accuracy_first"
     high_source["cross_market_decision"] = choice_reason
     high_source["selection_reason"] = (
         f"{reason_text}했습니다. 선택 배당 "
@@ -3831,7 +4082,7 @@ def select_pick_categories(picks, confidence):
         high_source["selection_warning"] = ""
     high_source["selection_policy"] = {"minimum_odds": None,
                                        "policy_version": PICK_POLICY_VERSION,
-                                       "decision_axis": "all_evidence_best_one",
+                                       "decision_axis": "evidence_ensemble_accuracy_first",
                                        "cross_market_decision": choice_reason,
                                        "minimum_edge_advantage": None,
                                        "price_tradeoff_validated": False,
@@ -3957,6 +4208,96 @@ def _ensure_autonomous_robot_tables(conn):
     )
 
 
+def _load_historical_grading_experience(conn):
+    """Use every honest grading row as probability-calibration experience.
+
+    Detailed robot features exist only for newer matches.  Older grading-note
+    rows still contain the probability shown before kickoff and the settled
+    result, so they can teach probability calibration without inventing any
+    missing team, lineup or event feature.
+    """
+    _ensure_prediction_analysis_tables(conn)
+    cells = {}
+
+    def add(market, probability, hit, count=1):
+        try:
+            probability = float(probability)
+            hit = float(hit)
+            count = int(count)
+        except (TypeError, ValueError):
+            return
+        if not 0 <= probability <= 1 or hit < 0 or count <= 0:
+            return
+        bucket = min(9, max(0, int(probability * 10)))
+        key = (str(market or "1x2"), bucket)
+        cell = cells.setdefault(key, {"samples": 0, "correct": 0.0})
+        cell["samples"] += count
+        cell["correct"] += hit
+
+    for market, probability, samples, correct in conn.execute(
+        """
+        SELECT market_key,model_probability,COUNT(*),SUM(is_correct)
+        FROM prediction_candidate_results
+        WHERE model_probability BETWEEN 0 AND 1 AND is_correct IN (0,1)
+        GROUP BY market_key,ROUND(model_probability,4)
+        """
+    ).fetchall():
+        add(market, probability, correct, samples)
+
+    # Compatibility rows from before candidate-level grading existed.
+    tables = {
+        str(row[0]) for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "predictions" in tables:
+        prediction_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
+        }
+        required = {
+            "match_id", "prob_pick", "prob_pick_prob", "is_correct_prob",
+            "actual_result",
+        }
+        if required.issubset(prediction_columns):
+            for raw_pick, probability, hit in conn.execute(
+                """
+                SELECT p.prob_pick,p.prob_pick_prob,p.is_correct_prob
+                FROM predictions p
+                WHERE p.actual_result='FINISHED'
+                  AND p.is_correct_prob IN (0,1)
+                  AND p.prob_pick_prob BETWEEN 0 AND 100
+                  AND NOT EXISTS (
+                      SELECT 1 FROM prediction_candidate_results r
+                      WHERE r.match_id=p.match_id
+                  )
+                """
+            ).fetchall():
+                add(
+                    infer_pick_market({"raw_pick": raw_pick}),
+                    float(probability or 0) / 100.0,
+                    hit,
+                )
+
+    markets = {}
+    total = 0
+    for (market, bucket), cell in sorted(cells.items()):
+        samples = int(cell["samples"])
+        correct = float(cell["correct"])
+        total += samples
+        markets.setdefault(market, {})[str(bucket)] = {
+            "samples": samples,
+            "correct": round(correct, 6),
+            "observed_rate": round(correct / samples, 8),
+        }
+    return {
+        "schema_version": "grading-experience.v1",
+        "samples": total,
+        "markets": markets,
+        "minimum_sample_gate": False,
+        "history_rewrite": False,
+    }
+
+
 def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff):
     if int(fixture_id or 0) > 0:
         return f"fixture:{int(fixture_id)}"
@@ -3974,6 +4315,7 @@ def _load_autonomous_robot_artifact():
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
+        _ensure_prediction_analysis_tables(conn)
         signature_row = conn.execute(
             """
             SELECT COUNT(*), COALESCE(MAX(result_known_timestamp), 0)
@@ -3981,7 +4323,30 @@ def _load_autonomous_robot_artifact():
             WHERE actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
             """
         ).fetchone()
-        signature = f"{int(signature_row[0] or 0)}:{float(signature_row[1] or 0):.3f}"
+        grading_signature = conn.execute(
+            "SELECT COUNT(*),COALESCE(MAX(id),0) FROM prediction_candidate_results"
+        ).fetchone()
+        prediction_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
+        }
+        if {"actual_result", "is_correct_prob"}.issubset(prediction_columns):
+            public_grading_signature = conn.execute(
+                """
+                SELECT COUNT(*),
+                       COALESCE(SUM(CASE WHEN actual_result='FINISHED' THEN rowid ELSE 0 END),0),
+                       COALESCE(SUM(CASE WHEN is_correct_prob IN (0,1) THEN is_correct_prob + 1 ELSE 0 END),0)
+                FROM predictions
+                """
+            ).fetchone()
+        else:
+            public_grading_signature = (0, 0, 0)
+        signature = (
+            f"{int(signature_row[0] or 0)}:{float(signature_row[1] or 0):.3f}:"
+            f"{int(grading_signature[0] or 0)}:{int(grading_signature[1] or 0)}:"
+            f"{int(public_grading_signature[0] or 0)}:"
+            f"{int(public_grading_signature[1] or 0)}:"
+            f"{int(public_grading_signature[2] or 0)}"
+        )
         if (
             _AUTONOMOUS_ROBOT_CACHE.get("signature") == signature
             and isinstance(_AUTONOMOUS_ROBOT_CACHE.get("artifact"), dict)
@@ -4002,7 +4367,6 @@ def _load_autonomous_robot_artifact():
                   AND actual_away_goals IS NOT NULL
                   AND feature_schema_version=?
                 ORDER BY kickoff_timestamp DESC,id DESC
-                LIMIT 600
             )
             ORDER BY kickoff_timestamp,id
             """
@@ -4020,6 +4384,10 @@ def _load_autonomous_robot_artifact():
                 "away_goals": int(goals_a),
             })
         artifact = train_autonomous_robot(examples)
+        artifact["grading_experience"] = _load_historical_grading_experience(conn)
+        artifact["grading_experience_samples"] = int(
+            artifact["grading_experience"].get("samples") or 0
+        )
         safe_artifact = {key: value for key, value in artifact.items() if key != "parameters"}
         fingerprint = hashlib.sha256(
             json.dumps(safe_artifact, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -4087,6 +4455,8 @@ def save_autonomous_robot_sample(
                 "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
                 "market_prob", "handicap_base", "totals_base", "robot_probability",
                 "robot_expected_goals", "robot_model_version",
+                "robot_pre_grading_probability", "robot_grading_experience_samples",
+                "robot_grading_calibration_samples", "robot_grading_calibration_weight",
             )
         })
     compact_pick = {
@@ -4096,6 +4466,8 @@ def save_autonomous_robot_sample(
             "robot_expected_goals", "robot_model_version", "robot_model_active",
             "robot_training_samples", "robot_validation_fixtures",
             "robot_decision_reason", "robot_selection_axis",
+            "robot_grading_experience_samples", "robot_grading_calibration_samples",
+            "robot_grading_calibration_weight", "robot_minimum_sample_gate",
         )
     }
     conn = None
@@ -4319,7 +4691,10 @@ def select_autonomous_robot_pick(picks, confidence, robot_features=None):
         "history_rewrite": False,
         "self_modifying": False,
         "self_learning": bool(isinstance(robot_features, dict) or has_robot_probabilities),
-        "robot_learning_active": bool(robot_artifact.get("active")),
+        "robot_learning_active": bool(
+            robot_artifact.get("active")
+            or int(robot_artifact.get("grading_experience_samples") or 0) > 0
+        ),
         "robot_learning_reason": str(robot_artifact.get("reason") or ""),
     })
     return selected
@@ -4338,17 +4713,21 @@ def robot_pick_report(robot_pick, home_team=""):
             f"보수적 가치차 {float(robot_pick.get('robust_edge') or 0) * 100:+.1f}%p"
         )
     value_text = f"실제 배당 {odd:.2f}배" if odd > 1 else "실제 배당 미수신"
+    detailed_samples = int(robot_pick.get("robot_training_samples") or 0)
+    grading_samples = int(robot_pick.get("robot_grading_experience_samples") or 0)
     learning_text = (
-        f"자체 학습모형 승격 적용 · 종료표본 {int(robot_pick.get('robot_training_samples') or 0)}경기"
-        if robot_pick.get("robot_model_active")
-        else f"전체 경기 전 근거 기초모형 · 종료표본 {int(robot_pick.get('robot_training_samples') or 0)}경기 수집 중"
+        f"온라인 자체학습 적용 · 상세 경기표본 {detailed_samples}경기 · "
+        f"기존 채점사례 {grading_samples}개 반영"
+        if detailed_samples or grading_samples
+        else "아직 종료 채점이 없어 경기 전 전체 근거 기초모형 사용"
     )
     return (
         "[로봇 독립픽] "
         f"{_human_pick_label(robot_pick.get('raw_pick'), home_team)} · "
         f"로봇 자체확률 {probability * 100:.1f}% · {value_text} · {edge_text}. "
         "공식 확률을 재정렬한 값이 아니라 경기 전 원자료에서 로봇이 만든 득점·전 시장 확률로 비교한 답입니다. "
-        f"{learning_text}. 경기 시작 뒤 자료는 사용하지 않습니다."
+        f"{learning_text}. 최소 경기 수 대기 없이 첫 채점부터 미래 픽에 반영하며, "
+        "경기 시작 뒤 자료는 사용하지 않습니다."
     )
 
 
@@ -4440,6 +4819,7 @@ def _build_grading_snapshot():
                 "schema_version": "grading-results.v1",
                 "public_history_mode": "current-robot-version-only",
                 "public_score_version": PUBLIC_SCORE_VERSION,
+                "three_engine": _three_engine_grading_payload(conn),
                 "finished": [], "pending": [], "generated_at": _utc_iso(),
             }
         all_rows = [
@@ -4558,6 +4938,7 @@ def _build_grading_snapshot():
 
         finished.sort(key=sort_timestamp, reverse=True)
         pending.sort(key=sort_timestamp, reverse=True)
+        three_engine = _three_engine_grading_payload(conn)
         return {
             "schema_version": "grading-results.v1",
             "analysis_version": ANALYSIS_VERSION,
@@ -4566,6 +4947,7 @@ def _build_grading_snapshot():
             "public_score_version": PUBLIC_SCORE_VERSION,
             "public_score_label": "새 로봇 독립픽 공개 성적",
             "legacy_rows_hidden": max(0, len(all_rows) - len(public_rows)),
+            "three_engine": three_engine,
             "finished": finished,
             "pending": pending,
             "generated_at": _utc_iso(),
@@ -4863,7 +5245,7 @@ def _world_market_preview_analysis(item, now=None):
         data_confidence=preview_confidence,
     )
     decision.update({
-        "decision_axis": "all_evidence_best_one",
+        "decision_axis": "evidence_ensemble_accuracy_first",
         "selected_market": selected_market,
         "data_confidence": preview_confidence,
         "market_preview": True,
@@ -6356,6 +6738,12 @@ def _save_world_learning_record(match, analysis):
         match.get("match_time") or match.get("kickoff_at")
     )
     if analysis_saved and kickoff is not None:
+        save_three_engine_picks(
+            "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
+            str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
+            str(match.get("home") or "홈팀"), str(match.get("away") or "원정팀"),
+            kickoff, selected, analysis.get("legacy_v4_pick") or {}, robot_pick,
+        )
         save_autonomous_robot_sample(
             "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
             str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
@@ -6696,8 +7084,19 @@ def _analyze_world_match(item, now, market_performance):
             "h2h_draws": h2h.get("draws", 0),
             "h2h_away_wins": h2h.get("a_wins", 0),
             "is_derby": is_derby,
+            "home_survival_active": bool(h_survival.get("active")),
+            "away_survival_active": bool(a_survival.get("active")),
+            "home_manager_active": h_manager_buff > 0,
+            "away_manager_active": a_manager_buff > 0,
+            "home_vacation_active": h_vacation > 0,
+            "away_vacation_active": a_vacation > 0,
+            "home_market_signal": h_market_bonus > 0,
+            "away_market_signal": a_market_bonus > 0,
+            "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
         },
     )
+    legacy_v4_candidates = build_legacy_v4_candidates(candidates, robot_features)
+    legacy_v4_pick = legacy_v4_choice(candidates, robot_features)
     robot_candidates = build_autonomous_robot_candidates(
         candidates, robot_features, _load_autonomous_robot_artifact()
     )
@@ -6850,6 +7249,8 @@ def _analyze_world_match(item, now, market_performance):
         "candidates": candidate_rows,
         "categories": compact_categories,
         "selected": selected_summary,
+        "legacy_v4_pick": legacy_v4_pick,
+        "legacy_v4_candidates": legacy_v4_candidates,
         "robot_pick": dict(compact_categories.get("robot_independent") or {}),
         "robot_features": robot_features,
         "robot_candidates": robot_candidates,
@@ -7238,15 +7639,8 @@ def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
 
 
 def _needs_current_analysis_refresh(item, kickoff, now, target_version):
-    """Allow one pre-kickoff migration from an older analysis version."""
-    if not isinstance(item, dict) or kickoff is None or kickoff <= now:
-        return False
-    previous_version = str(
-        item.get("analysis_version")
-        or (item.get("analysis") or {}).get("analysis_version")
-        or ""
-    )
-    return previous_version != str(target_version)
+    """Never replace an already published valid pick merely for a new version."""
+    return False
 
 
 def _locked_proto_item(match, previous=None):
@@ -7857,8 +8251,21 @@ def build_dashboard_data():
                 "h2h_draws": h2h_draws,
                 "h2h_away_wins": a_wins,
                 "is_derby": is_derby,
+                "home_survival_active": bool(h_survival.get("active")),
+                "away_survival_active": bool(a_survival.get("active")),
+                "home_manager_active": h_manager_buff > 0,
+                "away_manager_active": a_manager_buff > 0,
+                "home_vacation_active": h_vacation > 0,
+                "away_vacation_active": a_vacation > 0,
+                "home_market_signal": h_market_bonus > 0,
+                "away_market_signal": a_market_bonus > 0,
+                "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
             },
         )
+        legacy_v4_candidates = build_legacy_v4_candidates(
+            valid_all_picks, robot_features
+        )
+        legacy_v4_pick = legacy_v4_choice(valid_all_picks, robot_features)
         robot_candidates = build_autonomous_robot_candidates(
             valid_all_picks, robot_features, _load_autonomous_robot_artifact()
         )
@@ -7972,6 +8379,11 @@ def build_dashboard_data():
             robot_pick=robot_pick,
             lineup_prediction=lineup_learning,
         )
+        save_three_engine_picks(
+            "PROTO", m["id"], api_fixture_id, league_n,
+            home_team, away_team, m_dt, highest_prob_pick,
+            legacy_v4_pick, robot_pick,
+        )
         save_autonomous_robot_sample(
             "PROTO", m["id"], api_fixture_id, league_n,
             home_team, away_team, m_dt, robot_features,
@@ -8053,6 +8465,8 @@ def build_dashboard_data():
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks,
             "pick_categories": pick_categories,
+            "legacy_v4_pick": legacy_v4_pick,
+            "legacy_v4_candidates": legacy_v4_candidates,
             "robot_pick": robot_pick,
             "robot_wdl_probabilities": {
                 str(candidate.get("selection_side")): round(float(candidate.get("robot_probability") or 0), 8)
@@ -8514,6 +8928,16 @@ def build_dashboard_data():
                 "settlement_supported": True,
             },
         ]
+        official_toto_pick = max(
+            robot_wdl_candidates,
+            key=lambda candidate: float(candidate.get("prob") or 0),
+        )
+        official_toto_pick = dict(
+            official_toto_pick,
+            official_policy_version=OFFICIAL_PICK_POLICY_VERSION,
+            selection_axis="toto14_single_direction_accuracy",
+            selection_reason="공식 승무패14 확률표에서 가장 높은 단일 방향",
+        )
         robot_features = build_autonomous_robot_features(
             goal_model_audit, toto_context_audit, robot_wdl_candidates,
             analysis_confidence,
@@ -8536,10 +8960,24 @@ def build_dashboard_data():
                 "lineup_confirmed": lineup_confirmed,
                 "h2h_total": h2h_total,
                 "h2h_home_wins": h_wins,
+                "h2h_draws": fixture_details.get("draws", 0),
                 "h2h_away_wins": a_wins,
                 "is_derby": is_derby,
+                "home_survival_active": bool(h_survival.get("active")),
+                "away_survival_active": bool(a_survival.get("active")),
+                "home_manager_active": h_manager_buff > 0,
+                "away_manager_active": a_manager_buff > 0,
+                "home_vacation_active": h_vacation > 0,
+                "away_vacation_active": a_vacation > 0,
+                "home_market_signal": False,
+                "away_market_signal": False,
+                "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
             },
         )
+        legacy_v4_candidates = build_legacy_v4_candidates(
+            robot_wdl_candidates, robot_features
+        )
+        legacy_v4_pick = legacy_v4_choice(robot_wdl_candidates, robot_features)
         robot_candidates = build_autonomous_robot_candidates(
             robot_wdl_candidates, robot_features,
             _load_autonomous_robot_artifact(),
@@ -8590,6 +9028,9 @@ def build_dashboard_data():
                 "analysis_stage": analysis_stage,
                 "survival_motivation": {"home": h_survival, "away": a_survival},
                 "robot_features": robot_features,
+                "official_comparison_pick": official_toto_pick,
+                "legacy_v4_candidates": legacy_v4_candidates,
+                "legacy_v4_pick": legacy_v4_pick,
                 "robot_candidates": robot_candidates,
                 "robot_wdl_probabilities": robot_wdl_probabilities,
                 "robot_pick": robot_pick,
@@ -9399,6 +9840,12 @@ def _finalize_toto14_round(items):
             item.get('analysis_confidence') or 0)
         kickoff = _parse_kst_match_time(match.get('match_time'))
         if saved and kickoff and item.get("robot_pick"):
+            save_three_engine_picks(
+                "TOTO14", match_id, item.get("api_fixture_id") or 0,
+                "승무패 14경기", match["home"], match["away"], kickoff,
+                item.get("official_comparison_pick") or {},
+                item.get("legacy_v4_pick") or {}, item.get("robot_pick") or {},
+            )
             save_autonomous_robot_sample(
                 "TOTO14", match_id, item.get("api_fixture_id") or 0,
                 "승무패 14경기", match["home"], match["away"], kickoff,
