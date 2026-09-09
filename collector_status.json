@@ -27,21 +27,21 @@
     },
     "score": {
       "child_pid": 346472,
-      "state": "running",
-      "heartbeat_at": "2026-09-09T23:26:48+00:00",
-      "pid": 346209,
+      "state": "success",
+      "heartbeat_at": "2026-09-09T23:27:05+00:00",
+      "pid": 346472,
       "last_started_at": "2026-09-09T23:26:17+00:00",
       "elapsed_seconds": 30.1,
       "overlap_skips": 0,
-      "duration_seconds": 22.25,
-      "last_success_at": "2026-09-09T23:21:40+00:00",
+      "duration_seconds": 46.68,
+      "last_success_at": "2026-09-09T23:27:05+00:00",
       "last_failure_at": "2026-09-08T09:59:08+00:00",
       "due_count": 10,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
       "last_stage": "grading_published_backup_pending",
-      "grading_published_at": "2026-09-09T23:21:31+00:00",
+      "grading_published_at": "2026-09-09T23:26:45+00:00",
       "db_backup_ok": false
     },
     "master": {
@@ -60,21 +60,21 @@
     },
     "world": {
       "child_pid": 346468,
-      "state": "running",
-      "heartbeat_at": "2026-09-09T23:26:48+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-09T23:26:50+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-09T23:26:48+00:00",
       "elapsed_seconds": 32.1,
       "overlap_skips": 0,
-      "duration_seconds": 26.48,
+      "duration_seconds": 34.4,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-09T23:26:43+00:00",
+      "last_failure_at": "2026-09-09T23:26:50+00:00",
       "last_stage": "world_published_backup_pending",
       "db_backup_ok": false,
-      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
+      "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-09T23:26:48+00:00",
+  "updated_at": "2026-09-09T23:27:05+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -144,7 +144,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 1583
+        "count": 1863
       },
       {
         "metric": "cache_hit",
@@ -201,6 +201,12 @@
         "count": 80
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/headtohead",
+        "count": 75
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
@@ -209,8 +215,8 @@
       {
         "metric": "singleflight_block",
         "purpose": "analysis",
-        "endpoint": "/fixtures/headtohead",
-        "count": 56
+        "endpoint": "/fixtures/lineups",
+        "count": 50
       },
       {
         "metric": "cache_hit",
@@ -252,12 +258,6 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 4
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "live",
-        "endpoint": "/fixtures",
         "count": 4
       }
     ],
