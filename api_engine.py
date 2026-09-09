@@ -19,7 +19,10 @@ from football_model import (clean_records, train_challenger, predict_goals,
                             OFFICIAL_PICK_POLICY_VERSION,
                             LEGACY_V4_POLICY_VERSION,
                             AUTONOMOUS_ROBOT_POLICY_VERSION, ROBOT_MODEL_VERSION,
-                            ROBOT_FEATURE_SCHEMA_VERSION)
+                            ROBOT_FEATURE_SCHEMA_VERSION,
+                            ROBOT_COMPATIBLE_FEATURE_SCHEMAS,
+                            ROBOT_MEMORY_SCHEMA_VERSION,
+                            ROBOT_LINEUP_SCHEMA_VERSION)
 
 from grading_postmortem import (
     build_postmortem,
@@ -50,7 +53,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v2-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.0-three-engine-comparison"
+SYSTEM_VERSION = "R7.12.1-autonomous-all-evidence-memory"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1636,9 +1639,24 @@ def fetch_team_info_api(team_name):
             # 잘못 저장된 팀 ID는 로고·최근 전적·채점까지 모두 오염시키기 때문이다.
             if similarity(best_entry) < 0.45:
                 continue
-            result = best_entry.get('team', {})
+            result = dict(best_entry.get('team', {}) or {})
             if not result.get("id"):
                 continue
+
+            # Preserve the provider's verified home venue when it is included
+            # in the same team-search response.  The autonomous robot can then
+            # compare a future match city/country with the club base without
+            # making a separate paid request or inventing a distance.
+            venue = best_entry.get("venue") or {}
+            if isinstance(venue, dict) and venue:
+                result["venue"] = {
+                    "id": int(venue.get("id") or 0),
+                    "name": str(venue.get("name") or ""),
+                    "city": str(venue.get("city") or ""),
+                    "address": str(venue.get("address") or ""),
+                    "capacity": int(venue.get("capacity") or 0),
+                    "surface": str(venue.get("surface") or ""),
+                }
 
             result["logo"] = _resolve_team_logo(
                 team_name, result.get("id"), result.get("logo")
@@ -1931,22 +1949,57 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
         )
     return home_info, away_info, None
 
-def fetch_weather_api(city_name, ttl_h):
-    if not city_name: return "Clear"
+def fetch_weather_details_api(city_name, ttl_h):
+    default = {"available": False, "condition": "Unknown", "city": str(city_name or "")}
+    if not city_name:
+        return default
     clean_city = city_name.split(',')[0].strip()
-    cache_key = f"weather_{clean_city}"
+    cache_key = f"weather_details_v2_{clean_city}"
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data: return cached_data
+    if isinstance(cached_data, dict):
+        return cached_data
     try:
         res = requests.get(f"https://wttr.in/{clean_city}?format=j1", timeout=4)
         data = res.json()
-        condition = data['current_condition'][0]['weatherDesc'][0]['value'].lower()
-        if 'rain' in condition or 'shower' in condition or 'drizzle' in condition: result = "Rain"
-        elif 'snow' in condition or 'blizzard' in condition: result = "Snow"
-        else: result = "Clear"
+        current = (data.get("current_condition") or [{}])[0]
+        raw_condition = str(
+            ((current.get("weatherDesc") or [{}])[0]).get("value") or ""
+        ).strip()
+        condition_text = raw_condition.casefold()
+        if any(word in condition_text for word in ("rain", "shower", "drizzle")):
+            condition = "Rain"
+        elif any(word in condition_text for word in ("snow", "blizzard")):
+            condition = "Snow"
+        else:
+            condition = "Clear"
+        result = {
+            "available": True,
+            "city": clean_city,
+            "condition": condition,
+            "description": raw_condition,
+            "temperature_c": current.get("temp_C"),
+            "feels_like_c": current.get("FeelsLikeC"),
+            "humidity_pct": current.get("humidity"),
+            "wind_speed_kmph": current.get("windspeedKmph"),
+            "wind_direction": current.get("winddir16Point"),
+            "precipitation_mm": current.get("precipMM"),
+            "cloud_cover_pct": current.get("cloudcover"),
+            "visibility_km": current.get("visibility"),
+            "pressure_hpa": current.get("pressure"),
+            "uv_index": current.get("uvIndex"),
+            "observation_time": current.get("localObsDateTime") or current.get("observation_time"),
+        }
         set_db_cache(cache_key, result)
         return result
-    except: return "Clear"
+    except Exception:
+        return default
+
+
+def fetch_weather_api(city_name, ttl_h):
+    details = fetch_weather_details_api(city_name, ttl_h)
+    # Preserve the existing public-analysis fallback while the robot receives
+    # the explicit available=False flag and never learns a failed call as sun.
+    return str(details.get("condition") or "Clear") if details.get("available") else "Clear"
 
 def _extract_match_winner_odds(odds_data):
     """Return median 1X2 odds across bookmakers with complete prices."""
@@ -2428,7 +2481,7 @@ def fetch_league_key_players(league_id, season):
 def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
     default_res = {
         "count": 0, "ace_missing": False, "ace_names": [],
-        "all_names": [], "missing_goals": 0,
+        "all_names": [], "missing_goals": 0, "records": [],
         "available": False, "source": "none",
     }
     if not team_id: return default_res
@@ -2466,6 +2519,19 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
             for x in inj_data
             if x.get("team", {}).get("id") == team_id and x.get("player", {}).get("name")
         })
+        injury_records = []
+        for row in inj_data:
+            if int((row.get("team") or {}).get("id") or 0) != int(team_id):
+                continue
+            player = row.get("player") or {}
+            name = str(player.get("name") or "").strip()
+            if name:
+                injury_records.append({
+                    "player_id": int(player.get("id") or 0),
+                    "name": name,
+                    "type": str(player.get("type") or "").strip(),
+                    "reason": str(player.get("reason") or "").strip(),
+                })
         count = len(injured_names)
         ace_names = []
         missing_goals_total = 0
@@ -2494,6 +2560,7 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
             # Keep the complete confirmed unavailable list for starting-XI
             # prediction. Strength penalties still use ace_names separately.
             "all_names": injured_names,
+            "records": injury_records,
             "missing_goals": missing_goals_total,
             "available": True,
             "source": source,
@@ -2546,21 +2613,54 @@ def check_derby_match(home_name, away_name):
             return True
     return False
 
-def fetch_lineups_api(fixture_id, ttl_h):
-    default_res = {"home": [], "away": [], "confirmed": False}
+def fetch_lineups_api(fixture_id, ttl_h, purpose="analysis"):
+    default_res = {"home": [], "away": [], "confirmed": False, "details": {}}
     if not fixture_id: return default_res
-    cache_key = f"lineups_v1_{fixture_id}"
+    cache_key = f"lineups_v2_detailed_{fixture_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        res = api_get("/fixtures/lineups", params={"fixture": fixture_id}, timeout=5)
+        res = api_get(
+            "/fixtures/lineups", params={"fixture": fixture_id}, timeout=5,
+            purpose=purpose,
+        )
         data = res.json().get("response", [])
-        res_val = {"home": [], "away": [], "confirmed": False}
+        res_val = {"home": [], "away": [], "confirmed": False, "details": {}}
         if data and len(data) == 2:
             for t in data:
-                t_id = t["team"]["id"]
-                starters = [x["player"]["name"] for x in t.get("startXI", [])]
+                team = t.get("team") or {}
+                t_id = int(team.get("id") or 0)
+                starter_rows = []
+                for row in t.get("startXI", []) or []:
+                    player = row.get("player") or {}
+                    starter_rows.append({
+                        "player_id": int(player.get("id") or 0),
+                        "name": str(player.get("name") or "").strip(),
+                        "number": player.get("number"),
+                        "position": str(player.get("pos") or "").strip(),
+                        "grid": str(player.get("grid") or "").strip(),
+                    })
+                starters = [row["name"] for row in starter_rows if row["name"]]
                 res_val[str(t_id)] = starters
+                res_val["details"][str(t_id)] = {
+                    "team": {"id": t_id, "name": str(team.get("name") or "").strip()},
+                    "formation": str(t.get("formation") or "").strip(),
+                    "coach": {
+                        "id": int((t.get("coach") or {}).get("id") or 0),
+                        "name": str((t.get("coach") or {}).get("name") or "").strip(),
+                    },
+                    "start_xi": starter_rows,
+                    "substitutes": [
+                        {
+                            "player_id": int((row.get("player") or {}).get("id") or 0),
+                            "name": str((row.get("player") or {}).get("name") or "").strip(),
+                            "number": (row.get("player") or {}).get("number"),
+                            "position": str((row.get("player") or {}).get("pos") or "").strip(),
+                        }
+                        for row in (t.get("substitutes") or [])
+                        if str((row.get("player") or {}).get("name") or "").strip()
+                    ],
+                }
             res_val["confirmed"] = all(len(res_val.get(str(t.get("team", {}).get("id")), [])) >= 11 for t in data)
         # 발표 전 빈 명단은 저장하지 않아 다음 5분 주기에 다시 확인한다.
         if res_val["confirmed"]:

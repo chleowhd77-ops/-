@@ -4,6 +4,7 @@ No network, database writes or dependency on the collector. A chronological
 holdout must beat the venue-shrinkage baseline on BOTH WDL Brier and log loss.
 This is a promotion gate, not a claim of prospective profitability.
 """
+import hashlib
 import math
 from collections import Counter
 
@@ -14,8 +15,14 @@ LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-goals-online-v2"
-ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v1"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-all-evidence-online-v3"
+ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v2-all-evidence"
+ROBOT_COMPATIBLE_FEATURE_SCHEMAS = (
+    "robot-features.v1",
+    ROBOT_FEATURE_SCHEMA_VERSION,
+)
+ROBOT_MEMORY_SCHEMA_VERSION = "robot-memory.v2-all-pre-match-context"
+ROBOT_LINEUP_SCHEMA_VERSION = "robot-lineup-learning.v1"
 
 
 def price_eligible(pick, confidence):
@@ -865,8 +872,123 @@ def _finite_number(value, default=0.0):
         return default
 
 
+def _robot_feature_path(parts):
+    clean = []
+    for part in parts:
+        token = "".join(
+            character if character.isalnum() else "_"
+            for character in str(part or "field").casefold()
+        ).strip("_")
+        clean.append((token or "field")[:64])
+    return "__".join(clean)[-220:]
+
+
+def _robot_categorical_bucket(path, value, buckets=4096):
+    """Map every categorical observation to a stable sparse model input.
+
+    The complete unmodified value is retained in the collector's immutable
+    evidence JSON. Hashing here only keeps the online learner's matrix bounded
+    as new teams, players, referees and competitions appear forever.
+    """
+    token = f"{path}\x1f{str(value).strip().casefold()}".encode("utf-8")
+    digest = hashlib.sha256(token).digest()
+    bucket = int.from_bytes(digest[:4], "big") % buckets
+    sign = 1.0 if digest[4] & 1 else -1.0
+    return f"evidence_category_{bucket:04d}", sign
+
+
+def _flatten_robot_evidence(value, path, features, depth=0):
+    """Feed every JSON-like pre-match field to the learner without a whitelist."""
+    if depth > 12:
+        features["evidence_depth_overflow"] = features.get(
+            "evidence_depth_overflow", 0.0
+        ) + 1.0
+        return
+    key = _robot_feature_path(path)
+    if value is None:
+        features[f"evidence__{key}__missing"] = features.get(
+            f"evidence__{key}__missing", 0.0
+        ) + 1.0
+        return
+    if isinstance(value, bool):
+        features[f"evidence__{key}"] = features.get(
+            f"evidence__{key}", 0.0
+        ) + float(value)
+        features[f"evidence__{key}__known"] = features.get(
+            f"evidence__{key}__known", 0.0
+        ) + 1.0
+        return
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Identifiers are categories, not quantities: team 500 is not twice
+        # team 250. Original values remain in full_evidence_json.
+        terminal = str(path[-1] if path else "").casefold()
+        if terminal == "id" or terminal.endswith("_id") or terminal.endswith("ids"):
+            bucket, sign = _robot_categorical_bucket(key, value)
+            features[bucket] = features.get(bucket, 0.0) + sign
+            features[f"evidence__{key}__known"] = features.get(
+                f"evidence__{key}__known", 0.0
+            ) + 1.0
+            return
+        number = _finite_number(value, float("nan"))
+        if math.isfinite(number):
+            features[f"evidence__{key}"] = features.get(
+                f"evidence__{key}", 0.0
+            ) + number
+            features[f"evidence__{key}__known"] = features.get(
+                f"evidence__{key}__known", 0.0
+            ) + 1.0
+        else:
+            features[f"evidence__{key}__missing"] = features.get(
+                f"evidence__{key}__missing", 0.0
+            ) + 1.0
+        return
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            features[f"evidence__{key}__missing"] = features.get(
+                f"evidence__{key}__missing", 0.0
+            ) + 1.0
+            return
+        bucket, sign = _robot_categorical_bucket(key, normalized)
+        features[bucket] = features.get(bucket, 0.0) + sign
+        features[f"evidence__{key}__known"] = features.get(
+            f"evidence__{key}__known", 0.0
+        ) + 1.0
+        return
+    if isinstance(value, dict):
+        features[f"evidence__{key}__field_count"] = features.get(
+            f"evidence__{key}__field_count", 0.0
+        ) + float(len(value))
+        for child_key in sorted(value, key=lambda item: str(item)):
+            _flatten_robot_evidence(
+                value.get(child_key), path + (str(child_key),), features, depth + 1
+            )
+        return
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        features[f"evidence__{key}__count"] = features.get(
+            f"evidence__{key}__count", 0.0
+        ) + float(len(items))
+        # List order must not create a different feature layout. Repeated
+        # numeric fields accumulate with a corresponding ``known`` count,
+        # while names/IDs retain their signed categorical buckets. This keeps
+        # all raw entities learnable without creating a new dense column for
+        # every fixture/player ever observed.
+        for item in items:
+            _flatten_robot_evidence(
+                item, path + ("member",), features, depth + 1
+            )
+        return
+    bucket, sign = _robot_categorical_bucket(key, value)
+    features[bucket] = features.get(bucket, 0.0) + sign
+    features[f"evidence__{key}__known"] = features.get(
+        f"evidence__{key}__known", 0.0
+    ) + 1.0
+
+
 def build_autonomous_robot_features(
     goal_audit, context_audit, candidates, confidence, extra=None,
+    all_evidence=None,
 ):
     """Freeze a numeric pre-match feature map for the autonomous learner.
 
@@ -924,6 +1046,8 @@ def build_autonomous_robot_features(
             features[str(key)] = float(value)
         elif isinstance(value, (int, float)):
             features[str(key)] = _finite_number(value)
+    if isinstance(all_evidence, dict):
+        _flatten_robot_evidence(all_evidence, ("all_evidence",), features)
     return {
         key: round(value, 8)
         for key, value in sorted(features.items())
@@ -1003,18 +1127,10 @@ def _robot_feature_candidates(rows):
             if math.isfinite(number):
                 numeric.setdefault(str(key), []).append(number)
     required = {"base_home_goals", "base_away_goals"}
-    # A feature may enter from the very first clean result.  Coverage controls
-    # sparse columns, but it is not a minimum learning-match gate.
-    minimum_coverage = max(1, int(math.ceil(len(rows) * .50)))
-    variable = []
-    for key, values in numeric.items():
-        if len(values) < minimum_coverage and key not in required:
-            continue
-        mean = sum(values) / len(values)
-        variance = sum((value - mean) ** 2 for value in values) / len(values)
-        if variance > 1e-8 or key in required:
-            variable.append(key)
-    return sorted(set(variable) | required)
+    # There is no human coverage gate. A field observed in one honest match is
+    # admitted immediately; absent values naturally become zero in the sparse
+    # design matrix and ridge regularization limits unstable first impressions.
+    return sorted(set(numeric) | required)
 
 
 def _robot_correlation(rows, key, target):
@@ -1201,7 +1317,7 @@ def train_autonomous_robot(examples):
             abs(_robot_correlation(rows, key, "away_goals")),
         ),
         reverse=True,
-    )[:min(24, max(2, int(math.sqrt(len(rows)) * 4)))]
+    )
     for required in ("base_home_goals", "base_away_goals"):
         if required not in ranked_names:
             ranked_names.append(required)

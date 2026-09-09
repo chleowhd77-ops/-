@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import traceback
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -1533,6 +1534,129 @@ def get_expected_core_players(team_id, league_id, season):
     return core_players[:8]
 
 
+def _load_robot_lineup_experience(team_id):
+    """Load every post-match official XI answer for this team.
+
+    There is no minimum-match activation gate. One official answer changes the
+    next estimate, while the returned counts keep that early evidence honest.
+    """
+    if not int(team_id or 0):
+        return {"players": {}, "formations": {}, "samples": 0}
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=10)
+        tables = {
+            str(row[0]) for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "robot_learning_samples" not in tables:
+            return {"players": {}, "formations": {}, "samples": 0}
+        columns = {
+            str(row[1]) for row in conn.execute(
+                "PRAGMA table_info(robot_learning_samples)"
+            ).fetchall()
+        }
+        required = {
+            "lineup_prediction_json", "official_lineup_json", "full_evidence_json"
+        }
+        if not required.issubset(columns):
+            return {"players": {}, "formations": {}, "samples": 0}
+        rows = conn.execute(
+            """
+            SELECT lineup_prediction_json,official_lineup_json,full_evidence_json
+            FROM robot_learning_samples
+            WHERE lineup_known_timestamp IS NOT NULL
+              AND official_lineup_json NOT IN ('','{}')
+            ORDER BY kickoff_timestamp,id
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return {"players": {}, "formations": {}, "samples": 0}
+    finally:
+        if conn is not None:
+            conn.close()
+
+    players = {}
+    formations = Counter()
+    samples = 0
+    for prediction_json, official_json, evidence_json in rows:
+        try:
+            prediction = json.loads(prediction_json or "{}")
+            official = json.loads(official_json or "{}")
+            evidence = json.loads(evidence_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        side = next((
+            value for value in ("home", "away")
+            if int(prediction.get(f"{value}_team_id") or 0) == int(team_id)
+        ), None)
+        if not side:
+            continue
+        team_detail = (official.get("details") or {}).get(str(int(team_id))) or {}
+        actual = [
+            str(row.get("name") or "").strip()
+            for row in (team_detail.get("start_xi") or [])
+            if str(row.get("name") or "").strip()
+        ]
+        if len(actual) < 11:
+            continue
+        candidate_rows = ((evidence.get("squads") or {}).get(side) or [])
+        candidate_names = [
+            str(row.get("name") or "").strip()
+            for row in candidate_rows if isinstance(row, dict)
+            and str(row.get("name") or "").strip()
+        ]
+        candidate_names.extend(
+            prediction.get(f"{side}_predicted_starting_xi") or []
+        )
+        candidate_names.extend(actual)
+        actual_keys = {_normalize_player_name(name) for name in actual}
+        unique_candidates = {}
+        for name in candidate_names:
+            normalized = _normalize_player_name(name)
+            if normalized:
+                unique_candidates.setdefault(normalized, str(name))
+        for normalized, name in unique_candidates.items():
+            cell = players.setdefault(normalized, {
+                "name": str(name), "eligible_games": 0, "starts": 0,
+            })
+            cell["eligible_games"] += 1
+            if normalized in actual_keys:
+                cell["starts"] += 1
+        formation = str(team_detail.get("formation") or "").strip()
+        if formation:
+            formations[formation] += 1
+        samples += 1
+    for cell in players.values():
+        games = int(cell.get("eligible_games") or 0)
+        starts = int(cell.get("starts") or 0)
+        cell["learned_start_probability"] = round(
+            (starts + 0.5) / (games + 1.0), 8
+        )
+    return {
+        "players": players,
+        "formations": dict(formations),
+        "samples": samples,
+    }
+
+
+def _formation_quotas(formation):
+    try:
+        parts = [int(part) for part in str(formation or "").split("-")]
+    except ValueError:
+        return None
+    if not parts or sum(parts) != 10:
+        return None
+    defenders = parts[0]
+    attackers = parts[-1] if len(parts) > 1 else 0
+    midfielders = max(0, 10 - defenders - attackers)
+    return {
+        "Goalkeeper": 1, "Defender": defenders,
+        "Midfielder": midfielders, "Attacker": attackers,
+    }
+
+
 def predict_starting_xi(
     team_id, league_id=None, season=None, unavailable_names=None,
     historical_lineups=True,
@@ -1601,6 +1725,8 @@ def predict_starting_xi(
         set_db_cache(usage_key, {**usage, "_sample_lineups": sample_lineups})
 
     core = get_expected_core_players(team_id, league_id, season)
+    robot_experience = _load_robot_lineup_experience(team_id)
+    learned_players = robot_experience.get("players") or {}
     core_normalized = {_normalize_player_name(name) for name in core}
     usage_by_normalized = {
         _normalize_player_name(name): float(score or 0)
@@ -1616,6 +1742,9 @@ def predict_starting_xi(
         seen.add(normalized)
         position = str(player.get("position") or "Unknown")
         appearances = usage_by_normalized.get(normalized, 0.0)
+        learned = learned_players.get(normalized) or {}
+        learned_games = int(learned.get("eligible_games") or 0)
+        learned_probability = float(learned.get("learned_start_probability") or 0)
         core_bonus = 4.0 if normalized in core_normalized else 0.0
         try:
             shirt_number = int(player.get("number") or 99)
@@ -1624,8 +1753,10 @@ def predict_starting_xi(
         players.append({
             "name": name,
             "position": position,
-            "score": appearances + core_bonus,
+            "score": appearances + core_bonus + learned_probability * learned_games,
             "recent_weight": appearances,
+            "learned_start_probability": learned_probability,
+            "learned_games": learned_games,
             "shirt_number": shirt_number,
         })
 
@@ -1657,7 +1788,13 @@ def predict_starting_xi(
     selected = []
     # A neutral 4-3-3 positional shell is used only to stop a squad-list
     # fallback from selecting eleven attackers. It is not a formation claim.
-    quotas = {
+    learned_formation = ""
+    if robot_experience.get("formations"):
+        learned_formation = max(
+            robot_experience["formations"],
+            key=lambda key: (robot_experience["formations"][key], key),
+        )
+    quotas = _formation_quotas(learned_formation) or {
         "Goalkeeper": 1, "Defender": 4,
         "Midfielder": 3, "Attacker": 3,
     }
@@ -1685,7 +1822,13 @@ def predict_starting_xi(
         "confidence": round(confidence, 3),
         "predicted_count": len(names),
         "excluded_unavailable_count": len(unavailable),
-        "formation_note": "포지션 균형용 4-3-3 틀 · 실제 포메이션 예측 아님",
+        "robot_lineup_answer_samples": int(robot_experience.get("samples") or 0),
+        "learned_formation": learned_formation,
+        "formation_note": (
+            f"공식 선발 정답에서 학습한 포메이션 {learned_formation}"
+            if learned_formation else
+            "공식 선발 정답 전 포지션 균형용 4-3-3 임시 틀"
+        ),
     }
 
 
@@ -4166,7 +4309,10 @@ def _ensure_autonomous_robot_tables(conn):
             captured_timestamp REAL NOT NULL,
             robot_pick_version TEXT NOT NULL,
             feature_schema_version TEXT NOT NULL,
+            memory_schema_version TEXT DEFAULT '',
             features_json TEXT NOT NULL,
+            full_evidence_json TEXT DEFAULT '{}',
+            lineup_prediction_json TEXT DEFAULT '{}',
             candidates_json TEXT NOT NULL,
             robot_pick_json TEXT NOT NULL,
             actual_home_goals INTEGER,
@@ -4175,6 +4321,12 @@ def _ensure_autonomous_robot_tables(conn):
             result_known_timestamp REAL,
             robot_pick_correct INTEGER,
             candidate_results_json TEXT DEFAULT '[]',
+            official_lineup_json TEXT DEFAULT '{}',
+            lineup_comparison_json TEXT DEFAULT '{}',
+            lineup_known_at TEXT,
+            lineup_known_timestamp REAL,
+            lineup_retry_at REAL DEFAULT 0,
+            lineup_retry_attempts INTEGER DEFAULT 0,
             UNIQUE(fixture_key, robot_pick_version)
         )
         """
@@ -4192,6 +4344,45 @@ def _ensure_autonomous_robot_tables(conn):
         conn.execute(
             "ALTER TABLE robot_learning_samples ADD COLUMN candidate_results_json TEXT DEFAULT '[]'"
         )
+    robot_column_defaults = {
+        "memory_schema_version": "TEXT DEFAULT ''",
+        "full_evidence_json": "TEXT DEFAULT '{}'",
+        "lineup_prediction_json": "TEXT DEFAULT '{}'",
+        "official_lineup_json": "TEXT DEFAULT '{}'",
+        "lineup_comparison_json": "TEXT DEFAULT '{}'",
+        "lineup_known_at": "TEXT",
+        "lineup_known_timestamp": "REAL",
+        "lineup_retry_at": "REAL DEFAULT 0",
+        "lineup_retry_attempts": "INTEGER DEFAULT 0",
+    }
+    for column, declaration in robot_column_defaults.items():
+        if column not in robot_columns:
+            conn.execute(
+                f"ALTER TABLE robot_learning_samples ADD COLUMN {column} {declaration}"
+            )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS robot_pre_match_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_key TEXT NOT NULL,
+            robot_pick_version TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            memory_schema_version TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            captured_timestamp REAL NOT NULL,
+            kickoff_timestamp REAL NOT NULL,
+            analysis_stage TEXT DEFAULT '',
+            features_json TEXT NOT NULL,
+            full_evidence_json TEXT NOT NULL,
+            evidence_fingerprint TEXT NOT NULL,
+            UNIQUE(fixture_key,robot_pick_version,evidence_fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_robot_observations_fixture "
+        "ON robot_pre_match_observations(fixture_key,captured_timestamp)"
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS robot_model_promotions (
@@ -4353,24 +4544,32 @@ def _load_autonomous_robot_artifact():
         ):
             return _AUTONOMOUS_ROBOT_CACHE["artifact"]
         examples = []
+        compatible_schemas = tuple(ROBOT_COMPATIBLE_FEATURE_SCHEMAS)
+        schema_marks = ",".join("?" for _ in compatible_schemas)
         rows = conn.execute(
-            """
-            SELECT fixture_key,kickoff_timestamp,captured_timestamp,
-                   result_known_timestamp,features_json,
-                   actual_home_goals,actual_away_goals
-            FROM (
-                SELECT id,fixture_key,kickoff_timestamp,captured_timestamp,
-                       result_known_timestamp,features_json,
-                       actual_home_goals,actual_away_goals
-                FROM robot_learning_samples
-                WHERE actual_home_goals IS NOT NULL
-                  AND actual_away_goals IS NOT NULL
-                  AND feature_schema_version=?
-                ORDER BY kickoff_timestamp DESC,id DESC
-            )
-            ORDER BY kickoff_timestamp,id
-            """
-            , (ROBOT_FEATURE_SCHEMA_VERSION,)
+            f"""
+            SELECT sample.fixture_key,sample.kickoff_timestamp,
+                   COALESCE(observation.captured_timestamp,sample.captured_timestamp),
+                   sample.result_known_timestamp,
+                   COALESCE(observation.features_json,sample.features_json),
+                   sample.actual_home_goals,sample.actual_away_goals
+            FROM robot_learning_samples AS sample
+            LEFT JOIN robot_pre_match_observations AS observation
+              ON observation.id=(
+                  SELECT latest.id
+                  FROM robot_pre_match_observations AS latest
+                  WHERE latest.fixture_key=sample.fixture_key
+                    AND latest.robot_pick_version=sample.robot_pick_version
+                    AND latest.captured_timestamp < sample.kickoff_timestamp
+                  ORDER BY latest.captured_timestamp DESC,latest.id DESC
+                  LIMIT 1
+              )
+            WHERE sample.actual_home_goals IS NOT NULL
+              AND sample.actual_away_goals IS NOT NULL
+              AND sample.feature_schema_version IN ({schema_marks})
+            ORDER BY sample.kickoff_timestamp,sample.id
+            """,
+            compatible_schemas,
         ).fetchall()
         for fixture_key, kickoff, captured, known, features_json, goals_h, goals_a in rows:
             try:
@@ -4422,7 +4621,8 @@ def _load_autonomous_robot_artifact():
 
 def save_autonomous_robot_sample(
     source, match_id, fixture_id, league, home_team, away_team, kickoff,
-    features, candidates, robot_pick,
+    features, candidates, robot_pick, full_evidence=None,
+    lineup_prediction=None, analysis_stage="",
 ):
     """Persist the first verified pre-kickoff robot input without later edits."""
     if not isinstance(kickoff, datetime):
@@ -4445,6 +4645,16 @@ def save_autonomous_robot_sample(
         return False
     fixture_key = _robot_fixture_key(
         match_id, fixture_id, home_team, away_team, kickoff_utc
+    )
+    full_evidence = full_evidence if isinstance(full_evidence, dict) else {}
+    lineup_prediction = (
+        lineup_prediction if isinstance(lineup_prediction, dict) else {}
+    )
+    evidence_json = json.dumps(
+        full_evidence, ensure_ascii=False, sort_keys=True, default=str
+    )
+    feature_json = json.dumps(
+        features, ensure_ascii=False, sort_keys=True, default=str
     )
     compact_candidates = []
     for candidate in candidates or []:
@@ -4475,21 +4685,42 @@ def save_autonomous_robot_sample(
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
+        observation_fingerprint = hashlib.sha256(
+            (feature_json + "\x1f" + evidence_json).encode("utf-8")
+        ).hexdigest()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO robot_pre_match_observations (
+                fixture_key,robot_pick_version,feature_schema_version,
+                memory_schema_version,captured_at,captured_timestamp,
+                kickoff_timestamp,analysis_stage,features_json,
+                full_evidence_json,evidence_fingerprint
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                fixture_key, ROBOT_PICK_VERSION, ROBOT_FEATURE_SCHEMA_VERSION,
+                ROBOT_MEMORY_SCHEMA_VERSION, now.isoformat(), now.timestamp(),
+                kickoff_utc.timestamp(), str(analysis_stage or ""),
+                feature_json, evidence_json, observation_fingerprint,
+            ),
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO robot_learning_samples (
                 fixture_key,source,match_id,api_fixture_id,league,home_team,away_team,
                 kickoff_at,kickoff_timestamp,captured_at,captured_timestamp,
-                robot_pick_version,feature_schema_version,features_json,
+                robot_pick_version,feature_schema_version,memory_schema_version,
+                features_json,full_evidence_json,lineup_prediction_json,
                 candidates_json,robot_pick_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 fixture_key, str(source or "UNKNOWN"), str(match_id), int(fixture_id or 0),
                 str(league or ""), str(home_team), str(away_team), kickoff_utc.isoformat(),
                 kickoff_utc.timestamp(), now.isoformat(), now.timestamp(),
                 ROBOT_PICK_VERSION, ROBOT_FEATURE_SCHEMA_VERSION,
-                json.dumps(features, ensure_ascii=False, sort_keys=True),
+                ROBOT_MEMORY_SCHEMA_VERSION, feature_json, evidence_json,
+                json.dumps(lineup_prediction, ensure_ascii=False, sort_keys=True, default=str),
                 json.dumps(compact_candidates, ensure_ascii=False, sort_keys=True),
                 json.dumps(compact_pick, ensure_ascii=False, sort_keys=True),
             ),
@@ -4594,13 +4825,65 @@ def _apply_frozen_toto14_robot(item, match_id):
     return item
 
 
+def _compare_robot_lineup_prediction(lineup_prediction, official_lineup):
+    if not official_lineup.get("confirmed"):
+        return {}
+    details = official_lineup.get("details") or {}
+    predicted_sides = {
+        "home": list(lineup_prediction.get("home_predicted_starting_xi") or []),
+        "away": list(lineup_prediction.get("away_predicted_starting_xi") or []),
+    }
+    team_ids = {
+        "home": int(lineup_prediction.get("home_team_id") or 0),
+        "away": int(lineup_prediction.get("away_team_id") or 0),
+    }
+    comparisons = {}
+    ordered_fallback = list(details.values())
+    for index, side in enumerate(("home", "away")):
+        actual_team = details.get(str(team_ids[side])) or (
+            ordered_fallback[index] if index < len(ordered_fallback) else {}
+        )
+        actual_names = [
+            str(row.get("name") or "")
+            for row in (actual_team.get("start_xi") or [])
+            if str(row.get("name") or "").strip()
+        ]
+        actual_normalized = {_normalize_player_name(name) for name in actual_names}
+        predicted_names = predicted_sides[side]
+        predicted_normalized = {
+            _normalize_player_name(name) for name in predicted_names
+        }
+        hits = [
+            name for name in predicted_names
+            if _normalize_player_name(name) in actual_normalized
+        ]
+        comparisons[side] = {
+            "team_id": team_ids[side],
+            "predicted_count": len(predicted_names),
+            "official_count": len(actual_names),
+            "correct_starters": len(hits),
+            "accuracy": round(len(hits) / max(1, len(actual_names)), 6),
+            "matched_players": hits,
+            "missed_official_players": [
+                name for name in actual_names
+                if _normalize_player_name(name) not in predicted_normalized
+            ],
+            "formation": actual_team.get("formation") or "",
+        }
+    return {
+        "schema_version": ROBOT_LINEUP_SCHEMA_VERSION,
+        "teams": comparisons,
+    }
+
+
 def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a):
     _ensure_autonomous_robot_tables(conn)
     known = datetime.now(timezone.utc)
     if int(fixture_id or 0) > 0:
         rows = conn.execute(
             """
-            SELECT id,home_team,away_team,robot_pick_json,candidates_json
+            SELECT id,home_team,away_team,robot_pick_json,candidates_json,
+                   lineup_prediction_json
             FROM robot_learning_samples
             WHERE api_fixture_id=? AND actual_home_goals IS NULL AND kickoff_timestamp < ?
             """,
@@ -4609,14 +4892,33 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
     else:
         rows = conn.execute(
             """
-            SELECT id,home_team,away_team,robot_pick_json,candidates_json
+            SELECT id,home_team,away_team,robot_pick_json,candidates_json,
+                   lineup_prediction_json
             FROM robot_learning_samples
             WHERE match_id=? AND actual_home_goals IS NULL AND kickoff_timestamp < ?
             """,
             (str(match_id), known.timestamp()),
         ).fetchall()
+    official_lineup = {"confirmed": False, "details": {}}
+    needs_lineup_answer = any(
+        str(row[5] or "").strip() not in {"", "{}", "null"}
+        for row in rows
+    )
+    if int(fixture_id or 0) > 0 and needs_lineup_answer:
+        # This is a post-match answer label only. It is never copied into the
+        # pre-kickoff result model features for the same fixture. A lineup API
+        # failure must never prevent the score and pick from being graded.
+        try:
+            official_lineup = fetch_lineups_api(
+                int(fixture_id), 24 * 365 * 5, purpose="scoring"
+            )
+        except Exception as error:
+            print(
+                f"⚠️ 로봇 공식 선발 정답 조회 실패({fixture_id}) · "
+                f"결과 채점은 계속: {type(error).__name__}"
+            )
     graded = 0
-    for sample_id, home_team, away_team, robot_json, candidates_json in rows:
+    for sample_id, home_team, away_team, robot_json, candidates_json, lineup_json in rows:
         try:
             robot_pick = json.loads(robot_json or "{}")
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -4625,6 +4927,10 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
             candidates = json.loads(candidates_json or "[]")
         except (TypeError, ValueError, json.JSONDecodeError):
             candidates = []
+        try:
+            lineup_prediction = json.loads(lineup_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            lineup_prediction = {}
         robot_hit = evaluate_single_pick(
             robot_pick.get("raw_pick"), home_team, away_team,
             int(goals_h), int(goals_a),
@@ -4644,17 +4950,37 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
                     int(goals_h), int(goals_a),
                 ),
             })
+        lineup_comparison = {}
+        lineup_known_at = None
+        lineup_known_timestamp = None
+        if official_lineup.get("confirmed"):
+            lineup_comparison = _compare_robot_lineup_prediction(
+                lineup_prediction, official_lineup
+            )
+            lineup_known_at = known.isoformat()
+            lineup_known_timestamp = known.timestamp()
         cursor = conn.execute(
             """
             UPDATE robot_learning_samples
             SET actual_home_goals=?,actual_away_goals=?,result_known_at=?,
-                result_known_timestamp=?,robot_pick_correct=?,candidate_results_json=?
+                result_known_timestamp=?,robot_pick_correct=?,candidate_results_json=?,
+                official_lineup_json=?,lineup_comparison_json=?,
+                lineup_known_at=?,lineup_known_timestamp=?,
+                lineup_retry_attempts=?,lineup_retry_at=?
             WHERE id=? AND actual_home_goals IS NULL
             """,
             (
                 int(goals_h), int(goals_a), known.isoformat(), known.timestamp(),
                 int(bool(robot_hit)),
                 json.dumps(candidate_results, ensure_ascii=False, sort_keys=True),
+                json.dumps(
+                    official_lineup if official_lineup.get("confirmed") else {},
+                    ensure_ascii=False, sort_keys=True,
+                ),
+                json.dumps(lineup_comparison, ensure_ascii=False, sort_keys=True),
+                lineup_known_at, lineup_known_timestamp,
+                0 if official_lineup.get("confirmed") else 1,
+                0 if official_lineup.get("confirmed") else known.timestamp() + 900.0,
                 int(sample_id),
             ),
         )
@@ -4662,6 +4988,79 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
     if graded:
         _AUTONOMOUS_ROBOT_CACHE.update(signature=None, artifact=None)
     return graded
+
+
+def _reconcile_robot_lineup_answers(conn, batch_size=6):
+    """Keep seeking missing official XI answers without blocking score grading."""
+    _ensure_autonomous_robot_tables(conn)
+    now = datetime.now(timezone.utc)
+    rows = conn.execute(
+        """
+        SELECT id,api_fixture_id,lineup_prediction_json,lineup_retry_attempts
+        FROM robot_learning_samples
+        WHERE actual_home_goals IS NOT NULL
+          AND api_fixture_id > 0
+          AND lineup_prediction_json NOT IN ('','{}')
+          AND (lineup_known_timestamp IS NULL OR official_lineup_json IN ('','{}'))
+          AND COALESCE(lineup_retry_at,0) <= ?
+        ORDER BY result_known_timestamp,id
+        LIMIT ?
+        """,
+        (now.timestamp(), max(1, int(batch_size))),
+    ).fetchall()
+    attached = 0
+    for sample_id, fixture_id, prediction_json, attempts in rows:
+        try:
+            prediction = json.loads(prediction_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            prediction = {}
+        try:
+            official = fetch_lineups_api(
+                int(fixture_id), 24 * 365 * 5, purpose="scoring"
+            )
+        except Exception as error:
+            print(
+                f"⚠️ 로봇 공식 선발 정답 재조회 실패({fixture_id}): "
+                f"{type(error).__name__}"
+            )
+            official = {"confirmed": False, "details": {}}
+        attempt_count = int(attempts or 0) + 1
+        if official.get("confirmed"):
+            comparison = _compare_robot_lineup_prediction(prediction, official)
+            cursor = conn.execute(
+                """
+                UPDATE robot_learning_samples
+                SET official_lineup_json=?,lineup_comparison_json=?,
+                    lineup_known_at=?,lineup_known_timestamp=?,
+                    lineup_retry_attempts=?,lineup_retry_at=0
+                WHERE id=? AND lineup_known_timestamp IS NULL
+                """,
+                (
+                    json.dumps(official, ensure_ascii=False, sort_keys=True),
+                    json.dumps(comparison, ensure_ascii=False, sort_keys=True),
+                    now.isoformat(), now.timestamp(), attempt_count, int(sample_id),
+                ),
+            )
+            attached += int(cursor.rowcount or 0)
+        else:
+            # Retry forever with a restrained exponential backoff; this is an
+            # API-safety schedule, never a learning eligibility threshold.
+            retry_hours = min(24.0, 0.25 * (2 ** min(7, attempt_count - 1)))
+            conn.execute(
+                """
+                UPDATE robot_learning_samples
+                SET lineup_retry_attempts=?,lineup_retry_at=?
+                WHERE id=? AND lineup_known_timestamp IS NULL
+                """,
+                (
+                    attempt_count,
+                    now.timestamp() + retry_hours * 3600.0,
+                    int(sample_id),
+                ),
+            )
+    if rows:
+        conn.commit()
+    return attached
 
 
 def select_autonomous_robot_pick(picks, confidence, robot_features=None):
@@ -5996,6 +6395,7 @@ def _detect_odds_movement(
         )
     except (TypeError, ValueError):
         underdog_side = ""
+    result["opening_underdog_side"] = underdog_side
     for market_name in ("1x2", "totals", "handicap"):
         old_market = previous.get(market_name) or {}
         new_market = current.get(market_name) or {}
@@ -6120,6 +6520,17 @@ def _detect_odds_movement(
         )
     if result["underdog_move"]:
         summaries.append("초기 열세팀 배당 수축 확인")
+    result["upset_price_signal_side"] = (
+        underdog_side if result["underdog_move"] else ""
+    )
+    current_wdl = current.get("1x2") or {}
+    try:
+        result["current_favorite_side"] = min(
+            ("home", "draw", "away"),
+            key=lambda side: float(current_wdl.get(side) or 999),
+        ) if all(float(current_wdl.get(side) or 0) > 1 for side in ("home", "draw", "away")) else ""
+    except (TypeError, ValueError):
+        result["current_favorite_side"] = ""
     result["qualified"] = bool(result["signals"] or result["line_movements"]) and result["comparable_bookmakers"]
     if not result["comparable_bookmakers"]:
         result["home_bonus"] = result["away_bonus"] = 0.0
@@ -6200,6 +6611,34 @@ def capture_odds_movement(fixture_id, source_type, analysis_stage, snapshot):
             (fixture_id, str(source_type), str(analysis_stage or ""), encoded, fingerprint),
         )
         conn.commit()
+        history = []
+        for stage, raw_odds, captured_at in conn.execute(
+            """
+            SELECT analysis_stage,odds_json,captured_at
+            FROM odds_movement_snapshots
+            WHERE fixture_id=? AND source_type=?
+            ORDER BY id ASC
+            """,
+            (fixture_id, str(source_type)),
+        ).fetchall():
+            try:
+                quote = json.loads(raw_odds or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            history.append({
+                "captured_at": str(captured_at or ""),
+                "analysis_stage": str(stage or ""),
+                "odds": quote,
+            })
+        movement["history"] = history
+        movement["history_count"] = len(history)
+        movement["opening_snapshot"] = history[0] if history else None
+        movement["latest_snapshot"] = history[-1] if history else None
+        movement["closing_snapshot"] = (
+            history[-1]
+            if history and str(analysis_stage or "") == "T-30-final"
+            else None
+        )
         return movement
     except Exception as error:
         print(f"⚠️ 시간대별 해외배당 기록 실패({fixture_id}): {error}")
@@ -6208,13 +6647,80 @@ def capture_odds_movement(fixture_id, source_type, analysis_stage, snapshot):
         conn.close()
 
 
+def _observe_locked_pick_market_flow(
+    item, source, match_id, fixture_id, league, home_team, away_team,
+    kickoff, diff_hours, snapshot=None,
+):
+    """Keep learning the price path without changing a published pick.
+
+    Official, legacy V4 and robot picks are first-public immutable.  Market
+    observations are different: opening, intermediate and the last available
+    pre-kickoff quote remain useful answers for the robot after the pick has
+    been locked.  This helper therefore appends only evidence/feature memory.
+    """
+    item = item if isinstance(item, dict) else {}
+    fixture_id = int(fixture_id or 0)
+    if fixture_id <= 0 or not item.get("robot_pick"):
+        return False
+    if not isinstance(kickoff, datetime):
+        kickoff = _parse_kst_match_time(kickoff)
+    if kickoff is None:
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    if datetime.now(KST) >= kickoff.astimezone(KST):
+        return False
+    snapshot = snapshot or fetch_world_market_snapshot(fixture_id, diff_hours)
+    if not _has_valid_world_market(snapshot):
+        return False
+    observation_stage = prediction_stage(diff_hours, bool(item.get("lineup_confirmed")))
+    movement = capture_odds_movement(
+        fixture_id, str(source or "UNKNOWN"), observation_stage, snapshot
+    )
+    try:
+        full_evidence = json.loads(json.dumps(
+            item.get("robot_full_evidence") or {},
+            ensure_ascii=False, default=str,
+        ))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        full_evidence = {}
+    markets = full_evidence.setdefault("markets", {})
+    if not isinstance(markets, dict):
+        markets = {}
+        full_evidence["markets"] = markets
+    markets["current_snapshot"] = snapshot
+    markets["time_series_and_reverse_signals"] = movement
+    markets["latest_observation_role"] = (
+        "closing" if float(diff_hours) <= 0.5 else "intermediate"
+    )
+    # Existing first-pass inputs are retained as direct features, while every
+    # newly observed nested odds field is added automatically.
+    robot_features = build_autonomous_robot_features(
+        {}, {}, item.get("robot_candidates") or [],
+        float(item.get("analysis_confidence") or 0),
+        extra=item.get("robot_features") or {},
+        all_evidence=full_evidence,
+    )
+    return save_autonomous_robot_sample(
+        str(source or "UNKNOWN"), str(match_id or ""), fixture_id,
+        str(league or ""), str(home_team or "홈팀"), str(away_team or "원정팀"),
+        kickoff, robot_features, item.get("robot_candidates") or [],
+        item.get("robot_pick") or {}, full_evidence=full_evidence,
+        lineup_prediction=(
+            item.get("robot_lineup_prediction")
+            or item.get("lineup_learning") or {}
+        ),
+        analysis_stage=observation_stage,
+    )
+
+
 def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, season, ttl_h):
     fixture_id = int(fixture_id or 0)
     team_ids = {int(home_id or 0), int(away_id or 0)}
     default = {
         str(team_id): {
             "count": 0, "ace_missing": False, "ace_names": [],
-            "all_names": [], "missing_goals": 0,
+            "all_names": [], "missing_goals": 0, "records": [],
             "available": False, "source": "none",
         }
         for team_id in team_ids if team_id > 0
@@ -6232,11 +6738,19 @@ def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, seaso
         if response.status_code != 200 or payload.get("errors"):
             raise RuntimeError(f"injuries HTTP {response.status_code}: {payload.get('errors')}")
         names_by_team = {team_id: [] for team_id in team_ids}
+        records_by_team = {team_id: [] for team_id in team_ids}
         for row in payload.get("response", []) or []:
             team_id = int((row.get("team") or {}).get("id") or 0)
-            player_name = str((row.get("player") or {}).get("name") or "").strip()
+            player = row.get("player") or {}
+            player_name = str(player.get("name") or "").strip()
             if team_id in names_by_team and player_name:
                 names_by_team[team_id].append(player_name)
+                records_by_team[team_id].append({
+                    "player_id": int(player.get("id") or 0),
+                    "name": player_name,
+                    "type": str(player.get("type") or "").strip(),
+                    "reason": str(player.get("reason") or "").strip(),
+                })
         key_players = {}
         if any(names_by_team.values()) and league_id and season:
             key_players = fetch_league_key_players(league_id, season)
@@ -6269,6 +6783,7 @@ def fetch_world_injuries_snapshot(fixture_id, home_id, away_id, league_id, seaso
                 "ace_missing": bool(ace_names),
                 "ace_names": ace_names,
                 "all_names": names,
+                "records": records_by_team.get(team_id) or [],
                 "missing_goals": missing_goals,
                 "available": True,
                 "source": "target_fixture",
@@ -6651,6 +7166,200 @@ def _sync_world_item_from_proto(item, proto_item):
     return before != json.dumps(item, ensure_ascii=False, sort_keys=True)
 
 
+def _competition_kind(league_name, match_identity=None):
+    text = " ".join((
+        str(league_name or ""),
+        str((match_identity or {}).get("round") or ""),
+        str((match_identity or {}).get("country") or ""),
+    )).casefold()
+    if any(word in text for word in ("friendly", "친선")):
+        return "friendly"
+    if any(word in text for word in (
+        "champions", "europa", "conference", "libertadores", "sudamericana",
+        "afc", "concacaf", "caf", "ofc", "international", "world cup",
+    )):
+        return "international_club_or_national"
+    if any(word in text for word in ("cup", "copa", "fa컵", "리그컵", "coppa", "pokal")):
+        return "domestic_cup"
+    if any(word in text for word in ("playoff", "play-off", "knockout", "final", "결승")):
+        return "playoff_or_knockout"
+    return "league_or_other"
+
+
+def _robot_team_travel_context(team_info, current_match, recent_fixtures, current_role):
+    """Summarize only verified itinerary facts already present in fixture data.
+
+    A city change is not presented as a kilometre distance.  Keeping the raw
+    cities, countries, dates and home/away roles lets the robot learn which
+    itineraries matter for each team/competition once results arrive.
+    """
+    team_info = team_info if isinstance(team_info, dict) else {}
+    current_match = current_match if isinstance(current_match, dict) else {}
+    recent_fixtures = [
+        row for row in (recent_fixtures or []) if isinstance(row, dict)
+    ]
+    try:
+        team_id = int(team_info.get("id") or 0)
+    except (TypeError, ValueError):
+        team_id = 0
+    venue = team_info.get("venue") or {}
+    base_city = str(venue.get("city") or "").strip()
+    current_city = str(current_match.get("city") or "").strip()
+    current_country = str(current_match.get("country") or "").strip()
+
+    itinerary = []
+    for row in recent_fixtures[-8:]:
+        fixture = row.get("fixture") or {}
+        league = row.get("league") or {}
+        teams = row.get("teams") or {}
+        home_id = int(((teams.get("home") or {}).get("id") or 0))
+        away_id = int(((teams.get("away") or {}).get("id") or 0))
+        role = "home" if team_id and home_id == team_id else (
+            "away" if team_id and away_id == team_id else "unknown"
+        )
+        venue_row = fixture.get("venue") or {}
+        itinerary.append({
+            "fixture_id": int(fixture.get("id") or 0),
+            "timestamp": int(fixture.get("timestamp") or 0),
+            "date": str(fixture.get("date") or ""),
+            "role": role,
+            "city": str(venue_row.get("city") or ""),
+            "venue_name": str(venue_row.get("name") or ""),
+            "country": str(league.get("country") or ""),
+            "league_name": str(league.get("name") or ""),
+            "opponent_id": (
+                away_id if role == "home" else home_id if role == "away" else 0
+            ),
+        })
+
+    last = itinerary[-1] if itinerary else {}
+    consecutive_away = 0
+    for row in reversed(itinerary):
+        if row.get("role") != "away":
+            break
+        consecutive_away += 1
+    last_five = itinerary[-5:]
+    recent_away_count = sum(row.get("role") == "away" for row in last_five)
+    last_city = str(last.get("city") or "").strip()
+    last_country = str(last.get("country") or "").strip()
+    return {
+        "team_id": team_id,
+        "current_role": str(current_role or ""),
+        "verified_base_city": base_city,
+        "current_match_city": current_city,
+        "current_match_country": current_country,
+        "base_city_to_current_city_changed": (
+            base_city.casefold() != current_city.casefold()
+            if base_city and current_city else None
+        ),
+        "last_match_city": last_city,
+        "last_match_country": last_country,
+        "last_city_to_current_city_changed": (
+            last_city.casefold() != current_city.casefold()
+            if last_city and current_city else None
+        ),
+        "last_country_to_current_country_changed": (
+            last_country.casefold() != current_country.casefold()
+            if last_country and current_country else None
+        ),
+        "consecutive_recent_away_matches": consecutive_away,
+        "away_matches_in_last_five": recent_away_count,
+        "raw_recent_itinerary": itinerary,
+        # Exact kilometres/time zones require verified coordinates.  Unknown
+        # values stay unknown instead of becoming a misleading zero.
+        "verified_distance_km": None,
+        "verified_timezone_shift_hours": None,
+    }
+
+
+def _robot_full_pre_match_evidence(
+    source, match_identity, league_name, league_id, season,
+    home_info, away_info, home_recent, away_recent,
+    home_stats, away_stats, home_long, away_long,
+    home_standing, away_standing, home_survival, away_survival,
+    injuries, lineup_learning, rest_days, last_fixtures, next_fixtures,
+    managers, h2h, environment, odds, odds_movement,
+    goal_model_audit, context_audit, confidence,
+    quality=None, adjustments=None, supplemental=None,
+):
+    """Return the robot's complete immutable pre-kickoff memory document.
+
+    Nested payloads are intentionally retained instead of cherry-picking
+    numeric fields. The model flattener automatically admits newly added
+    provider fields without a new human weighting rule.
+    """
+    match_identity = dict(match_identity or {})
+    league_name = str(league_name or match_identity.get("league") or "")
+    last_fixtures = last_fixtures if isinstance(last_fixtures, dict) else {}
+    environment = environment if isinstance(environment, dict) else {}
+    travel_match = dict(match_identity)
+    travel_match["city"] = str(
+        travel_match.get("city") or environment.get("city") or ""
+    )
+    travel_match["country"] = str(
+        travel_match.get("country") or environment.get("country") or ""
+    )
+    evidence = {
+        "memory_schema_version": ROBOT_MEMORY_SCHEMA_VERSION,
+        "source": str(source or ""),
+        "match_identity": match_identity,
+        "competition": {
+            "league_name": league_name,
+            "league_id": int(league_id or 0),
+            "season": season,
+            "kind": _competition_kind(league_name, match_identity),
+            "round": match_identity.get("round"),
+            "country": match_identity.get("country"),
+        },
+        "teams": {"home": home_info or {}, "away": away_info or {}},
+        "recent_form": {"home": home_recent or {}, "away": away_recent or {}},
+        "recent_match_stats": {"home": home_stats or {}, "away": away_stats or {}},
+        "long_term": {"home": home_long or {}, "away": away_long or {}},
+        "standings": {"home": home_standing or {}, "away": away_standing or {}},
+        "motivation": {
+            "home_survival": home_survival or {},
+            "away_survival": away_survival or {},
+        },
+        "h2h_and_matchup": h2h or {},
+        "injuries_and_absences": injuries or {},
+        "lineup_learning": lineup_learning or {},
+        "squads": {
+            "home": fetch_team_squad_cached(int((home_info or {}).get("id") or 0)),
+            "away": fetch_team_squad_cached(int((away_info or {}).get("id") or 0)),
+        },
+        "schedule_and_travel": {
+            "rest_days": rest_days or {},
+            "recent_fixtures": last_fixtures,
+            "next_fixtures": next_fixtures or {},
+            "home_itinerary": _robot_team_travel_context(
+                home_info, travel_match, last_fixtures.get("home") or [], "home"
+            ),
+            "away_itinerary": _robot_team_travel_context(
+                away_info, travel_match, last_fixtures.get("away") or [], "away"
+            ),
+            # Exact distance is deliberately left unknown until verified
+            # coordinates are available; no location is fabricated.
+            "travel_distance_km": None,
+        },
+        "managers": managers or {},
+        "environment": environment,
+        "markets": {
+            "current_snapshot": odds or {},
+            "time_series_and_reverse_signals": odds_movement or {},
+        },
+        "model_context": {
+            "goal_model_audit": goal_model_audit or {},
+            "context_audit": context_audit or {},
+            "data_confidence": confidence,
+            "quality": quality or {},
+            "adjustments": adjustments or {},
+        },
+    }
+    if isinstance(supplemental, dict):
+        evidence["supplemental"] = supplemental
+    return evidence
+
+
 def _save_world_learning_record(match, analysis):
     """Feed WORLD forecasts into the same immutable grading/learning pipeline."""
     # A price-only market preview is a provisional display while the complete
@@ -6703,6 +7412,22 @@ def _save_world_learning_record(match, analysis):
     )
     odds = analysis.get("odds_snapshot") or {}
     wdl = odds.get("1x2") or {}
+    kickoff = _parse_kst_match_time(
+        match.get("match_time") or match.get("kickoff_at")
+    )
+    if kickoff is not None and robot_pick:
+        # Every changed pre-kickoff evidence state is appended to the robot's
+        # observation memory. The first public pick row remains immutable.
+        save_autonomous_robot_sample(
+            "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
+            str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
+            str(match.get("home") or "홈팀"), str(match.get("away") or "원정팀"),
+            kickoff, analysis.get("robot_features") or {},
+            analysis.get("robot_candidates") or [], robot_pick,
+            full_evidence=analysis.get("robot_full_evidence") or {},
+            lineup_prediction=analysis.get("robot_lineup_prediction") or {},
+            analysis_stage=str(analysis.get("analysis_stage") or ""),
+        )
     prediction_saved = save_dual_predictions_to_local_db(
         str(match.get("id") or ""),
         str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
@@ -6734,22 +7459,12 @@ def _save_world_learning_record(match, analysis):
         robot_pick=robot_pick,
         lineup_prediction=(analysis.get("decision") or {}).get("lineup_prediction"),
     )
-    kickoff = _parse_kst_match_time(
-        match.get("match_time") or match.get("kickoff_at")
-    )
     if analysis_saved and kickoff is not None:
         save_three_engine_picks(
             "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
             str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
             str(match.get("home") or "홈팀"), str(match.get("away") or "원정팀"),
             kickoff, selected, analysis.get("legacy_v4_pick") or {}, robot_pick,
-        )
-        save_autonomous_robot_sample(
-            "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
-            str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
-            str(match.get("home") or "홈팀"), str(match.get("away") or "원정팀"),
-            kickoff, analysis.get("robot_features") or {},
-            analysis.get("robot_candidates") or [], robot_pick,
         )
     return analysis_saved
 
@@ -6887,6 +7602,9 @@ def _analyze_world_match(item, now, market_performance):
     referee = str(match.get("referee") or "").strip() or None
     city = str(match.get("city") or "").strip()
     weather_condition = fetch_weather_api(city, heavy_ttl) if city else None
+    weather_details = fetch_weather_details_api(city, heavy_ttl) if city else {
+        "available": False, "condition": "Unknown", "city": ""
+    }
 
     injuries_for_quality = {"home": h_inj, "away": a_inj}
     quality_score, quality_grade, missing_data = _world_data_quality(
@@ -7060,6 +7778,59 @@ def _analyze_world_match(item, now, market_performance):
     })
     annotate_pick_metrics(candidates, confidence)
     categories, _ = select_pick_categories(candidates, confidence)
+    lineup_learning = {
+        "schema_version": ROBOT_LINEUP_SCHEMA_VERSION,
+        "mode": "predicted-xi-then-official-answer-v2",
+        "home_team_id": home_id,
+        "away_team_id": away_id,
+        "not_full_starting_xi": len(h_predicted_xi) < 11 or len(a_predicted_xi) < 11,
+        "home_predicted_core": list(h_core),
+        "away_predicted_core": list(a_core),
+        "home_predicted_starting_xi": list(h_predicted_xi),
+        "away_predicted_starting_xi": list(a_predicted_xi),
+        "home_official_starters": list(lineup_data.get(str(home_id), []) or []),
+        "away_official_starters": list(lineup_data.get(str(away_id), []) or []),
+        "home_active_starting_xi": list(lineup_data.get(str(home_id), []) or h_predicted_xi),
+        "away_active_starting_xi": list(lineup_data.get(str(away_id), []) or a_predicted_xi),
+        "official_details": lineup_data.get("details") or {},
+        "home_prediction_audit": h_lineup_prediction,
+        "away_prediction_audit": a_lineup_prediction,
+        "official_replaced_prediction": lineup_confirmed,
+        "home_confirmed_core": [name for name in h_core if name not in h_missing]
+        if lineup_confirmed else [],
+        "away_confirmed_core": [name for name in a_core if name not in a_missing]
+        if lineup_confirmed else [],
+    }
+    world_full_evidence = _robot_full_pre_match_evidence(
+        "WORLD", match, league_name, league_id, season,
+        {"id": home_id, "name": home, "raw_name": raw_home, "venue_role": "home"},
+        {"id": away_id, "name": away, "raw_name": raw_away, "venue_role": "away"},
+        h_recent, a_recent, h_stats, a_stats, h_long, a_long,
+        h_stand, a_stand, h_survival, a_survival,
+        injuries_for_quality, lineup_learning,
+        {"home": h_rest, "away": a_rest},
+        {
+            "home": fetch_team_recent_fixtures_api(home_id, heavy_ttl),
+            "away": fetch_team_recent_fixtures_api(away_id, heavy_ttl),
+        },
+        {"home": h_next, "away": a_next},
+        {"home": h_manager, "away": a_manager}, h2h,
+        {
+            "city": city, "weather": weather_condition,
+            "weather_details": weather_details, "referee": referee,
+            "derby": is_derby, "home_venue": True,
+        },
+        odds, odds_movement, goal_model_audit, context_audit, confidence,
+        {"score": quality_score, "grade": quality_grade, "missing": missing_data},
+        {
+            "home_total_penalty": h_total_penalty,
+            "away_total_penalty": a_total_penalty,
+            "home_rank_signal": h_rank_bonus, "away_rank_signal": a_rank_bonus,
+            "home_matchup_signal": h_matchup, "away_matchup_signal": a_matchup,
+            "home_title_signal": h_title, "away_title_signal": a_title,
+            "home_market_signal": h_market_bonus, "away_market_signal": a_market_bonus,
+        },
+    )
     robot_features = build_autonomous_robot_features(
         goal_model_audit, context_audit, candidates, confidence,
         {
@@ -7094,6 +7865,7 @@ def _analyze_world_match(item, now, market_performance):
             "away_market_signal": a_market_bonus > 0,
             "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
         },
+        all_evidence=world_full_evidence,
     )
     legacy_v4_candidates = build_legacy_v4_candidates(candidates, robot_features)
     legacy_v4_pick = legacy_v4_choice(candidates, robot_features)
@@ -7154,25 +7926,6 @@ def _analyze_world_match(item, now, market_performance):
         "name": "데이터 품질", "weight": 0.0,
         "value": f"{quality_score}/100 ({quality_grade})",
     })
-    lineup_learning = {
-        "mode": "predicted-xi-then-official-reassessment-v1",
-        "not_full_starting_xi": len(h_predicted_xi) < 11 or len(a_predicted_xi) < 11,
-        "home_predicted_core": list(h_core),
-        "away_predicted_core": list(a_core),
-        "home_predicted_starting_xi": list(h_predicted_xi),
-        "away_predicted_starting_xi": list(a_predicted_xi),
-        "home_official_starters": list(lineup_data.get(str(home_id), []) or []),
-        "away_official_starters": list(lineup_data.get(str(away_id), []) or []),
-        "home_active_starting_xi": list(lineup_data.get(str(home_id), []) or h_predicted_xi),
-        "away_active_starting_xi": list(lineup_data.get(str(away_id), []) or a_predicted_xi),
-        "home_prediction_audit": h_lineup_prediction,
-        "away_prediction_audit": a_lineup_prediction,
-        "official_replaced_prediction": lineup_confirmed,
-        "home_confirmed_core": [name for name in h_core if name not in h_missing]
-        if lineup_confirmed else [],
-        "away_confirmed_core": [name for name in a_core if name not in a_missing]
-        if lineup_confirmed else [],
-    }
     candidate_rows, compact_categories, decision = build_pick_selection_audit(
         candidates, categories, confidence, robot_pick=robot_pick,
         lineup_prediction=lineup_learning,
@@ -7217,7 +7970,8 @@ def _analyze_world_match(item, now, market_performance):
         "next_fixture": {"home": h_next, "away": a_next},
         "manager": {"home": h_manager, "away": a_manager},
         "environment": {
-            "city": city, "weather": weather_condition, "referee": referee,
+            "city": city, "weather": weather_condition,
+            "weather_details": weather_details, "referee": referee,
             "derby": is_derby,
         },
         "adjustments": {
@@ -7253,6 +8007,8 @@ def _analyze_world_match(item, now, market_performance):
         "legacy_v4_candidates": legacy_v4_candidates,
         "robot_pick": dict(compact_categories.get("robot_independent") or {}),
         "robot_features": robot_features,
+        "robot_full_evidence": world_full_evidence,
+        "robot_lineup_prediction": lineup_learning,
         "robot_candidates": robot_candidates,
         "robot_wdl_probabilities": {
             str(candidate.get("selection_side")): round(float(candidate.get("robot_probability") or 0), 8)
@@ -7289,6 +8045,7 @@ def analyze_world_schedule():
         "T-3-refresh": 2, "PREKICKOFF-initial": 3,
     }
     due_items = []
+    market_watch_items = []
 
     for item in payload.get("matches", []):
         match = item.get("match") or {}
@@ -7362,6 +8119,8 @@ def analyze_world_schedule():
             item, kickoff, now, WORLD_ANALYSIS_VERSION
         )
         if frozen and not refresh_old_version:
+            if fixture_id > 0 and isinstance(item.get("analysis"), dict):
+                market_watch_items.append((item, kickoff))
             continue
         if frozen and refresh_old_version:
             print(
@@ -7375,6 +8134,8 @@ def analyze_world_schedule():
                 and not item.get("lineup_confirmed")
                 and int(item.get("lineup_attempts") or 0) < 2
             ):
+                if fixture_id > 0 and isinstance(item.get("analysis"), dict):
+                    market_watch_items.append((item, kickoff))
                 continue
         due_items.append((stage_priority.get(stage, 9), float(item.get("timestamp") or 0), stage, item))
 
@@ -7468,6 +8229,24 @@ def analyze_world_schedule():
                 item["analysis_error"] = f"{type(error).__name__}: {error}"[:500]
                 changed = True
                 print(f"⚠️ 세계경기 분석 실패({fixture_id}): {type(error).__name__}: {error}")
+
+        # A complete analysis is intentionally not rerun inside the same
+        # stage, but the overseas line keeps moving. Append its latest cached
+        # or refreshed pre-kickoff state without touching the published pick.
+        if not quota_paused:
+            for item, kickoff in market_watch_items:
+                match = item.get("match") or {}
+                analysis = item.get("analysis") or {}
+                fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
+                diff_hours = max(
+                    0.0, (kickoff - datetime.now(KST)).total_seconds() / 3600.0
+                )
+                _observe_locked_pick_market_flow(
+                    analysis, "WORLD", str(match.get("id") or ""), fixture_id,
+                    str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
+                    str(match.get("home") or "홈팀"),
+                    str(match.get("away") or "원정팀"), kickoff, diff_hours,
+                )
 
     previous_source_meta = json.dumps(
         payload.get("source_meta", {}), ensure_ascii=False, sort_keys=True
@@ -7793,6 +8572,12 @@ def build_dashboard_data():
                 preserved["final_match_time"] = final_match_time
                 preserved["timestamp"] = m_dt.timestamp()
                 preserved["odds_temporarily_missing"] = True
+                _observe_locked_pick_market_flow(
+                    preserved, "PROTO", str(m.get("id") or ""),
+                    int(preserved.get("api_fixture_id") or 0),
+                    str(preserved.get("league") or m.get("league") or "프로토"),
+                    home_team, away_team, scheduled, diff_hours,
+                )
                 dashboard_proto.append(preserved)
                 print(f"⚠️ 배당 일시 누락 - 마지막 정상 분석 유지: {home_team} vs {away_team}")
                 continue
@@ -7859,6 +8644,7 @@ def build_dashboard_data():
                 api_fixture_id, "PROTO", prediction_stage(diff_hours, False), quote_snapshot
             )
         weather_condition = fetch_weather_api(city, odds_ttl)
+        weather_details = fetch_weather_details_api(city, odds_ttl)
          
         fixture_details = fetch_fixture_details_api(home_info["id"], away_info["id"], heavy_ttl)
         h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
@@ -8226,6 +9012,69 @@ def build_dashboard_data():
         pick_categories, ev_sorted_picks = select_pick_categories(
             valid_all_picks, analysis_confidence
         )
+        lineup_learning = {
+            "schema_version": ROBOT_LINEUP_SCHEMA_VERSION,
+            "mode": "predicted-xi-then-official-answer-v2",
+            "home_team_id": int(home_info.get("id") or 0),
+            "away_team_id": int(away_info.get("id") or 0),
+            "home_predicted_core": list(h_core),
+            "away_predicted_core": list(a_core),
+            "home_predicted_starting_xi": list(h_predicted_xi),
+            "away_predicted_starting_xi": list(a_predicted_xi),
+            "home_official_starters": list(h_starters),
+            "away_official_starters": list(a_starters),
+            "home_active_starting_xi": list(h_starters or h_predicted_xi),
+            "away_active_starting_xi": list(a_starters or a_predicted_xi),
+            "official_details": lineup_data.get("details") or {},
+            "home_prediction_audit": h_lineup_prediction,
+            "away_prediction_audit": a_lineup_prediction,
+            "official_replaced_prediction": bool(lineup_confirmed),
+        }
+        proto_full_evidence = _robot_full_pre_match_evidence(
+            "PROTO", m, league_n, (os_data or {}).get("league_id"),
+            (os_data or {}).get("season"),
+            {**home_info, "display_name": home_team, "venue_role": "home"},
+            {**away_info, "display_name": away_team, "venue_role": "away"},
+            h_recent, a_recent, h_stats, a_stats, h_long, a_long,
+            h_stand, a_stand, h_survival, a_survival,
+            {"home": h_inj_data, "away": a_inj_data}, lineup_learning,
+            {"home": h_rest_days, "away": a_rest_days},
+            {
+                "home": fetch_team_recent_fixtures_api(home_info.get("id"), heavy_ttl),
+                "away": fetch_team_recent_fixtures_api(away_info.get("id"), heavy_ttl),
+            },
+            {"home": h_next, "away": a_next},
+            {"home": h_manager, "away": a_manager}, fixture_details,
+            {
+                "city": city, "weather": weather_condition,
+                "weather_details": weather_details, "referee": referee,
+                "derby": is_derby, "home_venue": True,
+            },
+            {
+                "source": analysis_odds_source,
+                "betman": {
+                    "home": odd_h, "draw": odd_d, "away": odd_a,
+                    "handicap": {"line": handi_base, "home": handi_h, "draw": handi_d, "away": handi_a},
+                    "totals": {"line": uo_base, "under": uo_under, "over": uo_over},
+                },
+                "overseas_fixture_and_quotes": os_data or {},
+            },
+            proto_movement, goal_model_audit, context_audit,
+            analysis_confidence,
+            {"coverage": data_coverage, "odds_source": analysis_odds_source},
+            {
+                "home_total_penalty": h_total_penalty,
+                "away_total_penalty": a_total_penalty,
+                "home_rank_signal": rank_diff_bonus_h,
+                "away_rank_signal": rank_diff_bonus_a,
+                "home_matchup_signal": h_kryptonite,
+                "away_matchup_signal": a_kryptonite,
+                "home_title_signal": h_title_buff,
+                "away_title_signal": a_title_buff,
+                "home_market_signal": h_market_bonus,
+                "away_market_signal": a_market_bonus,
+            },
+        )
         robot_features = build_autonomous_robot_features(
             goal_model_audit, context_audit, valid_all_picks,
             analysis_confidence,
@@ -8261,6 +9110,7 @@ def build_dashboard_data():
                 "away_market_signal": a_market_bonus > 0,
                 "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
             },
+            all_evidence=proto_full_evidence,
         )
         legacy_v4_candidates = build_legacy_v4_candidates(
             valid_all_picks, robot_features
@@ -8272,20 +9122,6 @@ def build_dashboard_data():
         robot_pick = select_autonomous_robot_pick(
             robot_candidates, analysis_confidence, robot_features
         )
-        lineup_learning = {
-            "mode": "predicted-xi-then-official-reassessment-v1",
-            "home_predicted_core": list(h_core),
-            "away_predicted_core": list(a_core),
-            "home_predicted_starting_xi": list(h_predicted_xi),
-            "away_predicted_starting_xi": list(a_predicted_xi),
-            "home_official_starters": list(h_starters),
-            "away_official_starters": list(a_starters),
-            "home_active_starting_xi": list(h_starters or h_predicted_xi),
-            "away_active_starting_xi": list(a_starters or a_predicted_xi),
-            "home_prediction_audit": h_lineup_prediction,
-            "away_prediction_audit": a_lineup_prediction,
-            "official_replaced_prediction": bool(lineup_confirmed),
-        }
         highest_prob_pick = pick_categories["high_probability"]
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
@@ -8388,6 +9224,9 @@ def build_dashboard_data():
             "PROTO", m["id"], api_fixture_id, league_n,
             home_team, away_team, m_dt, robot_features,
             robot_candidates, robot_pick,
+            full_evidence=proto_full_evidence,
+            lineup_prediction=lineup_learning,
+            analysis_stage=analysis_stage,
         )
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
@@ -8654,6 +9493,13 @@ def build_dashboard_data():
             frozen_item = dict(frozen_item)
             frozen_item["match"] = dict(m)
             frozen_item["prediction_frozen"] = True
+            if not kickoff_passed and scheduled_dt is not None:
+                _observe_locked_pick_market_flow(
+                    frozen_item, "TOTO14", match_id,
+                    int(frozen_item.get("api_fixture_id") or 0),
+                    "승무패 14경기", home_team, away_team,
+                    scheduled_dt, diff_hours,
+                )
             picks = _normalize_toto14_picks(
                 frozen_item.get("picks")
                 or _toto14_picks_from_display(
@@ -8705,7 +9551,19 @@ def build_dashboard_data():
         api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
-        weather_condition = fetch_weather_api(city, odds_ttl) 
+        toto_movement = _detect_odds_movement({}, {})
+        toto_raw_quotes = (os_data or {}).get("odds_response") or []
+        if api_fixture_id and toto_raw_quotes:
+            toto_quote_snapshot = _world_market_snapshot_from_response(
+                toto_raw_quotes, api_fixture_id
+            )
+            set_db_cache(f"world_market_v3_{api_fixture_id}", toto_quote_snapshot)
+            toto_movement = capture_odds_movement(
+                api_fixture_id, "TOTO14", prediction_stage(diff_hours, False),
+                toto_quote_snapshot,
+            )
+        weather_condition = fetch_weather_api(city, odds_ttl)
+        weather_details = fetch_weather_details_api(city, odds_ttl)
          
         h_stand = fetch_team_standing_api(home_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
         a_stand = fetch_team_standing_api(away_info.get("id"), heavy_ttl, (os_data or {}).get("league_id"), (os_data or {}).get("season"))
@@ -8757,14 +9615,28 @@ def build_dashboard_data():
         h_lineup_penalty, a_lineup_penalty = 0.0, 0.0
         h_lineup_msg, a_lineup_msg = "", ""
         lineup_confirmed = False
+        lineup_data = {"confirmed": False, "details": {}}
+        h_starters, a_starters = [], []
+        h_core = get_expected_core_players(
+            home_info.get("id"), h_stand.get("league_id"), h_stand.get("season")
+        )
+        a_core = get_expected_core_players(
+            away_info.get("id"), a_stand.get("league_id"), a_stand.get("season")
+        )
+        h_predicted_xi, h_lineup_prediction = predict_starting_xi(
+            home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"),
+            h_inj_data.get("all_names") or h_inj_data.get("ace_names") or [],
+        )
+        a_predicted_xi, a_lineup_prediction = predict_starting_xi(
+            away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"),
+            a_inj_data.get("all_names") or a_inj_data.get("ace_names") or [],
+        )
         if 0 < diff_hours <= 1.5 and api_fixture_id:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
             lineup_confirmed = bool(lineup_data.get("confirmed"))
             if lineup_confirmed:
                 h_starters = lineup_data.get(str(home_info.get("id")), [])
                 a_starters = lineup_data.get(str(away_info.get("id")), [])
-                h_core = get_expected_core_players(home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"))
-                a_core = get_expected_core_players(away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"))
                 h_missing = find_missing_core_players(sorted(set(h_core + h_inj_data.get("ace_names", []))), h_starters)
                 a_missing = find_missing_core_players(sorted(set(a_core + a_inj_data.get("ace_names", []))), a_starters)
                 h_injury_names = {_normalize_player_name(name) for name in h_inj_data.get("ace_names", [])}
@@ -8938,6 +9810,61 @@ def build_dashboard_data():
             selection_axis="toto14_single_direction_accuracy",
             selection_reason="공식 승무패14 확률표에서 가장 높은 단일 방향",
         )
+        lineup_learning = {
+            "schema_version": ROBOT_LINEUP_SCHEMA_VERSION,
+            "mode": "predicted-xi-then-official-answer-v2",
+            "home_team_id": int(home_info.get("id") or 0),
+            "away_team_id": int(away_info.get("id") or 0),
+            "home_predicted_core": list(h_core),
+            "away_predicted_core": list(a_core),
+            "home_predicted_starting_xi": list(h_predicted_xi),
+            "away_predicted_starting_xi": list(a_predicted_xi),
+            "home_official_starters": list(h_starters),
+            "away_official_starters": list(a_starters),
+            "home_active_starting_xi": list(h_starters or h_predicted_xi),
+            "away_active_starting_xi": list(a_starters or a_predicted_xi),
+            "official_details": lineup_data.get("details") or {},
+            "home_prediction_audit": h_lineup_prediction,
+            "away_prediction_audit": a_lineup_prediction,
+            "official_replaced_prediction": bool(lineup_confirmed),
+        }
+        toto_full_evidence = _robot_full_pre_match_evidence(
+            "TOTO14", m, league_n_14, (os_data or {}).get("league_id"),
+            (os_data or {}).get("season"),
+            {**home_info, "display_name": home_team, "venue_role": "home"},
+            {**away_info, "display_name": away_team, "venue_role": "away"},
+            h_recent, a_recent, h_stats, a_stats, h_long, a_long,
+            h_stand, a_stand, h_survival, a_survival,
+            {"home": h_inj_data, "away": a_inj_data}, lineup_learning,
+            {"home": h_rest_days, "away": a_rest_days},
+            {
+                "home": fetch_team_recent_fixtures_api(home_info.get("id"), heavy_ttl),
+                "away": fetch_team_recent_fixtures_api(away_info.get("id"), heavy_ttl),
+            },
+            {"home": h_next, "away": a_next},
+            {"home": h_manager, "away": a_manager}, fixture_details,
+            {
+                "city": city, "weather": weather_condition,
+                "weather_details": weather_details, "referee": referee,
+                "derby": is_derby, "home_venue": True,
+            },
+            {"overseas_fixture_and_quotes": os_data or {}, "wdl": market_odds},
+            toto_movement, goal_model_audit, toto_context_audit,
+            analysis_confidence,
+            {"source": "toto14", "vote_percentages": {
+                "home": m.get("vote_h"), "draw": m.get("vote_d"), "away": m.get("vote_a"),
+            }},
+            {
+                "home_total_penalty": h_total_penalty,
+                "away_total_penalty": a_total_penalty,
+                "home_rank_signal": rank_diff_bonus_h,
+                "away_rank_signal": rank_diff_bonus_a,
+                "home_matchup_signal": h_kryptonite,
+                "away_matchup_signal": a_kryptonite,
+                "home_title_signal": h_title_buff,
+                "away_title_signal": a_title_buff,
+            },
+        )
         robot_features = build_autonomous_robot_features(
             goal_model_audit, toto_context_audit, robot_wdl_candidates,
             analysis_confidence,
@@ -8973,6 +9900,7 @@ def build_dashboard_data():
                 "away_market_signal": False,
                 "adverse_weather": str(weather_condition or "").casefold() in {"rain", "snow"},
             },
+            all_evidence=toto_full_evidence,
         )
         legacy_v4_candidates = build_legacy_v4_candidates(
             robot_wdl_candidates, robot_features
@@ -9028,6 +9956,8 @@ def build_dashboard_data():
                 "analysis_stage": analysis_stage,
                 "survival_motivation": {"home": h_survival, "away": a_survival},
                 "robot_features": robot_features,
+                "robot_full_evidence": toto_full_evidence,
+                "robot_lineup_prediction": lineup_learning,
                 "official_comparison_pick": official_toto_pick,
                 "legacy_v4_candidates": legacy_v4_candidates,
                 "legacy_v4_pick": legacy_v4_pick,
@@ -9833,24 +10763,31 @@ def _finalize_toto14_round(items):
         item.update(best_pick_display=display, picks_html=_render_toto14_picks_html(marks),
                     covered_probability=round(coverage, 1))
         match_id = 'TOTO14_' + str(match['id'])
+        kickoff = _parse_kst_match_time(match.get('match_time'))
+        if (
+            kickoff and datetime.now(KST) < kickoff
+            and item.get("robot_pick")
+        ):
+            save_autonomous_robot_sample(
+                "TOTO14", match_id, item.get("api_fixture_id") or 0,
+                "승무패 14경기", match["home"], match["away"], kickoff,
+                item.get("robot_features") or {},
+                item.get("robot_candidates") or [], item.get("robot_pick") or {},
+                full_evidence=item.get("robot_full_evidence") or {},
+                lineup_prediction=item.get("robot_lineup_prediction") or {},
+                analysis_stage=item.get("analysis_stage") or "",
+            )
         saved = save_dual_predictions_to_local_db(
             match_id, '승무패 14경기', match['home'], match['away'], display, coverage,
             display, coverage, 0, 0, 0, match.get('match_time'), 1,
             item.get('api_fixture_id') or 0, item.get('analysis_stage') or 'regular',
             item.get('analysis_confidence') or 0)
-        kickoff = _parse_kst_match_time(match.get('match_time'))
         if saved and kickoff and item.get("robot_pick"):
             save_three_engine_picks(
                 "TOTO14", match_id, item.get("api_fixture_id") or 0,
                 "승무패 14경기", match["home"], match["away"], kickoff,
                 item.get("official_comparison_pick") or {},
                 item.get("legacy_v4_pick") or {}, item.get("robot_pick") or {},
-            )
-            save_autonomous_robot_sample(
-                "TOTO14", match_id, item.get("api_fixture_id") or 0,
-                "승무패 14경기", match["home"], match["away"], kickoff,
-                item.get("robot_features") or {},
-                item.get("robot_candidates") or [], item.get("robot_pick") or {},
             )
             _apply_frozen_toto14_robot(item, match_id)
         if not saved or not kickoff or datetime.now(KST) >= kickoff:
@@ -10160,6 +11097,11 @@ def auto_score_matches():
                                     "API 예산/연결 확인 필요" if isinstance(batch_error,ApiQuotaUnavailable) else "채점 처리 오류 · 재시도 대기",3600)
                 print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
 
+        lineup_answers_attached = _reconcile_robot_lineup_answers(conn)
+        if lineup_answers_attached:
+            print(
+                f"✅ 자율 로봇 공식 선발 11명 정답 연결: {lineup_answers_attached}경기"
+            )
         scoring_calls_after = int(get_api_usage_status().get("scoring_calls") or 0)
         _update_collector_status("score", "running", due_count=len(due_matches),
                                  graded_count=graded_count, result_error_count=result_error_count,
