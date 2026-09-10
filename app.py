@@ -3289,16 +3289,10 @@ with main_tab6:
         1 for item in eligible_world_matches
         if str(item.get("visibility_status") or "").upper() == "PUBLIC"
     )
-    world_matches = (
-        [
-            item for item in eligible_world_matches
-            if item not in missed_prekickoff_world
-        ]
-        if has_full_access
-        else [
-            item for item in eligible_world_matches
-            if world_pick_ready[id(item)]
-        ]
+world_matches = [
+        item for item in eligible_world_matches
+        if item not in missed_prekickoff_world
+    ]
     )
     if is_world_admin:
         rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
