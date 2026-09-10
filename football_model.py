@@ -124,17 +124,17 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         market_disagreement = abs(probability - fair) if priced else 0.0
         context_support = context * .035
         value_tiebreak = max(-.008, min(.008, (expected_return - 1.0) * .02)) if priced else 0.0
-        score = (
-            probability * .57
-            + lower_bound * .25
+score = (
+            probability * .75             # 💡 순수 적중 확률 비중 대폭 상향 (57% -> 75%)
+            + lower_bound * .10           # 보수적 하한선 비중 축소
             + raw_probability * .10
-            + market_confirmation * .08
-            + context_support
-            + support
+            + market_confirmation * .15   # 해외 공정 배당과의 일치도 비중 상향
+            + context_support * 1.5       # 실제 축구 데이터(순위, 맞대결 등) 보너스 증폭
+            + support * 1.5
             + value_tiebreak
-            - uncertainty * .08
-            - market_disagreement * .025
-        ) * (.90 + confidence * .10)
+            - uncertainty * .03           # 💡 불확실성 감점 대폭 축소 (과감하게 픽)
+            - market_disagreement * .01   # 시장과의 불일치 감점 축소
+        ) * (.85 + confidence * .15)
         pick.update({
             "official_score": round(score, 6),
             "official_accuracy_probability": round(probability, 6),
@@ -461,15 +461,15 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
         # Value terms dominate. Probability is a small stability term only;
         # this makes 40%@3.20 capable of beating 85%@1.20 when its conservative
         # expected growth is genuinely better.
-        score = (
-            max(-0.10, kelly) * 0.44
-            + max(-0.10, min(0.20, edge)) * 0.22
-            + max(-0.10, min(0.50, expected_return - 1.0)) * 0.12
-            + probability * 0.10
+score = (
+            probability * 0.65                                    # 💡 적중 확률 비중 대폭 상향 (10% -> 65%)
+            + max(-0.10, kelly) * 0.15                            # 켈리 지수 비중 대폭 하향 (44% -> 15%)
+            + max(-0.10, min(0.20, edge)) * 0.10                  # 엣지 비중 하향 (22% -> 10%)
+            + max(-0.10, min(0.50, expected_return - 1.0)) * 0.10 # 기대 수익 비중 하향
             + context_bonus
             + learning_bonus
             + support_bonus
-        ) * (0.75 + confidence * 0.25)
+        ) * (0.80 + confidence * 0.20)
         pick.update({
             "robot_score": round(score, 6),
             "robot_kelly": round(kelly, 6),
