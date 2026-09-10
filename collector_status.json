@@ -3,36 +3,35 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T19:20:34+00:00",
+      "heartbeat_at": "2026-09-10T19:23:06+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 349768,
-        "world": 349779,
         "score": 349781,
         "live": 349789
       }
     },
     "live": {
       "child_pid": 349789,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T19:20:40+00:00",
-      "pid": 349789,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T19:23:24+00:00",
+      "pid": 346209,
       "last_started_at": "2026-09-10T19:20:23+00:00",
-      "elapsed_seconds": 0.1,
+      "elapsed_seconds": 163.4,
       "overlap_skips": 0,
-      "duration_seconds": 182.0,
-      "last_failure_at": "2026-09-10T19:18:08+00:00",
+      "duration_seconds": 181.7,
+      "last_failure_at": "2026-09-10T19:23:24+00:00",
       "last_success_at": "2026-09-10T18:41:17+00:00",
       "last_error": "hard timeout after 181 seconds"
     },
     "score": {
       "child_pid": 349781,
       "state": "running",
-      "heartbeat_at": "2026-09-10T19:20:36+00:00",
+      "heartbeat_at": "2026-09-10T19:23:06+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T19:15:11+00:00",
-      "elapsed_seconds": 324.7,
+      "elapsed_seconds": 474.4,
       "overlap_skips": 1,
       "duration_seconds": 600.4,
       "last_success_at": "2026-09-10T16:00:38+00:00",
@@ -49,10 +48,10 @@
     "master": {
       "child_pid": 349768,
       "state": "running",
-      "heartbeat_at": "2026-09-10T19:20:23+00:00",
+      "heartbeat_at": "2026-09-10T19:23:06+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T19:05:04+00:00",
-      "elapsed_seconds": 786.6,
+      "elapsed_seconds": 949.9,
       "overlap_skips": 0,
       "duration_seconds": 1053.03,
       "last_failure_at": "2026-09-10T16:12:03+00:00",
@@ -63,20 +62,20 @@
     "world": {
       "child_pid": 349779,
       "state": "failed",
-      "heartbeat_at": "2026-09-10T19:20:41+00:00",
-      "pid": 349779,
-      "last_started_at": "2026-09-10T19:13:06+00:00",
-      "elapsed_seconds": 437.0,
+      "heartbeat_at": "2026-09-10T19:21:29+00:00",
+      "pid": 346209,
+      "last_started_at": "2026-09-10T19:21:04+00:00",
+      "elapsed_seconds": 478.7,
       "overlap_skips": 0,
-      "duration_seconds": 451.49,
+      "duration_seconds": 503.1,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-10T19:20:41+00:00",
+      "last_failure_at": "2026-09-10T19:21:29+00:00",
       "last_stage": "world_dashboard_publish_failed",
       "db_backup_ok": false,
-      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
+      "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-10T19:20:41+00:00",
+  "updated_at": "2026-09-10T19:23:24+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -176,7 +175,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 115
+        "count": 129
       },
       {
         "metric": "cache_hit",
