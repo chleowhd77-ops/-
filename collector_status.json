@@ -3,11 +3,10 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T09:31:32+00:00",
+      "heartbeat_at": "2026-09-10T09:32:02+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "master": 348120,
         "world": 348121
       }
     },
@@ -58,28 +57,28 @@
     },
     "world": {
       "child_pid": 348121,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T09:31:32+00:00",
-      "pid": 346209,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T09:32:03+00:00",
+      "pid": 348121,
       "last_started_at": "2026-09-10T09:27:07+00:00",
-      "elapsed_seconds": 264.5,
+      "elapsed_seconds": 294.6,
       "overlap_skips": 0,
-      "duration_seconds": 202.3,
+      "duration_seconds": 295.02,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-10T09:15:28+00:00",
+      "last_failure_at": "2026-09-10T09:32:03+00:00",
       "last_stage": "world_dashboard_publish_failed",
       "db_backup_ok": false,
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-10T09:31:35+00:00",
+  "updated_at": "2026-09-10T09:32:03+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "world",
         "endpoint": "/odds",
-        "calls": 280
+        "calls": 284
       },
       {
         "purpose": "analysis",
@@ -190,12 +189,12 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-10",
     "reset_timezone": "UTC",
-    "local_calls": 2049,
-    "provider_remaining": 3265,
+    "local_calls": 2053,
+    "provider_remaining": 3261,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 1164,
+    "world_calls": 1168,
     "analysis_calls": 617,
     "live_calls": 199,
     "scoring_calls": 69,
