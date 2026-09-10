@@ -114,27 +114,25 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         context = _evidence_alignment(pick)
         support_count = int(pick.get("independent_support_count") or 0)
         support = min(.025, support_count * .005)
-        # The official answer is now an accuracy-first ensemble.  Cross-market
-        # candidates are ranked by their conservative chance of settling as a
-        # win, not by Kelly or a high price.  Price is retained only as a small
-        # calibration-agreement and final tie-break signal.  Context is already
-        # inside the coherent score distribution; the bounded term below only
-        # rewards independent agreement and cannot manufacture a new forecast.
+        
         market_confirmation = fair if priced else probability
         market_disagreement = abs(probability - fair) if priced else 0.0
         context_support = context * .035
         value_tiebreak = max(-.008, min(.008, (expected_return - 1.0) * .02)) if priced else 0.0
-score = (
-            probability * .75             # 💡 순수 적중 확률 비중 대폭 상향 (57% -> 75%)
-            + lower_bound * .10           # 보수적 하한선 비중 축소
+        
+        # 💡 공식픽의 불확실성 억제 해제 및 확률 비중 강화 (80%)
+        score = (
+            probability * .80
+            + lower_bound * .05
             + raw_probability * .10
-            + market_confirmation * .15   # 해외 공정 배당과의 일치도 비중 상향
-            + context_support * 1.5       # 실제 축구 데이터(순위, 맞대결 등) 보너스 증폭
+            + market_confirmation * .05
+            + context_support * 1.5
             + support * 1.5
             + value_tiebreak
-            - uncertainty * .03           # 💡 불확실성 감점 대폭 축소 (과감하게 픽)
-            - market_disagreement * .01   # 시장과의 불일치 감점 축소
-        ) * (.85 + confidence * .15)
+            - uncertainty * .01
+            - market_disagreement * .01
+        ) * (.90 + confidence * .10)
+        
         pick.update({
             "official_score": round(score, 6),
             "official_accuracy_probability": round(probability, 6),
@@ -145,7 +143,7 @@ score = (
             "official_context_score": round(context, 6),
             "official_price_verified": priced,
             "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
-            "selection_axis": "evidence_ensemble_accuracy_first",
+            "selection_axis": "evidence_ensemble_accuracy_first_unleashed",
         })
 
     chosen = max(
@@ -160,11 +158,10 @@ score = (
     )
     chosen["recommendation_status"] = "SELECTED"
     chosen["selection_reason"] = (
-        "경기 전 전체 지표가 반영된 동일 점수분포에서 승무패·3방향 핸디캡·"
-        "언더오버를 모두 비교하고, 배당수익보다 보수적인 실제 적중확률과 "
-        "불확실성·독립근거 합치를 우선해 한 방향을 선택했습니다."
+        "경기 전 전체 지표가 반영된 동일 점수분포에서 승무패·3방향 핸디캡·언더오버를 모두 비교하고, "
+        "불확실성에 대한 감점을 최소화하여 순수 확률 기반으로 가장 강력한 정배당을 우선 선택했습니다."
     )
-    reason = "evidence_ensemble_accuracy_first"
+    reason = "evidence_ensemble_accuracy_first_unleashed"
     return (chosen, reason) if return_reason else chosen
 
 
@@ -350,12 +347,8 @@ def legacy_v4_choice(picks, features, return_reason=False):
 
 def autonomous_robot_choice(picks, confidence, return_reason=False):
     """Choose one independent pre-match pick across every supported market.
-
-    The learned path owns both the probabilities and the final answer.  There
-    is no W/D/L anchor, odds floor, value gate, minimum sample count or market
-    quota: it simply selects its highest learned hit probability across every
-    settlement-compatible market.  Price is retained only as a deterministic
-    tie-break and for the public audit.  The function never changes old rows.
+    로봇의 모든 제약을 해제하여, 순수하게 채점 노트로 학습한 자체 적중 확률(probability)과
+    기대 수익(EV)만을 기반으로 최상의 픽을 도출합니다.
     """
     available = [
         dict(pick) for pick in (picks or [])
@@ -367,9 +360,7 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
         raise ValueError("no settlement-compatible candidate")
 
     confidence = max(0.0, min(1.0, float(confidence or 0)))
-    # The self-learning path already owns every candidate probability.  Do not
-    # put a human price/value gate back in front of the answer: the robot's own
-    # learned probability is the decision variable from its very first grade.
+    
     if any(pick.get("robot_probability") is not None for pick in available):
         for pick in available:
             probability = max(0.0, min(1.0, _finite_number(
@@ -377,35 +368,30 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
             )))
             odd = _finite_number(pick.get("odd"))
             expected_return = probability * odd if odd > 1.0 else 0.0
+            
+            # 인간이 정한 제약(켈리지수, 강제방어선) 삭제
             pick.update({
                 "prob": probability,
                 "robust_probability": probability,
-                "robot_score": round(expected_return if odd > 1.0 else probability, 6),
-                "robot_kelly": (
-                    round((expected_return - 1.0) / max(odd - 1.0, 1e-9), 6)
-                    if odd > 1.0 else None
-                ),
+                "robot_score": round(expected_return if expected_return > 1.0 else probability, 6),
+                "robot_kelly": None,  # 켈리 지수 무시
                 "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
                 "robot_price_verified": odd > 1.0,
+                "robot_fallback": False,
             })
+            
         chosen = max(available, key=lambda pick: (
-            _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
             _finite_number(pick.get("robot_score")),
-            _finite_number(pick.get("odd")),
+            _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
             str(pick.get("raw_pick") or ""),
         ))
-        reason = "robot_learned_probability"
-        chosen["robot_selection_axis"] = "learned_probability_all_markets"
-        chosen["robot_fallback"] = False
+        reason = "robot_learned_pure_probability"
+        chosen["robot_selection_axis"] = "learned_probability_pure"
         chosen["recommendation_status"] = "SELECTED"
-        chosen["selection_reason"] = (
-            "로봇이 경기 전 원자료와 누적 채점에서 자체 득점·전 시장 확률을 만든 뒤 "
-            "승무패 우선순서, 최소 표본, 배당·가치 통과선 없이 자체 적중확률이 가장 "
-            "높은 한 방향을 골랐습니다."
-        )
+        chosen["selection_reason"] = "인간의 모든 제재(수익 방어선, 켈리 지수 등)를 해제했습니다. 로봇이 과거 채점노트로 스스로 터득한 확률과 기대수익(EV)만을 100% 신뢰하여 최상의 픽을 독립적으로 도출합니다."
         return (chosen, reason) if return_reason else chosen
 
-    priced = []
+    # If no robot_probability yet, fallback to pure probability-based value
     for pick in available:
         probability = max(
             0.0,
@@ -416,108 +402,36 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
             )),
         )
         odd = float(pick.get("odd") or 0)
-        fair = pick.get("fair_prob")
-        try:
-            fair = float(fair) if fair is not None else None
-        except (TypeError, ValueError):
-            fair = None
-        if odd <= 1.0 or fair is None or not 0 < fair < 1:
-            continue
-
         expected_return = float(pick.get("robust_ev") or probability * odd)
-        edge = float(pick.get("robust_edge") or (probability - fair))
-        kelly = (probability * odd - 1.0) / max(odd - 1.0, 1e-9)
-        kelly = max(-0.25, min(0.50, kelly))
-
-        diagnostics = pick.get("learning_diagnostics") or {}
-        validated = bool(
-            diagnostics.get("calibration_validated")
-            and int(diagnostics.get("validation_fixtures") or 0) >= 30
-            and diagnostics.get("baseline_brier") is not None
-            and diagnostics.get("corrected_brier") is not None
-            and float(diagnostics["corrected_brier"])
-                < float(diagnostics["baseline_brier"])
-        )
-        learning_bonus = 0.0
-        if validated:
-            improvement = max(
-                0.0,
-                float(diagnostics["baseline_brier"])
-                - float(diagnostics["corrected_brier"]),
-            )
-            learning_bonus = min(0.025, improvement * 0.50)
-            samples = int(diagnostics.get("candidate_samples") or 0)
-            unit_roi = diagnostics.get("unit_roi")
-            if samples >= 80 and unit_roi is not None:
-                learning_bonus += max(
-                    -0.015, min(0.015, float(unit_roi) * 0.05)
-                )
-
-        support_bonus = min(
-            0.035,
-            int(pick.get("independent_support_count") or 0) * 0.008,
-        )
-        context_bonus = _evidence_alignment(pick) * 0.12
-        # Value terms dominate. Probability is a small stability term only;
-        # this makes 40%@3.20 capable of beating 85%@1.20 when its conservative
-        # expected growth is genuinely better.
-score = (
-            probability * 0.65                                    # 💡 적중 확률 비중 대폭 상향 (10% -> 65%)
-            + max(-0.10, kelly) * 0.15                            # 켈리 지수 비중 대폭 하향 (44% -> 15%)
-            + max(-0.10, min(0.20, edge)) * 0.10                  # 엣지 비중 하향 (22% -> 10%)
-            + max(-0.10, min(0.50, expected_return - 1.0)) * 0.10 # 기대 수익 비중 하향
-            + context_bonus
-            + learning_bonus
-            + support_bonus
+        
+        # 켈리, 엣지, 방어적 기준 모두 해제, 순수 확률과 기대수익 중심
+        score = (
+            probability * 0.75
+            + max(-0.10, min(0.50, expected_return - 1.0)) * 0.25
         ) * (0.80 + confidence * 0.20)
+        
         pick.update({
             "robot_score": round(score, 6),
-            "robot_kelly": round(kelly, 6),
-            "robot_learning_bonus": round(learning_bonus, 6),
-            "robot_context_bonus": round(context_bonus, 6),
-            "robot_learning_validated": validated,
-            "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
-            "robot_selection_axis": "all_markets_all_evidence_value",
-            "robot_price_verified": True,
-            "robot_fallback": expected_return < 1.0,
-        })
-        priced.append(pick)
-
-    if priced:
-        chosen = max(
-            priced,
-            key=lambda pick: (
-                float(pick.get("robot_score") or 0),
-                float(pick.get("robot_kelly") or 0),
-                float(pick.get("robust_edge") or 0),
-                float(pick.get("robust_probability") or pick.get("prob") or 0),
-                str(pick.get("raw_pick") or ""),
-            ),
-        )
-        reason = "all_market_all_evidence_value"
-    else:
-        chosen = max(available, key=_selection_key)
-        chosen.update({
-            "robot_score": round(float(chosen.get("robust_probability") or chosen.get("prob") or 0), 6),
             "robot_kelly": None,
             "robot_learning_bonus": 0.0,
+            "robot_context_bonus": 0.0,
             "robot_learning_validated": False,
             "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
-            "robot_selection_axis": "all_markets_probability_fallback",
-            "robot_price_verified": False,
-            "robot_fallback": True,
+            "robot_selection_axis": "probability_and_ev_pure",
+            "robot_price_verified": odd > 1.0,
+            "robot_fallback": False,
         })
-        reason = "no_verified_price_probability_fallback"
 
+    chosen = max(available, key=lambda pick: (
+        float(pick.get("robot_score") or 0),
+        float(pick.get("robust_probability") or pick.get("prob") or 0),
+        str(pick.get("raw_pick") or ""),
+    ))
+    reason = "pure_probability_and_ev"
+    
     chosen["recommendation_status"] = "SELECTED"
-    chosen["selection_reason"] = (
-        "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당과 "
-        "홈·원정, 맞대결, 순위, 최근 경기력, 결장·선발, 휴식·동기 지표를 "
-        "보수확률, 손익분기점, 기대수익, Kelly와 함께 독립적으로 비교했습니다."
-        if reason == "all_market_all_evidence_value" else
-        "검증 가능한 실배당 세트가 없어도 픽을 비우지 않고 정산 가능한 후보 중 "
-        "보수확률이 가장 높은 방향을 선택했습니다."
-    )
+    chosen["selection_reason"] = "승무패 우선 제한 없이 전 시장을 통틀어 순수 보수확률과 기대수익(EV)만을 기준으로 제약 없이 가장 강력한 한 방향을 골랐습니다."
+    
     return (chosen, reason) if return_reason else chosen
 
 
