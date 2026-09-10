@@ -3,13 +3,11 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T09:13:30+00:00",
+      "heartbeat_at": "2026-09-10T09:15:00+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "world": 348085,
-        "live": 348088,
-        "score": 348089
+        "world": 348085
       }
     },
     "live": {
@@ -26,11 +24,11 @@
     },
     "score": {
       "child_pid": 348089,
-      "state": "success",
-      "heartbeat_at": "2026-09-10T09:13:59+00:00",
-      "pid": 348089,
-      "last_started_at": "2026-09-10T09:12:24+00:00",
-      "elapsed_seconds": 66.1,
+      "state": "running",
+      "heartbeat_at": "2026-09-10T09:14:00+00:00",
+      "pid": 346209,
+      "last_started_at": "2026-09-10T09:14:00+00:00",
+      "elapsed_seconds": 96.1,
       "overlap_skips": 0,
       "duration_seconds": 94.6,
       "last_success_at": "2026-09-10T09:13:59+00:00",
@@ -59,21 +57,21 @@
     },
     "world": {
       "child_pid": 348085,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T09:13:30+00:00",
-      "pid": 346209,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T09:15:24+00:00",
+      "pid": 348085,
       "last_started_at": "2026-09-10T09:12:06+00:00",
-      "elapsed_seconds": 84.1,
+      "elapsed_seconds": 174.2,
       "overlap_skips": 0,
-      "duration_seconds": 90.1,
+      "duration_seconds": 197.31,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-10T08:58:35+00:00",
+      "last_failure_at": "2026-09-10T09:15:24+00:00",
       "last_stage": "world_dashboard_publish_failed",
       "db_backup_ok": false,
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-10T09:13:59+00:00",
+  "updated_at": "2026-09-10T09:15:24+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -85,7 +83,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 224
+        "calls": 240
       },
       {
         "purpose": "live",
@@ -95,7 +93,7 @@
       {
         "purpose": "world",
         "endpoint": "/fixtures",
-        "calls": 165
+        "calls": 169
       },
       {
         "purpose": "analysis",
@@ -120,7 +118,7 @@
       {
         "purpose": "world",
         "endpoint": "/injuries",
-        "calls": 79
+        "calls": 81
       },
       {
         "purpose": "world",
@@ -143,13 +141,13 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "count": 186
+        "count": 193
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 186
+        "count": 193
       },
       {
         "metric": "cache_hit",
@@ -191,13 +189,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-10",
     "reset_timezone": "UTC",
-    "local_calls": 1991,
-    "provider_remaining": 3323,
+    "local_calls": 2023,
+    "provider_remaining": 3291,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 1137,
-    "analysis_calls": 593,
+    "world_calls": 1153,
+    "analysis_calls": 609,
     "live_calls": 194,
     "scoring_calls": 67,
     "world_daily_limit": 4000,
