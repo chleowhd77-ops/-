@@ -62,21 +62,21 @@
     },
     "world": {
       "child_pid": 349779,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T19:20:34+00:00",
-      "pid": 346209,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T19:20:41+00:00",
+      "pid": 349779,
       "last_started_at": "2026-09-10T19:13:06+00:00",
       "elapsed_seconds": 437.0,
       "overlap_skips": 0,
-      "duration_seconds": 544.7,
+      "duration_seconds": 451.49,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-10T19:07:09+00:00",
+      "last_failure_at": "2026-09-10T19:20:41+00:00",
       "last_stage": "world_dashboard_publish_failed",
       "db_backup_ok": false,
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-10T19:20:40+00:00",
+  "updated_at": "2026-09-10T19:20:41+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -176,7 +176,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 111
+        "count": 115
       },
       {
         "metric": "cache_hit",
