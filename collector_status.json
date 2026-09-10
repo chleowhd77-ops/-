@@ -3,35 +3,36 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T17:33:12+00:00",
+      "heartbeat_at": "2026-09-10T17:36:15+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 349566,
         "world": 349575,
-        "score": 349602
+        "score": 349602,
+        "live": 349611
       }
     },
     "live": {
       "child_pid": 349611,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T17:33:41+00:00",
-      "pid": 349611,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T17:36:35+00:00",
+      "pid": 346209,
       "last_started_at": "2026-09-10T17:33:34+00:00",
-      "elapsed_seconds": 74.9,
+      "elapsed_seconds": 160.7,
       "overlap_skips": 0,
-      "duration_seconds": 189.0,
-      "last_failure_at": "2026-09-10T17:31:43+00:00",
+      "duration_seconds": 181.2,
+      "last_failure_at": "2026-09-10T17:36:35+00:00",
       "last_success_at": "2026-09-10T16:00:18+00:00",
-      "last_error": "hard timeout after 188 seconds"
+      "last_error": "hard timeout after 181 seconds"
     },
     "score": {
       "child_pid": 349602,
       "state": "running",
-      "heartbeat_at": "2026-09-10T17:33:34+00:00",
+      "heartbeat_at": "2026-09-10T17:36:15+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T17:28:34+00:00",
-      "elapsed_seconds": 300.8,
+      "elapsed_seconds": 461.4,
       "overlap_skips": 1,
       "duration_seconds": 601.2,
       "last_success_at": "2026-09-10T16:00:38+00:00",
@@ -48,10 +49,10 @@
     "master": {
       "child_pid": 349566,
       "state": "running",
-      "heartbeat_at": "2026-09-10T17:33:12+00:00",
+      "heartbeat_at": "2026-09-10T17:36:15+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T17:04:06+00:00",
-      "elapsed_seconds": 1562.8,
+      "elapsed_seconds": 1745.8,
       "overlap_skips": 1,
       "duration_seconds": 2202.66,
       "last_failure_at": "2026-09-10T16:12:03+00:00",
@@ -62,10 +63,10 @@
     "world": {
       "child_pid": 349575,
       "state": "running",
-      "heartbeat_at": "2026-09-10T17:33:12+00:00",
+      "heartbeat_at": "2026-09-10T17:36:15+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T17:12:48+00:00",
-      "elapsed_seconds": 1224.1,
+      "elapsed_seconds": 1407.1,
       "overlap_skips": 1,
       "duration_seconds": 3601.6,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -75,7 +76,7 @@
       "last_error": "hard timeout after 3601 seconds"
     }
   },
-  "updated_at": "2026-09-10T17:33:41+00:00",
+  "updated_at": "2026-09-10T17:36:35+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -169,7 +170,7 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/fixtures",
-        "count": 222
+        "count": 267
       },
       {
         "metric": "cache_hit",
@@ -178,16 +179,16 @@
         "count": 74
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 62
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/injuries",
         "count": 58
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 56
       },
       {
         "metric": "singleflight_block",
