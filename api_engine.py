@@ -3281,8 +3281,8 @@ def combine_availability_penalties(injury, lineup, goal_dependency, fatigue, rot
     """Same missing player must not incur injury+lineup+goal-share penalties."""
     absence = max(float(injury or 0), float(lineup or 0), float(goal_dependency or 0))
     schedule = max(float(fatigue or 0), float(rotation or 0))
-    return min(0.30, max(0.0, (1 - (1-absence) * (1-schedule)) * float(depth or 1)))
-
+    # 💡 0.30 -> 0.15 로 낮춰 강팀의 기본 체급(정배당)을 보존합니다.
+    return min(0.15, max(0.0, (1 - (1-absence) * (1-schedule)) * float(depth or 1)))
 
 def total_settlement_probabilities(exp_h, exp_a, line, side, matrix=None):
     """Asian totals: distinguish winning stake, refunded stake and loss.
