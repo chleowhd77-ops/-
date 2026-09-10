@@ -3,21 +3,22 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T20:35:17+00:00",
+      "heartbeat_at": "2026-09-10T20:35:47+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "master": 350134,
-        "world": 350174
+        "world": 350174,
+        "live": 350187
       }
     },
     "live": {
       "child_pid": 350187,
       "state": "running",
       "heartbeat_at": "2026-09-10T20:35:47+00:00",
-      "pid": 350187,
+      "pid": 346209,
       "last_started_at": "2026-09-10T20:35:43+00:00",
-      "elapsed_seconds": 153.4,
+      "elapsed_seconds": 4.0,
       "overlap_skips": 0,
       "duration_seconds": 181.6,
       "last_failure_at": "2026-09-10T20:33:43+00:00",
@@ -47,10 +48,10 @@
     "master": {
       "child_pid": 350134,
       "state": "running",
-      "heartbeat_at": "2026-09-10T20:35:17+00:00",
+      "heartbeat_at": "2026-09-10T20:35:47+00:00",
       "pid": 346209,
       "last_started_at": "2026-09-10T20:07:20+00:00",
-      "elapsed_seconds": 1677.4,
+      "elapsed_seconds": 1707.5,
       "overlap_skips": 1,
       "duration_seconds": 2702.0,
       "last_failure_at": "2026-09-10T19:52:18+00:00",
@@ -61,21 +62,21 @@
     },
     "world": {
       "child_pid": 350174,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T20:35:17+00:00",
-      "pid": 346209,
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T20:36:17+00:00",
+      "pid": 350174,
       "last_started_at": "2026-09-10T20:28:13+00:00",
-      "elapsed_seconds": 424.6,
+      "elapsed_seconds": 454.7,
       "overlap_skips": 0,
-      "duration_seconds": 792.7,
+      "duration_seconds": 476.68,
       "last_success_at": "2026-09-09T15:43:19+00:00",
-      "last_failure_at": "2026-09-10T20:26:25+00:00",
+      "last_failure_at": "2026-09-10T20:36:17+00:00",
       "last_stage": "world_dashboard_publish_failed",
       "db_backup_ok": false,
-      "last_error": "worker exited with code 1"
+      "last_error": "RuntimeError: world 작업이 정상 결과를 게시하지 못함"
     }
   },
-  "updated_at": "2026-09-10T20:35:47+00:00",
+  "updated_at": "2026-09-10T20:36:17+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
