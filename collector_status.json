@@ -3,30 +3,34 @@
     "scheduler": {
       "supervisor_pid": 346209,
       "state": "running",
-      "heartbeat_at": "2026-09-10T12:22:19+00:00",
+      "heartbeat_at": "2026-09-10T12:23:49+00:00",
       "pid": 346209,
       "last_started_at": "2026-08-30T14:02:45+00:00",
-      "active_jobs": {}
+      "active_jobs": {
+        "live": 348869,
+        "score": 348870
+      }
     },
     "live": {
       "child_pid": 348869,
-      "state": "running",
-      "heartbeat_at": "2026-09-10T12:22:44+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-10T12:23:57+00:00",
       "pid": 348869,
       "last_started_at": "2026-09-10T12:22:43+00:00",
-      "elapsed_seconds": 6.0,
+      "elapsed_seconds": 66.0,
       "overlap_skips": 0,
-      "duration_seconds": 28.95,
-      "last_failure_at": "2026-09-10T01:58:05+00:00",
-      "last_success_at": "2026-09-10T12:18:13+00:00"
+      "duration_seconds": 72.11,
+      "last_failure_at": "2026-09-10T12:23:57+00:00",
+      "last_success_at": "2026-09-10T12:18:13+00:00",
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "child_pid": 348870,
       "state": "running",
-      "heartbeat_at": "2026-09-10T12:22:44+00:00",
-      "pid": 348870,
+      "heartbeat_at": "2026-09-10T12:23:49+00:00",
+      "pid": 346209,
       "last_started_at": "2026-09-10T12:22:43+00:00",
-      "elapsed_seconds": 66.1,
+      "elapsed_seconds": 66.0,
       "overlap_skips": 0,
       "duration_seconds": 72.69,
       "last_success_at": "2026-09-10T12:18:57+00:00",
@@ -69,7 +73,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-10T12:22:44+00:00",
+  "updated_at": "2026-09-10T12:23:57+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -86,7 +90,7 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 266
+        "calls": 268
       },
       {
         "purpose": "world",
@@ -193,15 +197,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-10",
     "reset_timezone": "UTC",
-    "local_calls": 2742,
-    "provider_remaining": 2572,
+    "local_calls": 2746,
+    "provider_remaining": 2568,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 1519,
     "analysis_calls": 874,
-    "live_calls": 266,
-    "scoring_calls": 83,
+    "live_calls": 268,
+    "scoring_calls": 85,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
