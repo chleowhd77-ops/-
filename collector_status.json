@@ -3,33 +3,35 @@
     "scheduler": {
       "supervisor_pid": 351039,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:32:01+00:00",
+      "heartbeat_at": "2026-09-11T01:33:02+00:00",
       "pid": 351039,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
         "world": 351833,
-        "master": 351887
+        "master": 351887,
+        "live": 351888,
+        "score": 351889
       }
     },
     "live": {
       "child_pid": 351888,
-      "state": "running",
-      "heartbeat_at": "2026-09-11T01:32:10+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-11T01:33:21+00:00",
       "pid": 351888,
       "last_started_at": "2026-09-11T01:32:07+00:00",
       "elapsed_seconds": 54.1,
       "overlap_skips": 0,
-      "duration_seconds": 61.39,
+      "duration_seconds": 71.09,
       "last_failure_at": "2026-09-11T00:04:53+00:00",
-      "last_success_at": "2026-09-11T01:28:08+00:00"
+      "last_success_at": "2026-09-11T01:33:21+00:00"
     },
     "score": {
       "child_pid": 351889,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:32:11+00:00",
-      "pid": 351889,
+      "heartbeat_at": "2026-09-11T01:33:02+00:00",
+      "pid": 351039,
       "last_started_at": "2026-09-11T01:32:09+00:00",
-      "elapsed_seconds": 143.5,
+      "elapsed_seconds": 52.1,
       "overlap_skips": 0,
       "duration_seconds": 160.24,
       "last_success_at": "2026-09-11T01:29:49+00:00",
@@ -45,10 +47,10 @@
     "master": {
       "child_pid": 351887,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:32:01+00:00",
+      "heartbeat_at": "2026-09-11T01:33:02+00:00",
       "pid": 351039,
       "last_started_at": "2026-09-11T01:30:35+00:00",
-      "elapsed_seconds": 86.1,
+      "elapsed_seconds": 146.3,
       "overlap_skips": 0,
       "duration_seconds": 2700.7,
       "last_failure_at": "2026-09-11T01:15:34+00:00",
@@ -60,10 +62,10 @@
     "world": {
       "child_pid": 351833,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:32:01+00:00",
+      "heartbeat_at": "2026-09-11T01:33:02+00:00",
       "pid": 351039,
       "last_started_at": "2026-09-11T00:55:37+00:00",
-      "elapsed_seconds": 2184.6,
+      "elapsed_seconds": 2244.7,
       "overlap_skips": 2,
       "duration_seconds": 3600.0,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -73,7 +75,7 @@
       "last_error": "hard timeout after 3600 seconds"
     }
   },
-  "updated_at": "2026-09-11T01:32:11+00:00",
+  "updated_at": "2026-09-11T01:33:21+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -95,7 +97,7 @@
       {
         "purpose": "world",
         "endpoint": "/fixtures",
-        "calls": 47
+        "calls": 51
       },
       {
         "purpose": "analysis",
@@ -105,17 +107,22 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 35
+        "calls": 37
       },
       {
         "purpose": "world",
         "endpoint": "/coachs",
-        "calls": 30
+        "calls": 34
       },
       {
         "purpose": "world",
         "endpoint": "/standings",
-        "calls": 30
+        "calls": 34
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/squads",
+        "calls": 29
       },
       {
         "purpose": "world",
@@ -124,13 +131,8 @@
       },
       {
         "purpose": "world",
-        "endpoint": "/players/squads",
-        "calls": 25
-      },
-      {
-        "purpose": "world",
         "endpoint": "/injuries",
-        "calls": 19
+        "calls": 22
       },
       {
         "purpose": "analysis",
@@ -143,13 +145,13 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "count": 41
+        "count": 47
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 41
+        "count": 47
       },
       {
         "metric": "cache_hit",
@@ -173,14 +175,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-11",
     "reset_timezone": "UTC",
-    "local_calls": 667,
-    "provider_remaining": 6833,
+    "local_calls": 694,
+    "provider_remaining": 6806,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 290,
+    "world_calls": 315,
     "analysis_calls": 236,
-    "live_calls": 35,
+    "live_calls": 37,
     "scoring_calls": 106,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
