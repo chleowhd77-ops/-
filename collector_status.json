@@ -3,32 +3,34 @@
     "scheduler": {
       "supervisor_pid": 351039,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:16:58+00:00",
+      "heartbeat_at": "2026-09-11T01:17:58+00:00",
       "pid": 351039,
       "last_started_at": "2026-08-30T14:02:45+00:00",
       "active_jobs": {
-        "world": 351833
+        "world": 351833,
+        "live": 351861,
+        "score": 351862
       }
     },
     "live": {
       "child_pid": 351861,
-      "state": "running",
-      "heartbeat_at": "2026-09-11T01:17:05+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-11T01:18:06+00:00",
       "pid": 351861,
       "last_started_at": "2026-09-11T01:17:04+00:00",
       "elapsed_seconds": 54.1,
       "overlap_skips": 0,
-      "duration_seconds": 60.1,
+      "duration_seconds": 61.09,
       "last_failure_at": "2026-09-11T00:04:53+00:00",
-      "last_success_at": "2026-09-11T01:13:05+00:00"
+      "last_success_at": "2026-09-11T01:18:06+00:00"
     },
     "score": {
       "child_pid": 351862,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:17:07+00:00",
-      "pid": 351862,
+      "heartbeat_at": "2026-09-11T01:17:58+00:00",
+      "pid": 351039,
       "last_started_at": "2026-09-11T01:17:06+00:00",
-      "elapsed_seconds": 172.2,
+      "elapsed_seconds": 52.0,
       "overlap_skips": 0,
       "duration_seconds": 177.3,
       "last_success_at": "2026-09-11T01:15:04+00:00",
@@ -59,10 +61,10 @@
     "world": {
       "child_pid": 351833,
       "state": "running",
-      "heartbeat_at": "2026-09-11T01:16:58+00:00",
+      "heartbeat_at": "2026-09-11T01:17:58+00:00",
       "pid": 351039,
       "last_started_at": "2026-09-11T00:55:37+00:00",
-      "elapsed_seconds": 1281.3,
+      "elapsed_seconds": 1341.4,
       "overlap_skips": 1,
       "duration_seconds": 3600.0,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -72,7 +74,7 @@
       "last_error": "hard timeout after 3600 seconds"
     }
   },
-  "updated_at": "2026-09-11T01:17:07+00:00",
+  "updated_at": "2026-09-11T01:18:06+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -94,7 +96,7 @@
       {
         "purpose": "world",
         "endpoint": "/fixtures",
-        "calls": 39
+        "calls": 41
       },
       {
         "purpose": "analysis",
@@ -104,7 +106,7 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 29
+        "calls": 31
       },
       {
         "purpose": "world",
@@ -114,12 +116,17 @@
       {
         "purpose": "world",
         "endpoint": "/coachs",
-        "calls": 22
+        "calls": 24
       },
       {
         "purpose": "world",
         "endpoint": "/standings",
-        "calls": 22
+        "calls": 24
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/squads",
+        "calls": 19
       },
       {
         "purpose": "analysis",
@@ -130,11 +137,6 @@
         "purpose": "analysis",
         "endpoint": "/standings",
         "calls": 18
-      },
-      {
-        "purpose": "world",
-        "endpoint": "/players/squads",
-        "calls": 17
       }
     ],
     "runtime_metrics": [
@@ -142,13 +144,13 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "count": 31
+        "count": 34
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 31
+        "count": 34
       },
       {
         "metric": "cache_hit",
@@ -172,14 +174,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-11",
     "reset_timezone": "UTC",
-    "local_calls": 596,
-    "provider_remaining": 6904,
+    "local_calls": 610,
+    "provider_remaining": 6890,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 243,
+    "world_calls": 255,
     "analysis_calls": 236,
-    "live_calls": 29,
+    "live_calls": 31,
     "scoring_calls": 88,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
