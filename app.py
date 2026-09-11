@@ -85,6 +85,8 @@ st.set_page_config(
 
 GITHUB_REPO = "chleowhd77-ops/-"
 DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
+# 결과 피드가 회차 전환 순간에 비어도 종료된 일반 축구 경기가
+# 다음 날 LIVE 추천 화면에 남지 않게 한다. 실제 LIVE 상태는 우선 보존된다.
 UNCONFIRMED_MATCH_GRACE_HOURS = 3
 
 NO_CACHE_HEADERS = {
@@ -114,6 +116,7 @@ def load_live_scores():
 
 
 def load_world_dashboard_data():
+    """Load the isolated WORLD feed without affecting the main dashboard."""
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/world_dashboard.json?t={int(time.time())}"
     try:
         res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
@@ -126,6 +129,7 @@ def load_world_dashboard_data():
     return {"matches": [], "source_meta": {}, "rejected_summary": []}
 
 def load_grading_snapshot(embedded):
+    """A score-owned feed is independent of slow analysis/DB publication."""
     embedded = embedded if isinstance(embedded, dict) else {}
     try:
         url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/grading_results.json?t={int(time.time())}"
@@ -143,6 +147,7 @@ def load_grading_snapshot(embedded):
 
 
 def _is_current_robot_public_snapshot(snapshot):
+    """Accept only the explicitly reset public score era in R7.9+."""
     return bool(
         isinstance(snapshot, dict)
         and snapshot.get("public_history_mode") == "current-robot-version-only"
@@ -152,6 +157,7 @@ def _is_current_robot_public_snapshot(snapshot):
 
 
 def load_prediction_results(grading_snapshot=None):
+    """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
     embedded_rows = []
     if isinstance(grading_snapshot, dict):
         embedded_rows = grading_snapshot.get("finished", []) or []
@@ -171,6 +177,8 @@ def load_prediction_results(grading_snapshot=None):
             for row in embedded_rows
             if row.get("match_id") is not None
         }
+    # A valid empty reset feed means exactly 0-0. Never fall back to the local
+    # legacy DB, because that would briefly republish the hidden old history.
     if _is_current_robot_public_snapshot(grading_snapshot):
         return {}
     try:
@@ -218,6 +226,7 @@ _NORMALIZED_PLACEHOLDER_TEAM_NAMES = {
 
 
 def _is_displayable_match_item(item):
+    """Block only unidentified placeholder rows, never a real named team."""
     if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
         return False
     match = item["match"]
@@ -242,6 +251,7 @@ MEMBER_STORAGE_STATUS = get_member_storage_status()
 
 
 def get_private_setting(name: str) -> str:
+    """Read a deployment secret without exposing it in the public repository."""
     value = os.getenv(name, "").strip()
     if value:
         return value
@@ -1000,6 +1010,8 @@ if 'auth_token' not in st.session_state:
 if 'supporter_expires_at' not in st.session_state:
     st.session_state['supporter_expires_at'] = None
 
+# 서버의 live_scores.json은 5분마다 갱신된다. 브라우저도 1분마다 조용히
+# 다시 읽어야 사용자가 수동 새로고침을 하지 않아도 점수가 움직인다.
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
@@ -1071,6 +1083,7 @@ def begin_user_session(user):
     write_auth_query_token(auth_token)
 
 
+# Streamlit 화면 상태가 초기화되어도 주소에 저장된 기기별 로그인 표식으로 복구한다.
 if not st.session_state['logged_in']:
     saved_auth_token = read_auth_query_token()
     if saved_auth_token:
@@ -1080,6 +1093,9 @@ if not st.session_state['logged_in']:
         else:
             clear_auth_query_token()
 
+# 로그인 상태가 유지되는 동안에도 매 화면 실행마다 실제 DB 등급을 다시 확인한다.
+# 따라서 관리자가 지정한 후원 만료 시각이 지나면 다음 자동 새로고침(최대 1분)에서
+# 세션과 DB가 함께 일반회원으로 복귀한다.
 if st.session_state['logged_in'] and st.session_state.get('user_id'):
     previous_role = st.session_state.get('role', ROLE_MEMBER)
     refreshed_user = refresh_user_access(int(st.session_state['user_id']))
@@ -1345,6 +1361,8 @@ else:
                 )
                 (st.success if ok else st.error)(message)
 
+    # 서버 비밀 설정에 등록한 운영자 아이디에만 최초 관리자 인증창을 보여준다.
+    # 표시 이름을 "관리자"로 적는 것만으로는 절대 관리자 권한을 얻을 수 없다.
     owner_username_matches = bool(
         ADMIN_BOOTSTRAP_USERNAME
         and hmac.compare_digest(
@@ -1389,6 +1407,7 @@ else:
         st.session_state['supporter_expires_at'] = None
         st.rerun()
 
+    # 관리자 전용 회원·권한 관리
     if current_role == ROLE_ADMIN:
         st.sidebar.markdown("---")
         storage_status = get_member_storage_status()
@@ -1645,6 +1664,7 @@ dashboard_data = load_dashboard_data()
 world_dashboard_data = load_world_dashboard_data()
 live_scores_data = load_live_scores()
 if isinstance(dashboard_data, dict):
+    # 수집기가 새 버전으로 교체되기 전 남아 있는 캐시에도 같은 안전망을 적용한다.
     for collection_name in ("proto", "top3", "toto14"):
         dashboard_data[collection_name] = [
             item for item in dashboard_data.get(collection_name, [])
@@ -1652,6 +1672,9 @@ if isinstance(dashboard_data, dict):
         ]
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
 if not _is_current_robot_public_snapshot(grading_snapshot):
+    # App deployment can precede the collector's first R7.9 publish by a few
+    # moments. Hide every legacy feed immediately instead of displaying it
+    # during that transition. The SQLite rows themselves remain untouched.
     grading_snapshot = {
         "schema_version": "grading-results.v1",
         "analysis_version": ANALYSIS_VERSION,
@@ -1711,6 +1734,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# 사이드바가 접힌 모바일 방문자도 첫 화면에서 바로 가입·로그인할 수 있다.
 if not st.session_state.get('logged_in'):
     st.markdown(
         """
@@ -1779,6 +1803,7 @@ if not st.session_state.get('logged_in'):
             st.session_state['next_auth_menu'] = "로그인"
             st.info("왼쪽 위의 메뉴(>>)를 열어 로그인해주세요.")
 
+# 공개 대상과 기간에 맞는 중요 팝업은 접속 중 한 번만 보여준다.
 try:
     popup_notices = list_active_notices(active_role, notice_mode="popup", limit=5)
 except Exception:
@@ -1792,6 +1817,7 @@ next_popup = next(
 if next_popup and hasattr(st, "dialog") and "open_notice_popup" in globals():
     open_notice_popup(next_popup)
 
+# 공개 대상과 기간에 맞는 최신 상단 안내문을 자동 노출한다.
 try:
     visible_notices = list_active_notices(active_role, notice_mode="banner", limit=1)
     latest_notice = visible_notices[0] if visible_notices else None
@@ -1809,6 +1835,7 @@ if latest_notice:
     if notice_link:
         st.link_button("공지 자세히 보기", notice_link)
 
+# TOP3, 베트맨 전용, 해외·사설용 경기를 서로 섞지 않는다.
 main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
     "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14", "채점 노트", "인증 게시판"
 ])
@@ -1879,6 +1906,7 @@ def _result_for_item(item):
 
 
 def _legacy_v4_pick_for_item(item):
+    """Recover the frozen reconstructed V4 answer from any card shape."""
     if not isinstance(item, dict):
         return None
     analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
@@ -1941,6 +1969,7 @@ def _live_time_html(item):
 
 
 def _world_live_item(world_item, proto_by_fixture):
+    """Adapt WORLD to the exact same renderer, without recalculating a forecast."""
     analysis, canonical = _world_analysis_for_display(world_item,proto_by_fixture)
     if canonical is not None:
         return canonical
@@ -2068,6 +2097,11 @@ def _world_live_item(world_item, proto_by_fixture):
 
 
 def _with_analysis_pick(item):
+    """Fill legacy empty cards from pre-kickoff evidence, not current results.
+
+    This is a display-only copy. The historical prediction, decision and grade
+    remain unchanged, including an old decision not to issue an official pick.
+    """
     categories = item.get("pick_categories") or {}
     selected = categories.get("high_probability") or {}
     if selected.get("raw_pick") or any(p.get("raw_pick") for p in item.get("ev_sorted_picks", []) if isinstance(p, dict)):
@@ -2106,6 +2140,7 @@ def _with_analysis_pick(item):
 
 
 def _render_live_match_card(item):
+    """ONE component for Proto and World: score, events, pick, quality, full report."""
     item = _with_analysis_pick(item)
     if _live_state(item) in {"LIVE", "FINISHED"}:
         item = dict(item)
@@ -2133,6 +2168,8 @@ def _render_live_match_card(item):
         m.get("uo_under"), m.get("uo_over")
     )
 
+    # 출처 표시가 누락된 데이터도 실제 1X2 배당이 없으면
+    # 0.0 숫자 대신 배당 대기 안내를 보여줍니다.
     if odds_source == "model_only" or not has_three_way_odds:
         odds_bar_html = (
             "<div class='odd-bar'><span class='odd-item'>"
@@ -2162,6 +2199,7 @@ def _render_live_match_card(item):
             f"<span class='odd-item'>{totals_html}</span>"
             "</div>"
         )
+
 
     detail_item = dict(item)
     if not detail_item.get("detailed_report"):
@@ -2231,6 +2269,7 @@ def _ui_match_datetime(match_time_str):
 
 
 def _item_api_fixture_id(item):
+    """Return the verified provider fixture ID without guessing from team names."""
     if not isinstance(item, dict):
         return 0
     match = item.get("match") if isinstance(item.get("match"), dict) else {}
@@ -2248,6 +2287,7 @@ def _item_api_fixture_id(item):
 
 
 def _prefer_canonical_grading_rows(rows):
+    """Hide stored WORLD shadows when the same official Proto fixture exists."""
     rows = [dict(row) for row in (rows or [])]
     canonical_fixture_ids = {
         _item_api_fixture_id(row)
@@ -2287,6 +2327,7 @@ def _item_kickoff_datetime(item):
 
 
 def _recommendation_is_upcoming(item, now=None):
+    """Recommendation pages contain only fixtures that have not kicked off."""
     if not isinstance(item, dict):
         return False
     match = item.get("match") if isinstance(item.get("match"), dict) else {}
@@ -2310,6 +2351,12 @@ def _recommendation_is_upcoming(item, now=None):
 
 
 def _toto14_round_has_started(items, now=None):
+    """Hide a pools ticket once its first match has kicked off.
+
+    The frozen predictions remain in the dashboard payload and grading DB.  This
+    helper controls only the current recommendation screen, so historical picks
+    are still available to the grading note and learning pipeline.
+    """
     if not isinstance(items, list):
         return False
     current = now or datetime.now(timezone(timedelta(hours=9)))
@@ -2402,6 +2449,7 @@ def _score_value(source):
 
 
 def _localize_event_line(value):
+    """신규·기존 사건 기록의 API 영문 표기를 고객용 한글로 통일합니다."""
     line = str(value or "").strip()
     replacements = (
         (r"\bSubstitution\b", "교체"),
@@ -2461,6 +2509,7 @@ def _event_html(*sources):
 
 
 def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
+    """Show verified facts and a deterministic reason for every missed pick."""
     raw = str(raw_note or "").strip()
     canned_prefixes = (
         "💡 [퍼펙트 적중] AI의 분석이 경기 흐름과 정확히 일치했습니다! ",
@@ -2473,7 +2522,9 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
             raw = raw[len(prefix):].lstrip()
             break
 
+    # 새 형식의 요약도 현재 DB 적중값으로 다시 만들기 때문에 중복하지 않습니다.
     raw = re.sub(r"^\[채점 결과\][^\n]*(?:\n|$)", "", raw).strip()
+    # 구버전의 긴 영문 타임라인은 아래 한글 주요 사건 기록과 중복되므로 제거합니다.
     raw = re.sub(
         r"\s*\|\s*⏱️\s*매치 타임라인:.*?(?=\n\n🎬|\Z)",
         "",
@@ -2482,6 +2533,8 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
     ).strip()
 
     main_text, marker, event_text = raw.partition("🎬")
+    # The old provider-missing sentence was identical on every match and added
+    # no learning signal.  The structured limitation below replaces it.
     main_text = re.sub(
         r"^\[공식 경기 통계\]\s*(?:제공된|조회된|조회되지 않아).*?(?:\n|$)",
         "",
@@ -2501,11 +2554,15 @@ def _clean_grading_note(raw_note, prob_ok, ev_ok, has_ev_pick, row=None):
                 event_lines.append(line)
     event_lines = event_lines[-8:]
 
+    # The current product publishes one official final pick.  Legacy alternative
+    # data remains in the database for audit, but is not a second public result.
     result_parts = [f"공식 최종픽 {'적중' if prob_ok else '미적중'}"]
     sections = [f"[채점 결과] {' · '.join(result_parts)}."]
     if main_text.strip():
         sections.append(main_text.strip().replace("승리 결과로 이어지지 않았습니다.", "해당 추천픽의 정산 조건은 충족되지 않았습니다."))
 
+    # New rows carry JSON for the future learning robot.  Old rows are rebuilt
+    # from their frozen picks, final score, and any facts already in the note.
     row = row if isinstance(row, dict) else {}
     payload = parse_postmortem_json(row.get("postmortem_json"))
     if isinstance(payload, dict):
@@ -2577,6 +2634,8 @@ def _detail_html(item, *, always_visible=False):
     if isinstance(detail, (dict, list)):
         detail = json.dumps(detail, ensure_ascii=False, indent=2)
     safe_detail = escape(str(detail)).replace("\n", "<br>")
+    # Both LIVE tabs show the full saved report without a click (2026-09-06).
+    # Keep other tabs' existing disclosure behavior unchanged.
     if always_visible:
         return (
             "<section class='analysis-details analysis-details-visible' "
@@ -2597,6 +2656,7 @@ def _detail_html(item, *, always_visible=False):
 
 
 def _analysis_data_quality_html(item):
+    """Keep evidence coverage separate from adjusted analysis confidence."""
     if not isinstance(item, dict):
         return ""
     try:
@@ -2641,6 +2701,21 @@ def _analysis_data_quality_html(item):
     return coverage_badge + confidence_badge + lineup_badge
 
 
+def _has_display_odds(*values):
+    """실제로 화면에 표시할 수 있는 십진수 배당인지 확인합니다.
+
+    배당 출처 표시가 누락된 예전 대시보드 데이터라도 0, 0.0, '-'를
+    실제 배당으로 잘못 보여주지 않도록 값 자체를 한 번 더 검증합니다.
+    """
+    if not values:
+        return False
+    try:
+        return all(float(value) > 1.0 for value in values)
+    except (TypeError, ValueError):
+        return False
+
+
+# 🔥 라이브 경기 판별 함수
 def check_is_live(item):
     return _live_state(item) == "LIVE"
 
@@ -2667,6 +2742,9 @@ def _proto_is_recent_or_active(item):
     state = _live_state(item)
     if state == "FINISHED":
         return False
+    # A result-link problem must not leave a Saturday card in LIVE forever.
+    # Keep the immutable prediction in grading, but remove an unconfirmed card
+    # from the recommendation feed after the live lookup window.
     if state == "AWAITING_STATUS":
         kickoff = _item_kickoff_datetime(item)
         now = datetime.now(timezone(timedelta(hours=9)))
@@ -2691,6 +2769,7 @@ def render_logo_html(logo_url):
 
 
 def _human_pick_label(raw_pick, home_team=""):
+    """Turn terse Betman handicap notation into an unambiguous sentence."""
     raw = str(raw_pick or "").strip()
     matched = re.match(
         r"^\[\s*([+-]?\d+(?:\.\d+)?)\s*\]\s*(.*?)\s*핸디(승|무|패)$",
@@ -2716,6 +2795,7 @@ _WORLD_KO_OVERRIDES = {
     "Pohang Steelers": "포항 스틸러스",
     "Newcastle": "뉴캐슬 유나이티드",
     "Bournemouth": "본머스",
+
     "Lyon": "올랭피크 리옹", "Auxerre": "AJ오세르",
     "Sparta Rotterdam": "스파르타 로테르담", "PEC Zwolle": "PEC즈볼러",
     "VfB Stuttgart": "VfB 슈투트가르트", "1. FC Köln": "쾰른",
@@ -2724,6 +2804,7 @@ _WORLD_KO_OVERRIDES = {
 
 
 def _world_korean_name(api_name, team_id=0):
+    """Localize old WORLD rows too, while preserving their API identity."""
     api_name = str(api_name or "").strip()
     if api_name in _WORLD_KO_OVERRIDES:
         return _WORLD_KO_OVERRIDES[api_name]
@@ -2752,6 +2833,7 @@ def _world_korean_name(api_name, team_id=0):
 
 
 def _proto_fixture_index(items):
+    """Index only verified official IDs; team-name guessing can join wrong games."""
     result = {}
     for item in items or []:
         fixture_id = _item_api_fixture_id(item)
@@ -2761,6 +2843,7 @@ def _proto_fixture_index(items):
 
 
 def _world_analysis_for_display(world_item, proto_by_fixture):
+    """Use the Proto decision as the single public answer for an identical fixture."""
     base = dict((world_item or {}).get("analysis") or {})
     canonical = (proto_by_fixture or {}).get(_item_api_fixture_id(world_item))
     if not isinstance(canonical, dict):
@@ -2814,6 +2897,7 @@ def _world_analysis_for_display(world_item, proto_by_fixture):
 
 
 def _top3_strategy_html(item):
+    """Show the decision and risk summary without making users open the long report."""
     categories = _pick_categories(item)
     high = categories.get("high_probability") if isinstance(categories, dict) else None
     honey = categories.get("honey") if isinstance(categories, dict) else None
@@ -2920,6 +3004,7 @@ def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
 ):
+    """Show the public pick and the administrator's three-engine comparison."""
     if isinstance(analysis_item, dict):
         display_item = _with_analysis_pick(analysis_item)
         if display_item.get("display_only_pick"):
@@ -2936,6 +3021,13 @@ def generate_pred_boxes(
             value = pick_categories.get(key)
             categories[key] = value if isinstance(value, dict) else None
 
+    for pick in picks:
+        key = pick.get("category_key")
+        if key in categories and categories[key] is None:
+            categories[key] = pick
+
+    # 이전 버전 데이터는 확률 높은 픽만 복원합니다. 배당형 대안픽과 VIP 역배는
+    # 엄격한 신규 기준을 거치지 않았으므로 임의로 만들어 표시하지 않습니다.
     if categories["high_probability"] is None and picks:
         categories["high_probability"] = max(
             picks, key=lambda item: float(item.get("prob", 0) or 0)
@@ -3090,6 +3182,7 @@ with main_tab1:
         </div>
         """, unsafe_allow_html=True)
         
+        # 진행 중 경기 → 예정 경기만 표시하며 종료 확정 경기는 채점 노트로 이동한다.
         proto_list = [
             item for item in dashboard_data.get("proto", [])
             if _proto_is_recent_or_active(item)
@@ -3106,6 +3199,7 @@ with main_tab1:
                  
             st.markdown("<hr style='border-color: #1E293B; margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
+            # 필터링
             if selected_league != "전체 리그 보기": 
                 proto_list = [m for m in proto_list if m.get('league') == selected_league]
                  
@@ -3166,6 +3260,7 @@ with main_tab6:
         item for item in eligible_world_matches
         if not world_pick_ready[id(item)] and not _recommendation_is_upcoming(item)
     ]
+    # 화면의 숫자는 오래된 메타데이터가 아니라 실제 저장된 경기 행에서 계산한다.
     world_market_previews = sum(
         1 for item in eligible_world_matches
         if str(
@@ -3194,13 +3289,10 @@ with main_tab6:
         1 for item in eligible_world_matches
         if str(item.get("visibility_status") or "").upper() == "PUBLIC"
     )
-    
-    # 💡 탭 필터링 해제 (일반 유저도 무조건 보이게 변경)
     world_matches = [
         item for item in eligible_world_matches
         if item not in missed_prekickoff_world
     ]
-    
     if is_world_admin:
         rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
         rejected_text = " · ".join(
@@ -3262,6 +3354,7 @@ with main_tab2:
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
     stored_toto14_list = dashboard_data.get("toto14", [])
     toto14_round_closed = _toto14_round_has_started(stored_toto14_list)
+    # 화면에서만 지난 회차를 숨긴다. 동결 예측과 채점 자료는 원본에 보존된다.
     toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
@@ -3316,6 +3409,8 @@ with main_tab2:
                     )
                 st.caption("이 세 단독픽은 관리자에게만 보이며 실제 공식 복수마킹 조합과 섞이지 않습니다.")
 
+        # The cards are the source of truth.  A partially published/stale meta
+        # object must never turn 10 singles + 3 doubles into 0 won.
         toto14_meta = toto14_display_meta(
             toto14_list, dashboard_data.get("toto14_meta", {})
         )
@@ -3494,6 +3589,7 @@ with main_tab3:
 # [TAB 4] 🔥 AI 리포트
 # -----------------------------------------------------------------------------
 def _render_three_engine_scorecard(snapshot):
+    """Administrator-only A/B/C scorecard; historical public grades stay intact."""
     if active_role != ROLE_ADMIN or not isinstance(snapshot, dict):
         return
     comparison = snapshot.get("three_engine") or {}
@@ -3652,11 +3748,15 @@ with main_tab4:
             else:
                 df_proto_current = df_proto_all
                 df_toto_current = df_toto_all
+            # 프로그램 배포와 무관하게 공식 성적은 과거 동결 픽부터 누적한다.
+            # 각 경기의 analysis_version 값은 그대로 보존해 버전별 재검증도 가능하다.
             df_proto = df_proto_all
             df_toto = df_toto_all
             
             proto_total = len(df_proto)
             proto_prob_hit = int(pd.to_numeric(df_proto['is_correct_prob'], errors='coerce').fillna(0).sum()) if proto_total > 0 else 0
+            # A/B 비교에서는 확률픽과 완전히 같은 대안픽을 두 번 센 것처럼
+            # 보이지 않도록 별도 방향인 배당형 대안픽만 집계한다.
             honey_mask = (
                 df_proto['ev_pick'].fillna('').astype(str).str.strip().ne('')
                 & df_proto['ev_pick'].fillna('').astype(str).ne(
@@ -3716,6 +3816,8 @@ with main_tab4:
                 "today_hit_count": today_hit_count,
                 "today_robot_hit_count": today_robot_hit_count,
                 "today_versions": today_versions,
+                # 새 로봇 버전 이후 공개 행만 제공한다. 이전 기록은 DB에서
+                # 지우지 않고 학습·감사용으로만 보존한다.
                 "history": df_proto.to_dict('records'),
                 "pending": df_pending.to_dict('records')
             }
@@ -3874,6 +3976,8 @@ with main_tab4:
                     not str(row.get('analysis_version') or '').strip()
                     and not int(row.get('api_fixture_id') or 0)
                 )
+                # 종료 예상 시점을 충분히 지난 미채점 기록은
+                # 고유번호 유무와 관계없이 현재 경기 목록에서 분리한다.
                 if now >= match_dt + timedelta(hours=5):
                     archived_row = dict(row)
                     archived_row['_archive_reason'] = (
