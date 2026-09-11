@@ -123,14 +123,7 @@ def valid_analysis_candidates(picks):
 
 
 def extract_robot_pick(item):
-    """Recover one frozen robot pick from every supported publication shape.
-
-    Collector versions have published the robot alongside the card, inside
-    category data, and inside the nested WORLD analysis.  The public app must
-    not silently hide the same frozen answer merely because its container
-    changed.  A copy is returned so display localization cannot mutate the
-    saved pre-kickoff record.
-    """
+    """Recover one frozen robot pick from every supported publication shape."""
     if not isinstance(item, dict):
         return None
     analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
@@ -312,12 +305,7 @@ def _pace_api_request():
 
 
 def _api_provider_day_key():
-    """API-Sports의 일일 사용량 초기화 기준(매일 00:00 UTC)을 따른다.
-
-    기존 버전은 한국 날짜를 사용해 공급사 초기화 시각과 최대 9시간 어긋났다.
-    ``utc:`` 접두사는 과거 KST 기준으로 저장된 소진 기록과 새 기록을 분리해,
-    업데이트 직후에도 오래된 0회 잔여 기록이 로봇을 막지 않게 한다.
-    """
+    """API-Sports의 일일 사용량 초기화 기준(매일 00:00 UTC)을 따른다."""
     return f"utc:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
 
@@ -563,13 +551,7 @@ def _show_api_quota_notice(message):
 
 @contextmanager
 def api_purpose_context(purpose):
-    """Count nested helper requests under one isolated job purpose.
-
-    Most data helpers are shared by PROTO and WORLD.  The world worker runs in
-    its own process, so a short-lived process-local override lets those helpers
-    keep their stable signatures while every real network request is charged
-    to the WORLD safety budget.
-    """
+    """Count nested helper requests under one isolated job purpose."""
     global _API_PURPOSE_OVERRIDE
     previous = _API_PURPOSE_OVERRIDE
     _API_PURPOSE_OVERRIDE = str(purpose or "analysis").strip().lower()
@@ -680,8 +662,6 @@ def get_api_usage_status():
     }
 
 # 득점/도움 순위만으로는 골키퍼ㆍ수비수ㆍ갑작스러운 로테이션을 놓칠 수 있다.
-# 팀을 고정하지 않고 선수 이름만 관리한 뒤, 실제 부상 명단/소속 스쿼드에
-# 등장할 때만 사용한다. 이 목록은 config.py에서도 쉽게 추가할 수 있다.
 PROTECTED_STAR_PLAYERS = [
     {"name": "Son Heung-min", "aliases": ["Heung Min Son", "Heung-min Son", "손흥민"], "impact": 1.25},
     {"name": "Erling Haaland", "aliases": ["E. Haaland"], "impact": 1.25},
@@ -717,9 +697,6 @@ def find_protected_star(player_name):
                 return star
     return None
 
-# API-Football이 실제 엠블럼 대신 '이미지 없음' 그림을 주는 국내 구단은
-# K리그 공식 엠블럼을 우선 사용한다. 팀 ID는 그대로 유지하므로 전적 조회에는
-# 영향을 주지 않고 화면의 로고만 정확하게 교체된다.
 OFFICIAL_TEAM_LOGOS = {
     "김포": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
     "김포FC": "https://www.kleague.com/assets/images/emblem/emblem_K36%403x.png",
@@ -841,7 +818,6 @@ MANUAL_TEAM_MAP = {
     "전북 현대": "Jeonbuk Motors", "FC서울": "FC Seoul", "포항 스틸러스": "Pohang Steelers"
 }
 
-# 기획자님이 주셨던 100% 원본 딕셔너리에 + 캡처로 주신 팀만 안전하게 추가!
 DIRECT_TEAM_INFO = {
     "제주 SKFC": {"id": 2977, "logo": "https://media.api-sports.io/football/teams/2977.png"},
     "제주": {"id": 2977, "logo": "https://media.api-sports.io/football/teams/2977.png"},
@@ -938,11 +914,7 @@ DIRECT_TEAM_INFO = {
     "바이어04 레버쿠젠": {"id": 168, "logo": "https://media.api-sports.io/football/teams/168.png"}
 }
 
-# API-Football의 고정 팀 ID가 검증된 구단은 검색 API가 느리거나 한도에
-# 걸려도 엠블럼과 경기 연결이 끊기지 않도록 직접 연결한다.
 DIRECT_TEAM_INFO.update({
-    # 세리에A 팀은 검색 결과의 동명이인/유소년 팀 오연결을 막기 위해
-    # API-Football의 검증된 1군 팀 ID를 직접 사용합니다.
     "AS로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
     "AS 로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
     "로마": {"id": 100, "logo": "https://media.api-sports.io/football/teams/100.png"},
@@ -957,7 +929,6 @@ DIRECT_TEAM_INFO.update({
     "파더보른07": {"id": 185, "logo": "https://media.api-sports.io/football/teams/185.png"},
     "프랑크푸르트": {"id": 169, "logo": "https://media.api-sports.io/football/teams/169.png"},
     "함부르크": {"id": 175, "logo": "https://media.api-sports.io/football/teams/175.png"},
-    # 베트맨의 짧은 표기와 프로토의 전체 표기를 같은 1군 팀으로 고정한다.
     "산프히로": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
     "산프레체 히로시마": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
     "Sanfrecce Hiroshima": {"id": 282, "logo": "https://media.api-sports.io/football/teams/282.png"},
@@ -966,8 +937,6 @@ DIRECT_TEAM_INFO.update({
 def init_cache_db():
     try:
         conn = _sqlite_connect()
-        # WAL lets the isolated LIVE/score/master/world workers read while one
-        # short write is committing. Existing data and table contents are kept.
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         cursor = conn.cursor()
@@ -1174,10 +1143,7 @@ SMART_MAPPING_FILE = "smart_mapping.json"
 TEAM_INFO_MEMORY_CACHE = {}
 TEAM_INFO_FAILURE_RETRY_AT = {}
 
-# 베트맨/국내 표기와 API-FOOTBALL 영문 팀명을 연결한다.
-# 여기서 찾은 동일 팀 ID를 팀 마크와 최근 전적 조회에 함께 사용한다.
 BUILTIN_TEAM_ALIASES = {
-    # 베트맨 화면의 짧은 팀명도 같은 공식 API 팀으로 연결합니다.
     "풀루미넨시": "Fluminense",
     "플루미넨시": "Fluminense",
     "CA플라텐세": "Platense",
@@ -1272,8 +1238,6 @@ BUILTIN_TEAM_ALIASES = {
     "코모1907": "Como",
     "광주FC": "Gwangju FC",
     "FC서울": "FC Seoul",
-    # 2026-09-10 승무패14 공식 경기표에서 확인하는 양 팀 이름.
-    # ID를 고정하지 않고 같은 날짜·시각의 공식 홈/원정 쌍으로 최종 검증한다.
     "스포르팅CP": "Sporting CP",
     "스포르팅 CP": "Sporting CP",
     "갈라타사라이": "Galatasaray",
@@ -1294,11 +1258,9 @@ def _lookup_builtin_team_alias(team_name):
     return BUILTIN_TEAM_ALIAS_INDEX.get(_builtin_team_alias_key(team_name))
 
 def _sanitize_team_search(value):
-    """API-Football 검색 규칙(영문/숫자/공백만 허용)에 맞춘다."""
     return re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 ]+', ' ', str(value or ''))).strip()
 
 def _team_search_candidates(translated_name, saved_name=None):
-    """정확한 이름부터 안전한 별칭까지 중복 없이 검색 후보를 만든다."""
     candidates = []
 
     def add(value):
@@ -1310,7 +1272,6 @@ def _team_search_candidates(translated_name, saved_name=None):
     add(translated_name)
 
     sanitized = _sanitize_team_search(saved_name or translated_name)
-    # API에서 자주 쓰지 않는 창단연도와 구단 접두/접미어를 제거한 후보.
     without_year = re.sub(r'\b(?:19|20)\d{2}\b', ' ', sanitized)
     without_club_words = re.sub(
         r'\b(?:FC|AFC|CF|SC|AC|AS|RC|RSC|SK|FK|SV|GNK|KF|AGF|CSKA|TC|AIF|NK|UD|CD)\b',
@@ -1321,14 +1282,8 @@ def _team_search_candidates(translated_name, saved_name=None):
     add(without_year)
     add(without_club_words)
 
-    # 공식 API가 별칭을 빼고 도시명으로만 등록한 대표 사례들.
     add(re.sub(r'\b(?:Red Diamonds|Antlers)\b$', ' ', without_club_words, flags=re.IGNORECASE))
 
-    # 전체 구단명 검색이 비어 있을 때 핵심 단어로 한 번 더 찾는다.
-    # 예: Shimizu S-Pulse -> Pulse/Shimizu,
-    #     V-Varen Nagasaki -> Nagasaki/Varen,
-    #     Yokohama F. Marinos -> Marinos/Yokohama
-    # 너무 짧은 약자는 오검색 위험이 커서 제외하고 호출 수 또한 최대 2회로 제한한다.
     key_tokens = [token for token in without_club_words.split() if len(token) >= 5]
     if key_tokens:
         add(key_tokens[-1])
@@ -1339,7 +1294,6 @@ def _normalize_team_alias(value):
     return re.sub(r'[^0-9A-Za-z가-힣]+', '', str(value or '')).casefold()
 
 def _resolve_team_logo(team_name, team_id=0, api_logo=None):
-    """공식 예외 로고를 우선하고 나머지는 API 로고를 그대로 쓴다."""
     try:
         direct_logo = OFFICIAL_TEAM_LOGOS_BY_ID.get(int(team_id or 0))
         if direct_logo:
@@ -1354,7 +1308,6 @@ def _resolve_team_logo(team_name, team_id=0, api_logo=None):
     return api_logo or DEFAULT_LOGO
 
 def _team_id_from_resolved_logo(team_name):
-    """이미 확인된 팀 로고와 같은 API 팀 ID를 돌려줍니다."""
     resolved_logo = _resolve_team_logo(team_name, 0, DEFAULT_LOGO)
     if not resolved_logo or resolved_logo == DEFAULT_LOGO:
         return 0
@@ -1375,7 +1328,6 @@ def _team_id_from_resolved_logo(team_name):
 
 
 def _resolve_translated_team_name(team_name):
-    """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
     builtin_alias = _lookup_builtin_team_alias(team_name)
     if builtin_alias:
         return builtin_alias
@@ -1394,8 +1346,6 @@ def _resolve_translated_team_name(team_name):
         normalized_key = _normalize_team_alias(korean_name)
         if normalized == normalized_key:
             return english_name
-        # '코번트리' ↔ '코번트리 시티', '라치오' ↔ 'SS라치오'처럼
-        # 한쪽이 다른 쪽에 완전히 포함될 때만 허용해 엉뚱한 팀 연결을 막는다.
         if normalized in normalized_key or normalized_key in normalized:
             alias_candidates.append((abs(len(normalized_key) - len(normalized)), english_name))
 
@@ -1413,7 +1363,6 @@ def _verified_team_cache_key(team_name):
 
 
 def _load_verified_team_info(team_name):
-    """경기표의 홈·원정 한 쌍으로 검증된 팀 정보만 불러온다."""
     cached = get_db_cache(_verified_team_cache_key(team_name), 24 * 365)
     if not isinstance(cached, dict) or not int(cached.get("id") or 0):
         return None
@@ -1425,7 +1374,6 @@ def _load_verified_team_info(team_name):
 
 
 def _remember_verified_team(team_name, api_team):
-    """실제 경기표에서 확인한 ID·로고를 모든 수집 단계의 기준으로 저장한다."""
     result = dict(api_team or {})
     team_id = int(result.get("id") or 0)
     if not team_id:
@@ -1445,17 +1393,12 @@ def _remember_verified_team(team_name, api_team):
 
 
 def _latin_team_key(value):
-    """악센트·구두점·FC 표기 차이를 제거한 영문 팀 비교 키."""
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii").casefold()
     return re.sub(r"[^0-9a-z]+", "", ascii_value)
 
 
 def known_team_id(team_name):
-    """베트맨 이름으로 이미 검증된 API 팀 ID를 반환한다."""
-    # 같은 프로세스에서 이미 찾은 팀과 DB에 저장된 정상 팀을 모두 같은
-    # 대표 ID로 사용한다. 로고ㆍ최근 전적ㆍ라이브ㆍ채점이 서로 다른 팀을
-    # 가리키지 않도록 하는 단일 팀 신원 기준이다.
     target = _normalize_team_alias(team_name)
     remembered = TEAM_INFO_MEMORY_CACHE.get(team_name) or TEAM_INFO_MEMORY_CACHE.get(target)
     if isinstance(remembered, dict) and int(remembered.get("id") or 0):
@@ -1475,11 +1418,6 @@ def known_team_id(team_name):
 
 
 def team_matches_api(local_name, api_name, api_team_id=0):
-    """베트맨 팀과 API 팀이 같은 팀인지 보수적으로 판정한다.
-
-    검증된 팀 ID를 최우선으로 사용하고, ID가 아직 없는 팀에 한해서만
-    영문 변환 이름의 정확 일치·포함·높은 유사도를 허용한다.
-    """
     expected_id = known_team_id(local_name)
     try:
         candidate_id = int(api_team_id or 0)
@@ -1561,8 +1499,6 @@ def fetch_team_info_api(team_name):
         set_db_cache(f"team_info_v7_search_{team_name}", result)
         return remember(result)
 
-    # 수동/공식 로고가 이미 확인된 팀은 그 로고의 API 팀 ID를 그대로 사용합니다.
-    # 이 ID가 최근 전적, 경기 매칭, 라이브 스코어 조회에 공통으로 전달됩니다.
     resolved_logo = _resolve_team_logo(team_name, 0, DEFAULT_LOGO)
     logo_team_id = _team_id_from_resolved_logo(team_name)
     if logo_team_id:
@@ -1578,8 +1514,7 @@ def fetch_team_info_api(team_name):
     retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
     if retry_at and datetime.now(timezone.utc) < retry_at:
         return fallback_res
-    # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
-    # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
+        
     cache_key = f"team_info_v7_search_{team_name}"
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
@@ -1612,7 +1547,6 @@ def fetch_team_info_api(team_name):
             if res.status_code != 200:
                 last_error = f"HTTP {res.status_code}"
                 had_api_error = True
-                # 제한 초과나 인증 오류일 때 후보를 연달아 호출하지 않는다.
                 if res.status_code in (401, 403, 429):
                     break
                 continue
@@ -1635,18 +1569,13 @@ def fetch_team_info_api(team_name):
                 )
 
             best_entry = max(data, key=similarity)
-            # 핵심 단어 검색 결과가 전혀 다른 팀이면 저장하지 않는다.
-            # 잘못 저장된 팀 ID는 로고·최근 전적·채점까지 모두 오염시키기 때문이다.
-            if similarity(best_entry) < 0.45:
+            # 💡 팀 마크 검색 로봇 융통성 상향 (유사도 0.45 -> 0.15 로 찰떡같이 찾게 함)
+            if similarity(best_entry) < 0.15:
                 continue
             result = dict(best_entry.get('team', {}) or {})
             if not result.get("id"):
                 continue
 
-            # Preserve the provider's verified home venue when it is included
-            # in the same team-search response.  The autonomous robot can then
-            # compare a future match city/country with the club base without
-            # making a separate paid request or inventing a distance.
             venue = best_entry.get("venue") or {}
             if isinstance(venue, dict) and venue:
                 result["venue"] = {
@@ -1678,16 +1607,18 @@ def fetch_team_info_api(team_name):
             print(f"⚠️ 팀 검색 API 오류({team_name}): {last_error}")
         else:
             print(f"⚠️ API에서 팀을 찾지 못함: {team_name} (검색 후보: {', '.join(candidates)})")
-        # API 시간 초과/서버 오류는 실패로 고정하지 않고 다음 20분 주기에 재시도한다.
+        
+        # 💡 에러 발생 시 재시도 시간 단축 (2분 -> 15초)
         if had_api_error:
-            TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(minutes=2)
+            TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(seconds=15)
         else:
             remember(fallback_res)
         return fallback_res
 
     except Exception as e:
         print(f"⚠️ 팀 검색 통신 오류({team_name}): {e}")
-        TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(minutes=2)
+        # 💡 에러 발생 시 재시도 시간 단축 (2분 -> 15초)
+        TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(seconds=15)
         return fallback_res
 
 def parse_match_time(match_time_str):
@@ -1721,7 +1652,6 @@ def parse_match_time(match_time_str):
 
 
 def _team_name_match_score(local_name, api_name):
-    """고정 ID를 배제하고 이름만으로 동일 팀 신뢰도를 계산한다."""
     translated = _resolve_translated_team_name(local_name)
     api_key = _latin_team_key(api_name)
     if not api_key:
@@ -1745,7 +1675,6 @@ def _team_name_match_score(local_name, api_name):
 
 
 def _fetch_date_fixtures_api(date_str, ttl_h=2, purpose="analysis"):
-    """한 날짜 경기표를 한 번만 받아 팀 신원·경기 ID가 함께 사용한다."""
     cache_key = f"fixtures_by_date_v2_{date_str}"
     cached = get_db_cache(cache_key, min(max(float(ttl_h or 0), 0.2), 2))
     if cached is not None:
@@ -1782,12 +1711,6 @@ def _fixture_team_payload(fixture_data, side):
 
 
 def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
-    """실제 날짜별 경기표에서 홈·원정 두 팀을 동시에 확정한다.
-
-    한 팀씩 검색하면 동명이인이나 오래된 잘못된 캐시가 상대 팀까지 오염시킬
-    수 있다. 이 함수는 같은 경기의 양쪽 이름과 킥오프 시간을 함께 대조하고,
-    서로 다른 두 팀에 같은 ID가 배정되는 결과를 절대 반환하지 않는다.
-    """
     home_name = str(home_name or "").strip()
     away_name = str(away_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
@@ -1826,8 +1749,6 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 if min(best[1], best[2]) >= 0.72 and best[1] + best[2] >= 1.52:
                     selected = best
 
-            # 베트맨의 새 축약명이 사전에 아직 없더라도, 한쪽 팀이 정확하고
-            # 같은 시각 후보가 하나뿐이면 실제 상대 팀을 경기표에서 역확정한다.
             if selected is None:
                 partner_candidates = [
                     item for item in candidates
@@ -1861,10 +1782,6 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 f"{home_name} vs {away_name} ({date_str})"
             )
 
-            # API-Football의 date 필터는 공급사 기준일/UTC 경계 때문에 한국
-            # 자정 근처 경기가 전날 또는 다음날 목록에 들어갈 수 있다. 같은
-            # 날짜에서 실패한 경우에만 인접 이틀을 캐시 조회하고, 양 팀 이름과
-            # 실제 timestamp가 모두 엄격히 맞는 한 쌍만 채택한다.
             for offset in (-1, 1):
                 adjacent_date = (match_dt + timedelta(days=offset)).strftime("%Y-%m-%d")
                 adjacent_fixtures = _fetch_date_fixtures_api(adjacent_date, ttl_h)
@@ -1931,8 +1848,6 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                     )
                     return verified_home, verified_away, fixture_data
 
-    # 날짜 정보가 없거나 공급사 경기표가 잠시 실패하면 기존 개별 검색을
-    # 사용하되, 서로 다른 팀이 같은 ID가 되는 순간 결과를 폐기한다.
     home_info = fetch_team_info_api(home_name)
     away_info = fetch_team_info_api(away_name)
     home_id = int(home_info.get("id") or 0)
@@ -1997,12 +1912,9 @@ def fetch_weather_details_api(city_name, ttl_h):
 
 def fetch_weather_api(city_name, ttl_h):
     details = fetch_weather_details_api(city_name, ttl_h)
-    # Preserve the existing public-analysis fallback while the robot receives
-    # the explicit available=False flag and never learns a failed call as sun.
     return str(details.get("condition") or "Clear") if details.get("available") else "Clear"
 
 def _extract_match_winner_odds(odds_data):
-    """Return median 1X2 odds across bookmakers with complete prices."""
     samples = {"odd_h": [], "odd_d": [], "odd_a": []}
     complete_bookmakers = 0
     for odds_row in odds_data or []:
@@ -2046,11 +1958,6 @@ def _extract_match_winner_odds(odds_data):
 def fetch_overseas_odds_and_fixture_api(
     home_id, away_id, ttl_h, match_time_str="시간 미정", include_odds=False
 ):
-    """두 팀과 경기 날짜가 모두 일치하는 API fixture만 반환한다.
-
-    예전 코드는 홈 팀의 다음/이전 경기로 대체해 다른 경기 점수가 LIVE로
-    붙을 수 있었다. 정확히 일치하지 않으면 fixture_id를 만들지 않는다.
-    """
     if not home_id or not away_id or match_time_str in ["시간 미정", "마감/진행중"]:
         return None
 
@@ -2061,7 +1968,6 @@ def fetch_overseas_odds_and_fixture_api(
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data: return cached_data
     try:
-        # 팀 신원을 확정할 때 받은 같은 날짜 경기표를 그대로 재사용한다.
         date_fixtures = _fetch_date_fixtures_api(date_str, ttl_h)
         if date_fixtures is None:
             return None
@@ -2099,9 +2005,6 @@ def fetch_overseas_odds_and_fixture_api(
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            # 베트맨 배당이 없을 때만 호출자가 해외배당을 명시적으로 요청한다.
-            # 여러 북메이커 중 한 곳을 임의 선택하지 않고 완전한 1X2 세트의
-            # 중앙값을 사용해 한 업체의 튀는 배당 영향을 줄인다.
             if odds_requested:
                 try:
                     odds_res = api_get("/odds", params={"fixture": fix_id}, timeout=5)
@@ -2200,7 +2103,6 @@ def fetch_fixture_details_api(home_id, away_id, ttl_h):
     except: return default_res
 
 def _validate_recent_fixtures(matches, team_id):
-    """종료되고 해당 팀이 실제 참가한 경기만 중복 없이 시간순으로 정리한다."""
     validated = {}
     for match in matches or []:
         fixture = match.get("fixture", {})
@@ -2227,14 +2129,12 @@ def _validate_recent_fixtures(matches, team_id):
 
 
 def fetch_team_recent_fixtures_api(team_id, ttl_h):
-    """최근 경기 원본을 팀당 한 번만 받아 전적/휴식/장기지표가 함께 쓴다."""
     if not team_id:
         return []
     cache_key = f"recent_fixtures_v2_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None:
         return cached_data
-    # 일시적인 API 장애 때 웹의 전적이 사라지지 않도록 마지막 정상본을 보존한다.
     stale_data = get_db_cache(cache_key, 24 * 365 * 5)
     try:
         response = api_get(
@@ -2261,7 +2161,6 @@ def fetch_team_recent_fixtures_api(team_id, ttl_h):
 
 
 def regulation_score(fixture):
-    """Never train a 90-minute market on extra-time or shootout goals."""
     status = str(fixture.get("fixture", {}).get("status", {}).get("short") or "")
     full = fixture.get("score", {}).get("fulltime") or {}
     if full.get("home") is not None and full.get("away") is not None:
@@ -2295,7 +2194,6 @@ def fetch_team_form_api(team_id, ttl_h):
                 elif away_win is False and home_win is True: form_list.append("패")
                 else: form_list.append("무")
         res = "-".join(form_list) if form_list else ""
-        # 빈 문자열은 장기 저장하지 않아 다음 수집 주기에 다시 시도한다.
         if res:
             set_db_cache(cache_key, res)
         return res
@@ -2488,7 +2386,6 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
     cache_key = f"inj_v6_all_names_{team_id}_{league_id}_{season}_{int(fixture_id or 0)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data is not None: return cached_data
-    # 당일 API가 소진돼도 직전 정상 부상자 자료를 버리지 않는다.
     stale_data = get_db_cache(cache_key, max(72, ttl_h))
 
     def stale_or_default():
@@ -2557,8 +2454,6 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
             "count": count,
             "ace_missing": bool(ace_names),
             "ace_names": sorted(set(ace_names)),
-            # Keep the complete confirmed unavailable list for starting-XI
-            # prediction. Strength penalties still use ace_names separately.
             "all_names": injured_names,
             "records": injury_records,
             "missing_goals": missing_goals_total,
@@ -2662,7 +2557,6 @@ def fetch_lineups_api(fixture_id, ttl_h, purpose="analysis"):
                     ],
                 }
             res_val["confirmed"] = all(len(res_val.get(str(t.get("team", {}).get("id")), [])) >= 11 for t in data)
-        # 발표 전 빈 명단은 저장하지 않아 다음 5분 주기에 다시 확인한다.
         if res_val["confirmed"]:
             set_db_cache(cache_key, res_val)
         return res_val
@@ -2758,7 +2652,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
                     except (TypeError, ValueError):
                         continue
                     if math.isfinite(value) and value >= 0:
-                        parsed[key] = value  # Zero is an observation, never a default.
+                        parsed[key] = value
                 if own and parsed:
                     source_ids.append(fix_id)
                     for key, value in parsed.items():
@@ -2780,9 +2674,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
     except: pass
     return default_res
 
-
 def fetch_team_recent_form_metrics(team_id, ttl_h):
-    """추가 API 호출 없이 최근 5경기의 득실ㆍ승점을 작은 보정값으로 만든다."""
     default_res = {"matches": 0, "ppg": 1.33, "gf_pg": 1.2, "ga_pg": 1.2, "strength": 0.0}
     if not team_id:
         return default_res
@@ -2835,7 +2727,6 @@ def get_league_averages(league_name):
     return 1.50, 1.20
 
 def build_score_matrix(exp_h, exp_a, rho=-0.15):
-    """Dixon-Coles with fitted-or-fallback rho and a bounded Poisson tail."""
     exp_h, exp_a, rho = float(exp_h), float(exp_a), float(rho)
     if not all(math.isfinite(x) for x in (exp_h, exp_a, rho)) or not (0 < exp_h <= 20 and 0 < exp_a <= 20):
         raise ValueError("expected goals must be finite and in (0, 20]")
@@ -2877,7 +2768,6 @@ def calculate_poisson_probs(exp_h, exp_a, handi_val=1.0, uo_base=2.5, matrix=Non
 
 
 def project_score_matrix_wdl(matrix, target):
-    """Reweight disjoint W/D/L cells, preserving their conditional score shape."""
     masses = [0.0, 0.0, 0.0]
     for h, row in enumerate(matrix):
         for a, p in enumerate(row):
@@ -2894,14 +2784,6 @@ def project_score_matrix_wdl(matrix, target):
 
 
 def integrate_pre_match_context(exp_h, exp_a, context, goal_audit=None):
-    """Apply every usable pre-match factor once and return an auditable signal.
-
-    Goal-shaped information changes expected goals. Directional information
-    such as rank and head-to-head changes the W/D/L weights later, preserving
-    one coherent score distribution for W/D/L, handicap and totals. Context
-    with no honest goal or result direction (for example only a referee name)
-    is explicitly recorded as neutral instead of being fabricated.
-    """
     context = context if isinstance(context, dict) else {}
     audit = dict(goal_audit or {})
 
@@ -3069,12 +2951,6 @@ def integrate_pre_match_context(exp_h, exp_a, context, goal_audit=None):
 def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
                             history=None, rho=-.15, movement_adjustment=None,
                             context_adjustment=None):
-    """All markets and refund contracts come from ONE final score distribution.
-
-    Only WDL is market/learning calibrated. Independent handicap/totals
-    calibration would contradict the same score events. Market prices for
-    those markets remain available for value comparison, not extra goal boosts.
-    """
     matrix = build_score_matrix(exp_h, exp_a, rho)
     wdl = list(calculate_poisson_probs(exp_h, exp_a, matrix=matrix)[:3])
     valid_odds = len(odds or []) == 3 and all(
@@ -3098,8 +2974,6 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
     ]
     context_applied = any(abs(value) > 1e-12 for value in context_adjustment)
     if context_applied:
-        # Log weighting lets a strong, repeated directional signal overcome a
-        # marginal market/model favourite without creating invalid probabilities.
         target = normalize_probabilities([
             max(1e-9, probability * math.exp(adjustment))
             for probability, adjustment in zip(target, context_adjustment)
@@ -3136,19 +3010,11 @@ def coherent_match_forecast(exp_h, exp_a, handicap, total, odds, confidence,
         "context_adjustment": context_adjustment,
         "context_integration_active": context_applied,
     }
-    # Matrix is transient; only the small audit is persisted for each candidate.
     return probabilities, audit, matrix
 
 
 def estimate_match_goals(h_long, a_long, h_recent, a_recent, h_stats, a_stats,
                          league_name, home_penalty=0.0, away_penalty=0.0):
-    """Shared, auditable pre-match goal model; no extra API or market-as-goals.
-
-    Five pseudo-matches shrink noisy venue rates toward league priors. These
-    are declared regularization assumptions, not validated optimal parameters.
-    xG replaces part of the goal estimate; shots/possession do not multiply it
-    again. Venue priors already include home advantage.
-    """
     avg_h, avg_a = get_league_averages(league_name)
 
     def number(value, default=0.0):
@@ -3172,8 +3038,6 @@ def estimate_match_goals(h_long, a_long, h_recent, a_recent, h_stats, a_stats,
     def side(base, recent, own_stats, other_stats, penalty, name):
         n = number(recent.get("matches"))
         recent_weight = min(0.25, n / (n + 10.0))
-        # Form points and goal difference are correlated with goals: use GF
-        # once, with a bounded blend, not another strength multiplier.
         recent_gf = number(recent.get("gf_pg"), base)
         formed = base * (1 - recent_weight) + recent_gf * recent_weight
         xg_inputs = []
@@ -3209,12 +3073,6 @@ _FIT_MEMORY = {}
 
 def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id, kickoff,
                                 home_penalty=0.0, away_penalty=0.0):
-    """Read cached fixtures only; never spend an API request to train/check.
-
-    A stale/missing/failed challenger leaves the auditable baseline untouched.
-    The fitted goal model deliberately replaces, rather than multiplies, the
-    baseline's recent-form and xG components. Absence adjustment is applied once.
-    """
     audit = dict(audit)
     now = datetime.now(timezone.utc).timestamp()
     cutoff = min(now, kickoff.timestamp()) if kickoff is not None else now
@@ -3223,8 +3081,6 @@ def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id
     if not all((home_id, away_id, league_id)) or int(home_id) == int(away_id) or cutoff < now-60:
         audit["opponent_model"] = inactive
         return exp_h, exp_a, audit
-    # The v2 key deliberately prevents a cached fixed-rho R7.6 artifact from
-    # being mistaken for the learned-rho model introduced in R7.7.
     key = f"opponent_fit_v2_{int(league_id)}_{int(cutoff//21600)}"
     artifact = _FIT_MEMORY.get(key) or get_db_cache(key, 6)
     if not artifact:
@@ -3254,7 +3110,6 @@ def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id
                 conn.close()
         set_db_cache(key, artifact)
     _FIT_MEMORY[key] = artifact
-    # Keep memory bounded as the daily collector spans many leagues.
     if len(_FIT_MEMORY) > 256:
         _FIT_MEMORY.pop(next(iter(_FIT_MEMORY)))
     public = {k: v for k, v in artifact.items() if k != "parameters"}
@@ -3276,19 +3131,15 @@ def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id
                      active_features="time_weighted_opponent_attack_defence_and_single_availability_penalty")
     return exp_h, exp_a, audit
 
-
+# 💡 강팀 억까 방지 (부상 페널티 상한선 0.30 -> 0.15 로 낮춰서 강팀 정배당 보존)
 def combine_availability_penalties(injury, lineup, goal_dependency, fatigue, rotation, depth=1.0):
     """Same missing player must not incur injury+lineup+goal-share penalties."""
     absence = max(float(injury or 0), float(lineup or 0), float(goal_dependency or 0))
     schedule = max(float(fatigue or 0), float(rotation or 0))
-    # 💡 0.30 -> 0.15 로 낮춰 강팀의 기본 체급(정배당)을 보존합니다.
     return min(0.15, max(0.0, (1 - (1-absence) * (1-schedule)) * float(depth or 1)))
 
-def total_settlement_probabilities(exp_h, exp_a, line, side, matrix=None):
-    """Asian totals: distinguish winning stake, refunded stake and loss.
 
-    Three-way handicaps are deliberately NOT treated as Asian handicaps.
-    """
+def total_settlement_probabilities(exp_h, exp_a, line, side, matrix=None):
     line = float(line)
     if side not in {"under", "over"} or not math.isfinite(line) or line < 0 or abs(line*4-round(line*4)) > 1e-8:
         raise ValueError("unsupported totals contract")
@@ -3339,7 +3190,6 @@ def _cap_probabilities(values, cap):
 
 
 def calibrate_three_way_probabilities(model_probs, odds, confidence):
-    """모델 과신을 낮추고 실제 배당의 마진 제거 확률을 일부 혼합한다."""
     confidence = max(0.35, min(0.95, float(confidence or 0.35)))
     temperature = 1.55 - (0.45 * confidence)
     model = _temperature_scale(model_probs, temperature)
@@ -3348,8 +3198,6 @@ def calibrate_three_way_probabilities(model_probs, odds, confidence):
         market = normalize_probabilities([1.0 / float(odd) for odd in odds])
         market_weight = 0.45 - (0.18 * confidence)
         model = [(1.0 - market_weight) * m + market_weight * q for m, q in zip(model, market)]
-    # A fractional three-way handicap has no draw. Calibration must not turn
-    # an impossible outcome into a positive-probability candidate.
     model = [p if float(raw) > 0 else 0.0 for p, raw in zip(model, model_probs)]
     return _cap_probabilities(model, 0.80)
 
@@ -3401,10 +3249,6 @@ def evaluate_single_pick(pick_str, h_team, a_team, goals_h, goals_a):
     
     for pick in picks:
         if "핸디" in pick or "적용 후" in pick:
-            # 핸디캡은 팀명이 들어 있는지만 보면 안 된다. 예를 들어
-            # "[+1.0] 파주 핸디패"는 홈팀 이름을 포함하지만, +1 적용 뒤
-            # 홈팀이 앞서면 명백한 미적중이다. 문구에 선언된 승/무/패와
-            # 실제 조정 점수를 직접 비교한다.
             m_handi = re.search(r'\[\s*([+-]?\d+(?:\.\d+)?)\s*\]', pick)
             if not m_handi:
                 m_handi = re.search(
@@ -3449,7 +3293,6 @@ def generate_real_ai_note(
     home_team="", away_team="", prob_pick="", ev_pick="", event_timeline=None,
     return_postmortem=False, fetch_official_stats=True,
 ):
-    """Record verified score, official facts, and deterministic miss reasons."""
     normalized_stats = []
     try:
         if fetch_official_stats:
