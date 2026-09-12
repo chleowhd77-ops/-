@@ -84,6 +84,13 @@ PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
 # 남아 있어도 8조합(8,000원)을 넘지 않도록 상한을 강제한다.
 TOTO14_MAX_COMBINATIONS = max(1, min(8, int(os.getenv("TOTO14_MAX_COMBINATIONS", "8"))))
 TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
+# A full Betman board can contain well over one hundred matches. Publish and
+# resume before the master worker's hard timeout instead of waiting for every
+# heavy enrichment call to finish. This limits one cycle, never a match's total
+# learning lifetime.
+MASTER_ANALYSIS_SOFT_SECONDS = max(
+    300, min(1800, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "900")))
+)
 # A decimal quote must exceed 1. No arbitrary minimum price sacrifices a
 # higher-probability candidate; actual conservative return remains required.
 FINAL_PICK_MIN_ODDS = 1.0
@@ -131,6 +138,12 @@ WORLD_SCHEDULE_REFRESH_HOURS = max(
 )
 WORLD_ANALYSIS_INTERVAL_MINUTES = max(
     10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
+)
+WORLD_ANALYSIS_SOFT_SECONDS = max(
+    600, min(3000, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "1800")))
+)
+WORLD_MARKET_WATCH_HORIZON_HOURS = max(
+    3, min(48, int(os.getenv("WORLD_MARKET_WATCH_HORIZON_HOURS", "24")))
 )
 WORLD_ODDS_MAX_PAGES_PER_DAY = max(
     10, min(100, int(os.getenv("WORLD_ODDS_MAX_PAGES_PER_DAY", "100")))
@@ -3944,6 +3957,11 @@ def _load_first_public_pick_bundle(match_id, home_team, away_team, match_time=""
 def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
     """Overlay the first public official/robot answer onto a current card copy."""
     current = dict(current or {})
+    latest_analysis_stage = str(
+        current.get("latest_analysis_stage")
+        or current.get("analysis_stage")
+        or ""
+    )
     bundle = _load_first_public_pick_bundle(
         str(match.get("id") or ""),
         str(match.get("home") or ""),
@@ -3974,6 +3992,9 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         ),
         "analysis_version": bundle["analysis_version"],
         "analysis_stage": "locked" if locked else bundle["analysis_stage"],
+        # Public pick stage stays immutable, while this operational field lets
+        # the collector know the newest evidence stage has already completed.
+        "latest_analysis_stage": latest_analysis_stage or bundle["analysis_stage"],
         "analysis_confidence": bundle["confidence"],
         "odds_source": bundle["odds_source"] or current.get("odds_source") or "",
         "model_probability": bundle["selected"].get("prob"),
@@ -5833,6 +5854,7 @@ def collect_world_schedule():
     previous_payload = _read_json(WORLD_DASHBOARD_FILE, {})
     fixtures_by_date = {}
     market_snapshots_by_fixture = {}
+    market_failed_dates = []
     for day_offset in range(WORLD_SCHEDULE_DAYS):
         date_key = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         fixtures = _fetch_date_fixtures_api(date_key, ttl_h=2, purpose="world")
@@ -5842,12 +5864,17 @@ def collect_world_schedule():
         fixtures_by_date[date_key] = fixtures
         date_markets = _fetch_world_market_snapshots_by_date(date_key)
         if date_markets is None:
-            print(
-                f"❌ 세계경기 배당 목록 수집 실패({date_key}) - "
-                "마지막 정상본을 유지합니다."
-            )
-            return False
+            market_failed_dates.append(date_key)
+            print(f"⚠️ 세계경기 배당 목록 재시도 대기({date_key})")
+            continue
         market_snapshots_by_fixture.update(date_markets)
+
+    if not market_snapshots_by_fixture:
+        print(
+            "❌ 세계경기 유효 배당 0건 - 기존 정상 일정/분석을 보존하고 "
+            "다음 WORLD 주기에 다시 수집합니다."
+        )
+        return False
 
     payload = build_world_schedule_payload(
         fixtures_by_date,
@@ -5859,6 +5886,9 @@ def collect_world_schedule():
     preview_items = _ensure_world_market_previews(payload, now=now)
     if preview_items or proto_overlaps:
         _refresh_world_source_meta(payload)
+    payload.setdefault("source_meta", {})["market_collection_degraded_dates"] = (
+        market_failed_dates
+    )
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})
     print(
@@ -6167,7 +6197,7 @@ def _world_market_map_from_batch_cache(payload):
             continue
         if fixture_key > 0 and _has_valid_world_market(snapshot):
             normalized[fixture_key] = dict(snapshot)
-    return normalized
+    return normalized or None
 
 
 def _fetch_world_market_snapshots_by_date(date_key):
@@ -6230,6 +6260,8 @@ def _fetch_world_market_snapshots_by_date(date_key):
             )
             if _has_valid_world_market(snapshot):
                 snapshots[fixture_id] = snapshot
+        if not snapshots:
+            raise RuntimeError("유효한 정규시간 배당이 0건")
         set_db_cache(
             cache_key,
             {
@@ -8040,6 +8072,9 @@ def analyze_world_schedule():
     analyzed_now = 0
     errors_now = 0
     quota_paused = False
+    soft_paused = False
+    due_visited = 0
+    analysis_deadline = time.monotonic() + WORLD_ANALYSIS_SOFT_SECONDS
     stage_priority = {
         "T-30-final": 0, "T-60-lineup": 1,
         "T-3-refresh": 2, "PREKICKOFF-initial": 3,
@@ -8119,7 +8154,11 @@ def analyze_world_schedule():
             item, kickoff, now, WORLD_ANALYSIS_VERSION
         )
         if frozen and not refresh_old_version:
-            if fixture_id > 0 and isinstance(item.get("analysis"), dict):
+            if (
+                fixture_id > 0 and isinstance(item.get("analysis"), dict)
+                and 0 < (kickoff - now).total_seconds() / 3600.0
+                <= WORLD_MARKET_WATCH_HORIZON_HOURS
+            ):
                 market_watch_items.append((item, kickoff))
             continue
         if frozen and refresh_old_version:
@@ -8134,7 +8173,11 @@ def analyze_world_schedule():
                 and not item.get("lineup_confirmed")
                 and int(item.get("lineup_attempts") or 0) < 2
             ):
-                if fixture_id > 0 and isinstance(item.get("analysis"), dict):
+                if (
+                    fixture_id > 0 and isinstance(item.get("analysis"), dict)
+                    and 0 < (kickoff - now).total_seconds() / 3600.0
+                    <= WORLD_MARKET_WATCH_HORIZON_HOURS
+                ):
                     market_watch_items.append((item, kickoff))
                 continue
         due_items.append((stage_priority.get(stage, 9), float(item.get("timestamp") or 0), stage, item))
@@ -8143,6 +8186,12 @@ def analyze_world_schedule():
     world_calls_before = int(get_api_usage_status().get("world_calls") or 0)
     with api_purpose_context("world"):
         for _, _, stage, item in due_items:
+            if time.monotonic() >= analysis_deadline:
+                soft_paused = True
+                changed = True
+                print("⏸️ 세계경기 저장 지점 게시 후 다음 주기에 분석을 계속합니다.")
+                break
+            due_visited += 1
             match = item.get("match") or {}
             fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
             league_id = int(match.get("league_id") or 0)
@@ -8235,6 +8284,10 @@ def analyze_world_schedule():
         # or refreshed pre-kickoff state without touching the published pick.
         if not quota_paused:
             for item, kickoff in market_watch_items:
+                if time.monotonic() >= analysis_deadline:
+                    soft_paused = True
+                    changed = True
+                    break
                 match = item.get("match") or {}
                 analysis = item.get("analysis") or {}
                 fixture_id = int(match.get("fixture_id") or item.get("api_fixture_id") or 0)
@@ -8258,6 +8311,9 @@ def analyze_world_schedule():
         "analysis_daily_limit": WORLD_MAX_DEEP_ANALYSES_DAILY,
         "analysis_per_league_limit": WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE,
         "quota_paused": quota_paused,
+        "analysis_soft_paused": soft_paused,
+        "analysis_resume_pending_count": max(0, len(due_items) - due_visited),
+        "analysis_soft_budget_seconds": WORLD_ANALYSIS_SOFT_SECONDS,
         "api_usage": get_api_usage_status(),
     })
     metadata_changed = previous_source_meta != json.dumps(
@@ -8422,12 +8478,14 @@ def _needs_current_analysis_refresh(item, kickoff, now, target_version):
     return False
 
 
-def _locked_proto_item(match, previous=None):
+def _locked_proto_item(match, previous=None, locked=True):
     """Read the stored forecast, never regenerate it with post-kickoff inputs."""
     conn = sqlite3.connect(str(_local_path("ai_predictions.db")),timeout=5)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute("SELECT * FROM predictions WHERE match_id=?",(str(match.get("id") or ""),)).fetchone()
+        if row is None and not locked:
+            return None
         if row is None:
             return dict(match=dict(match),final_match_time=match.get("match_time"),
                         ev_sorted_picks=[],pick_categories={},analysis_stage="locked",
@@ -8445,8 +8503,12 @@ def _locked_proto_item(match, previous=None):
         }
         categories = {"high_probability":selected,"honey":None,"vip_underdog":None}
         report = "경기 전 저장한 최종픽을 그대로 유지합니다. 상세 분석 원본은 보관 자료 확인 중입니다."
+        stored_stage = "regular"
+        odds_source = ""
         if saved is not None and str(saved["selected_pick"] or "") == selected["raw_pick"]:
             saved = dict(saved)
+            stored_stage = str(saved.get("stage") or "regular")
+            odds_source = str(saved.get("odds_source") or "")
             kickoff = _parse_kst_match_time(row.get("match_time"))
             saved_at = datetime.fromisoformat(str(saved.get("updated_at")).replace("Z", "+00:00"))
             if saved_at.tzinfo is None:
@@ -8466,13 +8528,99 @@ def _locked_proto_item(match, previous=None):
                 categories["high_probability"] = selected
                 report = str(saved.get("report_text") or report)
         item.update(match=dict(match),api_fixture_id=int(row.get("api_fixture_id") or 0),
-                    final_match_time=row.get("match_time"),analysis_stage="locked",
+                    final_match_time=match.get("match_time") or row.get("match_time"),
+                    timestamp=parse_match_time(match.get("match_time") or row.get("match_time")).timestamp(),
+                    analysis_stage="locked" if locked else stored_stage,
+                    latest_analysis_stage=stored_stage,
                     analysis_version=row.get("analysis_version"),
+                    odds_source=odds_source or item.get("odds_source") or "",
                     pick_categories=categories,ev_sorted_picks=[selected] if selected["raw_pick"] else [],
                     detailed_report=report,story="",prediction_frozen=True)
-        return _public_proto_item_from_first_snapshot(match, item, locked=True)
+        return _public_proto_item_from_first_snapshot(match, item, locked=locked)
     finally:
         conn.close()
+
+
+def _proto_item_has_usable_pick(item, match):
+    if not isinstance(item, dict):
+        return False
+    item_match = item.get("match") or {}
+    if (
+        str(item_match.get("home") or "") != str(match.get("home") or "")
+        or str(item_match.get("away") or "") != str(match.get("away") or "")
+    ):
+        return False
+    selected = (item.get("pick_categories") or {}).get("high_probability") or {}
+    return bool(str(selected.get("raw_pick") or "").strip())
+
+
+def _resumable_proto_item(match, previous=None, require_current_stage=False):
+    """Restore a pre-kickoff card without repeating its heavy analysis."""
+    final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
+    candidate = dict(previous) if _proto_item_has_usable_pick(previous, match) else None
+    if candidate is None:
+        candidate = _locked_proto_item(match, previous, locked=False)
+    if not _proto_item_has_usable_pick(candidate, match):
+        return None
+
+    match_dt = parse_match_time(final_match_time)
+    diff_hours = (match_dt - datetime.now(KST)).total_seconds() / 3600.0
+    target_stage = prediction_stage(
+        diff_hours, bool(candidate.get("lineup_confirmed"))
+    )
+    candidate_stage = str(
+        candidate.get("latest_analysis_stage")
+        or candidate.get("analysis_stage")
+        or "regular"
+    )
+    betman_odds_ready = _valid_three_way_odds([
+        match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
+    ])
+    temporary_odds_stage = candidate_stage in {
+        "overseas-preview", "model-only-preview"
+    }
+    if require_current_stage and (
+        candidate_stage != target_stage
+        or (temporary_odds_stage and betman_odds_ready)
+    ):
+        return None
+
+    candidate["match"] = dict(match)
+    candidate["final_match_time"] = final_match_time
+    candidate["timestamp"] = match_dt.timestamp()
+    candidate["analysis_refresh_pending"] = False
+    if (
+        candidate.get("home_logo") in (None, "", DEFAULT_LOGO)
+        or candidate.get("away_logo") in (None, "", DEFAULT_LOGO)
+        or not candidate.get("home_form")
+        or not candidate.get("away_form")
+    ):
+        queue_team_identity_retry(
+            match.get("home"), match.get("away"), final_match_time,
+            reason="published_card_identity_logo_or_form_missing",
+        )
+    return _public_proto_item_from_first_snapshot(match, candidate, locked=False)
+
+
+def _pending_proto_item(match):
+    final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
+    return {
+        "match": dict(match),
+        "final_match_time": final_match_time,
+        "timestamp": parse_match_time(final_match_time).timestamp(),
+        "home_logo": DEFAULT_LOGO,
+        "away_logo": DEFAULT_LOGO,
+        "home_form": "",
+        "away_form": "",
+        "ev_sorted_picks": [],
+        "pick_categories": {},
+        "analysis_stage": "PENDING_RESUMABLE_ANALYSIS",
+        "analysis_refresh_pending": True,
+        "detailed_report": (
+            "전체 경기표를 먼저 공개했습니다. 이 경기는 다음 자동 주기에서 "
+            "저장 지점부터 분석하며, 경기 전 최초픽이 완성되면 고정됩니다."
+        ),
+    }
 
 
 def build_dashboard_data():
@@ -8528,6 +8676,12 @@ def build_dashboard_data():
 
     # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
     market_performance_cache = {}
+    proto_cycle_started = time.monotonic()
+    proto_soft_deadline = proto_cycle_started + MASTER_ANALYSIS_SOFT_SECONDS
+    resumed_proto_count = 0
+    analyzed_proto_count = 0
+    deferred_proto_count = 0
+    proto_market_watch_count = 0
       
     for m in proto_matches:
         home_team, away_team = m["home"], m["away"]
@@ -8539,6 +8693,44 @@ def build_dashboard_data():
             if frozen_item:
                 dashboard_proto.append(frozen_item)
             continue  # No odds/injuries/lineups/form API calls after kickoff.
+
+        previous_item = previous_proto.get(str(m.get("id", "")))
+        resumed_item = _resumable_proto_item(
+            m, previous_item, require_current_stage=True
+        )
+        if resumed_item is not None:
+            resumed_diff_hours = (m_dt - datetime.now(KST)).total_seconds() / 3600.0
+            if (
+                proto_market_watch_count < 4
+                and 0 < resumed_diff_hours <= WORLD_MARKET_WATCH_HORIZON_HOURS
+            ):
+                _observe_locked_pick_market_flow(
+                    resumed_item, "PROTO", str(m.get("id") or ""),
+                    int(resumed_item.get("api_fixture_id") or 0),
+                    str(resumed_item.get("league") or m.get("league") or "프로토"),
+                    home_team, away_team, scheduled, resumed_diff_hours,
+                )
+                proto_market_watch_count += 1
+            dashboard_proto.append(resumed_item)
+            resumed_proto_count += 1
+            continue
+
+        if time.monotonic() >= proto_soft_deadline:
+            deferred_item = _resumable_proto_item(
+                m, previous_item, require_current_stage=False
+            )
+            if deferred_item is None:
+                deferred_item = _pending_proto_item(m)
+                queue_team_identity_retry(
+                    home_team, away_team, final_match_time,
+                    reason="analysis_deferred_identity_logo_or_form_pending",
+                )
+            deferred_item["analysis_refresh_pending"] = True
+            dashboard_proto.append(deferred_item)
+            deferred_proto_count += 1
+            continue
+
+        analyzed_proto_count += 1
         home_info, away_info, _ = resolve_match_team_pair(
             home_team, away_team, final_match_time, ttl_h=2
         )
@@ -9231,6 +9423,15 @@ def build_dashboard_data():
 
         h_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
         a_form = fetch_team_form_api(away_info.get("id"), heavy_ttl)
+        if (
+            home_info.get("logo") in (None, "", DEFAULT_LOGO)
+            or away_info.get("logo") in (None, "", DEFAULT_LOGO)
+            or not h_form or not a_form
+        ):
+            queue_team_identity_retry(
+                home_team, away_team, final_match_time,
+                reason="identity_ready_logo_or_recent_form_pending",
+            )
         story = "<br><br>".join(
             paragraph.replace("\n", "<br>")
             for paragraph in detailed_report.split("\n\n")
@@ -9946,6 +10147,17 @@ def build_dashboard_data():
             double_suppressed = False
             frozen_prediction_count += 1
         else:
+            toto_home_form = fetch_team_form_api(home_info.get("id"), heavy_ttl)
+            toto_away_form = fetch_team_form_api(away_info.get("id"), heavy_ttl)
+            if (
+                home_info.get("logo") in (None, "", DEFAULT_LOGO)
+                or away_info.get("logo") in (None, "", DEFAULT_LOGO)
+                or not toto_home_form or not toto_away_form
+            ):
+                queue_team_identity_retry(
+                    home_team, away_team, match_time,
+                    reason="toto14_identity_logo_or_recent_form_pending",
+                )
             toto_item = {
                 "_pending_toto_save": True, "api_fixture_id": api_fixture_id,
                 "_policy_migration": policy_migration,
@@ -9973,7 +10185,7 @@ def build_dashboard_data():
                 "picks": picks,
                 "picks_html": picks_html, "h_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 리그 순위: {a_rank}위</div>" if a_rank != 99 else "",
                 "h_inj_html": h_inj_html, "a_inj_html": a_inj_html,
-                "home_form": fetch_team_form_api(home_info.get("id"), heavy_ttl), "away_form": fetch_team_form_api(away_info.get("id"), heavy_ttl)
+                "home_form": toto_home_form, "away_form": toto_away_form
             }
         final_picks = _normalize_toto14_picks(
             toto_item.get("picks")
@@ -10031,6 +10243,14 @@ def build_dashboard_data():
             "display_proto_count": len(dashboard_proto),
             "betman_toto14_count": len(toto_14_matches),
             "display_toto14_count": len(dashboard_toto14),
+            "resumed_proto_count": resumed_proto_count,
+            "analyzed_proto_count": analyzed_proto_count,
+            "deferred_proto_count": deferred_proto_count,
+            "proto_market_watch_count": proto_market_watch_count,
+            "analysis_resume_pending": bool(deferred_proto_count),
+            "master_analysis_elapsed_seconds": round(
+                time.monotonic() - proto_cycle_started, 2
+            ),
             "proto_parity_ok": len(proto_matches) == len(dashboard_proto),
             "toto14_parity_ok": len(toto_14_matches) == len(dashboard_toto14),
             "api_usage": get_api_usage_status(),
@@ -12798,6 +13018,20 @@ def run_master_job():
             "master", "running", last_stage="dashboard_publish_failed"
         )
         return False
+    # Cards are already safely published. Missing team ID/logo/form enrichment
+    # is deliberately last so it can never keep the site blank. Rows remain in
+    # the local runtime DB until genuinely complete; four is only a cycle cap.
+    try:
+        retry_summary = process_team_identity_retry_queue(limit=4)
+        if retry_summary.get("processed") or retry_summary.get("pending"):
+            print(
+                "🔎 팀 자료 재탐색: "
+                f"이번 {retry_summary.get('processed', 0)}건 / "
+                f"완료 {retry_summary.get('resolved', 0)}건 / "
+                f"계속 대기 {retry_summary.get('pending', 0)}건"
+            )
+    except Exception as error:
+        print(f"⚠️ 팀 자료 재탐색 작업 오류(다음 주기 계속): {error}")
     backup_ok = upload_sqlite_to_github("ai_predictions.db")
     _update_collector_status(
         "master",
@@ -12838,6 +13072,31 @@ def _world_schedule_refresh_due(now=None):
     """Refresh the broad schedule slowly while allowing frequent cached analysis."""
     now = now or datetime.now(KST)
     payload = _read_json(WORLD_DASHBOARD_FILE, {})
+    matches = [
+        item for item in (payload or {}).get("matches", []) or []
+        if isinstance(item, dict)
+    ]
+    has_upcoming = False
+    for item in matches:
+        match = item.get("match") or {}
+        kickoff = _parse_kst_match_time(
+            item.get("final_match_time") or match.get("match_time")
+        )
+        if kickoff is None and match.get("kickoff_at"):
+            try:
+                kickoff = datetime.fromisoformat(
+                    str(match.get("kickoff_at")).replace("Z", "+00:00")
+                )
+                if kickoff.tzinfo is None:
+                    kickoff = kickoff.replace(tzinfo=KST)
+                kickoff = kickoff.astimezone(KST)
+            except (TypeError, ValueError):
+                kickoff = None
+        if kickoff is not None and kickoff > now:
+            has_upcoming = True
+            break
+    if not has_upcoming:
+        return True
     generated_at = str((payload or {}).get("generated_at") or "")
     if not generated_at:
         return True
@@ -12856,9 +13115,9 @@ def run_world_job():
     """Run independently so WORLD failures never block PROTO/LIVE/scoring."""
     schedule_refreshed = False
     if _world_schedule_refresh_due():
-        if not collect_world_schedule():
-            return False
-        schedule_refreshed = True
+        schedule_refreshed = bool(collect_world_schedule())
+        if not schedule_refreshed:
+            print("↩️ 세계경기 마지막 정상 일정으로 분석 대기열을 계속 진행합니다.")
 
     analysis_ok, analysis_changed = analyze_world_schedule()
     if not analysis_ok:

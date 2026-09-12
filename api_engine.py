@@ -53,7 +53,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v2-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.1-autonomous-all-evidence-memory"
+SYSTEM_VERSION = "R7.12.3-resumable-publish-team-retry"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -341,6 +341,24 @@ def _runtime_connect():
             PRIMARY KEY(usage_day,metric,purpose,endpoint));
         CREATE TABLE IF NOT EXISTS request_cache (
             key TEXT PRIMARY KEY, body TEXT, expires REAL DEFAULT 0, lease REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS team_identity_retry_queue (
+            retry_key TEXT PRIMARY KEY,
+            home_name TEXT NOT NULL,
+            away_name TEXT NOT NULL,
+            match_time TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_reason TEXT NOT NULL DEFAULT '',
+            last_attempt_at TEXT,
+            next_retry_at TEXT,
+            home_team_id INTEGER NOT NULL DEFAULT 0,
+            away_team_id INTEGER NOT NULL DEFAULT 0,
+            home_form_ready INTEGER NOT NULL DEFAULT 0,
+            away_form_ready INTEGER NOT NULL DEFAULT 0,
+            resolved_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS idx_team_identity_retry_due
+            ON team_identity_retry_queue(status,next_retry_at,updated_at);
         CREATE TABLE IF NOT EXISTS runtime_meta (key TEXT PRIMARY KEY);
     """)
     if not conn.execute("SELECT 1 FROM runtime_meta WHERE key='migrated'").fetchone():
@@ -419,7 +437,12 @@ def _reserve_api_request(day, purpose, path):
             conn.close()
 
 
-def _request_cache_ttl(path, params):
+def _request_cache_ttl(path, params, payload=None):
+    response_rows = payload.get("response") if isinstance(payload, dict) else None
+    # 팀/경기표의 정상 HTTP 빈 응답은 공급사 색인 지연일 수 있다. 하루 동안
+    # 실패로 굳히지 않고 5분 뒤 영구 재시도 대기열이 다시 확인하게 한다.
+    if path in {"/teams", "/fixtures"} and isinstance(response_rows, list) and not response_rows:
+        return 300
     if path in {"/fixtures/statistics","/players/squads","/coachs","/teams"}:
         return 86400
     if path == "/standings" or (path == "/fixtures" and params.get("last")):
@@ -623,7 +646,9 @@ def api_get(path, params=None, timeout=7, purpose=None):
                 continue
             payload = response.json()
             if response.status_code == 200 and not payload.get("errors"):
-                _finish_request_cache(key,payload,_request_cache_ttl(path,params))
+                _finish_request_cache(
+                    key, payload, _request_cache_ttl(path, params, payload)
+                )
                 saved = True
             return response
     except ApiQuotaUnavailable:
@@ -1277,6 +1302,17 @@ BUILTIN_TEAM_ALIASES = {
     "스포르팅CP": "Sporting CP",
     "스포르팅 CP": "Sporting CP",
     "갈라타사라이": "Galatasaray",
+    "SE파우메이라스": "Palmeiras",
+    "파우메이라스": "Palmeiras",
+    "에스투디안테스데 라플라타": "Estudiantes L.P.",
+    "에스투디안테스 데 라플라타": "Estudiantes L.P.",
+    "SC코린티안스": "Corinthians",
+    "코린티안스": "Corinthians",
+    "페네르바흐체SK": "Fenerbahce",
+    "페네르바흐체": "Fenerbahce",
+    "페네르SK": "Fenerbahce",
+    "CR플라멩구": "Flamengo",
+    "플라멩구": "Flamengo",
 }
 
 
@@ -1442,6 +1478,181 @@ def _remember_verified_team(team_name, api_team):
         TEAM_INFO_MEMORY_CACHE[identity_key] = result
     set_db_cache(_verified_team_cache_key(team_name), result)
     return result
+
+
+def _team_identity_retry_key(home_name, away_name, match_time=""):
+    return "|".join((
+        _normalize_team_alias(home_name),
+        _normalize_team_alias(away_name),
+        str(match_time or "").strip(),
+    ))
+
+
+def queue_team_identity_retry(home_name, away_name, match_time="", reason="unresolved"):
+    """Save unresolved IDs/logos/forms until they are genuinely completed."""
+    home_name = str(home_name or "").strip()
+    away_name = str(away_name or "").strip()
+    if not home_name or not away_name:
+        return False
+    retry_key = _team_identity_retry_key(home_name, away_name, match_time)
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn = None
+    try:
+        conn = _runtime_connect()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO team_identity_retry_queue (
+                retry_key,home_name,away_name,match_time,status,attempts,
+                last_reason,next_retry_at,updated_at
+            ) VALUES (?,?,?,?, 'PENDING',0,?,?,CURRENT_TIMESTAMP)
+            """,
+            (retry_key, home_name, away_name, str(match_time or ""),
+             str(reason or "unresolved")[:300], now_iso),
+        )
+        conn.execute(
+            """
+            UPDATE team_identity_retry_queue
+            SET home_name=?,away_name=?,match_time=?,last_reason=?,
+                status=CASE WHEN status='RESOLVED' THEN status ELSE 'PENDING' END,
+                next_retry_at=CASE
+                    WHEN status='RESOLVED' THEN next_retry_at
+                    WHEN next_retry_at IS NULL OR next_retry_at>? THEN ?
+                    ELSE next_retry_at END,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE retry_key=?
+            """,
+            (home_name, away_name, str(match_time or ""),
+             str(reason or "unresolved")[:300], now_iso, now_iso, retry_key),
+        )
+        conn.commit()
+        return True
+    except Exception as error:
+        if conn is not None:
+            conn.rollback()
+        print(f"⚠️ 팀 재탐색 대기열 저장 실패: {error}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _complete_team_identity_retry(home_name, away_name, match_time, home_id, away_id):
+    retry_key = _team_identity_retry_key(home_name, away_name, match_time)
+    conn = _runtime_connect()
+    try:
+        conn.execute(
+            """
+            UPDATE team_identity_retry_queue
+            SET status='RESOLVED',home_team_id=?,away_team_id=?,
+                home_form_ready=1,away_form_ready=1,resolved_at=?,next_retry_at=NULL,
+                last_reason='identity_logo_form_ready',updated_at=CURRENT_TIMESTAMP
+            WHERE retry_key=?
+            """,
+            (int(home_id), int(away_id),
+             datetime.now(timezone.utc).isoformat(timespec="seconds"), retry_key),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_team_identity_retry_status():
+    try:
+        conn = _runtime_connect()
+        rows = conn.execute(
+            "SELECT status,COUNT(*) FROM team_identity_retry_queue GROUP BY status"
+        ).fetchall()
+        due = conn.execute(
+            """SELECT COUNT(*) FROM team_identity_retry_queue
+               WHERE status!='RESOLVED' AND (next_retry_at IS NULL OR next_retry_at<=?)""",
+            (datetime.now(timezone.utc).isoformat(timespec="seconds"),),
+        ).fetchone()[0]
+        conn.close()
+        counts = {str(status): int(count) for status, count in rows}
+        return {
+            "pending": sum(count for status, count in counts.items() if status != "RESOLVED"),
+            "due": int(due or 0),
+            "resolved": int(counts.get("RESOLVED", 0)),
+        }
+    except Exception:
+        return {"pending": 0, "due": 0, "resolved": 0}
+
+
+def process_team_identity_retry_queue(limit=4):
+    """Retry forever across service restarts, while bounding only one cycle."""
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat(timespec="seconds")
+    conn = _runtime_connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT retry_key,home_name,away_name,match_time,attempts
+            FROM team_identity_retry_queue
+            WHERE status!='RESOLVED' AND (next_retry_at IS NULL OR next_retry_at<=?)
+            ORDER BY COALESCE(next_retry_at,''),updated_at,retry_key LIMIT ?
+            """,
+            (now_iso, max(1, int(limit or 1))),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    processed = resolved = 0
+    for retry_key, home_name, away_name, match_time, prior_attempts in rows:
+        processed += 1
+        attempts = int(prior_attempts or 0) + 1
+        reason = "team_identity_unresolved"
+        home_id = away_id = 0
+        home_form_ready = away_form_ready = False
+        try:
+            with api_purpose_context("analysis"):
+                home_info, away_info, _ = resolve_match_team_pair(
+                    home_name, away_name, match_time, ttl_h=0.2
+                )
+                home_id = int((home_info or {}).get("id") or 0)
+                away_id = int((away_info or {}).get("id") or 0)
+                if home_id and away_id and home_id != away_id:
+                    home_form_ready = bool(fetch_team_form_api(home_id, 0.2))
+                    away_form_ready = bool(fetch_team_form_api(away_id, 0.2))
+                    logos_ready = bool(
+                        (home_info or {}).get("logo") not in (None, "", DEFAULT_LOGO)
+                        and (away_info or {}).get("logo") not in (None, "", DEFAULT_LOGO)
+                    )
+                    if logos_ready and home_form_ready and away_form_ready:
+                        _complete_team_identity_retry(
+                            home_name, away_name, match_time, home_id, away_id
+                        )
+                        resolved += 1
+                        print(
+                            f"✅ 팀 자료 재탐색 완료: {home_name}({home_id}) vs "
+                            f"{away_name}({away_id}) · 마크/최근 전적 확인"
+                        )
+                        continue
+                    reason = "identity_ready_profile_pending"
+        except (ApiQuotaUnavailable, ApiRateLimited) as error:
+            reason = f"provider_wait:{error}"
+        except Exception as error:
+            reason = f"{type(error).__name__}:{error}"
+
+        delay_minutes = min(360, 10 * (2 ** min(max(0, attempts - 1), 6)))
+        next_retry = (now + timedelta(minutes=delay_minutes)).isoformat(timespec="seconds")
+        conn = _runtime_connect()
+        try:
+            conn.execute(
+                """
+                UPDATE team_identity_retry_queue
+                SET status='PENDING',attempts=?,last_reason=?,last_attempt_at=?,
+                    next_retry_at=?,home_team_id=?,away_team_id=?,
+                    home_form_ready=?,away_form_ready=?,updated_at=CURRENT_TIMESTAMP
+                WHERE retry_key=?
+                """,
+                (attempts, str(reason)[:300], now_iso, next_retry, home_id, away_id,
+                 int(home_form_ready), int(away_form_ready), retry_key),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return {"processed": processed, "resolved": resolved, **get_team_identity_retry_status()}
 
 
 def _latin_team_key(value):
@@ -1792,6 +2003,12 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
     away_name = str(away_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
 
+    # 이미 검증된 쌍은 날짜 전체 경기표를 매 주기 다시 훑지 않는다.
+    known_home = known_team_id(home_name)
+    known_away = known_team_id(away_name)
+    if known_home and known_away and (not different_teams or known_home != known_away):
+        return fetch_team_info_api(home_name), fetch_team_info_api(away_name), None
+
     if match_time_str not in (None, "", "시간 미정", "마감/진행중"):
         match_dt = parse_match_time(match_time_str)
         date_str = match_dt.strftime("%Y-%m-%d")
@@ -1942,10 +2159,21 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
             f"[팀검증 차단] 중복 팀 ID: {home_name}와 {away_name}가 모두 {home_id}번으로 "
             "연결되어 해당 결과를 사용하지 않습니다."
         )
+        queue_team_identity_retry(
+            home_name, away_name, match_time_str, reason="duplicate_team_id"
+        )
         return (
             {"id": 0, "name": home_name, "logo": None, "identity_error": "duplicate_id"},
             {"id": 0, "name": away_name, "logo": None, "identity_error": "duplicate_id"},
             None,
+        )
+    if not home_id or not away_id:
+        missing_sides = "/".join(
+            side for side, value in (("home", home_id), ("away", away_id)) if not value
+        )
+        queue_team_identity_retry(
+            home_name, away_name, match_time_str,
+            reason=f"missing_team_id:{missing_sides or 'unknown'}",
         )
     return home_info, away_info, None
 
