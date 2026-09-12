@@ -56,6 +56,7 @@ from grading_postmortem import (
 APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
+WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
@@ -150,6 +151,16 @@ WORLD_MARKET_WATCH_HORIZON_HOURS = max(
 )
 WORLD_ODDS_MAX_PAGES_PER_DAY = max(
     10, min(100, int(os.getenv("WORLD_ODDS_MAX_PAGES_PER_DAY", "100")))
+)
+# The full local WORLD document intentionally retains complete robot/audit
+# evidence. The GitHub/Streamlit copy only needs display fields, so keep a
+# separate public object below the size that previously caused HTTP 422.
+WORLD_PUBLIC_DASHBOARD_MAX_BYTES = max(
+    2 * 1024 * 1024,
+    min(
+        20 * 1024 * 1024,
+        int(os.getenv("WORLD_PUBLIC_DASHBOARD_MAX_BYTES", str(12 * 1024 * 1024))),
+    ),
 )
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
@@ -277,6 +288,161 @@ def _refresh_world_source_meta(payload):
         "system_version": SYSTEM_VERSION,
     })
     return payload
+
+
+WORLD_PUBLIC_CANDIDATE_FIELDS = (
+    "market_key", "label", "raw_pick", "selection_side", "handicap_base",
+    "totals_base", "sort_id", "prob", "probability", "model_probability",
+    "fair_prob", "fair_probability", "odd", "edge", "robust_probability",
+    "robust_edge", "robust_ev", "recommendation_score", "data_confidence",
+    "error_margin", "probability_interval", "is_true_underdog",
+    "is_qualified_underdog", "support_signals", "independent_support_count",
+    "selected_as", "selection_reason", "selection_warning",
+    "recommendation_status", "settlement_supported", "final_pick_grade",
+    "learning_robot", "official_policy_version", "official_score",
+    "value_pick_tier", "public_pick_frozen", "official_final_pick",
+    "probability_fallback", "context_alignment", "robot_probability",
+    "robot_expected_goals", "robot_model_active", "robot_model_version",
+    "robot_training_samples", "robot_validation_fixtures",
+    "robot_decision_reason", "robot_selection_axis",
+    "robot_grading_experience_samples", "robot_grading_calibration_samples",
+    "robot_grading_calibration_weight", "robot_minimum_sample_gate",
+    "legacy_v4_policy_version", "legacy_v4_expected_goals",
+)
+WORLD_PUBLIC_INPUT_FIELDS = (
+    "recent", "standings", "injuries", "lineups", "lineup_learning",
+    "rest_days",
+)
+WORLD_PUBLIC_DECISION_FIELDS = (
+    "analysis_version", "schema_version", "data_confidence", "selected_market",
+    "selected_pick", "selection_reason", "selection_warning", "final_pick_grade",
+    "value_badge", "probability_fallback", "market_candidate_counts",
+    "missing_markets",
+)
+WORLD_PUBLIC_ANALYSIS_FIELDS = (
+    "analysis_version", "system_version", "analysis_stage", "analyzed_at",
+    "frozen_at", "data_quality_score", "data_quality_grade", "missing_data",
+    "lineup_confirmed", "odds_snapshot", "odds_movement", "evidence",
+    "categories", "selected", "legacy_v4_pick", "robot_pick",
+    "robot_wdl_probabilities", "alternative", "learning_robot", "report",
+    "public_pick_frozen", "public_pick_frozen_at",
+    "public_pick_analysis_version", "public_pick_analysis_stage",
+    "public_pick_snapshot_id", "canonical_source", "canonical_match_id",
+)
+
+
+def _compact_world_public_candidate(candidate):
+    """Keep only candidate fields the website can display as a fallback."""
+    if not isinstance(candidate, dict):
+        return {}
+    return {
+        key: candidate.get(key)
+        for key in WORLD_PUBLIC_CANDIDATE_FIELDS
+        if key in candidate
+    }
+
+
+def _compact_world_public_analysis(analysis):
+    """Build a display-complete copy without removing local learning memory."""
+    if not isinstance(analysis, dict):
+        return {}
+    public = {
+        key: analysis.get(key)
+        for key in WORLD_PUBLIC_ANALYSIS_FIELDS
+        if key in analysis
+    }
+    inputs = analysis.get("inputs_snapshot") or {}
+    if isinstance(inputs, dict):
+        public["inputs_snapshot"] = {
+            key: inputs.get(key)
+            for key in WORLD_PUBLIC_INPUT_FIELDS
+            if key in inputs
+        }
+    categories = analysis.get("categories") or {}
+    if isinstance(categories, dict):
+        public["categories"] = {
+            key: (
+                _compact_world_public_candidate(candidate)
+                if isinstance(candidate, dict) else None
+            )
+            for key, candidate in categories.items()
+        }
+    for key in ("selected", "legacy_v4_pick", "robot_pick", "alternative"):
+        if isinstance(analysis.get(key), dict):
+            public[key] = _compact_world_public_candidate(analysis[key])
+    public["candidates"] = [
+        compact
+        for compact in (
+            _compact_world_public_candidate(candidate)
+            for candidate in analysis.get("candidates", []) or []
+        )
+        if compact
+    ]
+    decision = analysis.get("decision") or {}
+    if isinstance(decision, dict):
+        public["decision"] = {
+            key: decision.get(key)
+            for key in WORLD_PUBLIC_DECISION_FIELDS
+            if key in decision
+        }
+    public["publication_compacted"] = True
+    return public
+
+
+def _build_world_publication_payload(payload):
+    """Separate web payload; the caller's full local payload is never mutated."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("matches"), list):
+        return None
+    public = {
+        key: value for key, value in payload.items()
+        if key != "matches"
+    }
+    public_matches = []
+    for item in payload.get("matches", []) or []:
+        if not isinstance(item, dict):
+            continue
+        row = {key: value for key, value in item.items() if key != "analysis"}
+        if isinstance(item.get("analysis"), dict):
+            row["analysis"] = _compact_world_public_analysis(item["analysis"])
+        public_matches.append(row)
+    public["matches"] = public_matches
+    public["publication_schema_version"] = "world-public.v1"
+    source_meta = dict(public.get("source_meta") or {})
+    source_meta.update({
+        "publication_compacted": True,
+        "publication_match_count": len(public_matches),
+        "publication_system_version": SYSTEM_VERSION,
+    })
+    public["source_meta"] = source_meta
+    return public
+
+
+def _write_world_publication_file():
+    """Write the compact GitHub/web copy while preserving the full local file."""
+    payload = _read_json(WORLD_DASHBOARD_FILE, {})
+    public = _build_world_publication_payload(payload)
+    if public is None:
+        print("❌ WORLD 공개본 생성 실패: 로컬 정상 분석 파일이 없습니다.")
+        return None
+    _atomic_write_json(WORLD_PUBLICATION_FILE, public)
+    try:
+        public_bytes = WORLD_PUBLICATION_FILE.stat().st_size
+        full_bytes = WORLD_DASHBOARD_FILE.stat().st_size
+    except OSError as error:
+        print(f"❌ WORLD 공개본 크기 확인 실패: {error}")
+        return None
+    if public_bytes > WORLD_PUBLIC_DASHBOARD_MAX_BYTES:
+        print(
+            "❌ WORLD 공개본 안전 상한 초과: "
+            f"{public_bytes}바이트 / {WORLD_PUBLIC_DASHBOARD_MAX_BYTES}바이트"
+        )
+        return None
+    print(
+        "✅ WORLD 웹 게시본 압축 완료: "
+        f"{full_bytes}바이트 → {public_bytes}바이트 "
+        "(로컬 전체 학습·감사자료 보존)"
+    )
+    return WORLD_PUBLICATION_FILE
 
 
 def _exclude_proto_overlaps(payload, proto_by_fixture=None):
@@ -3742,6 +3908,50 @@ def _json_rows(value):
     return [dict(row) for row in parsed if isinstance(row, dict)] if isinstance(parsed, list) else []
 
 
+def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, kickoff):
+    """Read one append-only engine answer that was captured before kickoff."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT id,engine_version,market_key,selection_side,raw_pick,
+                   probability,odd,pick_json,captured_at
+            FROM three_engine_pick_snapshots
+            WHERE match_id=? AND home_team=? AND away_team=? AND engine_key=?
+            ORDER BY id ASC
+            """,
+            (str(match_id), str(home_team), str(away_team), str(engine_key)),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    for row in rows:
+        if not _snapshot_existed_before_kickoff(row[8], kickoff):
+            continue
+        raw_pick = str(row[4] or "").strip()
+        if not raw_pick:
+            continue
+        pick = _json_object(row[7])
+        pick.update({
+            "market_key": str(row[2] or pick.get("market_key") or ""),
+            "selection_side": str(row[3] or pick.get("selection_side") or ""),
+            "raw_pick": raw_pick,
+            "prob": float(row[5] or pick.get("prob") or 0),
+            "probability": float(row[5] or pick.get("probability") or 0),
+            "odd": float(row[6] or pick.get("odd") or 0),
+            "public_pick_frozen": True,
+            "three_engine_snapshot_id": int(row[0]),
+        })
+        if engine_key == "legacy_v4":
+            pick["legacy_v4_policy_version"] = str(
+                pick.get("legacy_v4_policy_version") or row[1] or ""
+            )
+        elif engine_key == "robot":
+            pick["robot_pick_version"] = str(
+                pick.get("robot_pick_version") or row[1] or ""
+            )
+        return pick
+    return None
+
+
 def _is_current_public_analysis_version(value):
     """Identify a complete R7.10 public analysis, excluding market previews."""
     return str(value or "") in {ANALYSIS_VERSION, WORLD_ANALYSIS_VERSION}
@@ -3878,6 +4088,9 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         if isinstance(value, dict) and str(value.get("raw_pick") or "") == official_pick:
             frozen_categories[key] = dict(value, public_pick_frozen=True)
 
+    legacy_v4_pick = _first_three_engine_pick(
+        conn, match_id, home_team, away_team, "legacy_v4", kickoff
+    )
     robot_pick = None
     robot_analysis_id = None
     for row in analysis_rows:
@@ -3902,6 +4115,15 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         robot_analysis_id = int(row[0])
         frozen_categories["robot_independent"] = robot_pick
         break
+
+    # The three-engine table is the append-only source of truth for independent
+    # answers. Older analysis snapshots did not always embed the robot payload.
+    if robot_pick is None:
+        robot_pick = _first_three_engine_pick(
+            conn, match_id, home_team, away_team, "robot", kickoff
+        )
+        if robot_pick:
+            frozen_categories["robot_independent"] = robot_pick
 
     if not candidates:
         candidates = [dict(selected)]
@@ -3933,6 +4155,7 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         "ev_pick": ev_pick,
         "ev_probability": ev_probability,
         "categories": frozen_categories,
+        "legacy_v4_pick": legacy_v4_pick,
         "robot_pick": robot_pick,
         "candidates": candidates,
         "decision": decision,
@@ -3985,6 +4208,7 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         "match": dict(match),
         "final_match_time": current.get("final_match_time") or match.get("match_time"),
         "pick_categories": bundle["categories"],
+        "legacy_v4_pick": bundle.get("legacy_v4_pick") or current.get("legacy_v4_pick") or {},
         "robot_pick": bundle.get("robot_pick") or {},
         "ev_sorted_picks": bundle["candidates"],
         "display_candidates": bundle["candidates"],
@@ -4058,6 +4282,7 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
     current_analysis.update({
         "selected": selected,
         "categories": bundle["categories"],
+        "legacy_v4_pick": dict(bundle.get("legacy_v4_pick") or {}),
         "robot_pick": dict(bundle.get("robot_pick") or {}),
         "candidates": bundle["candidates"],
         "decision": decision,
@@ -7188,6 +7413,7 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
         "lineup_confirmed": bool(proto_item.get("lineup_confirmed")),
         "categories": categories,
         "selected": selected,
+        "legacy_v4_pick": dict(proto_item.get("legacy_v4_pick") or {}),
         "robot_pick": robot_pick,
         "report": str(
             proto_item.get("detailed_report")
@@ -8577,6 +8803,21 @@ def _proto_item_has_usable_pick(item, match):
     return bool(str(selected.get("raw_pick") or "").strip())
 
 
+def _proto_item_has_three_engine_picks(item):
+    """A pre-match card is complete only when all three independent picks exist."""
+    if not isinstance(item, dict):
+        return False
+    official = (item.get("pick_categories") or {}).get("high_probability") or {}
+    legacy = item.get("legacy_v4_pick") or {}
+    robot = item.get("robot_pick") or {}
+    if not all(isinstance(pick, dict) for pick in (official, legacy, robot)):
+        return False
+    return all(
+        str(pick.get("raw_pick") or "").strip()
+        for pick in (official, legacy, robot)
+    )
+
+
 def _hydrate_published_team_data(item, match=None):
     """Patch display-only team identity data without changing any saved pick."""
     if not isinstance(item, dict):
@@ -8680,7 +8921,13 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
             match.get("home"), match.get("away"), final_match_time,
             reason="published_card_identity_logo_or_form_missing",
         )
-    return _public_proto_item_from_first_snapshot(match, candidate, locked=False)
+    candidate = _public_proto_item_from_first_snapshot(match, candidate, locked=False)
+    # Two-pick cards created by an interrupted or older run must not remain
+    # permanently "complete". Before kickoff they return to the normal queue,
+    # which fills the missing answer without rewriting historical snapshots.
+    if not _proto_item_has_three_engine_picks(candidate):
+        return None
+    return candidate
 
 
 def _pending_proto_item(match):
@@ -8714,15 +8961,29 @@ def build_dashboard_data():
         return False
      
     raw_proto_matches = betman_data.get("proto_matches", [])
+    rejected_placeholder_count = sum(
+        1 for match in raw_proto_matches if _is_placeholder_match(match)
+    )
+    rejected_auxiliary_count = sum(
+        1 for match in raw_proto_matches
+        if not _is_placeholder_match(match)
+        and _is_betman_auxiliary_prediction_record(match)
+    )
     proto_matches = [
         match for match in raw_proto_matches
         if not _is_placeholder_match(match)
+        and not _is_betman_auxiliary_prediction_record(match)
     ]
     rejected_proto_count = len(raw_proto_matches) - len(proto_matches)
-    if rejected_proto_count:
+    if rejected_placeholder_count:
         print(
-            f"⚠️ 팀명이 확인되지 않은 가짜 경기 {rejected_proto_count}건을 "
+            f"⚠️ 팀명이 확인되지 않은 가짜 경기 {rejected_placeholder_count}건을 "
             "분석·화면·채점 대상에서 제외했습니다."
+        )
+    if rejected_auxiliary_count:
+        print(
+            f"🧹 베트맨 비판매 보조예측 경기 {rejected_auxiliary_count}건을 "
+            "현재 프로토 화면에서 제외했습니다."
         )
     toto_14_matches = betman_data.get("toto_14_matches", [])
     if toto_14_matches and not _valid_toto14_round(toto_14_matches):
@@ -8765,8 +9026,27 @@ def build_dashboard_data():
     analyzed_proto_count = 0
     deferred_proto_count = 0
     proto_market_watch_count = 0
-      
-    for m in proto_matches:
+
+    # Analyze the nearest kickoff first, then restore Betman's original display
+    # order before publishing. This keeps a large future board from delaying a
+    # match that starts sooner merely because its sale-row number is larger.
+    proto_display_order = {
+        str(match.get("id") or ""): index
+        for index, match in enumerate(proto_matches)
+    }
+    proto_processing_matches = sorted(
+        proto_matches,
+        key=lambda match: (
+            _parse_kst_match_time(match.get("match_time") or match.get("time")) is None,
+            (
+                _parse_kst_match_time(match.get("match_time") or match.get("time"))
+                or datetime.max.replace(tzinfo=KST)
+            ).timestamp(),
+            proto_display_order.get(str(match.get("id") or ""), 10**9),
+        ),
+    )
+
+    for m in proto_processing_matches:
         home_team, away_team = m["home"], m["away"]
         final_match_time = m.get("match_time") or m.get("time") or "시간 미정"
         m_dt = parse_match_time(final_match_time)
@@ -9647,6 +9927,11 @@ def build_dashboard_data():
             )
         )
     dashboard_proto = immutable_proto
+    dashboard_proto.sort(
+        key=lambda item: proto_display_order.get(
+            str((item.get("match") or {}).get("id") or ""), 10**9
+        )
+    )
 
     double_pick_count = 0
     single_pick_count = 0
@@ -10328,7 +10613,9 @@ def build_dashboard_data():
             "system_version": SYSTEM_VERSION,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
             "raw_betman_proto_count": len(raw_proto_matches),
-            "rejected_placeholder_count": rejected_proto_count,
+            "rejected_placeholder_count": rejected_placeholder_count,
+            "rejected_auxiliary_prediction_count": rejected_auxiliary_count,
+            "rejected_proto_count": rejected_proto_count,
             "betman_proto_count": len(proto_matches),
             "display_proto_count": len(dashboard_proto),
             "betman_toto14_count": len(toto_14_matches),
@@ -11988,6 +12275,8 @@ def parse_betman_proto_html(html):
         match_time = re.sub(r'\s+', ' ', time_match.group(0)).strip()
         league_node = row.select_one(".competition")
         league = league_node.get_text(" ", strip=True) if league_node else "축구"
+        if _is_betman_auxiliary_prediction_record({"league": league}):
+            continue
 
         market_root = row.select_one(".accordion-content")
         if market_root is None:
@@ -12113,6 +12402,20 @@ def parse_betman_toto14_html(html, round_id="current"):
 _BETMAN_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
 
 
+def _is_betman_auxiliary_prediction_record(record):
+    """Identify Betman auxiliary prediction rows that are not sale fixtures."""
+    if not isinstance(record, dict):
+        return False
+    league = str(
+        record.get("league")
+        or record.get("leagueShortName")
+        or record.get("leagueName")
+        or ""
+    )
+    normalized = re.sub(r"[\s._-]+", "", league).casefold()
+    return normalized == "ag예측"
+
+
 def _betman_epoch_text(value):
     """Format Betman's millisecond timestamp in the same KST form as the page."""
     try:
@@ -12159,6 +12462,7 @@ def parse_betman_proto_json(payload):
         row
         for row in _expand_betman_rows(payload.get("compSchedules"))
         if str(row.get("itemCode", "")).upper() == "SC"
+        and not _is_betman_auxiliary_prediction_record(row)
     ]
     groups = {}
     for row in rows:
@@ -12730,12 +13034,16 @@ def _merge_active_records(fresh, previous, pending_ids, prefix=""):
     merged = []
     seen = set()
     for record in fresh:
+        if not prefix and _is_betman_auxiliary_prediction_record(record):
+            continue
         match_id = str(record.get("id", ""))
         if not match_id or match_id in seen:
             continue
         seen.add(match_id)
         merged.append(record)
     for record in previous:
+        if not prefix and _is_betman_auxiliary_prediction_record(record):
+            continue
         match_id = str(record.get("id", ""))
         if not match_id or match_id in seen:
             continue
@@ -13250,8 +13558,14 @@ def run_world_job():
         return False
 
     if schedule_refreshed or analysis_changed:
+        publication_file = _write_world_publication_file()
+        if publication_file is None:
+            _update_collector_status(
+                "world", "running", last_stage="world_publication_build_failed"
+            )
+            return False
         if not upload_to_github(
-            WORLD_DASHBOARD_FILE, remote_path=WORLD_DASHBOARD_FILE.name
+            publication_file, remote_path=WORLD_DASHBOARD_FILE.name
         ):
             _update_collector_status(
                 "world", "running", last_stage="world_dashboard_publish_failed"
@@ -13480,7 +13794,9 @@ def run_scheduler():
     _launch_isolated_job("team")
     schedule.every(5).minutes.do(_launch_isolated_job, "live")
     schedule.every(5).minutes.do(_launch_isolated_job, "score")
-    schedule.every(20).minutes.do(_launch_isolated_job, "master")
+    # A large board can need several resumable passes. The overlap guard keeps
+    # one worker at a time while a five-minute tick starts the next pass soon.
+    schedule.every(5).minutes.do(_launch_isolated_job, "master")
     schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
         _launch_isolated_job, "world"
     )
