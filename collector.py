@@ -5280,6 +5280,17 @@ def _build_grading_snapshot():
         public_rows = []
         for source in all_rows:
             match_id = str(source.get("match_id") or "")
+            is_toto14 = int(source.get("is_toto14") or 0) == 1
+            if is_toto14:
+                # Toto14 is graded by the same result worker, but it does not
+                # belong to the public robot-version reset used by PROTO/WORLD.
+                # Publish only completed Toto14 rows so its independent
+                # scorecard can count the preserved pre-kickoff ticket.
+                if str(source.get("actual_result") or "") == "FINISHED":
+                    row = dict(source)
+                    row["source_type"] = "TOTO14"
+                    public_rows.append(row)
+                continue
             bundle = _first_public_pick_bundle(
                 conn, match_id, source.get("home_team"), source.get("away_team"),
                 source.get("match_time"),
@@ -5288,7 +5299,7 @@ def _build_grading_snapshot():
                 (bundle or {}).get("robot_pick")
                 or fallback_robot_by_match.get(match_id)
             )
-            if not robot or int(source.get("is_toto14") or 0) != 0:
+            if not robot:
                 continue
             row = dict(source)
             if bundle:
@@ -5343,7 +5354,10 @@ def _build_grading_snapshot():
         finished = [
             row for row in public_rows
             if row.get("actual_result") == "FINISHED"
-            and row.get("is_correct_robot") in (0, 1)
+            and (
+                int(row.get("is_toto14") or 0) == 1
+                or row.get("is_correct_robot") in (0, 1)
+            )
             and str(row.get("prob_pick") or "").strip()
         ]
         pending = [
@@ -5369,7 +5383,13 @@ def _build_grading_snapshot():
             "public_history_mode": "current-robot-version-only",
             "public_score_version": PUBLIC_SCORE_VERSION,
             "public_score_label": "새 로봇 독립픽 공개 성적",
-            "legacy_rows_hidden": max(0, len(all_rows) - len(public_rows)),
+            "legacy_rows_hidden": max(0, len([
+                row for row in all_rows
+                if int(row.get("is_toto14") or 0) == 0
+            ]) - len([
+                row for row in public_rows
+                if int(row.get("is_toto14") or 0) == 0
+            ])),
             "three_engine": three_engine,
             "finished": finished,
             "pending": pending,
