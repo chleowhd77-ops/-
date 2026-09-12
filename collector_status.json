@@ -3,21 +3,22 @@
     "scheduler": {
       "supervisor_pid": 358774,
       "state": "running",
-      "heartbeat_at": "2026-09-12T18:01:34+00:00",
+      "heartbeat_at": "2026-09-12T18:03:35+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T06:03:09+00:00",
       "active_jobs": {
         "master": 359647,
-        "score": 359700
+        "score": 359700,
+        "live": 359709
       }
     },
     "live": {
       "child_pid": 359709,
       "state": "running",
-      "heartbeat_at": "2026-09-12T18:01:49+00:00",
-      "pid": 359709,
+      "heartbeat_at": "2026-09-12T18:03:35+00:00",
+      "pid": 358774,
       "last_started_at": "2026-09-12T18:01:44+00:00",
-      "elapsed_seconds": 171.7,
+      "elapsed_seconds": 111.0,
       "overlap_skips": 0,
       "duration_seconds": 180.3,
       "last_failure_at": "2026-09-12T17:59:39+00:00",
@@ -27,11 +28,11 @@
     "score": {
       "child_pid": 359700,
       "state": "running",
-      "heartbeat_at": "2026-09-12T18:01:33+00:00",
+      "heartbeat_at": "2026-09-12T18:03:35+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T17:57:20+00:00",
-      "elapsed_seconds": 253.3,
-      "overlap_skips": 0,
+      "elapsed_seconds": 374.8,
+      "overlap_skips": 1,
       "duration_seconds": 601.8,
       "last_success_at": "2026-09-12T11:42:05+00:00",
       "last_failure_at": "2026-09-12T17:52:09+00:00",
@@ -46,14 +47,14 @@
     },
     "master": {
       "child_pid": 359647,
-      "state": "running",
-      "heartbeat_at": "2026-09-12T18:01:33+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-12T18:03:41+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T17:18:41+00:00",
-      "elapsed_seconds": 2572.3,
+      "elapsed_seconds": 2693.7,
       "overlap_skips": 2,
-      "duration_seconds": 2700.6,
-      "last_failure_at": "2026-09-12T17:03:37+00:00",
+      "duration_seconds": 2700.0,
+      "last_failure_at": "2026-09-12T18:03:41+00:00",
       "last_success_at": "2026-09-12T15:16:53+00:00",
       "last_stage": "dashboard_published_backup_pending",
       "db_backup_ok": false,
@@ -75,7 +76,7 @@
       "last_error": "worker exited with code 1"
     }
   },
-  "updated_at": "2026-09-12T18:01:49+00:00",
+  "updated_at": "2026-09-12T18:03:41+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -163,7 +164,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 93
+        "count": 96
       },
       {
         "metric": "cache_hit",
