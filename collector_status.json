@@ -3,13 +3,12 @@
     "scheduler": {
       "supervisor_pid": 358774,
       "state": "running",
-      "heartbeat_at": "2026-09-12T11:37:22+00:00",
+      "heartbeat_at": "2026-09-12T11:37:53+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T06:03:09+00:00",
       "active_jobs": {
         "master": 359012,
-        "world": 359013,
-        "score": 359048
+        "world": 359013
       }
     },
     "live": {
@@ -46,26 +45,25 @@
     },
     "master": {
       "child_pid": 359012,
-      "state": "running",
-      "heartbeat_at": "2026-09-12T11:37:22+00:00",
-      "pid": 358774,
+      "state": "success",
+      "heartbeat_at": "2026-09-12T11:38:22+00:00",
+      "pid": 359012,
       "last_started_at": "2026-09-12T11:18:17+00:00",
-      "elapsed_seconds": 1145.5,
-      "overlap_skips": 0,
-      "duration_seconds": 2701.1,
+      "elapsed_seconds": 1201.6,
+      "overlap_skips": 1,
+      "duration_seconds": 1203.99,
       "last_failure_at": "2026-09-12T11:03:15+00:00",
-      "last_success_at": "2026-09-10T23:11:04+00:00",
+      "last_success_at": "2026-09-12T11:38:22+00:00",
       "last_stage": "dashboard_published_backup_pending",
-      "db_backup_ok": false,
-      "last_error": "hard timeout after 2701 seconds"
+      "db_backup_ok": false
     },
     "world": {
       "child_pid": 359013,
       "state": "running",
-      "heartbeat_at": "2026-09-12T11:37:22+00:00",
+      "heartbeat_at": "2026-09-12T11:37:53+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T11:18:19+00:00",
-      "elapsed_seconds": 1143.5,
+      "elapsed_seconds": 1173.6,
       "overlap_skips": 1,
       "duration_seconds": 3600.3,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -75,7 +73,7 @@
       "last_error": "hard timeout after 3600 seconds"
     }
   },
-  "updated_at": "2026-09-12T11:37:36+00:00",
+  "updated_at": "2026-09-12T11:38:22+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -142,16 +140,16 @@
     ],
     "runtime_metrics": [
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/fixtures",
+        "count": 213
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
         "count": 212
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/fixtures",
-        "count": 139
       },
       {
         "metric": "cache_hit",
@@ -172,16 +170,16 @@
         "count": 77
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 46
+      },
+      {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
         "count": 38
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 26
       },
       {
         "metric": "cache_hit",
