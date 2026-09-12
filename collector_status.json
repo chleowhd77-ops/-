@@ -3,34 +3,35 @@
     "scheduler": {
       "supervisor_pid": 358774,
       "state": "running",
-      "heartbeat_at": "2026-09-12T11:38:23+00:00",
+      "heartbeat_at": "2026-09-12T11:41:23+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T06:03:09+00:00",
       "active_jobs": {
-        "master": 359012,
-        "world": 359013
+        "world": 359013,
+        "live": 359051,
+        "score": 359052
       }
     },
     "live": {
       "child_pid": 359051,
-      "state": "running",
-      "heartbeat_at": "2026-09-12T11:38:34+00:00",
-      "pid": 359051,
+      "state": "failed",
+      "heartbeat_at": "2026-09-12T11:41:33+00:00",
+      "pid": 358774,
       "last_started_at": "2026-09-12T11:38:33+00:00",
-      "elapsed_seconds": 170.9,
+      "elapsed_seconds": 170.4,
       "overlap_skips": 0,
-      "duration_seconds": 181.0,
-      "last_failure_at": "2026-09-12T11:36:32+00:00",
+      "duration_seconds": 180.4,
+      "last_failure_at": "2026-09-12T11:41:33+00:00",
       "last_success_at": "2026-09-12T01:57:18+00:00",
-      "last_error": "hard timeout after 181 seconds"
+      "last_error": "hard timeout after 180 seconds"
     },
     "score": {
       "child_pid": 359052,
       "state": "running",
-      "heartbeat_at": "2026-09-12T11:38:34+00:00",
-      "pid": 359052,
+      "heartbeat_at": "2026-09-12T11:41:23+00:00",
+      "pid": 358774,
       "last_started_at": "2026-09-12T11:38:33+00:00",
-      "elapsed_seconds": 231.3,
+      "elapsed_seconds": 170.3,
       "overlap_skips": 0,
       "duration_seconds": 243.17,
       "last_success_at": "2026-09-12T11:37:36+00:00",
@@ -39,8 +40,8 @@
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "last_stage": "grading_published_backup_pending",
-      "grading_published_at": "2026-09-12T11:35:22+00:00",
+      "last_stage": "grading_published",
+      "grading_published_at": "2026-09-12T11:40:21+00:00",
       "db_backup_ok": false
     },
     "master": {
@@ -60,10 +61,10 @@
     "world": {
       "child_pid": 359013,
       "state": "running",
-      "heartbeat_at": "2026-09-12T11:38:23+00:00",
+      "heartbeat_at": "2026-09-12T11:41:23+00:00",
       "pid": 358774,
       "last_started_at": "2026-09-12T11:18:19+00:00",
-      "elapsed_seconds": 1203.6,
+      "elapsed_seconds": 1384.0,
       "overlap_skips": 1,
       "duration_seconds": 3600.3,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -73,7 +74,7 @@
       "last_error": "hard timeout after 3600 seconds"
     }
   },
-  "updated_at": "2026-09-12T11:38:34+00:00",
+  "updated_at": "2026-09-12T11:41:33+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -100,7 +101,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures/lineups",
-        "calls": 169
+        "calls": 175
       },
       {
         "purpose": "analysis",
@@ -125,7 +126,7 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 101
+        "calls": 105
       },
       {
         "purpose": "world",
@@ -143,7 +144,7 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/fixtures",
-        "count": 213
+        "count": 315
       },
       {
         "metric": "cache_hit",
@@ -173,7 +174,7 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 46
+        "count": 76
       },
       {
         "metric": "cache_hit",
@@ -251,15 +252,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-12",
     "reset_timezone": "UTC",
-    "local_calls": 3257,
-    "provider_remaining": 1445,
+    "local_calls": 3267,
+    "provider_remaining": 1435,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 1135,
     "analysis_calls": 1821,
-    "live_calls": 101,
-    "scoring_calls": 200,
+    "live_calls": 105,
+    "scoring_calls": 206,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
