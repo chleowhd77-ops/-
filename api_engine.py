@@ -53,7 +53,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v2-prekickoff"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.3-resumable-publish-team-retry"
+SYSTEM_VERSION = "R7.12.4-team-identity-display-recovery"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1735,9 +1735,23 @@ def save_smart_mapping(mapping):
 
 def fetch_team_info_api(team_name):
     identity_key = _normalize_team_alias(team_name)
+    fallback_res = {
+        "id": 0,
+        "name": team_name,
+        "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO),
+    }
     remembered = TEAM_INFO_MEMORY_CACHE.get(team_name) or TEAM_INFO_MEMORY_CACHE.get(identity_key)
-    if remembered:
+    # A successful identity is safe to reuse for the process lifetime.  An
+    # id=0 result is only a transient failure and must never turn the permanent
+    # retry queue into a loop that returns the same failure without searching.
+    if remembered and int((remembered or {}).get("id") or 0):
         return remembered
+    retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
+    if retry_at and datetime.now(timezone.utc) < retry_at:
+        return fallback_res
+    TEAM_INFO_MEMORY_CACHE.pop(team_name, None)
+    if identity_key:
+        TEAM_INFO_MEMORY_CACHE.pop(identity_key, None)
 
     def remember(result):
         TEAM_INFO_MEMORY_CACHE[team_name] = result
@@ -1785,10 +1799,6 @@ def fetch_team_info_api(team_name):
         set_db_cache(f"team_info_v7_search_{team_name}", result)
         return remember(result)
 
-    fallback_res = {"id": 0, "name": team_name, "logo": _resolve_team_logo(team_name, 0, DEFAULT_LOGO)}
-    retry_at = TEAM_INFO_FAILURE_RETRY_AT.get(team_name)
-    if retry_at and datetime.now(timezone.utc) < retry_at:
-        return fallback_res
     # 이전 버전은 검색 실패(id=0)까지 1년 캐시해 복구를 막았다. 버전을
     # 올리고 실제 팀을 찾은 결과만 장기 캐시한다.
     cache_key = f"team_info_v7_search_{team_name}"
@@ -1807,7 +1817,9 @@ def fetch_team_info_api(team_name):
 
     if not candidates:
         print(f"⚠️ API 팀 검색용 영문 이름이 없음: {team_name}")
-        remember(fallback_res)
+        TEAM_INFO_FAILURE_RETRY_AT[team_name] = (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        )
         return fallback_res
 
     try:
@@ -1893,13 +1905,67 @@ def fetch_team_info_api(team_name):
         if had_api_error:
             TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(seconds=15)
         else:
-            remember(fallback_res)
+            TEAM_INFO_FAILURE_RETRY_AT[team_name] = (
+                datetime.now(timezone.utc) + timedelta(minutes=5)
+            )
         return fallback_res
 
     except Exception as e:
         print(f"⚠️ 팀 검색 통신 오류({team_name}): {e}")
         TEAM_INFO_FAILURE_RETRY_AT[team_name] = datetime.now(timezone.utc) + timedelta(seconds=15)
         return fallback_res
+
+
+def get_cached_team_display_profile(team_name, form_ttl_h=24):
+    """Return verified ID/logo/form without making a new provider request.
+
+    Published picks remain immutable, but identity decoration is operational
+    metadata and may be completed later.  This reads durable verified/search
+    caches so a retry worker can repair an already-published card immediately.
+    """
+    team_name = str(team_name or "").strip()
+    if not team_name:
+        return {"id": 0, "name": "", "logo": DEFAULT_LOGO, "form": ""}
+
+    identity_key = _normalize_team_alias(team_name)
+    info = _load_verified_team_info(team_name)
+    if not info:
+        remembered = (
+            TEAM_INFO_MEMORY_CACHE.get(team_name)
+            or TEAM_INFO_MEMORY_CACHE.get(identity_key)
+        )
+        if isinstance(remembered, dict) and int(remembered.get("id") or 0):
+            info = dict(remembered)
+    if not info:
+        cached = get_db_cache(f"team_info_v7_search_{team_name}", 24 * 365)
+        if isinstance(cached, dict) and int(cached.get("id") or 0):
+            info = dict(cached)
+    if not info:
+        team_id = known_team_id(team_name)
+        if team_id:
+            info = {
+                "id": team_id,
+                "name": _resolve_translated_team_name(team_name) or team_name,
+                "logo": f"https://media.api-sports.io/football/teams/{team_id}.png",
+            }
+
+    info = dict(info or {})
+    team_id = int(info.get("id") or 0)
+    logo = _resolve_team_logo(team_name, team_id, info.get("logo"))
+    form = ""
+    if team_id:
+        cached_form = get_db_cache(
+            f"form_v5_regulation_{team_id}", max(0.2, float(form_ttl_h or 24))
+        )
+        if isinstance(cached_form, str):
+            form = cached_form.strip()
+    return {
+        **info,
+        "id": team_id,
+        "name": str(info.get("name") or team_name),
+        "logo": logo or DEFAULT_LOGO,
+        "form": form,
+    }
 
 def parse_match_time(match_time_str):
     now = datetime.now(timezone(timedelta(hours=9)))

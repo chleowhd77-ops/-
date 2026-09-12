@@ -91,6 +91,9 @@ TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
 MASTER_ANALYSIS_SOFT_SECONDS = max(
     300, min(1800, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "900")))
 )
+TEAM_IDENTITY_RETRY_BATCH = max(
+    2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "12")))
+)
 # A decimal quote must exceed 1. No arbitrary minimum price sacrifices a
 # higher-probability candidate; actual conservative return remains required.
 FINAL_PICK_MIN_ODDS = 1.0
@@ -8554,6 +8557,63 @@ def _proto_item_has_usable_pick(item, match):
     return bool(str(selected.get("raw_pick") or "").strip())
 
 
+def _hydrate_published_team_data(item, match=None):
+    """Patch display-only team identity data without changing any saved pick."""
+    if not isinstance(item, dict):
+        return False, False
+    match = dict(match or item.get("match") or {})
+    changed = False
+    complete = True
+    for side, team_field, logo_field, form_field in (
+        ("home", "home", "home_logo", "home_form"),
+        ("away", "away", "away_logo", "away_form"),
+    ):
+        team_name = str(match.get(team_field) or "").strip()
+        profile = get_cached_team_display_profile(team_name)
+        team_id = int((profile or {}).get("id") or 0)
+        logo = str((profile or {}).get("logo") or "")
+        form = str((profile or {}).get("form") or "").strip()
+
+        if team_id and int(item.get(f"{side}_team_id") or 0) != team_id:
+            item[f"{side}_team_id"] = team_id
+            changed = True
+        if logo and logo != DEFAULT_LOGO and item.get(logo_field) != logo:
+            item[logo_field] = logo
+            changed = True
+        if form and item.get(form_field) != form:
+            item[form_field] = form
+            changed = True
+
+        if (
+            not team_id
+            or item.get(logo_field) in (None, "", DEFAULT_LOGO)
+            or not str(item.get(form_field) or "").strip()
+        ):
+            complete = False
+    return changed, complete
+
+
+def _refresh_dashboard_team_profiles(path="dashboard_data.json"):
+    """Apply completed retry data to all card copies and persist atomically."""
+    payload = _read_json(path, {})
+    if not isinstance(payload, dict):
+        return 0
+    changed_count = 0
+    for collection_name in ("proto", "toto14", "top3"):
+        items = payload.get(collection_name) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            changed, _ = _hydrate_published_team_data(item)
+            changed_count += int(changed)
+    if changed_count:
+        source_meta = payload.setdefault("source_meta", {})
+        source_meta["team_profiles_refreshed_at"] = datetime.now(KST).isoformat()
+        source_meta["team_profile_card_updates"] = changed_count
+        _atomic_write_json(path, payload)
+    return changed_count
+
+
 def _resumable_proto_item(match, previous=None, require_current_stage=False):
     """Restore a pre-kickoff card without repeating its heavy analysis."""
     final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
@@ -8589,6 +8649,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     candidate["final_match_time"] = final_match_time
     candidate["timestamp"] = match_dt.timestamp()
     candidate["analysis_refresh_pending"] = False
+    _hydrate_published_team_data(candidate, match)
     if (
         candidate.get("home_logo") in (None, "", DEFAULT_LOGO)
         or candidate.get("away_logo") in (None, "", DEFAULT_LOGO)
@@ -8604,7 +8665,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
 
 def _pending_proto_item(match):
     final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
-    return {
+    item = {
         "match": dict(match),
         "final_match_time": final_match_time,
         "timestamp": parse_match_time(final_match_time).timestamp(),
@@ -8621,6 +8682,8 @@ def _pending_proto_item(match):
             "저장 지점부터 분석하며, 경기 전 최초픽이 완성되면 고정됩니다."
         ),
     }
+    _hydrate_published_team_data(item, match)
+    return item
 
 
 def build_dashboard_data():
@@ -10207,6 +10270,13 @@ def build_dashboard_data():
         if double_suppressed:
             suppressed_double_count += 1
         dashboard_toto14.append(toto_item)
+
+    # Identity decoration is allowed to improve after the first public pick.
+    # It never changes the saved prediction, probability, odds or report.
+    for published_item in dashboard_proto:
+        _hydrate_published_team_data(published_item)
+    for published_item in dashboard_toto14:
+        _hydrate_published_team_data(published_item)
 
     dashboard_toto14 = _finalize_toto14_round(dashboard_toto14)
     toto14_meta = _build_toto14_ticket_meta(
@@ -13020,15 +13090,24 @@ def run_master_job():
         return False
     # Cards are already safely published. Missing team ID/logo/form enrichment
     # is deliberately last so it can never keep the site blank. Rows remain in
-    # the local runtime DB until genuinely complete; four is only a cycle cap.
+    # the local runtime DB until genuinely complete; the configured batch is
+    # only a per-cycle API safety cap, never a total retry limit.
     try:
-        retry_summary = process_team_identity_retry_queue(limit=4)
+        retry_summary = process_team_identity_retry_queue(
+            limit=TEAM_IDENTITY_RETRY_BATCH
+        )
+        repaired_cards = _refresh_dashboard_team_profiles()
+        if repaired_cards and not upload_to_github("dashboard_data.json"):
+            print(
+                "⚠️ 팀 자료 화면 갱신 업로드 실패(다음 전담 주기에서 계속)"
+            )
         if retry_summary.get("processed") or retry_summary.get("pending"):
             print(
                 "🔎 팀 자료 재탐색: "
                 f"이번 {retry_summary.get('processed', 0)}건 / "
                 f"완료 {retry_summary.get('resolved', 0)}건 / "
-                f"계속 대기 {retry_summary.get('pending', 0)}건"
+                f"계속 대기 {retry_summary.get('pending', 0)}건 / "
+                f"화면 갱신 {repaired_cards}장"
             )
     except Exception as error:
         print(f"⚠️ 팀 자료 재탐색 작업 오류(다음 주기 계속): {error}")
@@ -13039,6 +13118,33 @@ def run_master_job():
         db_backup_ok=backup_ok,
         last_stage="complete" if backup_ok else "dashboard_published_backup_pending",
     )
+    return True
+
+
+def run_team_identity_job():
+    """Repair team IDs/logos/forms independently from the heavy master pass."""
+    summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
+    repaired_cards = _refresh_dashboard_team_profiles()
+    if repaired_cards and not upload_to_github("dashboard_data.json"):
+        return False
+    _update_collector_status(
+        "team",
+        "running",
+        last_stage="complete",
+        team_retry_processed=int(summary.get("processed") or 0),
+        team_retry_resolved=int(summary.get("resolved") or 0),
+        team_retry_pending=int(summary.get("pending") or 0),
+        team_retry_due=int(summary.get("due") or 0),
+        team_profile_card_updates=int(repaired_cards),
+    )
+    if summary.get("processed") or summary.get("pending") or repaired_cards:
+        print(
+            "🔎 팀 전담 재탐색 완료: "
+            f"이번 {summary.get('processed', 0)}건 / "
+            f"성공 {summary.get('resolved', 0)}건 / "
+            f"계속 대기 {summary.get('pending', 0)}건 / "
+            f"화면 갱신 {repaired_cards}장"
+        )
     return True
 
 
@@ -13173,12 +13279,14 @@ JOB_FUNCTIONS = {
     "live": run_live_score_job,
     "score": run_score_job,
     "world": run_world_job,
+    "team": run_team_identity_job,
 }
 JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
     "world": max(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "3600"))),
+    "team": max(180, int(os.getenv("TEAM_JOB_TIMEOUT_SECONDS", "600"))),
 }
 
 
@@ -13349,15 +13457,17 @@ def run_scheduler():
     _launch_isolated_job("score")
     _launch_isolated_job("master")
     _launch_isolated_job("world")
+    _launch_isolated_job("team")
     schedule.every(5).minutes.do(_launch_isolated_job, "live")
     schedule.every(5).minutes.do(_launch_isolated_job, "score")
     schedule.every(20).minutes.do(_launch_isolated_job, "master")
     schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
         _launch_isolated_job, "world"
     )
+    schedule.every(5).minutes.do(_launch_isolated_job, "team")
 
     print(
-        "\n🚀 [감시 스케줄러] master/live/score/world 분리 · 중복 방지 · "
+        "\n🚀 [감시 스케줄러] master/live/score/world/team 분리 · 중복 방지 · "
         f"WORLD {WORLD_ANALYSIS_INTERVAL_MINUTES}분 분석/{WORLD_SCHEDULE_REFRESH_HOURS}시간 일정"
     )
     last_heartbeat = 0.0
@@ -13395,7 +13505,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "live", "score", "world"),
+        choices=("scheduler", "master", "live", "score", "world", "team"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )
