@@ -3,33 +3,35 @@
     "scheduler": {
       "supervisor_pid": 355898,
       "state": "running",
-      "heartbeat_at": "2026-09-12T01:10:32+00:00",
+      "heartbeat_at": "2026-09-12T01:12:02+00:00",
       "pid": 355898,
       "last_started_at": "2026-09-11T21:28:59+00:00",
       "active_jobs": {
         "master": 356416,
-        "world": 356417
+        "world": 356417,
+        "live": 356470,
+        "score": 356471
       }
     },
     "live": {
       "child_pid": 356470,
-      "state": "running",
-      "heartbeat_at": "2026-09-12T01:10:52+00:00",
+      "state": "success",
+      "heartbeat_at": "2026-09-12T01:12:03+00:00",
       "pid": 356470,
       "last_started_at": "2026-09-12T01:08:32+00:00",
-      "elapsed_seconds": 162.4,
+      "elapsed_seconds": 72.1,
       "overlap_skips": 0,
-      "duration_seconds": 160.7,
+      "duration_seconds": 70.79,
       "last_failure_at": "2026-09-11T22:43:26+00:00",
-      "last_success_at": "2026-09-12T01:08:32+00:00"
+      "last_success_at": "2026-09-12T01:12:03+00:00"
     },
     "score": {
       "child_pid": 356471,
       "state": "running",
-      "heartbeat_at": "2026-09-12T01:10:52+00:00",
-      "pid": 356471,
+      "heartbeat_at": "2026-09-12T01:12:02+00:00",
+      "pid": 355898,
       "last_started_at": "2026-09-12T01:10:50+00:00",
-      "elapsed_seconds": 192.6,
+      "elapsed_seconds": 72.1,
       "overlap_skips": 0,
       "duration_seconds": 201.33,
       "last_success_at": "2026-09-12T01:09:12+00:00",
@@ -45,10 +47,10 @@
     "master": {
       "child_pid": 356416,
       "state": "running",
-      "heartbeat_at": "2026-09-12T01:10:32+00:00",
+      "heartbeat_at": "2026-09-12T01:12:02+00:00",
       "pid": 355898,
       "last_started_at": "2026-09-12T00:30:29+00:00",
-      "elapsed_seconds": 2403.6,
+      "elapsed_seconds": 2493.8,
       "overlap_skips": 2,
       "duration_seconds": 2700.2,
       "last_failure_at": "2026-09-12T00:15:27+00:00",
@@ -60,10 +62,10 @@
     "world": {
       "child_pid": 356417,
       "state": "running",
-      "heartbeat_at": "2026-09-12T01:10:32+00:00",
+      "heartbeat_at": "2026-09-12T01:12:02+00:00",
       "pid": 355898,
       "last_started_at": "2026-09-12T00:30:33+00:00",
-      "elapsed_seconds": 2399.4,
+      "elapsed_seconds": 2489.6,
       "overlap_skips": 2,
       "duration_seconds": 3600.3,
       "last_success_at": "2026-09-09T15:43:19+00:00",
@@ -73,7 +75,7 @@
       "last_error": "hard timeout after 3600 seconds"
     }
   },
-  "updated_at": "2026-09-12T01:10:52+00:00",
+  "updated_at": "2026-09-12T01:12:03+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -168,6 +170,12 @@
         "purpose": "analysis",
         "endpoint": "/injuries",
         "count": 7
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 2
       },
       {
         "metric": "cache_hit",
