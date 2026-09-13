@@ -1,21 +1,22 @@
-"""Offline, bounded challenger trained only on already cached final scores.
+"""Offline autonomous formula learner using already completed final scores.
 
-No network, database writes or dependency on the collector. A chronological
-holdout must beat the venue-shrinkage baseline on BOTH WDL Brier and log loss.
-This is a promotion gate, not a claim of prospective profitability.
+No network, database writes or dependency on the collector. All completed
+history may train and select the next formula. Reported live accuracy comes
+only from later picks that were frozen before kickoff.
 """
 import hashlib
 import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-full-market-online-v2"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-formula-lab-all-history-v4"
 OFFICIAL_PICK_POLICY_VERSION = "evidence-ensemble-accuracy-first-v2"
 LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-all-evidence-online-v4-self-outcome"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-formula-evolution-v5"
+ROBOT_FORMULA_ENGINE_VERSION = "symbolic-formula-lab-v2-all-completed"
 ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v2-all-evidence"
 ROBOT_COMPATIBLE_FEATURE_SCHEMAS = (
     "robot-features.v1",
@@ -1203,11 +1204,244 @@ def _predict_robot_linear(model, vector):
     )
 
 
+def _robot_formula_text(program):
+    """Return a stable, human-auditable expression for one generated formula."""
+    if not isinstance(program, dict):
+        return "0"
+    operation = str(program.get("op") or "")
+    if operation == "feature":
+        return str(program.get("name") or "0")
+    unary_labels = {
+        "signed_log1p": "slog",
+        "signed_sqrt": "ssqrt",
+        "tanh": "tanh",
+        "square": "square",
+        "reciprocal": "inv1p",
+    }
+    if operation in unary_labels:
+        return f"{unary_labels[operation]}({_robot_formula_text(program.get('arg'))})"
+    binary_labels = {
+        "add": "+", "subtract": "-", "multiply": "*",
+        "safe_divide": "/", "mean": "mean",
+    }
+    if operation in binary_labels:
+        left = _robot_formula_text(program.get("left"))
+        right = _robot_formula_text(program.get("right"))
+        if operation == "mean":
+            return f"mean({left},{right})"
+        return f"({left}{binary_labels[operation]}{right})"
+    return "0"
+
+
+def _robot_formula_complexity(program):
+    if not isinstance(program, dict):
+        return 1
+    operation = str(program.get("op") or "")
+    if operation == "feature":
+        return 1
+    if "arg" in program:
+        return 1 + _robot_formula_complexity(program.get("arg"))
+    return (
+        1 + _robot_formula_complexity(program.get("left"))
+        + _robot_formula_complexity(program.get("right"))
+    )
+
+
+def _robot_formula_feature_names(program):
+    """Return the raw inputs actually used by an auditable formula tree."""
+    if not isinstance(program, dict):
+        return set()
+    if str(program.get("op") or "") == "feature":
+        name = str(program.get("name") or "").strip()
+        return {name} if name else set()
+    if "arg" in program:
+        return _robot_formula_feature_names(program.get("arg"))
+    return (
+        _robot_formula_feature_names(program.get("left"))
+        | _robot_formula_feature_names(program.get("right"))
+    )
+
+
+def _robot_formula_value(program, features):
+    """Evaluate generated arithmetic without executing generated source code."""
+    if not isinstance(program, dict):
+        return 0.0
+    operation = str(program.get("op") or "")
+    if operation == "feature":
+        return _finite_number((features or {}).get(str(program.get("name") or "")))
+    if "arg" in program:
+        value = _robot_formula_value(program.get("arg"), features)
+        if operation == "signed_log1p":
+            result = math.copysign(math.log1p(abs(value)), value)
+        elif operation == "signed_sqrt":
+            result = math.copysign(math.sqrt(abs(value)), value)
+        elif operation == "tanh":
+            result = math.tanh(value)
+        elif operation == "square":
+            result = min(abs(value), 50.0) ** 2
+        elif operation == "reciprocal":
+            result = math.copysign(1.0 / (1.0 + abs(value)), value)
+        else:
+            result = 0.0
+        return max(-2500.0, min(2500.0, _finite_number(result)))
+    left = _robot_formula_value(program.get("left"), features)
+    right = _robot_formula_value(program.get("right"), features)
+    if operation == "add":
+        result = left + right
+    elif operation == "subtract":
+        result = left - right
+    elif operation == "multiply":
+        result = left * right
+    elif operation == "safe_divide":
+        result = left / (1.0 + abs(right))
+    elif operation == "mean":
+        result = (left + right) / 2.0
+    else:
+        result = 0.0
+    return max(-2500.0, min(2500.0, _finite_number(result)))
+
+
+def _fit_robot_formula_program(rows, program, target, half_life_days):
+    if not rows:
+        return None
+    latest = max(_finite_number(row.get("kickoff")) for row in rows)
+    values = [
+        _robot_formula_value(program, row.get("features") or {}) for row in rows
+    ]
+    targets = [_finite_number(row.get(target)) for row in rows]
+    weights = [
+        2 ** (-(latest - _finite_number(row.get("kickoff"))) /
+              (max(1.0, half_life_days) * 86400.0))
+        for row in rows
+    ]
+    weight_sum = max(1e-9, sum(weights))
+    mean_x = sum(value * weight for value, weight in zip(values, weights)) / weight_sum
+    mean_y = sum(value * weight for value, weight in zip(targets, weights)) / weight_sum
+    variance = sum(
+        weight * (value - mean_x) ** 2
+        for value, weight in zip(values, weights)
+    )
+    if variance <= 1e-12:
+        return None
+    covariance = sum(
+        weight * (value - mean_x) * (answer - mean_y)
+        for value, answer, weight in zip(values, targets, weights)
+    )
+    slope = covariance / variance
+    intercept = mean_y - slope * mean_x
+    mse = sum(
+        weight * (intercept + slope * value - answer) ** 2
+        for value, answer, weight in zip(values, targets, weights)
+    ) / weight_sum
+    complexity = _robot_formula_complexity(program)
+    # Minimum-description penalty prevents one-off algebra from winning on
+    # noise. It does not prefer any football market, direction or feature.
+    objective = mse + complexity * (.01 / math.sqrt(max(1, len(rows))))
+    return {
+        "program": program,
+        "program_text": _robot_formula_text(program),
+        "intercept": intercept,
+        "slope": slope,
+        "training_mse": mse,
+        "search_objective": objective,
+        "complexity": complexity,
+    }
+
+
+def _search_robot_formula(rows, target, half_life_days):
+    """Generate arithmetic programs from every observed feature, then evolve them."""
+    feature_names = _robot_feature_candidates(rows)
+    generated = 0
+    seen = set()
+
+    def evaluate(program):
+        nonlocal generated
+        key = _robot_formula_text(program)
+        if key in seen:
+            return None
+        seen.add(key)
+        generated += 1
+        return _fit_robot_formula_program(
+            rows, program, target, half_life_days
+        )
+
+    atomic = []
+    for name in feature_names:
+        fitted = evaluate({"op": "feature", "name": name})
+        if fitted:
+            atomic.append(fitted)
+    if not atomic:
+        return None
+    atomic.sort(key=lambda row: (row["search_objective"], row["program_text"]))
+    # Every feature competed once. The best observed atoms seed subsequent
+    # generations so runtime stays safe on the small always-on EC2 instance.
+    atom_beam = atomic[:max(8, min(24, 6 + int(math.sqrt(len(rows)) * 2)))]
+    pool = list(atom_beam)
+    for fitted in list(atom_beam):
+        for operation in (
+            "signed_log1p", "signed_sqrt", "tanh", "square", "reciprocal",
+        ):
+            candidate = evaluate({
+                "op": operation, "arg": fitted["program"],
+            })
+            if candidate:
+                pool.append(candidate)
+    beam_width = max(10, min(22, 8 + int(math.sqrt(len(rows)) * 2)))
+    pool.sort(key=lambda row: (row["search_objective"], row["program_text"]))
+    beam = pool[:beam_width]
+    best = beam[0]
+    generations = []
+    binary_ops = ("add", "subtract", "multiply", "safe_divide", "mean")
+    for generation in range(1, 3):
+        challengers = list(beam)
+        left_pool = beam[:min(12, len(beam))]
+        right_pool = atom_beam[:min(12, len(atom_beam))]
+        for left in left_pool:
+            for right in right_pool:
+                if left["program_text"] == right["program_text"]:
+                    continue
+                for operation in binary_ops:
+                    candidate = evaluate({
+                        "op": operation,
+                        "left": left["program"],
+                        "right": right["program"],
+                    })
+                    if candidate:
+                        challengers.append(candidate)
+        challengers.sort(
+            key=lambda row: (row["search_objective"], row["program_text"])
+        )
+        beam = challengers[:beam_width]
+        if beam and beam[0]["search_objective"] < best["search_objective"]:
+            best = beam[0]
+        generations.append({
+            "generation": generation,
+            "survivors": len(beam),
+            "best_program": beam[0]["program_text"] if beam else "",
+            "best_objective": beam[0]["search_objective"] if beam else None,
+        })
+    best = dict(best)
+    best.update({
+        "formula_engine_version": ROBOT_FORMULA_ENGINE_VERSION,
+        "source_feature_count": len(feature_names),
+        "generated_candidate_count": generated,
+        "generations": generations,
+    })
+    return best
+
+
+def _predict_robot_formula(model, features):
+    value = _robot_formula_value(model.get("program") or {}, features or {})
+    return _finite_number(model.get("intercept")) + _finite_number(
+        model.get("slope")
+    ) * value
+
+
 def _robot_rates_from_parameters(features, parameters=None):
-    # Before enough results exist for promotion, use the verified full-context
-    # pre-match goal prior so home/H2H/form/availability evidence is not ignored.
-    # The learner then estimates its own residuals and interactions around this
-    # transparent starting point; it never copies the official final W/D/L.
+    # Use the verified full-context pre-match goal prior so home/H2H/form and
+    # availability evidence are present from the first match. The learner then
+    # invents residual formulas around that prior; it never copies the official
+    # final W/D/L decision.
     base_h = max(.15, min(4.5, _finite_number(
         features.get("context_home_goals"),
         _finite_number(features.get("base_home_goals"), 1.35),
@@ -1218,11 +1452,22 @@ def _robot_rates_from_parameters(features, parameters=None):
     )))
     if not parameters:
         return base_h, base_a
-    names = parameters.get("feature_names") or []
-    interactions = [tuple(pair) for pair in parameters.get("interactions") or []]
-    vector = _robot_expand_features(features, names, interactions)
-    residual_h = max(-1.1, min(1.1, _predict_robot_linear(parameters["home"], vector)))
-    residual_a = max(-1.1, min(1.1, _predict_robot_linear(parameters["away"], vector)))
+    formula_programs = parameters.get("formula_programs") or {}
+    if (
+        parameters.get("model_family") == "symbolic_formula"
+        and isinstance(formula_programs.get("home"), dict)
+        and isinstance(formula_programs.get("away"), dict)
+    ):
+        residual_h = _predict_robot_formula(formula_programs["home"], features)
+        residual_a = _predict_robot_formula(formula_programs["away"], features)
+    else:
+        names = parameters.get("feature_names") or []
+        interactions = [tuple(pair) for pair in parameters.get("interactions") or []]
+        vector = _robot_expand_features(features, names, interactions)
+        residual_h = _predict_robot_linear(parameters["home"], vector)
+        residual_a = _predict_robot_linear(parameters["away"], vector)
+    residual_h = max(-1.1, min(1.1, residual_h))
+    residual_a = max(-1.1, min(1.1, residual_a))
     return (
         max(.15, min(4.5, (base_h + .35) * math.exp(residual_h) - .35)),
         max(.15, min(4.5, (base_a + .35) * math.exp(residual_a) - .35)),
@@ -1283,67 +1528,72 @@ def _clean_robot_examples(examples):
 
 
 def train_autonomous_robot(examples):
-    """Update the robot from every clean completed pre-match sample.
+    """Evolve the robot's own arithmetic on clean, chronological samples.
 
-    There is deliberately no 20/60/100-match activation gate.  The first
-    result changes the residual prior by a strongly regularized non-zero
-    amount. From two results onward, feature discovery is performed only on
-    the older chronological training block and a challenger replaces the
-    stored champion only when both held-out Brier and log-loss improve.
+    The robot compares a learned linear program with formulas it generates
+    from all observed pre-match fields. No market quota, W/D/L anchor, value
+    gate or human-authored football weight chooses the winner. Every completed
+    historical result can participate in formula/model selection; no fixed
+    holdout portion is reserved. Source code and already published predictions
+    never change, so later real results remain the honest live scorecard.
     """
     rows = _clean_robot_examples(examples)
     artifact = {
         "model_version": ROBOT_MODEL_VERSION,
         "feature_schema_version": ROBOT_FEATURE_SCHEMA_VERSION,
+        "formula_engine_version": ROBOT_FORMULA_ENGINE_VERSION,
         "active": False,
         "samples": len(rows),
         "train_fixtures": 0,
         "validation_fixtures": 0,
         "reason": "첫 종료 경기 전 표본 대기",
-        "validation_scope": "online_update_with_chronological_diagnostics",
+        "validation_scope": "all_completed_history_fit_then_frozen_future_scorecard",
         "history_rewrite": False,
         "uses_post_kickoff_features": False,
         "minimum_sample_gate": False,
         "learning_started_from_first_result": False,
+        "formula_search_autonomous": True,
+        "human_market_quota": False,
+        "human_formula_weights": False,
+        "self_modifying_source_code": False,
     }
     if not rows:
         return artifact
 
-    split = None
-    selection_rows = rows
-    if len(rows) >= 2:
-        split = max(1, min(len(rows) - 1, int(len(rows) * .75)))
-        selection_rows = rows[:split]
-
-    candidate_names = _robot_feature_candidates(selection_rows)
-    ranked_names = sorted(
-        candidate_names,
-        key=lambda key: max(
-            abs(_robot_correlation(selection_rows, key, "home_goals")),
-            abs(_robot_correlation(selection_rows, key, "away_goals")),
-        ),
-        reverse=True,
-    )
-    for required in ("base_home_goals", "base_away_goals"):
-        if required not in ranked_names:
-            ranked_names.append(required)
-    interaction_sources = ranked_names[:min(7, len(ranked_names))]
-    all_interactions = [
-        (left, right)
-        for index, left in enumerate(interaction_sources)
-        for right in interaction_sources[index + 1:]
-    ]
-    interaction_count = min(
-        len(all_interactions), max(0, len(selection_rows) - 2), 8
-    )
-    interactions = all_interactions[:interaction_count]
-    ridge = max(.04, min(.45, .45 / math.sqrt(len(rows))))
-    half_life = max(30.0, min(420.0, 60.0 * math.sqrt(len(rows))))
     # The learner's share grows continuously; even sample one has a non-zero
     # effect while a single outlier cannot fully replace the pre-match prior.
     learning_strength = len(rows) / (len(rows) + 8.0)
 
-    def fit_parameters(source_rows, strength):
+    def model_layout(source_rows):
+        """Derive every feature choice from the rows available at that time."""
+        candidate_names = _robot_feature_candidates(source_rows)
+        ranked = sorted(
+            candidate_names,
+            key=lambda key: max(
+                abs(_robot_correlation(source_rows, key, "home_goals")),
+                abs(_robot_correlation(source_rows, key, "away_goals")),
+            ),
+            reverse=True,
+        )
+        for required in ("base_home_goals", "base_away_goals"):
+            if required not in ranked:
+                ranked.append(required)
+        interaction_sources = ranked[:min(7, len(ranked))]
+        candidates = [
+            (left, right)
+            for index, left in enumerate(interaction_sources)
+            for right in interaction_sources[index + 1:]
+        ]
+        interaction_count = min(
+            len(candidates), max(0, len(source_rows) - 2), 8
+        )
+        ridge = max(.04, min(.45, .45 / math.sqrt(max(1, len(source_rows)))))
+        half_life = max(
+            30.0, min(420.0, 60.0 * math.sqrt(max(1, len(source_rows))))
+        )
+        return ranked, candidates[:interaction_count], ridge, half_life
+
+    def prepared_rows(source_rows):
         fitted_rows = []
         for row in source_rows:
             copy = dict(row)
@@ -1355,7 +1605,13 @@ def train_autonomous_robot(examples):
                 (row["away_goals"] + .35) / (base_a + .35)
             )
             fitted_rows.append(copy)
+        return fitted_rows
+
+    def fit_linear_parameters(source_rows, strength):
+        ranked_names, interactions, ridge, half_life = model_layout(source_rows)
+        fitted_rows = prepared_rows(source_rows)
         parameters = {
+            "model_family": "linear_residual",
             "feature_names": list(ranked_names),
             "interactions": list(interactions),
             "home": _fit_robot_linear(
@@ -1368,6 +1624,8 @@ def train_autonomous_robot(examples):
             ),
             "rho": -.15,
             "learning_strength": strength,
+            "selected_ridge": ridge,
+            "selected_half_life_days": half_life,
         }
         for side in ("home", "away"):
             parameters[side]["intercept"] *= strength
@@ -1376,69 +1634,152 @@ def train_autonomous_robot(examples):
             ]
         return parameters
 
-    best_parameters = fit_parameters(rows, learning_strength)
-    baseline = _robot_loss(rows)
-    fitted = _robot_loss(rows, best_parameters)
-    validation = []
-    chronological_baseline = chronological_fitted = None
-    chronological_improved = None
-    if len(rows) >= 2:
-        train = rows[:split]
-        validation = rows[split:]
-        earlier_strength = len(train) / (len(train) + 8.0)
-        chronological_parameters = fit_parameters(train, earlier_strength)
-        chronological_baseline = _robot_loss(validation)
-        chronological_fitted = _robot_loss(validation, chronological_parameters)
-        chronological_improved = bool(
-            chronological_fitted["brier"] < chronological_baseline["brier"]
-            and chronological_fitted["log_loss"] < chronological_baseline["log_loss"]
+    def fit_symbolic_parameters(source_rows, strength):
+        _, _, _, half_life = model_layout(source_rows)
+        fitted_rows = prepared_rows(source_rows)
+        home_formula = _search_robot_formula(
+            fitted_rows, "target_h", half_life
         )
+        away_formula = _search_robot_formula(
+            fitted_rows, "target_a", half_life
+        )
+        if not home_formula or not away_formula:
+            return None
+        for formula in (home_formula, away_formula):
+            formula["intercept"] *= strength
+            formula["slope"] *= strength
+        return {
+            "model_family": "symbolic_formula",
+            "formula_engine_version": ROBOT_FORMULA_ENGINE_VERSION,
+            "formula_programs": {
+                "home": home_formula,
+                "away": away_formula,
+            },
+            "feature_names": sorted(
+                _robot_formula_feature_names(home_formula.get("program"))
+                | _robot_formula_feature_names(away_formula.get("program"))
+            ),
+            "interactions": [],
+            "rho": -.15,
+            "learning_strength": strength,
+            "selected_ridge": 0.0,
+            "selected_half_life_days": half_life,
+            "formula_candidates_generated": int(
+                home_formula.get("generated_candidate_count") or 0
+            ) + int(away_formula.get("generated_candidate_count") or 0),
+        }
+
+    final_models = {
+        "linear_residual": fit_linear_parameters(rows, learning_strength),
+    }
+    symbolic_final = fit_symbolic_parameters(rows, learning_strength)
+    if symbolic_final:
+        final_models["symbolic_formula"] = symbolic_final
+
+    baseline = _robot_loss(rows)
+    final_losses = {
+        family: _robot_loss(rows, parameters)
+        for family, parameters in final_models.items()
+    }
+    # The user chose unrestricted use of every completed historical answer.
+    # Families therefore compete on all available completed rows.  These fit
+    # diagnostics are not advertised as future accuracy: the honest score is
+    # produced only when subsequently frozen, pre-kickoff picks are graded.
+    family_fit_diagnostics = {}
+    family_scores = []
+    for family, loss in final_losses.items():
+        score = (
+            loss["brier"] / max(1e-12, baseline["brier"])
+            + loss["log_loss"] / max(1e-12, baseline["log_loss"])
+            + .25 * loss["goal_mae"] / max(1e-12, baseline["goal_mae"])
+        )
+        family_fit_diagnostics[family] = {
+            "brier": round(loss["brier"], 6),
+            "log_loss": round(loss["log_loss"], 6),
+            "goal_mae": round(loss["goal_mae"], 6),
+            "selection_score": round(score, 6),
+            "completed_history_rows": len(rows),
+        }
+        family_scores.append((score, family))
+    family_scores.sort(key=lambda row: (row[0], row[1]))
+    selected_family = family_scores[0][1]
+
+    best_parameters = final_models.get(selected_family) or final_models["linear_residual"]
+    fitted = final_losses.get(selected_family) or final_losses["linear_residual"]
+    symbolic_programs = (symbolic_final or {}).get("formula_programs") or {}
+    selected_programs = best_parameters.get("formula_programs") or {}
 
     artifact.update({
-        "active": bool(len(rows) == 1 or chronological_improved),
+        "active": True,
         "learning_started_from_first_result": True,
         "train_fixtures": len(rows),
-        "validation_fixtures": len(validation),
+        "validation_fixtures": 0,
+        "validation_windows": 0,
+        "validation_strategy": "no-reserved-holdout-all-completed-results-used",
         "baseline_brier": round(baseline["brier"], 6),
         "fitted_brier": round(fitted["brier"], 6),
         "baseline_log_loss": round(baseline["log_loss"], 6),
         "fitted_log_loss": round(fitted["log_loss"], 6),
         "baseline_goal_mae": round(baseline["goal_mae"], 6),
         "fitted_goal_mae": round(fitted["goal_mae"], 6),
-        "selected_ridge": ridge,
-        "selected_half_life_days": half_life,
-        "selected_interaction_count": interaction_count,
-        "selected_features": list(ranked_names),
-        "selected_interactions": [list(pair) for pair in best_parameters["interactions"]],
+        "selected_ridge": _finite_number(best_parameters.get("selected_ridge")),
+        "selected_half_life_days": _finite_number(
+            best_parameters.get("selected_half_life_days")
+        ),
+        "selected_interaction_count": len(best_parameters.get("interactions") or []),
+        "selected_features": list(best_parameters.get("feature_names") or []),
+        "formula_source_features": list(_robot_feature_candidates(rows)),
+        "selected_interactions": [
+            list(pair) for pair in best_parameters.get("interactions", [])
+        ],
+        "selected_model_family": selected_family,
+        "candidate_model_families": sorted(final_models),
+        "formula_candidates_generated": int(
+            (symbolic_final or {}).get("formula_candidates_generated") or 0
+        ),
+        "formula_challenger_programs": {
+            side: str((symbolic_programs.get(side) or {}).get("program_text") or "")
+            for side in ("home", "away")
+        },
+        "selected_formula_programs": {
+            side: str((selected_programs.get(side) or {}).get("program_text") or "")
+            for side in ("home", "away")
+        },
+        "model_family_validation": {},
+        "model_family_completed_history_fit": family_fit_diagnostics,
         "online_learning_strength": round(learning_strength, 6),
         "reason": (
-            "첫 종료표본을 강하게 축소해 다음 경기부터 학습 반영"
-            if len(rows) == 1 else
-            f"시간순 외표본 개선 확인 · 종료표본 {len(rows)}경기 도전자 승격"
-            if chronological_improved else
-            f"시간순 외표본 개선 없음 · 종료표본 {len(rows)}경기 도전자 보류"
+            f"완료된 과거 정답 전부로 {selected_family} 자율 계산식 선택 · "
+            f"다음 시작 전 동결픽부터 실제 성적 채점 · 종료표본 {len(rows)}경기"
         ),
     })
-    if chronological_baseline is not None and chronological_fitted is not None:
-        artifact.update({
-            "chronological_baseline_brier": round(chronological_baseline["brier"], 6),
-            "chronological_fitted_brier": round(chronological_fitted["brier"], 6),
-            "chronological_baseline_log_loss": round(chronological_baseline["log_loss"], 6),
-            "chronological_fitted_log_loss": round(chronological_fitted["log_loss"], 6),
-            "chronological_improved": chronological_improved,
-        })
-    labels = ranked_names + [f"{left}×{right}" for left, right in interactions]
-    importance = []
-    for index, label in enumerate(labels):
-        importance.append((
-            abs(best_parameters["home"]["weights"][index])
-            + abs(best_parameters["away"]["weights"][index]),
-            label,
-        ))
-    artifact["feature_importance"] = [
-        {"feature": label, "importance": round(value, 6)}
-        for value, label in sorted(importance, reverse=True)[:15]
-    ]
+    if selected_family == "symbolic_formula":
+        artifact["feature_importance"] = [
+            {
+                "side": side,
+                "feature": str((selected_programs.get(side) or {}).get("program_text") or ""),
+                "importance": round(abs(_finite_number(
+                    (selected_programs.get(side) or {}).get("slope")
+                )), 6),
+            }
+            for side in ("home", "away")
+        ]
+    else:
+        labels = list(best_parameters.get("feature_names") or []) + [
+            f"{left}×{right}"
+            for left, right in (best_parameters.get("interactions") or [])
+        ]
+        importance = []
+        for index, label in enumerate(labels):
+            importance.append((
+                abs(best_parameters["home"]["weights"][index])
+                + abs(best_parameters["away"]["weights"][index]),
+                label,
+            ))
+        artifact["feature_importance"] = [
+            {"feature": label, "importance": round(value, 6)}
+            for value, label in sorted(importance, reverse=True)[:15]
+        ]
     artifact["parameters"] = best_parameters
     return artifact
 

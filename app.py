@@ -87,7 +87,9 @@ GITHUB_REPO = "chleowhd77-ops/-"
 DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 # 결과 피드가 회차 전환 순간에 비어도 종료된 일반 축구 경기가
 # 다음 날 LIVE 추천 화면에 남지 않게 한다. 실제 LIVE 상태는 우선 보존된다.
-UNCONFIRMED_MATCH_GRACE_HOURS = 3
+# The live worker refreshes every five minutes. Two attempts are enough before
+# a started, unconfirmed card leaves the recommendation feed for grading.
+UNCONFIRMED_MATCH_GRACE_MINUTES = 10
 
 NO_CACHE_HEADERS = {
     'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -230,6 +232,18 @@ def _is_displayable_match_item(item):
     if not isinstance(item, dict) or not isinstance(item.get("match"), dict):
         return False
     match = item["match"]
+    league_values = [
+        source.get(key)
+        for source in (item, match)
+        for key in (
+            "league", "leagueShortName", "leagueName", "league_n", "league_name"
+        )
+    ]
+    if any(
+        "ag예측" in re.sub(r"[\s._-]+", "", str(value or "")).casefold()
+        for value in league_values
+    ):
+        return False
     home = str(match.get("home") or "").strip()
     away = str(match.get("away") or "").strip()
     home_key = re.sub(r"[\s._-]+", "", home.casefold())
@@ -924,6 +938,44 @@ st.markdown("""
     .grade-versus { color: #334155; font-size: 20px; font-weight: 700; }
     .grade-toto { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
     .grade-toto .grade-metric-value { color: var(--dj-cyan); font-size: 38px; }
+    .engine-score-grid, .engine-result-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+    .engine-score-grid, .engine-result-grid, .engine-result-card,
+    .engine-result-head, .engine-result-pick {
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+    .engine-result-card { overflow: hidden; }
+    .engine-result-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 9px;
+    }
+    .engine-result-pick {
+        overflow-wrap: anywhere;
+        word-break: keep-all;
+        white-space: normal;
+    }
+    .back-to-top-wrap { margin: 26px 0 8px; text-align: right; }
+    .back-to-top {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 8px 14px;
+        border: 1px solid rgba(25, 230, 242, .30);
+        border-radius: 10px;
+        background: rgba(25, 230, 242, .06);
+        color: #BEEEF2 !important;
+        font-size: 12px;
+        font-weight: 900;
+        text-decoration: none !important;
+    }
     .stTextInput input, [data-baseweb="select"] > div {
         border-radius: 10px !important;
         background: rgba(8, 13, 23, .92) !important;
@@ -998,6 +1050,19 @@ st.markdown("""
         .grade-toto .grade-metric-value { font-size: 31px; }
         .report-card, .pending-report-card { width: 100%; max-width: 100%; contain: inline-size; }
         .report-card *, .pending-report-card * { max-width: 100%; }
+        .stTabs [role="tabpanel"], .stTabs [data-baseweb="tab-panel"],
+        [data-testid="stExpander"], [data-testid="stDataFrame"],
+        .engine-score-grid, .engine-result-grid, .engine-result-card {
+            min-width: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+        }
+        .engine-score-grid, .engine-result-grid { grid-template-columns: minmax(0, 1fr) !important; }
+        .engine-result-head { flex-direction: column; align-items: flex-start; gap: 5px; }
+        .engine-result-pick { overflow-wrap: anywhere; word-break: break-word; }
+        .back-to-top-wrap { text-align: center; }
+        .back-to-top { width: 100%; box-sizing: border-box; }
     }
     @media (max-width: 430px) {
         .brand-row { display: block; }
@@ -1852,6 +1917,17 @@ if latest_notice:
         st.link_button("공지 자세히 보기", notice_link)
 
 # TOP3, 베트맨 전용, 해외·사설용 경기를 서로 섞지 않는다.
+st.markdown("<div id='dj-page-top'></div>", unsafe_allow_html=True)
+
+
+def _render_back_to_top():
+    st.markdown(
+        "<div class='back-to-top-wrap'><a class='back-to-top' "
+        "href='#dj-page-top' target='_self'>↑ 맨 위로 가기</a></div>",
+        unsafe_allow_html=True,
+    )
+
+
 main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
     "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14", "채점 노트", "인증 게시판"
 ])
@@ -1978,7 +2054,7 @@ def _live_time_html(item):
         number = f"<span class='live-score' style='white-space:nowrap'>{escape(score)}</span>" if score else "<span style='font-size:13px;white-space:nowrap'>점수 수신 대기</span>"
         return number + f"<span class='deadline-closed'>{'🔴 LIVE · ' if state=='LIVE' else ''}{escape(label)}</span>" + stale
     if state == "AWAITING_STATUS":
-        return f"<span class='match-time-text'>{when}</span><span class='deadline-closed'>경기 상태 수신 대기</span>"
+        return f"<span class='match-time-text'>{when}</span><span class='deadline-closed'>경기 시작 확인 중</span>"
     if state == "POSTPONED":
         return f"<span class='match-time-text'>{when}</span><span class='deadline-closed'>연기 · 일정 재확인</span>"
     return f"<span class='match-time-text'>{when}</span><span class='deadline-open'>경기 예정</span>"
@@ -2217,7 +2293,7 @@ def _render_live_match_card(item):
         f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
         "</div>"
         f"{event_html}<div style='color:#94A3B8;font-size:12px;margin:10px 0'>분석·픽·확률은 경기 전 기준입니다. 위 LIVE 점수·사건은 현재 상황이며 예측확률을 실시간으로 다시 계산한 것이 아닙니다.</div>"
-        f"{_detail_html(detail_item, always_visible=True)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
+        f"{_detail_html(detail_item)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
         "</div>"
     )
 
@@ -2752,8 +2828,8 @@ def _proto_is_recent_or_active(item):
     if state == "AWAITING_STATUS":
         kickoff = _item_kickoff_datetime(item)
         now = datetime.now(timezone(timedelta(hours=9)))
-        grace_hours = globals().get("UNCONFIRMED_MATCH_GRACE_HOURS", 3)
-        if kickoff and now >= kickoff + timedelta(hours=grace_hours):
+        grace_minutes = globals().get("UNCONFIRMED_MATCH_GRACE_MINUTES", 10)
+        if kickoff and now >= kickoff + timedelta(minutes=grace_minutes):
             return False
     return True
 
@@ -3009,6 +3085,12 @@ def generate_pred_boxes(
     home_team="", analysis_item=None,
 ):
     """Show the public pick and the administrator's official/robot comparison."""
+    viewer_role = globals().get("active_role", "")
+    if not viewer_role:
+        try:
+            viewer_role = st.session_state.get("role", "guest")
+        except Exception:
+            viewer_role = "guest"
     if isinstance(analysis_item, dict):
         display_item = _with_analysis_pick(analysis_item)
         if display_item.get("display_only_pick"):
@@ -3102,7 +3184,11 @@ def generate_pred_boxes(
     )
     robot_html = ""
     robot = extract_robot_pick(analysis_item)
-    if isinstance(robot, dict) and str(robot.get("raw_pick") or "").strip():
+    if (
+        viewer_role == globals().get("ROLE_ADMIN", "admin")
+        and isinstance(robot, dict)
+        and str(robot.get("raw_pick") or "").strip()
+    ):
         robot_label = "🤖 자율학습 로봇픽"
         robot_raw = escape(_human_pick_label(robot.get("raw_pick"), home_team))
         robot_probability = float(
@@ -3187,6 +3273,7 @@ with main_tab1:
         else: st.info("현재 분석 중입니다. 백그라운드 데이터 수집이 완료되면 화면이 표시됩니다.")
     with sub_baseball: st.info("야구 분석 데이터 준비 중입니다.")
     with sub_basketball: st.info("농구 분석 데이터 준비 중입니다.")
+    _render_back_to_top()
 
 # -----------------------------------------------------------------------------
 # [TAB 6] 전체 경기 · 해외/사설 이용자용 세계 경기
@@ -3221,10 +3308,25 @@ with main_tab6:
         and _proto_is_recent_or_active(item)
         and _item_api_fixture_id(item) not in proto_by_fixture
     ]
-    world_pick_ready = {
-        id(item): bool(
-            (_world_analysis_for_display(item, proto_by_fixture)[0].get("selected") or {}).get("raw_pick")
+    def world_pick_is_actionable(item):
+        analysis = _world_analysis_for_display(item, proto_by_fixture)[0]
+        stage = str(
+            analysis.get("analysis_stage")
+            or analysis.get("public_pick_analysis_stage")
+            or item.get("analysis_stage") or ""
+        ).strip().casefold()
+        status = str(item.get("analysis_status") or "").strip().upper()
+        pick_status = str(item.get("pick_status") or "").strip().upper()
+        expired_preview = (
+            stage == "market-preview" and not _recommendation_is_upcoming(item)
+        ) or status == "MISSED_PREKICKOFF" or pick_status == "PROVISIONAL_PREVIEW_EXPIRED"
+        return bool(
+            not expired_preview
+            and (analysis.get("selected") or {}).get("raw_pick")
         )
+
+    world_pick_ready = {
+        id(item): world_pick_is_actionable(item)
         for item in eligible_world_matches
     }
     missed_prekickoff_world = [
@@ -3317,6 +3419,7 @@ with main_tab6:
                 break
             display_item = _world_live_item(world_item,proto_by_fixture)
             st.markdown(_render_live_match_card(display_item),unsafe_allow_html=True)
+    _render_back_to_top()
 
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
@@ -3475,6 +3578,8 @@ with main_tab2:
     else:
         st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
+    _render_back_to_top()
+
 # -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
@@ -3554,41 +3659,33 @@ with main_tab3:
         if displayed_top3 == 0: st.info("현재 배팅 가능한 추천 분석 경기가 없습니다.")
     else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
 
+    _render_back_to_top()
+
 # -----------------------------------------------------------------------------
 # [TAB 4] 🔥 AI 리포트
 # -----------------------------------------------------------------------------
 def _render_three_engine_scorecard(snapshot):
-    """Administrator-only official/robot scorecard; old V4 grades stay in DB."""
+    """Render current-version grades without mixing PROTO/WORLD and TOTO14."""
     if active_role != ROLE_ADMIN or not isinstance(snapshot, dict):
         return
     comparison = snapshot.get("three_engine") or {}
     if not isinstance(comparison, dict):
         return
-    summary = comparison.get("summary") or {}
-    finished = list(comparison.get("finished") or [])
-    pending = list(comparison.get("pending") or [])
-    if not summary and not finished and not pending:
-        return
-    labels = {"official": "① 새 공식", "robot": "② 자율 로봇"}
+    tracks = comparison.get("tracks") or {}
+    if not isinstance(tracks, dict):
+        tracks = {}
+    labels = {"official": "① Codex 공식픽", "robot": "② 자율 로봇픽"}
     colors = {"official": "#00F2FE", "robot": "#C4B5FD"}
-    cards = []
-    for engine_key in ("official", "robot"):
-        value = summary.get(engine_key) or {}
-        graded = int(value.get("graded") or 0)
-        correct = int(value.get("correct") or 0)
-        accuracy = value.get("accuracy")
-        accuracy_text = f"{float(accuracy) * 100:.1f}%" if accuracy is not None else "채점 대기"
-        cards.append(
-            "<div style='background:#0B1220;border:1px solid #1E293B;border-radius:10px;padding:14px;'>"
-            f"<div style='color:{colors[engine_key]};font-weight:900;'>{labels[engine_key]}</div>"
-            f"<div style='color:#F8FAFC;font-size:24px;font-weight:900;margin-top:6px;'>{accuracy_text}</div>"
-            f"<small style='color:#94A3B8;'>{correct}/{graded} 적중</small></div>"
-        )
+    track_labels = {
+        "proto_world": "프로토 LIVE · 전체경기 LIVE",
+        "toto14": "승무패14",
+    }
+    hidden_count = int(comparison.get("legacy_rows_hidden") or 0)
     st.markdown(
-        "<h4 style='color:#F8FAFC;font-weight:900;margin-top:26px;'>🧪 두 분석가 독립 채점 대조</h4>"
-        "<p style='color:#64748B;font-size:12px;'>시작 전에는 새 버전 픽을 현재값으로 갱신하고, 킥오프 뒤 마지막 경기 전 공식·로봇픽을 결과와 연결합니다. 이전 버전은 감사 이력에 보존합니다.</p>"
-        "<div style='display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;'>"
-        + "".join(cards) + "</div>",
+        "<div class='section-intro'><div><h2>채점 노트</h2>"
+        "<p>프로토·전체경기와 승무패14를 분리해 Codex 공식픽과 자율 로봇픽을 각각 채점·복기합니다.</p>"
+        "</div></div>"
+        f"<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>현행 버전만 공개 집계 · 이전 버전 {hidden_count}행은 삭제하지 않고 감사용으로 보존</p>",
         unsafe_allow_html=True,
     )
 
@@ -3600,36 +3697,96 @@ def _render_three_engine_scorecard(snapshot):
         result_label = "적중" if hit == 1 else "실패" if hit == 0 else "대기"
         result_color = "#10B981" if hit == 1 else "#EF4444" if hit == 0 else "#64748B"
         return (
-            f"<span style='color:{colors[engine_key]};font-weight:900;'>"
-            f"<small style='display:block;color:#64748B;'>{labels[engine_key]}</small>"
+            f"<div class='engine-result-pick' style='color:{colors[engine_key]};'>"
+            f"<small>{labels[engine_key]}</small>"
             f"{escape(str(raw or '분석 대기'))} · {probability:.1f}% "
-            f"<b style='color:{result_color};'>{result_label}</b></span>"
+            f"<b style='color:{result_color};'>{result_label}</b></div>"
         )
 
-    for row in finished:
-        engines = row.get("engines") or {}
+    for track_key in ("proto_world", "toto14"):
+        payload = tracks.get(track_key) or {}
+        summary = payload.get("summary") or {}
+        finished = list(payload.get("finished") or [])
+        pending = list(payload.get("pending") or [])
+        review = payload.get("formula_review") or {}
+        cards = []
+        for engine_key in ("official", "robot"):
+            value = summary.get(engine_key) or {}
+            graded = int(value.get("graded") or 0)
+            correct = int(value.get("correct") or 0)
+            accuracy = value.get("accuracy")
+            accuracy_text = (
+                f"{float(accuracy) * 100:.1f}%"
+                if accuracy is not None else "채점 대기"
+            )
+            today_graded = int(value.get("today_graded") or 0)
+            today_correct = int(value.get("today_correct") or 0)
+            today_accuracy = value.get("today_accuracy")
+            today_text = (
+                f"오늘 실제 결과 {today_correct}/{today_graded} · {float(today_accuracy) * 100:.1f}%"
+                if today_accuracy is not None else "오늘 종료 경기 채점 대기"
+            )
+            hold_text = (
+                " · 다음 점검까지 공식식 수정 보류"
+                if engine_key == "official"
+                and bool(value.get("reached_70_percent_today"))
+                else ""
+            )
+            cards.append(
+                "<div class='engine-result-card'>"
+                f"<div style='color:{colors[engine_key]};font-weight:900;'>{labels[engine_key]}</div>"
+                f"<div style='color:#F8FAFC;font-size:24px;font-weight:900;margin-top:6px;'>{accuracy_text}</div>"
+                f"<small>{correct}/{graded} 적중<br>{today_text}{hold_text}</small></div>"
+            )
+        formula_hold = bool(
+            review.get("official_formula_hold_until_next_check")
+        )
+        formula_status = (
+            "오늘 실제 적중률 70% 이상: 다음 점검까지 Codex 공식식 수정 보류"
+            if formula_hold else
+            "오늘 실제 적중률 70% 미만 또는 표본 없음: 다음 점검에서 공식식 검토"
+        )
         st.markdown(
-            "<div style='background:#0B1220;border:1px solid #1E293B;border-radius:10px;padding:13px 15px;margin-bottom:8px;'>"
-            f"<div style='display:flex;justify-content:space-between;gap:12px;margin-bottom:9px;'>"
-            f"<b style='color:#F8FAFC;'>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
-            f"<b style='color:#F8FAFC;'>{escape(str(next(iter(engines.values()), {}).get('actual_score') or ''))}</b></div>"
-            "<div style='display:grid;grid-template-columns:repeat(2,1fr);gap:10px;'>"
-            f"{engine_result_line('official', engines)}"
-            f"{engine_result_line('robot', engines)}"
-            "</div></div>",
+            f"<h4 style='color:#F8FAFC;font-weight:900;margin:28px 0 10px;'>{track_labels[track_key]}</h4>"
+            "<div class='engine-score-grid'>" + "".join(cards) + "</div>"
+            "<div style='margin:10px 0 14px;padding:10px 12px;border:1px solid #1E293B;border-radius:9px;color:#94A3B8;font-size:12px;'>"
+            f"{formula_status}<br>자율 로봇 학습은 70% 도달 여부와 관계없이 계속됩니다.</div>",
             unsafe_allow_html=True,
         )
-    if pending:
-        with st.expander(f"두 분석가 채점 대기 {len(pending)}경기"):
-            for row in pending:
-                engines = row.get("engines") or {}
-                st.markdown(
-                    f"**{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}**  "
-                    f"{escape(str(row.get('kickoff_at') or ''))}<br>"
-                    f"① {escape(str((engines.get('official') or {}).get('raw_pick') or '대기'))} · "
-                    f"② {escape(str((engines.get('robot') or {}).get('raw_pick') or '대기'))}",
-                    unsafe_allow_html=True,
-                )
+        if finished:
+            st.markdown(
+                "<p style='color:#CBD5E1;font-size:13px;font-weight:900;margin:12px 0 8px;'>종료 경기 채점·복기</p>",
+                unsafe_allow_html=True,
+            )
+        for row in finished:
+            engines = row.get("engines") or {}
+            score = escape(str(
+                next(iter(engines.values()), {}).get("actual_score") or ""
+            ))
+            st.markdown(
+                "<div class='engine-result-card' style='margin-bottom:8px;'>"
+                "<div class='engine-result-head'>"
+                f"<b>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
+                f"<b>{score}</b></div>"
+                "<div class='engine-result-grid'>"
+                f"{engine_result_line('official', engines)}"
+                f"{engine_result_line('robot', engines)}"
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+        if pending:
+            with st.expander(
+                f"{track_labels[track_key]} 채점 대기 {len(pending)}경기"
+            ):
+                for row in pending:
+                    engines = row.get("engines") or {}
+                    st.markdown(
+                        f"**{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}**  "
+                        f"{escape(str(row.get('kickoff_at') or ''))}<br>"
+                        f"Codex: {escape(str((engines.get('official') or {}).get('raw_pick') or '대기'))} · "
+                        f"로봇: {escape(str((engines.get('robot') or {}).get('raw_pick') or '대기'))}",
+                        unsafe_allow_html=True,
+                    )
 
 
 with main_tab4:
@@ -3789,11 +3946,14 @@ with main_tab4:
         except Exception as e:
             return None
 
-    stats = get_v3_accuracy_stats()
+    # 현행 화면은 collector가 게시한 트랙별 스냅샷만 읽는다. 구형 혼합
+    # DB 집계를 다시 계산하지 않아 과거 433행이 끼어들 여지를 없앤다.
+    stats = None
     
-    if stats is None:
-        st.warning("⚠️ 백그라운드 로봇이 V3 듀얼 엔진으로 업그레이드 중입니다. 잠시 후 다시 확인해주세요!")
-    else:
+    # 구형 혼합 채점 화면은 감사 호환용 코드만 보존하고 공개하지 않는다.
+    if False and stats is None:
+        st.warning("현행 분리 채점 자료를 준비 중입니다.")
+    elif False:
         p_stats = stats['proto']
         r_stats = stats['robot']
         t_stats = stats['toto']
@@ -4054,6 +4214,9 @@ with main_tab4:
                         hide_index=True,
                     )
 
+    _render_three_engine_scorecard(grading_snapshot)
+    _render_back_to_top()
+
 # -----------------------------------------------------------------------------
 # [TAB 5] 인증 게시판 · 모두 열람, 후원회원/관리자 작성
 # -----------------------------------------------------------------------------
@@ -4196,3 +4359,5 @@ with main_tab5:
                         (st.success if ok else st.error)(message)
                         if ok:
                             st.rerun()
+
+    _render_back_to_top()

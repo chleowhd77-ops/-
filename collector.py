@@ -1111,7 +1111,8 @@ def _toto14_from_canonical_proto(match, proto_items):
         "selection_axis": "toto14_single_direction_accuracy",
     }
     frozen_robot = _load_frozen_autonomous_robot_sample(
-        "TOTO14_" + str(match.get("id") or ""), item.get("api_fixture_id") or 0
+        "TOTO14_" + str(match.get("id") or ""), item.get("api_fixture_id") or 0,
+        "TOTO14",
     )
     frozen_wdl = {
         str(candidate.get("selection_side")): float(
@@ -3754,13 +3755,15 @@ def _grade_three_engine_picks(conn):
 
 
 def _three_engine_grading_payload(conn):
-    """Return latest pre-kickoff official/robot revisions and honest grades."""
+    """Return current-version grades split into PROTO/WORLD and TOTO14 tracks."""
     _ensure_three_engine_tables(conn)
     _grade_three_engine_picks(conn)
     cursor = conn.execute(
         "SELECT * FROM three_engine_pick_snapshots "
-        "WHERE engine_key IN ('official','robot') "
-        "ORDER BY kickoff_timestamp DESC,id"
+        "WHERE (engine_key='official' AND engine_version=?) "
+        "   OR (engine_key='robot' AND (engine_version=? OR engine_version LIKE ?)) "
+        "ORDER BY kickoff_timestamp DESC,id",
+        (ANALYSIS_VERSION, ROBOT_PICK_VERSION, ROBOT_PICK_VERSION + ":%"),
     )
     columns = [str(description[0]) for description in cursor.description]
     rows = [
@@ -3781,32 +3784,95 @@ def _three_engine_grading_payload(conn):
             "selection_side": row["selection_side"], "raw_pick": row["raw_pick"],
             "probability": float(row["probability"] or 0),
             "odd": float(row["odd"] or 0), "is_correct": row["is_correct"],
+            "graded_at": str(row.get("graded_at") or ""),
             "actual_score": (
                 f"{row['actual_home_goals']}:{row['actual_away_goals']}"
                 if row["actual_home_goals"] is not None else ""
             ),
         }
     matches = list(grouped.values())
-    finished = [
-        row for row in matches
-        if len(row["engines"]) == 2
-        and all(engine.get("is_correct") in (0, 1) for engine in row["engines"].values())
-    ]
-    pending = [row for row in matches if row not in finished]
-    summary = {}
-    for engine_key in ("official", "robot"):
-        values = [row["engines"][engine_key]["is_correct"] for row in finished]
-        summary[engine_key] = {
-            "graded": len(values), "correct": sum(values),
-            "accuracy": (sum(values) / len(values) if values else None),
+
+    def kst_date(value):
+        try:
+            parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(KST).date()
+
+    def track_payload(track_matches):
+        finished = [
+            row for row in track_matches
+            if len(row["engines"]) == 2
+            and all(
+                engine.get("is_correct") in (0, 1)
+                for engine in row["engines"].values()
+            )
+        ]
+        pending = [row for row in track_matches if row not in finished]
+        today = datetime.now(KST).date()
+        summary = {}
+        for engine_key in ("official", "robot"):
+            values = [row["engines"][engine_key]["is_correct"] for row in finished]
+            today_values = [
+                row["engines"][engine_key]["is_correct"] for row in finished
+                if kst_date(row.get("kickoff_at")) == today
+            ]
+            today_accuracy = (
+                sum(today_values) / len(today_values) if today_values else None
+            )
+            summary[engine_key] = {
+                "graded": len(values), "correct": sum(values),
+                "accuracy": (sum(values) / len(values) if values else None),
+                "today_graded": len(today_values),
+                "today_correct": sum(today_values),
+                "today_accuracy": today_accuracy,
+                "reached_70_percent_today": bool(
+                    today_values and today_accuracy >= 0.70
+                ),
+            }
+        return {
+            "summary": summary,
+            "finished": finished,
+            "pending": pending,
+            "formula_review": {
+                "threshold": 0.70,
+                "basis": "today_finished_actual_results",
+                "official_formula_hold_until_next_check": bool(
+                    summary["official"]["reached_70_percent_today"]
+                ),
+                "robot_training_continues": True,
+            },
         }
+
+    proto_world_matches = [
+        row for row in matches if str(row.get("source") or "").upper() != "TOTO14"
+    ]
+    toto14_matches = [
+        row for row in matches if str(row.get("source") or "").upper() == "TOTO14"
+    ]
+    tracks = {
+        "proto_world": track_payload(proto_world_matches),
+        "toto14": track_payload(toto14_matches),
+    }
+    all_current_ids = {int(row.get("id") or 0) for row in rows}
+    total_engine_rows = int(conn.execute(
+        "SELECT COUNT(*) FROM three_engine_pick_snapshots "
+        "WHERE engine_key IN ('official','robot')"
+    ).fetchone()[0] or 0)
     return {
-        "schema_version": "two-analyzer-grading.v2",
+        "schema_version": "two-analyzer-grading.v3",
         "engine_versions": {
             "official": ANALYSIS_VERSION,
             "robot": ROBOT_PICK_VERSION,
         },
-        "summary": summary, "finished": finished, "pending": pending,
+        "tracks": tracks,
+        "legacy_rows_hidden": max(0, total_engine_rows - len(all_current_ids)),
+        # Compatibility totals are current-version only. New UI reads tracks.
+        "summary": tracks["proto_world"]["summary"],
+        "finished": tracks["proto_world"]["finished"],
+        "pending": tracks["proto_world"]["pending"],
     }
 
 
@@ -4228,6 +4294,23 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
     )
     if not bundle:
         return current
+    current_categories = (
+        current.get("pick_categories")
+        if isinstance(current.get("pick_categories"), dict) else {}
+    )
+    current_robot = current.get("robot_pick") or current_categories.get(
+        "robot_independent"
+    ) or {}
+    if not (
+        isinstance(current_robot, dict)
+        and str(current_robot.get("raw_pick") or "").strip()
+        and str(current_robot.get("robot_pick_version") or "") == ROBOT_PICK_VERSION
+    ):
+        current_robot = {}
+    public_robot = bundle.get("robot_pick") or current_robot
+    public_categories = dict(bundle["categories"])
+    if public_robot:
+        public_categories["robot_independent"] = dict(public_robot)
     current_pick = str(
         ((current.get("pick_categories") or {}).get("high_probability") or {}).get("raw_pick")
         or ""
@@ -4239,9 +4322,9 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
     current.update({
         "match": dict(match),
         "final_match_time": current.get("final_match_time") or match.get("match_time"),
-        "pick_categories": bundle["categories"],
+        "pick_categories": public_categories,
         "legacy_v4_pick": {},
-        "robot_pick": bundle.get("robot_pick") or {},
+        "robot_pick": dict(public_robot or {}),
         "ev_sorted_picks": bundle["candidates"],
         "display_candidates": bundle["candidates"],
         "display_candidates_saved_at": bundle["frozen_at"],
@@ -4569,21 +4652,35 @@ def select_pick_categories(picks, confidence):
     return categories, [categories["high_probability"]]
 
 
-_AUTONOMOUS_ROBOT_CACHE = {"signature": None, "artifact": None}
-_ROBOT_LEARNING_MARKER_CACHE = {"checked_at": 0.0, "value": None}
+_AUTONOMOUS_ROBOT_CACHE = {}
+_ROBOT_LEARNING_MARKER_CACHE = {}
 
 
-def _robot_learning_revision_marker():
+def _robot_learning_track(source):
+    """Keep pools tickets out of the open PROTO/WORLD learning brain."""
+    return "toto14" if str(source or "").strip().upper() == "TOTO14" else "proto_world"
+
+
+def _robot_track_sql(source, alias=""):
+    prefix = f"{alias}." if alias else ""
+    if _robot_learning_track(source) == "toto14":
+        return f"UPPER({prefix}source)='TOTO14'", ()
+    return f"UPPER({prefix}source) IN ('PROTO','WORLD')", ()
+
+
+def _robot_learning_revision_marker(source="PROTO"):
     """Return a cheap local marker that changes after a new robot result."""
-    checked_at = float(_ROBOT_LEARNING_MARKER_CACHE.get("checked_at") or 0)
-    cached = _ROBOT_LEARNING_MARKER_CACHE.get("value")
+    track = _robot_learning_track(source)
+    cache = _ROBOT_LEARNING_MARKER_CACHE.get(track) or {}
+    checked_at = float(cache.get("checked_at") or 0)
+    cached = cache.get("value")
     if cached and time.monotonic() - checked_at < 15:
         return str(cached)
     conn = None
     try:
         path = _local_path("ai_predictions.db")
         if not Path(path).exists():
-            marker = f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:0:0.000"
+            marker = f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:0:0.000"
         else:
             conn = sqlite3.connect(str(path), timeout=5)
             conn.execute("PRAGMA busy_timeout = 5000")
@@ -4594,18 +4691,20 @@ def _robot_learning_revision_marker():
             if not table:
                 count, latest = 0, 0.0
             else:
+                track_where, track_params = _robot_track_sql(source)
                 count, latest = conn.execute(
                     "SELECT COUNT(*),COALESCE(MAX(result_known_timestamp),0) "
                     "FROM robot_learning_samples WHERE actual_home_goals IS NOT NULL "
-                    "AND actual_away_goals IS NOT NULL"
+                    f"AND actual_away_goals IS NOT NULL AND {track_where}",
+                    track_params,
                 ).fetchone()
             marker = (
-                f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
+                f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
                 f"{int(count or 0)}:{float(latest or 0):.3f}"
             )
-        _ROBOT_LEARNING_MARKER_CACHE.update(
-            checked_at=time.monotonic(), value=marker
-        )
+        _ROBOT_LEARNING_MARKER_CACHE[track] = {
+            "checked_at": time.monotonic(), "value": marker,
+        }
         return marker
     except sqlite3.Error:
         return str(cached or "")
@@ -4839,7 +4938,7 @@ def _load_historical_grading_experience(conn):
     }
 
 
-def _load_robot_self_grading_experience(conn):
+def _load_robot_self_grading_experience(conn, source="PROTO"):
     """Build calibration cells only from the robot's own frozen answers.
 
     Every candidate was saved before kickoff and later receives both a right
@@ -4850,15 +4949,18 @@ def _load_robot_self_grading_experience(conn):
     cells = {}
     selection_samples = 0
     selection_correct = 0
+    track_where, track_params = _robot_track_sql(source)
     rows = conn.execute(
-        """
+        f"""
         SELECT candidate_results_json,robot_pick_correct
         FROM robot_learning_samples
         WHERE result_known_timestamp IS NOT NULL
           AND actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
           AND candidate_results_json NOT IN ('','[]','null')
+          AND {track_where}
         ORDER BY kickoff_timestamp,id
-        """
+        """,
+        track_params,
     ).fetchall()
     for candidate_json, robot_pick_correct in rows:
         if robot_pick_correct in (0, 1):
@@ -4906,48 +5008,55 @@ def _load_robot_self_grading_experience(conn):
         ),
         "minimum_sample_gate": False,
         "official_grading_used": False,
+        "learning_track": _robot_learning_track(source),
         "history_rewrite": False,
     }
 
 
-def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff):
+def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff, source="PROTO"):
+    track = _robot_learning_track(source)
     if int(fixture_id or 0) > 0:
-        return f"fixture:{int(fixture_id)}"
+        return f"{track}:fixture:{int(fixture_id)}"
     normalized = lambda value: re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").casefold())
-    return "scheduled:" + "|".join((
+    return f"{track}:scheduled:" + "|".join((
         normalized(home_team), normalized(away_team),
         kickoff.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M"),
         normalized(match_id),
     ))
 
 
-def _load_autonomous_robot_artifact():
+def _load_autonomous_robot_artifact(source="PROTO"):
+    track = _robot_learning_track(source)
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
         _ensure_prediction_analysis_tables(conn)
+        track_where, track_params = _robot_track_sql(source)
         signature_row = conn.execute(
-            """
+            f"""
             SELECT COUNT(*), COALESCE(MAX(result_known_timestamp), 0)
             FROM robot_learning_samples
             WHERE actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
-            """
+              AND {track_where}
+            """,
+            track_params,
         ).fetchone()
         signature = (
-            f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
+            f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
             f"{int(signature_row[0] or 0)}:"
             f"{float(signature_row[1] or 0):.3f}"
         )
         if (
-            _AUTONOMOUS_ROBOT_CACHE.get("signature") == signature
-            and isinstance(_AUTONOMOUS_ROBOT_CACHE.get("artifact"), dict)
+            (_AUTONOMOUS_ROBOT_CACHE.get(track) or {}).get("signature") == signature
+            and isinstance((_AUTONOMOUS_ROBOT_CACHE.get(track) or {}).get("artifact"), dict)
         ):
-            return _AUTONOMOUS_ROBOT_CACHE["artifact"]
+            return _AUTONOMOUS_ROBOT_CACHE[track]["artifact"]
         examples = []
         compatible_schemas = tuple(ROBOT_COMPATIBLE_FEATURE_SCHEMAS)
         schema_marks = ",".join("?" for _ in compatible_schemas)
+        track_where_alias, track_params_alias = _robot_track_sql(source, "sample")
         rows = conn.execute(
             f"""
             SELECT sample.fixture_key,sample.kickoff_timestamp,
@@ -4969,9 +5078,10 @@ def _load_autonomous_robot_artifact():
             WHERE sample.actual_home_goals IS NOT NULL
               AND sample.actual_away_goals IS NOT NULL
               AND sample.feature_schema_version IN ({schema_marks})
+              AND {track_where_alias}
             ORDER BY sample.kickoff_timestamp,sample.id
             """,
-            compatible_schemas,
+            tuple(compatible_schemas) + tuple(track_params_alias),
         ).fetchall()
         for fixture_key, kickoff, captured, known, features_json, goals_h, goals_a in rows:
             try:
@@ -4985,8 +5095,11 @@ def _load_autonomous_robot_artifact():
                 "away_goals": int(goals_a),
             })
         artifact = train_autonomous_robot(examples)
+        artifact["learning_track"] = track
         artifact["learning_revision_marker"] = signature
-        artifact["grading_experience"] = _load_robot_self_grading_experience(conn)
+        artifact["grading_experience"] = _load_robot_self_grading_experience(
+            conn, source
+        )
         artifact["grading_experience_samples"] = int(
             artifact["grading_experience"].get("samples") or 0
         )
@@ -5014,9 +5127,10 @@ def _load_autonomous_robot_artifact():
                 """
                 SELECT artifact_json FROM robot_model_promotions
                 WHERE robot_pick_version=? AND model_version=? AND active=1
+                  AND sample_signature LIKE ?
                 ORDER BY id DESC LIMIT 1
                 """,
-                (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION),
+                (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION, track + ":%"),
             ).fetchone()
             if champion_row:
                 try:
@@ -5033,17 +5147,20 @@ def _load_autonomous_robot_artifact():
                     champion["learning_revision_marker"] = signature
                     selected_artifact = champion
         selected_artifact["learning_revision_marker"] = signature
-        _ROBOT_LEARNING_MARKER_CACHE.update(
-            checked_at=time.monotonic(), value=signature
-        )
-        _AUTONOMOUS_ROBOT_CACHE.update(signature=signature, artifact=selected_artifact)
+        _ROBOT_LEARNING_MARKER_CACHE[track] = {
+            "checked_at": time.monotonic(), "value": signature,
+        }
+        _AUTONOMOUS_ROBOT_CACHE[track] = {
+            "signature": signature, "artifact": selected_artifact,
+        }
         return selected_artifact
     except Exception as error:
         print(f"⚠️ 자율학습 로봇 모델 준비 실패 · 기초 자율모형 유지: {type(error).__name__}")
         return {
             "model_version": ROBOT_MODEL_VERSION, "active": False, "samples": 0,
             "validation_fixtures": 0, "reason": "학습표본 저장소 확인 대기",
-            "learning_revision_marker": _robot_learning_revision_marker(),
+            "learning_track": track,
+            "learning_revision_marker": _robot_learning_revision_marker(source),
         }
     finally:
         if conn is not None:
@@ -5075,7 +5192,7 @@ def save_autonomous_robot_sample(
     if now >= kickoff_utc or not isinstance(features, dict) or not robot_pick:
         return False
     fixture_key = _robot_fixture_key(
-        match_id, fixture_id, home_team, away_team, kickoff_utc
+        match_id, fixture_id, home_team, away_team, kickoff_utc, source
     )
     full_evidence = full_evidence if isinstance(full_evidence, dict) else {}
     lineup_prediction = (
@@ -5216,7 +5333,7 @@ def save_autonomous_robot_sample(
             conn.close()
 
 
-def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0):
+def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0, source="PROTO"):
     """Read the current scheduled robot decision or last pre-kickoff decision."""
     conn = None
     try:
@@ -5228,20 +5345,20 @@ def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0):
                 """
                 SELECT features_json,candidates_json,robot_pick_json,captured_at
                 FROM robot_learning_samples
-                WHERE api_fixture_id=? AND robot_pick_version=?
+                WHERE api_fixture_id=? AND robot_pick_version=? AND UPPER(source)=?
                 ORDER BY id ASC LIMIT 1
                 """,
-                (int(fixture_id), ROBOT_PICK_VERSION),
+                (int(fixture_id), ROBOT_PICK_VERSION, str(source or "PROTO").upper()),
             ).fetchone()
         else:
             row = conn.execute(
                 """
                 SELECT features_json,candidates_json,robot_pick_json,captured_at
                 FROM robot_learning_samples
-                WHERE match_id=? AND robot_pick_version=?
+                WHERE match_id=? AND robot_pick_version=? AND UPPER(source)=?
                 ORDER BY id ASC LIMIT 1
                 """,
-                (str(match_id), ROBOT_PICK_VERSION),
+                (str(match_id), ROBOT_PICK_VERSION, str(source or "PROTO").upper()),
             ).fetchone()
         if not row:
             return None
@@ -5265,7 +5382,7 @@ def _apply_frozen_toto14_robot(item, match_id):
         return item
     match = item.get("match") or {}
     frozen = _load_frozen_autonomous_robot_sample(
-        match_id, item.get("api_fixture_id") or 0
+        match_id, item.get("api_fixture_id") or 0, "TOTO14"
     )
     if not frozen:
         return item
@@ -5469,8 +5586,8 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
         )
         graded += int(cursor.rowcount or 0)
     if graded:
-        _AUTONOMOUS_ROBOT_CACHE.update(signature=None, artifact=None)
-        _ROBOT_LEARNING_MARKER_CACHE.update(checked_at=0.0, value=None)
+        _AUTONOMOUS_ROBOT_CACHE.clear()
+        _ROBOT_LEARNING_MARKER_CACHE.clear()
     return graded
 
 
@@ -5547,12 +5664,14 @@ def _reconcile_robot_lineup_answers(conn, batch_size=6):
     return attached
 
 
-def select_autonomous_robot_pick(picks, confidence, robot_features=None):
+def select_autonomous_robot_pick(
+    picks, confidence, robot_features=None, source="PROTO"
+):
     """Return one robot-owned forecast without changing the official pick."""
     available = valid_analysis_candidates(picks)
     if not available:
         return None
-    robot_artifact = _load_autonomous_robot_artifact()
+    robot_artifact = _load_autonomous_robot_artifact(source)
     has_robot_probabilities = any(
         pick.get("robot_probability") is not None for pick in available
     )
@@ -5568,6 +5687,7 @@ def select_autonomous_robot_pick(picks, confidence, robot_features=None):
         "category_key": "robot_independent",
         "category_label": "로봇 독립픽",
         "robot_pick_version": ROBOT_PICK_VERSION,
+        "robot_learning_track": _robot_learning_track(source),
         "robot_decision_reason": reason,
         "official_final_pick": False,
         "pre_match_only": True,
@@ -6129,7 +6249,9 @@ def _world_market_preview_analysis(item, now=None):
     selected["display"] = _human_pick_label(selected["raw_pick"], home)
     selected["badges"] = []
     preview_confidence = float(selected["data_confidence"])
-    robot_pick = select_autonomous_robot_pick(candidate_rows, preview_confidence)
+    robot_pick = select_autonomous_robot_pick(
+        candidate_rows, preview_confidence, source="WORLD"
+    )
     audited_candidates, compact_categories, decision = build_pick_selection_audit(
         candidate_rows,
         {
@@ -8386,10 +8508,10 @@ def _analyze_world_match(item, now, market_performance):
     legacy_v4_candidates = []
     legacy_v4_pick = {}
     robot_candidates = build_autonomous_robot_candidates(
-        candidates, robot_features, _load_autonomous_robot_artifact()
+        candidates, robot_features, _load_autonomous_robot_artifact("WORLD")
     )
     robot_pick = select_autonomous_robot_pick(
-        robot_candidates, confidence, robot_features
+        robot_candidates, confidence, robot_features, source="WORLD"
     )
     # World VIP is a future paid-grade candidate.  A strong price alone cannot
     # bypass the separately agreed 90/100 input-quality gate.
@@ -8637,7 +8759,7 @@ def analyze_world_schedule():
         refresh_old_version = _needs_current_analysis_refresh(
             item, kickoff, now, WORLD_ANALYSIS_VERSION
         )
-        refresh_robot = _needs_current_robot_refresh(item, kickoff, now)
+        refresh_robot = _needs_current_robot_refresh(item, kickoff, now, "WORLD")
         lineup_retry_due = bool(
             stage == "T-60-lineup"
             and not item.get("lineup_confirmed")
@@ -9001,7 +9123,7 @@ def _needs_current_analysis_refresh(item, kickoff, now, target_version):
     return stored_version != str(target_version or "")
 
 
-def _needs_current_robot_refresh(item, kickoff, now):
+def _needs_current_robot_refresh(item, kickoff, now, source="PROTO"):
     """Refresh a scheduled card after the robot receives a new result."""
     if not isinstance(item, dict) or kickoff is None or now is None:
         return False
@@ -9050,7 +9172,7 @@ def _needs_current_robot_refresh(item, kickoff, now):
     stored_model_version = str(robot.get("robot_model_version") or "")
     if stored_model_version != ROBOT_MODEL_VERSION:
         return True
-    current_revision = _robot_learning_revision_marker()
+    current_revision = _robot_learning_revision_marker(source)
     stored_revision = str(robot.get("robot_learning_revision") or "")
     return bool(current_revision and stored_revision != current_revision)
 
@@ -9061,7 +9183,7 @@ def _scheduled_toto_revision_needs_refresh(item, kickoff, now):
         return False
     if _needs_current_analysis_refresh(item, kickoff, now, ANALYSIS_VERSION):
         return True
-    if _needs_current_robot_refresh(item, kickoff, now):
+    if _needs_current_robot_refresh(item, kickoff, now, "TOTO14"):
         return True
     target_stage = prediction_stage(
         (kickoff - now).total_seconds() / 3600.0,
@@ -9160,9 +9282,14 @@ def _proto_item_has_three_engine_picks(item):
     robot = item.get("robot_pick") or {}
     if not all(isinstance(pick, dict) for pick in (official, robot)):
         return False
-    return all(
+    picks_exist = all(
         str(pick.get("raw_pick") or "").strip()
         for pick in (official, robot)
+    )
+    return bool(
+        picks_exist
+        and str(item.get("analysis_version") or "") == ANALYSIS_VERSION
+        and str(robot.get("robot_pick_version") or "") == ROBOT_PICK_VERSION
     )
 
 
@@ -9255,7 +9382,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
         or _needs_current_analysis_refresh(
             candidate, match_dt, refresh_now, ANALYSIS_VERSION
         )
-        or _needs_current_robot_refresh(candidate, match_dt, refresh_now)
+        or _needs_current_robot_refresh(candidate, match_dt, refresh_now, "PROTO")
     ):
         return None
 
@@ -10024,10 +10151,11 @@ def build_dashboard_data():
         legacy_v4_candidates = []
         legacy_v4_pick = {}
         robot_candidates = build_autonomous_robot_candidates(
-            valid_all_picks, robot_features, _load_autonomous_robot_artifact()
+            valid_all_picks, robot_features, _load_autonomous_robot_artifact("PROTO")
         )
         robot_pick = select_autonomous_robot_pick(
-            robot_candidates, analysis_confidence, robot_features
+            robot_candidates, analysis_confidence, robot_features,
+            source="PROTO",
         )
         highest_prob_pick = pick_categories["high_probability"]
         honey_pick = pick_categories["honey"]
@@ -10807,10 +10935,11 @@ def build_dashboard_data():
         legacy_v4_pick = {}
         robot_candidates = build_autonomous_robot_candidates(
             robot_wdl_candidates, robot_features,
-            _load_autonomous_robot_artifact(),
+            _load_autonomous_robot_artifact("TOTO14"),
         )
         robot_pick = select_autonomous_robot_pick(
-            robot_candidates, analysis_confidence, robot_features
+            robot_candidates, analysis_confidence, robot_features,
+            source="TOTO14",
         )
         robot_wdl_probabilities = {
             str(candidate.get("selection_side")): float(candidate.get("robot_probability") or 0)
@@ -12736,14 +12865,20 @@ def _is_betman_auxiliary_prediction_record(record):
     """Identify Betman auxiliary prediction rows that are not sale fixtures."""
     if not isinstance(record, dict):
         return False
-    league = str(
-        record.get("league")
-        or record.get("leagueShortName")
-        or record.get("leagueName")
-        or ""
+    match = record.get("match") if isinstance(record.get("match"), dict) else {}
+    values = [
+        record.get(key) for key in (
+            "league", "leagueShortName", "leagueName", "league_n", "league_name"
+        )
+    ] + [
+        match.get(key) for key in (
+            "league", "leagueShortName", "leagueName", "league_n", "league_name"
+        )
+    ]
+    return any(
+        "ag예측" in re.sub(r"[\s._-]+", "", str(value or "")).casefold()
+        for value in values
     )
-    normalized = re.sub(r"[\s._-]+", "", league).casefold()
-    return normalized == "ag예측"
 
 
 def _betman_epoch_text(value):
