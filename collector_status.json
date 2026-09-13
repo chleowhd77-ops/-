@@ -72,24 +72,24 @@
     },
     "team": {
       "child_pid": 368573,
-      "state": "running",
-      "heartbeat_at": "2026-09-13T23:26:21+00:00",
-      "pid": 365186,
+      "state": "success",
+      "heartbeat_at": "2026-09-13T23:26:35+00:00",
+      "pid": 368573,
       "last_started_at": "2026-09-13T23:21:50+00:00",
       "elapsed_seconds": 68.1,
       "overlap_skips": 0,
       "last_stage": "complete",
-      "team_retry_processed": 0,
+      "team_retry_processed": 12,
       "team_retry_resolved": 82,
-      "team_retry_pending": 8,
-      "team_retry_due": 0,
-      "team_profile_card_updates": 0,
-      "duration_seconds": 92.53,
-      "last_success_at": "2026-09-13T23:21:45+00:00",
+      "team_retry_pending": 26,
+      "team_retry_due": 13,
+      "team_profile_card_updates": 4,
+      "duration_seconds": 81.49,
+      "last_success_at": "2026-09-13T23:26:35+00:00",
       "last_failure_at": "2026-09-13T21:19:49+00:00"
     }
   },
-  "updated_at": "2026-09-13T23:26:24+00:00",
+  "updated_at": "2026-09-13T23:26:35+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -159,7 +159,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 197
+        "count": 437
       },
       {
         "metric": "cache_hit",
@@ -192,6 +192,12 @@
         "count": 26
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/headtohead",
+        "count": 20
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
@@ -208,12 +214,6 @@
         "purpose": "analysis",
         "endpoint": "/injuries",
         "count": 8
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/headtohead",
-        "count": 5
       },
       {
         "metric": "singleflight_block",
@@ -235,8 +235,20 @@
       },
       {
         "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/teams",
+        "count": 1
+      },
+      {
+        "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/injuries",
+        "count": 1
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/lineups",
         "count": 1
       }
     ],
