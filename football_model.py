@@ -15,7 +15,7 @@ LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-all-evidence-online-v3"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-all-evidence-online-v4-self-outcome"
 ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v2-all-evidence"
 ROBOT_COMPATIBLE_FEATURE_SCHEMAS = (
     "robot-features.v1",
@@ -1287,9 +1287,9 @@ def train_autonomous_robot(examples):
 
     There is deliberately no 20/60/100-match activation gate.  The first
     result changes the residual prior by a strongly regularized non-zero
-    amount; more results automatically increase the learned share and permit
-    more features/interactions.  Chronological diagnostics are reported once
-    two or more results exist, but never decide whether learning is allowed.
+    amount. From two results onward, feature discovery is performed only on
+    the older chronological training block and a challenger replaces the
+    stored champion only when both held-out Brier and log-loss improve.
     """
     rows = _clean_robot_examples(examples)
     artifact = {
@@ -1309,12 +1309,18 @@ def train_autonomous_robot(examples):
     if not rows:
         return artifact
 
-    candidate_names = _robot_feature_candidates(rows)
+    split = None
+    selection_rows = rows
+    if len(rows) >= 2:
+        split = max(1, min(len(rows) - 1, int(len(rows) * .75)))
+        selection_rows = rows[:split]
+
+    candidate_names = _robot_feature_candidates(selection_rows)
     ranked_names = sorted(
         candidate_names,
         key=lambda key: max(
-            abs(_robot_correlation(rows, key, "home_goals")),
-            abs(_robot_correlation(rows, key, "away_goals")),
+            abs(_robot_correlation(selection_rows, key, "home_goals")),
+            abs(_robot_correlation(selection_rows, key, "away_goals")),
         ),
         reverse=True,
     )
@@ -1327,7 +1333,9 @@ def train_autonomous_robot(examples):
         for index, left in enumerate(interaction_sources)
         for right in interaction_sources[index + 1:]
     ]
-    interaction_count = min(len(all_interactions), max(0, len(rows) - 2), 8)
+    interaction_count = min(
+        len(all_interactions), max(0, len(selection_rows) - 2), 8
+    )
     interactions = all_interactions[:interaction_count]
     ridge = max(.04, min(.45, .45 / math.sqrt(len(rows))))
     half_life = max(30.0, min(420.0, 60.0 * math.sqrt(len(rows))))
@@ -1373,17 +1381,21 @@ def train_autonomous_robot(examples):
     fitted = _robot_loss(rows, best_parameters)
     validation = []
     chronological_baseline = chronological_fitted = None
+    chronological_improved = None
     if len(rows) >= 2:
-        split = max(1, min(len(rows) - 1, int(len(rows) * .75)))
         train = rows[:split]
         validation = rows[split:]
         earlier_strength = len(train) / (len(train) + 8.0)
         chronological_parameters = fit_parameters(train, earlier_strength)
         chronological_baseline = _robot_loss(validation)
         chronological_fitted = _robot_loss(validation, chronological_parameters)
+        chronological_improved = bool(
+            chronological_fitted["brier"] < chronological_baseline["brier"]
+            and chronological_fitted["log_loss"] < chronological_baseline["log_loss"]
+        )
 
     artifact.update({
-        "active": True,
+        "active": bool(len(rows) == 1 or chronological_improved),
         "learning_started_from_first_result": True,
         "train_fixtures": len(rows),
         "validation_fixtures": len(validation),
@@ -1400,19 +1412,20 @@ def train_autonomous_robot(examples):
         "selected_interactions": [list(pair) for pair in best_parameters["interactions"]],
         "online_learning_strength": round(learning_strength, 6),
         "reason": (
-            f"종료표본 {len(rows)}경기의 오차를 다음 경기 모형에 온라인 반영"
+            "첫 종료표본을 강하게 축소해 다음 경기부터 학습 반영"
+            if len(rows) == 1 else
+            f"시간순 외표본 개선 확인 · 종료표본 {len(rows)}경기 도전자 승격"
+            if chronological_improved else
+            f"시간순 외표본 개선 없음 · 종료표본 {len(rows)}경기 도전자 보류"
         ),
     })
-    if chronological_baseline and chronological_fitted:
+    if chronological_baseline is not None and chronological_fitted is not None:
         artifact.update({
             "chronological_baseline_brier": round(chronological_baseline["brier"], 6),
             "chronological_fitted_brier": round(chronological_fitted["brier"], 6),
             "chronological_baseline_log_loss": round(chronological_baseline["log_loss"], 6),
             "chronological_fitted_log_loss": round(chronological_fitted["log_loss"], 6),
-            "chronological_improved": bool(
-                chronological_fitted["brier"] < chronological_baseline["brier"]
-                and chronological_fitted["log_loss"] < chronological_baseline["log_loss"]
-            ),
+            "chronological_improved": chronological_improved,
         })
     labels = ranked_names + [f"{left}×{right}" for left, right in interactions]
     importance = []
@@ -1433,10 +1446,10 @@ def train_autonomous_robot(examples):
 def build_autonomous_robot_candidates(picks, features, artifact=None):
     """Calculate robot-owned probabilities for every supported market.
 
-    Newer grading rows with frozen feature snapshots update the goal model.
-    Every older honest grading row can still update probability calibration.
-    Both paths start with their first available result and affect only future
-    picks; no missing historical feature is fabricated.
+    Frozen feature snapshots update the goal model, while the robot's own
+    candidate right/wrong labels calibrate each market direction. Both paths
+    start with their first available result and affect only future picks; no
+    official-analysis answer or missing historical feature is fabricated.
     """
     artifact = artifact if isinstance(artifact, dict) else {}
     active = bool(artifact.get("active") and artifact.get("parameters"))
@@ -1473,6 +1486,9 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
             "robot_model_active": active,
             "robot_training_samples": int(artifact.get("samples") or 0),
             "robot_validation_fixtures": int(artifact.get("validation_fixtures") or 0),
+            "robot_learning_revision": str(
+                artifact.get("learning_revision_marker") or ""
+            ),
             "robot_learning_reason": str(artifact.get("reason") or "종료된 경기 전 표본 수집 중"),
             "robot_grading_experience_samples": int(
                 artifact.get("grading_experience_samples") or 0
@@ -1484,11 +1500,9 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
         })
         result.append(pick)
 
-    # Older grading-note rows often predate the detailed robot feature schema,
-    # but their frozen pre-match probability and final hit/miss are still valid
-    # evidence.  Learn a market/probability-bin reliability curve with smooth
-    # shrinkage.  There is no minimum-sample switch: sample one has a small,
-    # non-zero effect and its influence grows naturally with repeated evidence.
+    # Learn only from the robot's own frozen candidate outcomes. Direction is
+    # part of the key so, for example, home handicap and away handicap lessons
+    # cannot be mixed into one generic market-rate cell.
     experience = artifact.get("grading_experience") or {}
     market_cells = experience.get("markets") or {}
     grouped = {}
@@ -1508,7 +1522,10 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
         for pick in group:
             base_probability = _finite_number(pick.get("robot_probability"))
             bucket = str(min(9, max(0, int(base_probability * 10))))
-            cell = (market_cells.get(market) or {}).get(bucket) or {}
+            side = str(pick.get("selection_side") or "unknown")
+            cell = (
+                market_cells.get(f"{market}:{side}") or {}
+            ).get(bucket) or {}
             samples = max(0, int(cell.get("samples") or 0))
             observed = _finite_number(cell.get("observed_rate"), base_probability)
             learning_weight = samples / (samples + 12.0) if samples else 0.0

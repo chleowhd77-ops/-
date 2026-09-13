@@ -164,7 +164,7 @@ WORLD_PUBLIC_DASHBOARD_MAX_BYTES = max(
 )
 # PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
 # 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
-WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v4"
+WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v5"
 WORLD_MARKET_PREVIEW_VERSION = f"{ANALYSIS_VERSION}-world-market-preview-v1"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Bucheon FC 1995": "부천 FC 1995",
@@ -304,6 +304,7 @@ WORLD_PUBLIC_CANDIDATE_FIELDS = (
     "probability_fallback", "context_alignment", "robot_probability",
     "robot_expected_goals", "robot_model_active", "robot_model_version",
     "robot_training_samples", "robot_validation_fixtures",
+    "robot_learning_revision",
     "robot_decision_reason", "robot_selection_axis",
     "robot_grading_experience_samples", "robot_grading_calibration_samples",
     "robot_grading_calibration_weight", "robot_minimum_sample_gate",
@@ -1109,16 +1110,6 @@ def _toto14_from_canonical_proto(match, proto_items):
         "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
         "selection_axis": "toto14_single_direction_accuracy",
     }
-    legacy_rows = [
-        dict(candidate) for candidate in item.get("legacy_v4_candidates") or []
-        if isinstance(candidate, dict)
-        and str(candidate.get("market_key") or "") == "1x2"
-    ]
-    if legacy_rows:
-        result["legacy_v4_candidates"] = legacy_rows
-        result["legacy_v4_pick"] = max(
-            legacy_rows, key=lambda candidate: float(candidate.get("prob") or 0)
-        )
     frozen_robot = _load_frozen_autonomous_robot_sample(
         "TOTO14_" + str(match.get("id") or ""), item.get("api_fixture_id") or 0
     )
@@ -1235,10 +1226,11 @@ def _load_toto14_freezes():
 
 
 def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payload):
-    """Persist the first valid final ticket without a version rewrite.
+    """Persist the current pre-kickoff ticket and keep every older revision.
 
     Every former and replacement payload is copied into an append-only history
-    table.  Once kickoff has passed, the primary frozen ticket is immutable.
+    table. Scheduled matches follow the newest official/robot revision; once
+    kickoff has passed, the last pre-kickoff ticket is immutable.
     """
     conn = None
     try:
@@ -1305,9 +1297,46 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                 existing_payload = {}
         existing_version = str(existing_payload.get("analysis_version") or "")
         kickoff = _parse_kst_match_time((existing[2] if existing else None) or match_time)
-        # R7.10 used a one-time approved migration.  That exception is over:
-        # three-engine testing must not overwrite an already published answer.
-        can_migrate = False
+        def current_pick_signature(value):
+            value = value if isinstance(value, dict) else {}
+            official = value.get("official_comparison_pick") or {}
+            robot = value.get("robot_pick") or {}
+            return json.dumps({
+                "analysis_version": str(value.get("analysis_version") or ""),
+                "picks": _normalize_toto14_picks(value.get("picks") or []),
+                "best_pick_display": str(value.get("best_pick_display") or ""),
+                "probabilities": [
+                    value.get("p_h"), value.get("p_d"), value.get("p_a")
+                ],
+                "official": {
+                    "raw_pick": official.get("raw_pick"),
+                    "probability": official.get("prob", official.get("probability")),
+                },
+                "robot": {
+                    "raw_pick": robot.get("raw_pick"),
+                    "probability": robot.get("prob", robot.get("probability")),
+                    "pick_version": robot.get("robot_pick_version"),
+                    "model_version": robot.get("robot_model_version"),
+                    "training_samples": robot.get("robot_training_samples"),
+                    "learning_revision": robot.get("robot_learning_revision"),
+                },
+            }, ensure_ascii=False, sort_keys=True, default=str)
+
+        # The latest user policy freezes only a match that already started.
+        # Before kickoff a new analysis version or a newly learned robot answer
+        # replaces the current ticket, while preserve_history keeps the former
+        # public value auditable.
+        can_migrate = bool(
+            existing
+            and kickoff
+            and datetime.now(KST) < kickoff
+            and incoming_version == ANALYSIS_VERSION
+            and _toto14_item_has_usable_pick(
+                frozen_payload, home_team, away_team
+            )
+            and current_pick_signature(existing_payload)
+                != current_pick_signature(frozen_payload)
+        )
         can_repair_unavailable = bool(
             existing
             and kickoff
@@ -1355,7 +1384,7 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
             if can_repair_unavailable:
                 print(
                     f"🩹 시작 전 승무패14 빈 동결본 복구: "
-                    f"{home_team} vs {away_team} · 실제 최초픽 저장"
+                    f"{home_team} vs {away_team} · 현재 픽 저장"
                 )
             else:
                 print(
@@ -1521,23 +1550,15 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return False
             stored_kickoff = _parse_kst_match_time(stored_match_time)
             kickoff_passed = bool(stored_kickoff and datetime.now(KST) >= stored_kickoff)
-            previous_version = str(previous[6] or "") if previous else ""
-            toto_policy_migration = False
             prediction_locked = (
                 analysis_stage == "locked"
                 or str(actual_result or "PENDING") != "PENDING"
                 or kickoff_passed
-                or (
-                    int(is_toto14 or 0) == 1
-                    and previous
-                    and str(previous[0]) in {"T-30-final", "locked"}
-                    and not toto_policy_migration
-                )
             )
             if prediction_locked:
                 # Fixture identity may be recovered once, but prediction/odds/team
-                # fields are immutable after the Toto final snapshot or kickoff.
-                # Grading is handled elsewhere.
+                # fields become immutable only after kickoff or a known result.
+                # A pre-kickoff TOTO stage no longer locks the testing answer.
                 if (
                     str(actual_result or "PENDING") == "PENDING"
                     and not int(existing_fix_id or 0)
@@ -1551,31 +1572,21 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 return True
 
             final_fix_id = int(fixture_id or 0) or int(existing_fix_id or 0)
-            if toto_policy_migration:
-                # The user explicitly approved one R7.10 reset for the current
-                # not-started Toto round.  The old value remains in the append-
-                # only snapshots; only the current public row moves to R7.10.
-                cursor.execute("""
-                    UPDATE predictions
-                    SET prob_pick = ?, prob_pick_prob = ?, ev_pick = ?,
-                        ev_pick_prob = ?, odd_h = ?, odd_d = ?, odd_a = ?,
-                        api_fixture_id = ?, match_time = ?, league = ?,
-                        analysis_version = ?
-                    WHERE match_id = ?
-                """, (
-                    prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a,
-                    final_fix_id, match_time, league, target_analysis_version, m_id,
-                ))
-            else:
-                # Within one public policy version the first recommendation is
-                # immutable. Later calculations are append-only audit snapshots.
-                cursor.execute("""
-                    UPDATE predictions
-                    SET api_fixture_id = ?, match_time = ?, league = ?
-                    WHERE match_id = ?
-                """, (
-                    final_fix_id, match_time, league, m_id,
-                ))
+            # Scheduled cards always expose the newest pre-kickoff answer,
+            # whether it came from a formula release or fresher evidence in
+            # the same release. The prior answer remains in the append-only
+            # prediction_snapshots table. Kickoff/finished rows returned above.
+            cursor.execute("""
+                UPDATE predictions
+                SET prob_pick = ?, prob_pick_prob = ?, ev_pick = ?,
+                    ev_pick_prob = ?, odd_h = ?, odd_d = ?, odd_a = ?,
+                    api_fixture_id = ?, match_time = ?, league = ?,
+                    analysis_version = ?
+                WHERE match_id = ?
+            """, (
+                prob_pick, prob_val, ev_pick, ev_val, odd_h, odd_d, odd_a,
+                final_fix_id, match_time, league, target_analysis_version, m_id,
+            ))
 
         current = (
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
@@ -3268,6 +3279,9 @@ def build_pick_selection_audit(
             "robot_model_active": bool(robot_pick.get("robot_model_active")),
             "robot_training_samples": int(robot_pick.get("robot_training_samples") or 0),
             "robot_validation_fixtures": int(robot_pick.get("robot_validation_fixtures") or 0),
+            "robot_learning_revision": str(
+                robot_pick.get("robot_learning_revision") or ""
+            ),
             "robot_learning_reason": str(robot_pick.get("robot_learning_reason") or ""),
             "robot_pick_version": ROBOT_PICK_VERSION,
             "robot_policy_version": str(
@@ -3366,6 +3380,9 @@ def build_pick_selection_audit(
             "robot_model_active": bool(item.get("robot_model_active")),
             "robot_training_samples": int(item.get("robot_training_samples") or 0),
             "robot_validation_fixtures": int(item.get("robot_validation_fixtures") or 0),
+            "robot_learning_revision": str(
+                item.get("robot_learning_revision") or ""
+            ),
             "market_hit_rate": _audit_number(item.get("market_hit_rate"), 0.5),
             "market_history_samples": int(
                 item.get("market_history_samples", 0) or 0
@@ -3554,7 +3571,7 @@ def _ensure_prediction_analysis_tables(conn):
 
 
 def _ensure_three_engine_tables(conn):
-    """Create an append-only scorecard for official, restored V4 and robot."""
+    """Create append-only history for active official and robot revisions."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS three_engine_pick_snapshots (
@@ -3590,10 +3607,10 @@ def _ensure_three_engine_tables(conn):
         "CREATE INDEX IF NOT EXISTS idx_three_engine_grade "
         "ON three_engine_pick_snapshots(is_correct,kickoff_timestamp)"
     )
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_three_engine_first_answer "
-        "ON three_engine_pick_snapshots(comparison_key,engine_key)"
-    )
+    # R7.12.0 added a first-answer-only index. Scheduled matches now follow a
+    # new analysis/robot-learning version, so the table-level versioned UNIQUE
+    # constraint is the correct guard. Dropping the old index preserves rows.
+    conn.execute("DROP INDEX IF EXISTS idx_three_engine_first_answer")
 
 
 def _three_engine_compact_pick(pick):
@@ -3606,7 +3623,8 @@ def _three_engine_compact_pick(pick):
             "selection_reason", "selection_axis", "official_policy_version",
             "legacy_v4_policy_version", "legacy_v4_expected_goals",
             "robot_pick_version", "robot_model_version", "robot_expected_goals",
-            "robot_training_samples", "robot_learning_reason",
+            "robot_training_samples", "robot_learning_revision",
+            "robot_learning_reason",
         )
     }
 
@@ -3615,7 +3633,7 @@ def save_three_engine_picks(
     source, match_id, fixture_id, league, home_team, away_team, kickoff,
     official_pick, legacy_v4_pick, robot_pick,
 ):
-    """Freeze the first three independent pre-kickoff answers for one source."""
+    """Append active official/robot revisions before kickoff."""
     if not isinstance(kickoff, datetime):
         kickoff = _parse_kst_match_time(kickoff)
     if kickoff is None:
@@ -3626,10 +3644,15 @@ def save_three_engine_picks(
     now = datetime.now(timezone.utc)
     if now >= kickoff_utc:
         return False
+    robot_version = ":".join((
+        ROBOT_PICK_VERSION,
+        str((robot_pick or {}).get("robot_model_version") or ROBOT_MODEL_VERSION),
+        str(int((robot_pick or {}).get("robot_training_samples") or 0)),
+        str((robot_pick or {}).get("robot_learning_revision") or "no-revision"),
+    ))
     engines = (
         ("official", ANALYSIS_VERSION, official_pick),
-        ("legacy_v4", LEGACY_V4_POLICY_VERSION, legacy_v4_pick),
-        ("robot", ROBOT_PICK_VERSION, robot_pick),
+        ("robot", robot_version, robot_pick),
     )
     if any(not str((pick or {}).get("raw_pick") or "").strip() for _, _, pick in engines):
         return False
@@ -3669,12 +3692,13 @@ def save_three_engine_picks(
             )
         conn.commit()
         count = conn.execute(
-            "SELECT COUNT(*) FROM three_engine_pick_snapshots WHERE comparison_key=?",
+            "SELECT COUNT(DISTINCT engine_key) FROM three_engine_pick_snapshots "
+            "WHERE comparison_key=? AND engine_key IN ('official','robot')",
             (comparison_key,),
         ).fetchone()[0]
-        return int(count or 0) >= 3
+        return int(count or 0) >= 2
     except Exception as error:
-        print(f"⚠️ 세 분석기 최초픽 저장 실패({match_id}): {error}")
+        print(f"⚠️ 두 분석가 경기 전 픽 저장 실패({match_id}): {error}")
         return False
     finally:
         if conn is not None:
@@ -3730,11 +3754,13 @@ def _grade_three_engine_picks(conn):
 
 
 def _three_engine_grading_payload(conn):
-    """Return per-match rows and honest aggregate accuracy for all three engines."""
+    """Return latest pre-kickoff official/robot revisions and honest grades."""
     _ensure_three_engine_tables(conn)
     _grade_three_engine_picks(conn)
     cursor = conn.execute(
-        "SELECT * FROM three_engine_pick_snapshots ORDER BY kickoff_timestamp DESC,id"
+        "SELECT * FROM three_engine_pick_snapshots "
+        "WHERE engine_key IN ('official','robot') "
+        "ORDER BY kickoff_timestamp DESC,id"
     )
     columns = [str(description[0]) for description in cursor.description]
     rows = [
@@ -3763,22 +3789,21 @@ def _three_engine_grading_payload(conn):
     matches = list(grouped.values())
     finished = [
         row for row in matches
-        if len(row["engines"]) == 3
+        if len(row["engines"]) == 2
         and all(engine.get("is_correct") in (0, 1) for engine in row["engines"].values())
     ]
     pending = [row for row in matches if row not in finished]
     summary = {}
-    for engine_key in ("official", "legacy_v4", "robot"):
+    for engine_key in ("official", "robot"):
         values = [row["engines"][engine_key]["is_correct"] for row in finished]
         summary[engine_key] = {
             "graded": len(values), "correct": sum(values),
             "accuracy": (sum(values) / len(values) if values else None),
         }
     return {
-        "schema_version": "three-engine-grading.v1",
+        "schema_version": "two-analyzer-grading.v2",
         "engine_versions": {
             "official": ANALYSIS_VERSION,
-            "legacy_v4": LEGACY_V4_POLICY_VERSION,
             "robot": ROBOT_PICK_VERSION,
         },
         "summary": summary, "finished": finished, "pending": pending,
@@ -3909,7 +3934,7 @@ def _json_rows(value):
 
 
 def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, kickoff):
-    """Read one append-only engine answer that was captured before kickoff."""
+    """Read the newest compatible engine answer captured before kickoff."""
     try:
         rows = conn.execute(
             """
@@ -3917,7 +3942,7 @@ def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, k
                    probability,odd,pick_json,captured_at
             FROM three_engine_pick_snapshots
             WHERE match_id=? AND home_team=? AND away_team=? AND engine_key=?
-            ORDER BY id ASC
+            ORDER BY id DESC
             """,
             (str(match_id), str(home_team), str(away_team), str(engine_key)),
         ).fetchall()
@@ -3925,6 +3950,11 @@ def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, k
         return None
     for row in rows:
         if not _snapshot_existed_before_kickoff(row[8], kickoff):
+            continue
+        engine_version = str(row[1] or "")
+        if engine_key == "official" and engine_version != ANALYSIS_VERSION:
+            continue
+        if engine_key == "robot" and not engine_version.startswith(ROBOT_PICK_VERSION):
             continue
         raw_pick = str(row[4] or "").strip()
         if not raw_pick:
@@ -3946,7 +3976,7 @@ def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, k
             )
         elif engine_key == "robot":
             pick["robot_pick_version"] = str(
-                pick.get("robot_pick_version") or row[1] or ""
+                pick.get("robot_pick_version") or engine_version or ""
             )
         return pick
     return None
@@ -3958,14 +3988,12 @@ def _is_current_public_analysis_version(value):
 
 
 def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time=""):
-    """Recover the first provable pre-kickoff public answer without migration.
+    """Recover the active answer from append-only pre-kickoff revisions.
 
-    ``prediction_snapshots`` is append-only. Its first timestamped row is the
-    strongest historical proof available for installations that predate the
-    explicit public-freeze marker.  Later software versions never replace that
-    boundary; old rows and their original public pick remain untouched for
-    audit. LIVE/past games cannot gain such a row because every writer rejects
-    calculations at or after kickoff.
+    During the test period a scheduled game follows the newest analysis
+    version. After kickoff the same rule naturally selects the last revision
+    that existed before kickoff. Older rows remain untouched for audit, and
+    every writer still rejects hindsight calculations.
     """
     try:
         identity = conn.execute(
@@ -3999,7 +4027,14 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         if str(row[4] or "").strip()
         and _snapshot_existed_before_kickoff(row[12], kickoff)
     ]
-    public_row = eligible_public_rows[0] if eligible_public_rows else None
+    current_rows = [
+        row for row in eligible_public_rows
+        if str(row[1] or "") == ANALYSIS_VERSION
+    ]
+    public_row = (
+        max(current_rows or eligible_public_rows, key=lambda row: int(row[0]))
+        if eligible_public_rows else None
+    )
     if public_row is None:
         return None
 
@@ -4022,7 +4057,7 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
                    selected_market, selected_pick, candidates_json,
                    categories_json, decision_json, report_text, created_at
             FROM prediction_analysis_snapshots
-            WHERE match_id = ? ORDER BY id ASC
+            WHERE match_id = ? ORDER BY id DESC
             """,
             (str(match_id),),
         ).fetchall()
@@ -4088,9 +4123,6 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         if isinstance(value, dict) and str(value.get("raw_pick") or "") == official_pick:
             frozen_categories[key] = dict(value, public_pick_frozen=True)
 
-    legacy_v4_pick = _first_three_engine_pick(
-        conn, match_id, home_team, away_team, "legacy_v4", kickoff
-    )
     robot_pick = None
     robot_analysis_id = None
     for row in analysis_rows:
@@ -4155,7 +4187,7 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         "ev_pick": ev_pick,
         "ev_probability": ev_probability,
         "categories": frozen_categories,
-        "legacy_v4_pick": legacy_v4_pick,
+        "legacy_v4_pick": {},
         "robot_pick": robot_pick,
         "candidates": candidates,
         "decision": decision,
@@ -4181,7 +4213,7 @@ def _load_first_public_pick_bundle(match_id, home_team, away_team, match_time=""
 
 
 def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
-    """Overlay the first public official/robot answer onto a current card copy."""
+    """Overlay the active pre-kickoff official/robot revision onto a card."""
     current = dict(current or {})
     latest_analysis_stage = str(
         current.get("latest_analysis_stage")
@@ -4201,14 +4233,14 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         or ""
     )
     report = bundle.get("report") or (
-        "처음 공개된 경기 전 최종픽을 그대로 유지합니다. "
-        "이후 재분석과 경기 결과는 공개 픽을 변경하지 않습니다."
+        "시작 전 최신 분석 버전의 최종픽입니다. "
+        "경기가 시작되면 마지막 경기 전 픽을 잠그고 변경하지 않습니다."
     )
     current.update({
         "match": dict(match),
         "final_match_time": current.get("final_match_time") or match.get("match_time"),
         "pick_categories": bundle["categories"],
-        "legacy_v4_pick": bundle.get("legacy_v4_pick") or current.get("legacy_v4_pick") or {},
+        "legacy_v4_pick": {},
         "robot_pick": bundle.get("robot_pick") or {},
         "ev_sorted_picks": bundle["candidates"],
         "display_candidates": bundle["candidates"],
@@ -4219,8 +4251,8 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         ),
         "analysis_version": bundle["analysis_version"],
         "analysis_stage": "locked" if locked else bundle["analysis_stage"],
-        # Public pick stage stays immutable, while this operational field lets
-        # the collector know the newest evidence stage has already completed.
+        # The scheduled answer may move until kickoff. This operational field
+        # records which evidence stage completed last.
         "latest_analysis_stage": latest_analysis_stage or bundle["analysis_stage"],
         "analysis_confidence": bundle["confidence"],
         "odds_source": bundle["odds_source"] or current.get("odds_source") or "",
@@ -4240,7 +4272,7 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
 
 
 def _public_world_analysis_from_first_snapshot(match, current_analysis):
-    """Freeze public picks while retaining the newest pre-kickoff evidence/report."""
+    """Expose newest scheduled picks and lock the last pre-kickoff revision."""
     current_analysis = dict(current_analysis or {})
     bundle = _load_first_public_pick_bundle(
         str(match.get("id") or ""),
@@ -4262,10 +4294,9 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
     current_stage = str(current_analysis.get("analysis_stage") or "")
     current_report = str(current_analysis.get("report") or "").strip()
     frozen_report = str(bundle.get("report") or "").strip()
-    # A market preview can be the first visible pick.  Once the real full-context
-    # pass finishes, keep that richer evidence/report and freeze only the two
-    # public answers.  This prevents the immutable-pick guard from making a
-    # completed detailed analysis continue to look like "정밀분석 대기".
+    # A market preview can be the first visible pick. Once the full-context pass
+    # finishes, the scheduled card moves to that richer report and current two
+    # answers. After kickoff the selector returns the last pre-match rows.
     report = (
         current_report
         if current_stage and current_stage != "market-preview" and current_report
@@ -4276,13 +4307,14 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
         and frozen_report and current_report and frozen_report != current_report
     ):
         report += (
-            "\n\n[공개픽 고정] 위 상세자료는 최신 경기 전 정밀분석입니다. "
-            "공식픽과 로봇픽은 처음 공개된 값을 그대로 유지해 경기 뒤 변경되지 않습니다."
+            "\n\n[픽 이력 보호] 현재 값은 저장된 경기 전 공식픽·로봇픽입니다. "
+            "시작 전에는 새 공식 분석이나 로봇 학습 결과로 갱신될 수 있고, "
+            "시작 뒤에는 마지막 경기 전 값을 잠가 변경하지 않습니다."
         )
     current_analysis.update({
         "selected": selected,
         "categories": bundle["categories"],
-        "legacy_v4_pick": dict(bundle.get("legacy_v4_pick") or {}),
+        "legacy_v4_pick": {},
         "robot_pick": dict(bundle.get("robot_pick") or {}),
         "candidates": bundle["candidates"],
         "decision": decision,
@@ -4538,6 +4570,48 @@ def select_pick_categories(picks, confidence):
 
 
 _AUTONOMOUS_ROBOT_CACHE = {"signature": None, "artifact": None}
+_ROBOT_LEARNING_MARKER_CACHE = {"checked_at": 0.0, "value": None}
+
+
+def _robot_learning_revision_marker():
+    """Return a cheap local marker that changes after a new robot result."""
+    checked_at = float(_ROBOT_LEARNING_MARKER_CACHE.get("checked_at") or 0)
+    cached = _ROBOT_LEARNING_MARKER_CACHE.get("value")
+    if cached and time.monotonic() - checked_at < 15:
+        return str(cached)
+    conn = None
+    try:
+        path = _local_path("ai_predictions.db")
+        if not Path(path).exists():
+            marker = f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:0:0.000"
+        else:
+            conn = sqlite3.connect(str(path), timeout=5)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='robot_learning_samples'"
+            ).fetchone()
+            if not table:
+                count, latest = 0, 0.0
+            else:
+                count, latest = conn.execute(
+                    "SELECT COUNT(*),COALESCE(MAX(result_known_timestamp),0) "
+                    "FROM robot_learning_samples WHERE actual_home_goals IS NOT NULL "
+                    "AND actual_away_goals IS NOT NULL"
+                ).fetchone()
+            marker = (
+                f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
+                f"{int(count or 0)}:{float(latest or 0):.3f}"
+            )
+        _ROBOT_LEARNING_MARKER_CACHE.update(
+            checked_at=time.monotonic(), value=marker
+        )
+        return marker
+    except sqlite3.Error:
+        return str(cached or "")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _ensure_autonomous_robot_tables(conn):
@@ -4631,6 +4705,33 @@ def _ensure_autonomous_robot_tables(conn):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_robot_observations_fixture "
         "ON robot_pre_match_observations(fixture_key,captured_timestamp)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS robot_pick_revision_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fixture_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            match_id TEXT NOT NULL,
+            api_fixture_id INTEGER DEFAULT 0,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            kickoff_timestamp REAL NOT NULL,
+            robot_pick_version TEXT NOT NULL,
+            robot_model_version TEXT DEFAULT '',
+            captured_at TEXT NOT NULL,
+            captured_timestamp REAL NOT NULL,
+            features_json TEXT NOT NULL,
+            candidates_json TEXT NOT NULL,
+            robot_pick_json TEXT NOT NULL,
+            revision_fingerprint TEXT NOT NULL,
+            UNIQUE(fixture_key,robot_pick_version,revision_fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_robot_pick_revisions_fixture "
+        "ON robot_pick_revision_snapshots(fixture_key,captured_timestamp)"
     )
     conn.execute(
         """
@@ -4738,6 +4839,77 @@ def _load_historical_grading_experience(conn):
     }
 
 
+def _load_robot_self_grading_experience(conn):
+    """Build calibration cells only from the robot's own frozen answers.
+
+    Every candidate was saved before kickoff and later receives both a right
+    or wrong label. This deliberately excludes official/Codex grading rows so
+    the autonomous robot learns from its own decisions and probability errors.
+    """
+    _ensure_autonomous_robot_tables(conn)
+    cells = {}
+    selection_samples = 0
+    selection_correct = 0
+    rows = conn.execute(
+        """
+        SELECT candidate_results_json,robot_pick_correct
+        FROM robot_learning_samples
+        WHERE result_known_timestamp IS NOT NULL
+          AND actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
+          AND candidate_results_json NOT IN ('','[]','null')
+        ORDER BY kickoff_timestamp,id
+        """
+    ).fetchall()
+    for candidate_json, robot_pick_correct in rows:
+        if robot_pick_correct in (0, 1):
+            selection_samples += 1
+            selection_correct += int(robot_pick_correct)
+        try:
+            candidates = json.loads(candidate_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        for candidate in candidates if isinstance(candidates, list) else []:
+            if not isinstance(candidate, dict) or candidate.get("is_correct") not in (0, 1):
+                continue
+            try:
+                probability = float(candidate.get("robot_probability"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(probability) or not 0 <= probability <= 1:
+                continue
+            market = str(candidate.get("market_key") or "1x2")
+            side = str(candidate.get("selection_side") or "unknown")
+            key = f"{market}:{side}"
+            bucket = str(min(9, max(0, int(probability * 10))))
+            cell = cells.setdefault(key, {}).setdefault(
+                bucket, {"samples": 0, "correct": 0}
+            )
+            cell["samples"] += 1
+            cell["correct"] += int(candidate["is_correct"])
+
+    total = 0
+    for market_cells in cells.values():
+        for cell in market_cells.values():
+            total += int(cell["samples"])
+            cell["observed_rate"] = round(
+                float(cell["correct"]) / max(1, int(cell["samples"])), 8
+            )
+    return {
+        "schema_version": "robot-self-grading-experience.v2",
+        "samples": total,
+        "markets": cells,
+        "selection_samples": selection_samples,
+        "selection_correct": selection_correct,
+        "selection_accuracy": (
+            round(selection_correct / selection_samples, 8)
+            if selection_samples else None
+        ),
+        "minimum_sample_gate": False,
+        "official_grading_used": False,
+        "history_rewrite": False,
+    }
+
+
 def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff):
     if int(fixture_id or 0) > 0:
         return f"fixture:{int(fixture_id)}"
@@ -4763,29 +4935,10 @@ def _load_autonomous_robot_artifact():
             WHERE actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
             """
         ).fetchone()
-        grading_signature = conn.execute(
-            "SELECT COUNT(*),COALESCE(MAX(id),0) FROM prediction_candidate_results"
-        ).fetchone()
-        prediction_columns = {
-            str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
-        }
-        if {"actual_result", "is_correct_prob"}.issubset(prediction_columns):
-            public_grading_signature = conn.execute(
-                """
-                SELECT COUNT(*),
-                       COALESCE(SUM(CASE WHEN actual_result='FINISHED' THEN rowid ELSE 0 END),0),
-                       COALESCE(SUM(CASE WHEN is_correct_prob IN (0,1) THEN is_correct_prob + 1 ELSE 0 END),0)
-                FROM predictions
-                """
-            ).fetchone()
-        else:
-            public_grading_signature = (0, 0, 0)
         signature = (
-            f"{int(signature_row[0] or 0)}:{float(signature_row[1] or 0):.3f}:"
-            f"{int(grading_signature[0] or 0)}:{int(grading_signature[1] or 0)}:"
-            f"{int(public_grading_signature[0] or 0)}:"
-            f"{int(public_grading_signature[1] or 0)}:"
-            f"{int(public_grading_signature[2] or 0)}"
+            f"{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
+            f"{int(signature_row[0] or 0)}:"
+            f"{float(signature_row[1] or 0):.3f}"
         )
         if (
             _AUTONOMOUS_ROBOT_CACHE.get("signature") == signature
@@ -4832,13 +4985,13 @@ def _load_autonomous_robot_artifact():
                 "away_goals": int(goals_a),
             })
         artifact = train_autonomous_robot(examples)
-        artifact["grading_experience"] = _load_historical_grading_experience(conn)
+        artifact["learning_revision_marker"] = signature
+        artifact["grading_experience"] = _load_robot_self_grading_experience(conn)
         artifact["grading_experience_samples"] = int(
             artifact["grading_experience"].get("samples") or 0
         )
-        safe_artifact = {key: value for key, value in artifact.items() if key != "parameters"}
         fingerprint = hashlib.sha256(
-            json.dumps(safe_artifact, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            json.dumps(artifact, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         conn.execute(
             """
@@ -4850,18 +5003,47 @@ def _load_autonomous_robot_artifact():
             (
                 ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION,
                 signature + ":" + fingerprint[:16],
-                json.dumps(safe_artifact, ensure_ascii=False, sort_keys=True),
+                json.dumps(artifact, ensure_ascii=False, sort_keys=True),
                 int(bool(artifact.get("active"))), _utc_iso(),
             ),
         )
         conn.commit()
-        _AUTONOMOUS_ROBOT_CACHE.update(signature=signature, artifact=artifact)
-        return artifact
+        selected_artifact = artifact
+        if not artifact.get("active"):
+            champion_row = conn.execute(
+                """
+                SELECT artifact_json FROM robot_model_promotions
+                WHERE robot_pick_version=? AND model_version=? AND active=1
+                ORDER BY id DESC LIMIT 1
+                """,
+                (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION),
+            ).fetchone()
+            if champion_row:
+                try:
+                    champion = json.loads(champion_row[0] or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    champion = {}
+                if champion.get("parameters"):
+                    champion["grading_experience"] = artifact["grading_experience"]
+                    champion["grading_experience_samples"] = artifact[
+                        "grading_experience_samples"
+                    ]
+                    champion["latest_challenger_samples"] = artifact.get("samples", 0)
+                    champion["latest_challenger_reason"] = artifact.get("reason", "")
+                    champion["learning_revision_marker"] = signature
+                    selected_artifact = champion
+        selected_artifact["learning_revision_marker"] = signature
+        _ROBOT_LEARNING_MARKER_CACHE.update(
+            checked_at=time.monotonic(), value=signature
+        )
+        _AUTONOMOUS_ROBOT_CACHE.update(signature=signature, artifact=selected_artifact)
+        return selected_artifact
     except Exception as error:
         print(f"⚠️ 자율학습 로봇 모델 준비 실패 · 기초 자율모형 유지: {type(error).__name__}")
         return {
             "model_version": ROBOT_MODEL_VERSION, "active": False, "samples": 0,
             "validation_fixtures": 0, "reason": "학습표본 저장소 확인 대기",
+            "learning_revision_marker": _robot_learning_revision_marker(),
         }
     finally:
         if conn is not None:
@@ -4873,7 +5055,7 @@ def save_autonomous_robot_sample(
     features, candidates, robot_pick, full_evidence=None,
     lineup_prediction=None, analysis_stage="",
 ):
-    """Persist the first verified pre-kickoff robot input without later edits."""
+    """Persist the current scheduled robot answer plus append-only revisions."""
     if not isinstance(kickoff, datetime):
         raw_kickoff = kickoff
         kickoff = _parse_kst_match_time(raw_kickoff)
@@ -4914,6 +5096,7 @@ def save_autonomous_robot_sample(
                 "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
                 "market_prob", "handicap_base", "totals_base", "robot_probability",
                 "robot_expected_goals", "robot_model_version",
+                "robot_learning_revision",
                 "robot_pre_grading_probability", "robot_grading_experience_samples",
                 "robot_grading_calibration_samples", "robot_grading_calibration_weight",
             )
@@ -4924,6 +5107,7 @@ def save_autonomous_robot_sample(
             "handicap_base", "totals_base", "prob", "robot_probability",
             "robot_expected_goals", "robot_model_version", "robot_model_active",
             "robot_training_samples", "robot_validation_fixtures",
+            "robot_learning_revision",
             "robot_decision_reason", "robot_selection_axis",
             "robot_grading_experience_samples", "robot_grading_calibration_samples",
             "robot_grading_calibration_weight", "robot_minimum_sample_gate",
@@ -4953,6 +5137,33 @@ def save_autonomous_robot_sample(
                 feature_json, evidence_json, observation_fingerprint,
             ),
         )
+        revision_fingerprint = hashlib.sha256(
+            (feature_json + "\x1f" + json.dumps(
+                compact_candidates, ensure_ascii=False, sort_keys=True
+            ) + "\x1f" + json.dumps(
+                compact_pick, ensure_ascii=False, sort_keys=True
+            )).encode("utf-8")
+        ).hexdigest()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO robot_pick_revision_snapshots (
+                fixture_key,source,match_id,api_fixture_id,home_team,away_team,
+                kickoff_timestamp,robot_pick_version,robot_model_version,
+                captured_at,captured_timestamp,features_json,candidates_json,
+                robot_pick_json,revision_fingerprint
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                fixture_key, str(source or "UNKNOWN"), str(match_id),
+                int(fixture_id or 0), str(home_team), str(away_team),
+                kickoff_utc.timestamp(), ROBOT_PICK_VERSION,
+                str(robot_pick.get("robot_model_version") or ROBOT_MODEL_VERSION),
+                now.isoformat(), now.timestamp(), feature_json,
+                json.dumps(compact_candidates, ensure_ascii=False, sort_keys=True),
+                json.dumps(compact_pick, ensure_ascii=False, sort_keys=True),
+                revision_fingerprint,
+            ),
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO robot_learning_samples (
@@ -4974,6 +5185,27 @@ def save_autonomous_robot_sample(
                 json.dumps(compact_pick, ensure_ascii=False, sort_keys=True),
             ),
         )
+        # One row remains the current answer that will be graded. It may move
+        # only while the fixture is scheduled; every former answer is already
+        # protected above in robot_pick_revision_snapshots.
+        conn.execute(
+            """
+            UPDATE robot_learning_samples
+            SET captured_at=?,captured_timestamp=?,feature_schema_version=?,
+                memory_schema_version=?,features_json=?,full_evidence_json=?,
+                lineup_prediction_json=?,candidates_json=?,robot_pick_json=?
+            WHERE fixture_key=? AND robot_pick_version=?
+              AND actual_home_goals IS NULL AND kickoff_timestamp>?
+            """,
+            (
+                now.isoformat(), now.timestamp(), ROBOT_FEATURE_SCHEMA_VERSION,
+                ROBOT_MEMORY_SCHEMA_VERSION, feature_json, evidence_json,
+                json.dumps(lineup_prediction, ensure_ascii=False, sort_keys=True, default=str),
+                json.dumps(compact_candidates, ensure_ascii=False, sort_keys=True),
+                json.dumps(compact_pick, ensure_ascii=False, sort_keys=True),
+                fixture_key, ROBOT_PICK_VERSION, now.timestamp(),
+            ),
+        )
         conn.commit()
         return True
     except Exception as error:
@@ -4985,7 +5217,7 @@ def save_autonomous_robot_sample(
 
 
 def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0):
-    """Read the first robot decision for one physical fixture without mutation."""
+    """Read the current scheduled robot decision or last pre-kickoff decision."""
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
@@ -5028,7 +5260,7 @@ def _load_frozen_autonomous_robot_sample(match_id, fixture_id=0):
 
 
 def _apply_frozen_toto14_robot(item, match_id):
-    """Overlay the immutable first robot W/D/L table onto one TOTO14 card."""
+    """Overlay the current scheduled robot W/D/L table onto one TOTO14 card."""
     if not isinstance(item, dict):
         return item
     match = item.get("match") or {}
@@ -5069,6 +5301,8 @@ def _apply_frozen_toto14_robot(item, match_id):
         "robot_pick_probability": round(probabilities[side] * 100, 1),
         "robot_pick_version": ROBOT_PICK_VERSION,
         "robot_frozen_at": frozen.get("captured_at") or "",
+        "robot_current_pre_kickoff": True,
+        # Compatibility key for older app payload readers.
         "robot_first_pick_frozen": True,
     })
     return item
@@ -5236,6 +5470,7 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
         graded += int(cursor.rowcount or 0)
     if graded:
         _AUTONOMOUS_ROBOT_CACHE.update(signature=None, artifact=None)
+        _ROBOT_LEARNING_MARKER_CACHE.update(checked_at=0.0, value=None)
     return graded
 
 
@@ -6931,12 +7166,10 @@ def _observe_locked_pick_market_flow(
     item, source, match_id, fixture_id, league, home_team, away_team,
     kickoff, diff_hours, snapshot=None,
 ):
-    """Keep learning the price path without changing a published pick.
+    """Append pre-kickoff market evidence for the next robot revision.
 
-    Official, legacy V4 and robot picks are first-public immutable.  Market
-    observations are different: opening, intermediate and the last available
-    pre-kickoff quote remain useful answers for the robot after the pick has
-    been locked.  This helper therefore appends only evidence/feature memory.
+    Scheduled picks may refresh as the official formula or robot learns. Once
+    kickoff arrives, both displayed picks are immutable and this helper exits.
     """
     item = item if isinstance(item, dict) else {}
     fixture_id = int(fixture_id or 0)
@@ -7413,7 +7646,7 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
         "lineup_confirmed": bool(proto_item.get("lineup_confirmed")),
         "categories": categories,
         "selected": selected,
-        "legacy_v4_pick": dict(proto_item.get("legacy_v4_pick") or {}),
+        "legacy_v4_pick": {},
         "robot_pick": robot_pick,
         "report": str(
             proto_item.get("detailed_report")
@@ -7642,7 +7875,7 @@ def _robot_full_pre_match_evidence(
 
 
 def _save_world_learning_record(match, analysis):
-    """Feed WORLD forecasts into the same immutable grading/learning pipeline."""
+    """Feed WORLD forecasts into the same revision-safe grading pipeline."""
     # A price-only market preview is a provisional display while the complete
     # pre-match pass is pending.  Freezing or grading it would prevent the
     # first full-context official/robot answers from becoming the public picks.
@@ -7698,7 +7931,7 @@ def _save_world_learning_record(match, analysis):
     )
     if kickoff is not None and robot_pick:
         # Every changed pre-kickoff evidence state is appended to the robot's
-        # observation memory. The first public pick row remains immutable.
+        # observation and revision memory; the current row moves until kickoff.
         save_autonomous_robot_sample(
             "WORLD", str(match.get("id") or ""), int(match.get("fixture_id") or 0),
             str(match.get("league_name_ko") or match.get("league") or "세계 축구"),
@@ -8148,8 +8381,10 @@ def _analyze_world_match(item, now, market_performance):
         },
         all_evidence=world_full_evidence,
     )
-    legacy_v4_candidates = build_legacy_v4_candidates(candidates, robot_features)
-    legacy_v4_pick = legacy_v4_choice(candidates, robot_features)
+    # Restored V4 is retired from active calculation. Historical rows remain
+    # in SQLite, but no new scheduled match receives a V4 answer.
+    legacy_v4_candidates = []
+    legacy_v4_pick = {}
     robot_candidates = build_autonomous_robot_candidates(
         candidates, robot_features, _load_autonomous_robot_artifact()
     )
@@ -8402,7 +8637,17 @@ def analyze_world_schedule():
         refresh_old_version = _needs_current_analysis_refresh(
             item, kickoff, now, WORLD_ANALYSIS_VERSION
         )
-        if frozen and not refresh_old_version:
+        refresh_robot = _needs_current_robot_refresh(item, kickoff, now)
+        lineup_retry_due = bool(
+            stage == "T-60-lineup"
+            and not item.get("lineup_confirmed")
+            and int(item.get("lineup_attempts") or 0) < 2
+        )
+        refresh_stage = previous_stage != stage
+        refresh_current = bool(
+            refresh_old_version or refresh_robot or refresh_stage or lineup_retry_due
+        )
+        if frozen and not refresh_current:
             if (
                 fixture_id > 0 and isinstance(item.get("analysis"), dict)
                 and 0 < (kickoff - now).total_seconds() / 3600.0
@@ -8410,13 +8655,26 @@ def analyze_world_schedule():
             ):
                 market_watch_items.append((item, kickoff))
             continue
-        if frozen and refresh_old_version:
+        if frozen and refresh_current:
+            reasons = []
+            if refresh_old_version:
+                reasons.append("공식 버전")
+            if refresh_robot:
+                reasons.append("로봇 학습")
+            if refresh_stage:
+                reasons.append(f"단계 {previous_stage or '미기록'}→{stage}")
+            if lineup_retry_due:
+                reasons.append("선발 재확인")
             print(
-                f"🔄 경기 전 구버전 세계분석 교체: "
+                f"🔄 시작 전 세계분석 갱신: "
                 f"{match.get('home')} vs {match.get('away')} · "
-                f"{previous_version or '버전 미기록'} → {WORLD_ANALYSIS_VERSION}"
+                f"{', '.join(reasons)}"
             )
-        if previous_stage == stage and previous_version == WORLD_ANALYSIS_VERSION:
+        if (
+            previous_stage == stage
+            and previous_version == WORLD_ANALYSIS_VERSION
+            and not refresh_robot
+        ):
             if not (
                 stage == "T-60-lineup"
                 and not item.get("lineup_confirmed")
@@ -8723,8 +8981,99 @@ def _waiting_odds_team_forms(home_info, away_info, ttl_h=24):
 
 
 def _needs_current_analysis_refresh(item, kickoff, now, target_version):
-    """Never replace an already published valid pick merely for a new version."""
-    return False
+    """Refresh only a scheduled card whose official formula version is old."""
+    if not isinstance(item, dict) or kickoff is None or now is None:
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=KST)
+    if now >= kickoff:
+        return False
+    analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    stored_version = str(
+        item.get("analysis_version")
+        or analysis.get("analysis_version")
+        or item.get("public_pick_analysis_version")
+        or analysis.get("public_pick_analysis_version")
+        or ""
+    )
+    return stored_version != str(target_version or "")
+
+
+def _needs_current_robot_refresh(item, kickoff, now):
+    """Refresh a scheduled card after the robot receives a new result."""
+    if not isinstance(item, dict) or kickoff is None or now is None:
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=KST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=KST)
+    if now >= kickoff:
+        return False
+    analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    categories = (
+        item.get("pick_categories")
+        if isinstance(item.get("pick_categories"), dict)
+        else item.get("categories")
+        if isinstance(item.get("categories"), dict)
+        else {}
+    )
+    analysis_categories = (
+        analysis.get("categories")
+        if isinstance(analysis.get("categories"), dict) else {}
+    )
+    decision = item.get("decision") if isinstance(item.get("decision"), dict) else {}
+    analysis_decision = (
+        analysis.get("decision")
+        if isinstance(analysis.get("decision"), dict) else {}
+    )
+    robot = next((
+        value for value in (
+            item.get("robot_pick"), analysis.get("robot_pick"),
+            categories.get("robot_independent"),
+            analysis_categories.get("robot_independent"),
+            decision.get("robot_pick"), analysis_decision.get("robot_pick"),
+        )
+        if isinstance(value, dict) and str(value.get("raw_pick") or "").strip()
+    ), {})
+    if not robot:
+        return True
+    stored_pick_version = str(
+        robot.get("robot_pick_version")
+        or item.get("robot_pick_version")
+        or analysis.get("robot_pick_version")
+        or ""
+    )
+    if stored_pick_version != ROBOT_PICK_VERSION:
+        return True
+    stored_model_version = str(robot.get("robot_model_version") or "")
+    if stored_model_version != ROBOT_MODEL_VERSION:
+        return True
+    current_revision = _robot_learning_revision_marker()
+    stored_revision = str(robot.get("robot_learning_revision") or "")
+    return bool(current_revision and stored_revision != current_revision)
+
+
+def _scheduled_toto_revision_needs_refresh(item, kickoff, now):
+    """Combine formula, robot-learning and evidence-stage refresh rules."""
+    if not isinstance(item, dict) or kickoff is None or now is None or now >= kickoff:
+        return False
+    if _needs_current_analysis_refresh(item, kickoff, now, ANALYSIS_VERSION):
+        return True
+    if _needs_current_robot_refresh(item, kickoff, now):
+        return True
+    target_stage = prediction_stage(
+        (kickoff - now).total_seconds() / 3600.0,
+        bool(item.get("lineup_confirmed")),
+    )
+    stored_stage = str(
+        item.get("latest_analysis_stage")
+        or item.get("analysis_stage")
+        or item.get("frozen_from_stage")
+        or ""
+    )
+    return stored_stage != target_stage
 
 
 def _locked_proto_item(match, previous=None, locked=True):
@@ -8804,17 +9153,16 @@ def _proto_item_has_usable_pick(item, match):
 
 
 def _proto_item_has_three_engine_picks(item):
-    """A pre-match card is complete only when all three independent picks exist."""
+    """A pre-match card is complete when official and robot picks both exist."""
     if not isinstance(item, dict):
         return False
     official = (item.get("pick_categories") or {}).get("high_probability") or {}
-    legacy = item.get("legacy_v4_pick") or {}
     robot = item.get("robot_pick") or {}
-    if not all(isinstance(pick, dict) for pick in (official, legacy, robot)):
+    if not all(isinstance(pick, dict) for pick in (official, robot)):
         return False
     return all(
         str(pick.get("raw_pick") or "").strip()
-        for pick in (official, legacy, robot)
+        for pick in (official, robot)
     )
 
 
@@ -8900,9 +9248,14 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     temporary_odds_stage = candidate_stage in {
         "overseas-preview", "model-only-preview"
     }
+    refresh_now = datetime.now(KST)
     if require_current_stage and (
         candidate_stage != target_stage
         or (temporary_odds_stage and betman_odds_ready)
+        or _needs_current_analysis_refresh(
+            candidate, match_dt, refresh_now, ANALYSIS_VERSION
+        )
+        or _needs_current_robot_refresh(candidate, match_dt, refresh_now)
     ):
         return None
 
@@ -8946,7 +9299,8 @@ def _pending_proto_item(match):
         "analysis_refresh_pending": True,
         "detailed_report": (
             "전체 경기표를 먼저 공개했습니다. 이 경기는 다음 자동 주기에서 "
-            "저장 지점부터 분석하며, 경기 전 최초픽이 완성되면 고정됩니다."
+            "저장 지점부터 분석합니다. 시작 전에는 최신 공식·로봇픽으로 "
+            "갱신하고, 경기 시작 뒤 마지막 경기 전 픽을 고정합니다."
         ),
     }
     _hydrate_published_team_data(item, match)
@@ -9667,10 +10021,8 @@ def build_dashboard_data():
             },
             all_evidence=proto_full_evidence,
         )
-        legacy_v4_candidates = build_legacy_v4_candidates(
-            valid_all_picks, robot_features
-        )
-        legacy_v4_pick = legacy_v4_choice(valid_all_picks, robot_features)
+        legacy_v4_candidates = []
+        legacy_v4_pick = {}
         robot_candidates = build_autonomous_robot_candidates(
             valid_all_picks, robot_features, _load_autonomous_robot_artifact()
         )
@@ -9911,22 +10263,21 @@ def build_dashboard_data():
             "h_rank_html": f"<div class='rank-badge'>🏆 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 순위: {a_rank}위</div>" if a_rank != 99 else ""
         })
 
-    # Every card now leaves the collector through the same first-public
-    # snapshot gate. Fresh calculations still feed the append-only audit trail,
-    # but cannot replace the official or robot answer already shown.
-    immutable_proto = []
+    # Scheduled cards use the newest official/robot answer; started cards use
+    # the last pre-kickoff answer. Replacements stay in append-only audit tables.
+    current_proto = []
     public_now = datetime.now(KST)
     for item in dashboard_proto:
         match = item.get("match") or {}
         kickoff = _parse_kst_match_time(
             item.get("final_match_time") or match.get("match_time")
         )
-        immutable_proto.append(
+        current_proto.append(
             _public_proto_item_from_first_snapshot(
                 match, item, locked=bool(kickoff and public_now >= kickoff)
             )
         )
-    dashboard_proto = immutable_proto
+    dashboard_proto = current_proto
     dashboard_proto.sort(
         key=lambda item: proto_display_order.get(
             str((item.get("match") or {}).get("id") or ""), 10**9
@@ -9965,30 +10316,16 @@ def build_dashboard_data():
         if (
             frozen_item is not None
             and not kickoff_passed
-            and not _toto14_item_has_usable_pick(
-                frozen_item, home_team, away_team
+            and _scheduled_toto_revision_needs_refresh(
+                frozen_item, scheduled_dt, now
             )
-        ):
-            # 예전 버전이 빈 `분석 대기` 카드까지 최초픽으로
-            # 동결했던 경우에만 풀어준다. 실제 픽이 있는 13경기는
-            # 같은 버전에서 절대 재산출하지 않는다.
-            frozen_item = None
-            policy_migration = True
-            print(
-                f"🩹 시작 전 승무패14 빈 대기 기록 재분석: "
-                f"{home_team} vs {away_team}"
-            )
-        if frozen_item is not None and _needs_current_analysis_refresh(
-            frozen_item, scheduled_dt, now, ANALYSIS_VERSION
         ):
             migration_fallback = dict(frozen_item)
             frozen_item = None
             policy_migration = True
             print(
-                f"🔄 시작 전 구버전 승무패14 재분석: "
-                f"{home_team} vs {away_team} · "
-                f"{migration_fallback.get('analysis_version') or '버전 미기록'} "
-                f"→ {ANALYSIS_VERSION}"
+                f"🔄 시작 전 승무패14 최신픽 재분석: "
+                f"{home_team} vs {away_team}"
             )
         freeze_needs_persist = False
         previous_item = previous_toto14.get(str(m.get("id", "")))
@@ -10002,8 +10339,8 @@ def build_dashboard_data():
             and previous_generated_at <= scheduled_dt
         )
         previous_stage = str(previous_item.get("analysis_stage", "")) if isinstance(previous_item, dict) else ""
-        previous_needs_refresh = _needs_current_analysis_refresh(
-            previous_item, scheduled_dt, now, ANALYSIS_VERSION
+        previous_needs_refresh = _scheduled_toto_revision_needs_refresh(
+            previous_item, scheduled_dt, now
         )
         if (
             frozen_item is None
@@ -10011,11 +10348,6 @@ def build_dashboard_data():
             and not previous_needs_refresh
             and _toto14_item_has_usable_pick(
                 previous_item, home_team, away_team
-            )
-            and (
-                kickoff_passed
-                or previous_stage in {"T-30-final", "locked"}
-                or previous_item.get("prediction_frozen") is True
             )
         ):
             frozen_item = dict(previous_item)
@@ -10031,8 +10363,8 @@ def build_dashboard_data():
                 and str(snapshot_item.get("frozen_from_stage", ""))
                 in {"T-30-final", "locked"}
             )
-            snapshot_needs_refresh = _needs_current_analysis_refresh(
-                snapshot_item, scheduled_dt, now, ANALYSIS_VERSION
+            snapshot_needs_refresh = _scheduled_toto_revision_needs_refresh(
+                snapshot_item, scheduled_dt, now
             )
             if snapshot_item and not snapshot_needs_refresh and (kickoff_passed or snapshot_is_final):
                 frozen_item = snapshot_item
@@ -10044,8 +10376,8 @@ def build_dashboard_data():
             frozen_item = _unavailable_toto14_item(m)
             freeze_needs_persist = kickoff_passed  # Unknown schedules may recover later.
 
-        # Frozen rounds need no new analysis/identity API calls. A missing ID is
-        # repaired by the bounded scoring queue, never by rewriting forecasts.
+        # A reusable current/locked card needs no new heavy analysis call. A
+        # missing ID is repaired by the bounded scoring queue.
 
         if frozen_item is not None and freeze_needs_persist:
             stored_item = _freeze_toto14_prediction(
@@ -10471,10 +10803,8 @@ def build_dashboard_data():
             },
             all_evidence=toto_full_evidence,
         )
-        legacy_v4_candidates = build_legacy_v4_candidates(
-            robot_wdl_candidates, robot_features
-        )
-        legacy_v4_pick = legacy_v4_choice(robot_wdl_candidates, robot_features)
+        legacy_v4_candidates = []
+        legacy_v4_pick = {}
         robot_candidates = build_autonomous_robot_candidates(
             robot_wdl_candidates, robot_features,
             _load_autonomous_robot_artifact(),
@@ -10576,8 +10906,8 @@ def build_dashboard_data():
             suppressed_double_count += 1
         dashboard_toto14.append(toto_item)
 
-    # Identity decoration is allowed to improve after the first public pick.
-    # It never changes the saved prediction, probability, odds or report.
+    # Identity decoration improves independently from the scheduled pick
+    # revision and never changes its saved probability, odds or report.
     for published_item in dashboard_proto:
         _hydrate_published_team_data(published_item)
     for published_item in dashboard_toto14:
