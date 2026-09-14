@@ -9400,6 +9400,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
         queue_team_identity_retry(
             match.get("home"), match.get("away"), final_match_time,
             reason="published_card_identity_logo_or_form_missing",
+            league_name=match.get("league") or "",
         )
     candidate = _public_proto_item_from_first_snapshot(match, candidate, locked=False)
     # Two-pick cards created by an interrupted or older run must not remain
@@ -9568,6 +9569,7 @@ def build_dashboard_data():
                 queue_team_identity_retry(
                     home_team, away_team, final_match_time,
                     reason="analysis_deferred_identity_logo_or_form_pending",
+                    league_name=m.get("league") or "",
                 )
             deferred_item["analysis_refresh_pending"] = True
             dashboard_proto.append(deferred_item)
@@ -9576,7 +9578,8 @@ def build_dashboard_data():
 
         analyzed_proto_count += 1
         home_info, away_info, _ = resolve_match_team_pair(
-            home_team, away_team, final_match_time, ttl_h=2
+            home_team, away_team, final_match_time, ttl_h=2,
+            league_name=m.get("league") or "",
         )
 
         now = datetime.now(timezone(timedelta(hours=9)))
@@ -10274,6 +10277,7 @@ def build_dashboard_data():
             queue_team_identity_retry(
                 home_team, away_team, final_match_time,
                 reason="identity_ready_logo_or_recent_form_pending",
+                league_name=m.get("league") or "",
             )
         story = "<br><br>".join(
             paragraph.replace("\n", "<br>")
@@ -10558,7 +10562,8 @@ def build_dashboard_data():
             continue
 
         home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, match_time, ttl_h=2
+            home_team, away_team, match_time, ttl_h=2,
+            league_name=m.get("league") or "",
         )
         if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
             unavailable = dict(migration_fallback or _unavailable_toto14_item(m))
@@ -10984,6 +10989,7 @@ def build_dashboard_data():
                 queue_team_identity_retry(
                     home_team, away_team, match_time,
                     reason="toto14_identity_logo_or_recent_form_pending",
+                    league_name=m.get("league") or "",
                 )
             toto_item = {
                 "_pending_toto_save": True, "api_fixture_id": api_fixture_id,

@@ -51,7 +51,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v5-formula-lab-separated-tracks
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.8-commercial-football-autonomous-formula-lab"
+SYSTEM_VERSION = "R7.12.9-team-identity-national-flags-floating-top"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -344,6 +344,7 @@ def _runtime_connect():
             home_name TEXT NOT NULL,
             away_name TEXT NOT NULL,
             match_time TEXT NOT NULL DEFAULT '',
+            league_name TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'PENDING',
             attempts INTEGER NOT NULL DEFAULT 0,
             last_reason TEXT NOT NULL DEFAULT '',
@@ -359,6 +360,24 @@ def _runtime_connect():
             ON team_identity_retry_queue(status,next_retry_at,updated_at);
         CREATE TABLE IF NOT EXISTS runtime_meta (key TEXT PRIMARY KEY);
     """)
+    # Existing servers already have this durable queue.  Add the league hint
+    # in place without clearing attempts or resolved identities.
+    retry_columns = {
+        str(row[1]) for row in conn.execute(
+            "PRAGMA table_info(team_identity_retry_queue)"
+        ).fetchall()
+    }
+    if "league_name" not in retry_columns:
+        try:
+            conn.execute(
+                "ALTER TABLE team_identity_retry_queue "
+                "ADD COLUMN league_name TEXT NOT NULL DEFAULT ''"
+            )
+            conn.commit()
+        except sqlite3.OperationalError as error:
+            # Another worker may have completed the same one-time migration.
+            if "duplicate column" not in str(error).casefold():
+                raise
     if not conn.execute("SELECT 1 FROM runtime_meta WHERE key='migrated'").fetchone():
         legacy = None
         try:
@@ -1342,6 +1361,11 @@ def _team_search_candidates(translated_name, saved_name=None):
 
     add(saved_name)
     add(translated_name)
+    # New Betman spellings often arrive only as Hangul.  Keep a deterministic
+    # romanized candidate so the provider search is not called with an empty
+    # string such as "SC" forever.  Pair verification below still decides
+    # whether the returned identity is safe to store.
+    add(_hangul_romanize(saved_name or translated_name))
 
     sanitized = _sanitize_team_search(saved_name or translated_name)
     # API에서 자주 쓰지 않는 창단연도와 구단 접두/접미어를 제거한 후보.
@@ -1372,8 +1396,272 @@ def _team_search_candidates(translated_name, saved_name=None):
 def _normalize_team_alias(value):
     return re.sub(r'[^0-9A-Za-z가-힣]+', '', str(value or '')).casefold()
 
-def _resolve_team_logo(team_name, team_id=0, api_logo=None):
-    """공식 예외 로고를 우선하고 나머지는 API 로고를 그대로 쓴다."""
+
+def _country_alias_key(value):
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    normalized = "".join(
+        character for character in normalized
+        if not unicodedata.combining(character)
+    )
+    normalized = unicodedata.normalize("NFC", normalized)
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", normalized).casefold()
+
+
+# National-team cards should use a country's flag when the provider has no
+# usable crest.  The mapping is deliberately local and deterministic: no
+# unaudited image search or additional paid sports request is made at render
+# time.  Aliases are exact country names, so clubs that merely contain a city
+# or country word are not mistaken for national teams.
+_COUNTRY_FLAG_ROWS = (
+    ("af", "Afghanistan", "아프가니스탄"),
+    ("al", "Albania", "알바니아"),
+    ("dz", "Algeria", "알제리"),
+    ("ad", "Andorra", "안도라"),
+    ("ao", "Angola", "앙골라"),
+    ("ag", "Antigua and Barbuda", "Antigua Barbuda", "앤티가 바부다"),
+    ("ar", "Argentina", "아르헨티나"),
+    ("am", "Armenia", "아르메니아"),
+    ("au", "Australia", "호주", "오스트레일리아"),
+    ("at", "Austria", "오스트리아"),
+    ("az", "Azerbaijan", "아제르바이잔"),
+    ("bs", "Bahamas", "바하마"),
+    ("bh", "Bahrain", "바레인"),
+    ("bd", "Bangladesh", "방글라데시"),
+    ("bb", "Barbados", "바베이도스"),
+    ("by", "Belarus", "벨라루스"),
+    ("be", "Belgium", "벨기에"),
+    ("bz", "Belize", "벨리즈"),
+    ("bj", "Benin", "베냉"),
+    ("bt", "Bhutan", "부탄"),
+    ("bo", "Bolivia", "볼리비아"),
+    ("ba", "Bosnia and Herzegovina", "Bosnia-Herzegovina", "보스니아 헤르체고비나"),
+    ("bw", "Botswana", "보츠와나"),
+    ("br", "Brazil", "브라질"),
+    ("bn", "Brunei", "Brunei Darussalam", "브루나이"),
+    ("bg", "Bulgaria", "불가리아"),
+    ("bf", "Burkina Faso", "부르키나파소"),
+    ("bi", "Burundi", "부룬디"),
+    ("kh", "Cambodia", "캄보디아"),
+    ("cm", "Cameroon", "카메룬"),
+    ("ca", "Canada", "캐나다"),
+    ("cv", "Cape Verde", "Cabo Verde", "카보베르데"),
+    ("cf", "Central African Republic", "중앙아프리카공화국"),
+    ("td", "Chad", "차드"),
+    ("cl", "Chile", "칠레"),
+    ("cn", "China", "China PR", "중국"),
+    ("tw", "Chinese Taipei", "Taiwan", "대만", "차이니스 타이베이"),
+    ("co", "Colombia", "콜롬비아"),
+    ("km", "Comoros", "코모로"),
+    ("cg", "Congo", "Congo Republic", "콩고"),
+    ("cd", "DR Congo", "Congo DR", "Democratic Republic of the Congo", "콩고민주공화국"),
+    ("cr", "Costa Rica", "코스타리카"),
+    ("hr", "Croatia", "크로아티아"),
+    ("cu", "Cuba", "쿠바"),
+    ("cw", "Curacao", "Curaçao", "퀴라소"),
+    ("cy", "Cyprus", "키프로스"),
+    ("cz", "Czech Republic", "Czechia", "체코"),
+    ("dk", "Denmark", "덴마크"),
+    ("dj", "Djibouti", "지부티"),
+    ("dm", "Dominica", "도미니카 연방"),
+    ("do", "Dominican Republic", "도미니카공화국"),
+    ("ec", "Ecuador", "에콰도르"),
+    ("eg", "Egypt", "이집트"),
+    ("sv", "El Salvador", "엘살바도르"),
+    ("gb-eng", "England", "잉글랜드"),
+    ("gq", "Equatorial Guinea", "적도기니"),
+    ("er", "Eritrea", "에리트레아"),
+    ("ee", "Estonia", "에스토니아"),
+    ("sz", "Eswatini", "Swaziland", "에스와티니"),
+    ("et", "Ethiopia", "에티오피아"),
+    ("fo", "Faroe Islands", "페로 제도"),
+    ("fj", "Fiji", "피지"),
+    ("fi", "Finland", "핀란드"),
+    ("fr", "France", "프랑스"),
+    ("ga", "Gabon", "가봉"),
+    ("gm", "Gambia", "감비아"),
+    ("ge", "Georgia", "조지아"),
+    ("de", "Germany", "독일"),
+    ("gh", "Ghana", "가나"),
+    ("gr", "Greece", "그리스"),
+    ("gd", "Grenada", "그레나다"),
+    ("gt", "Guatemala", "과테말라"),
+    ("gn", "Guinea", "기니"),
+    ("gw", "Guinea-Bissau", "Guinea Bissau", "기니비사우"),
+    ("gy", "Guyana", "가이아나"),
+    ("ht", "Haiti", "아이티"),
+    ("hn", "Honduras", "온두라스"),
+    ("hk", "Hong Kong", "Hong Kong SAR", "홍콩"),
+    ("hu", "Hungary", "헝가리"),
+    ("is", "Iceland", "아이슬란드"),
+    ("in", "India", "인도"),
+    ("id", "Indonesia", "인도네시아"),
+    ("ir", "Iran", "Iran Islamic Republic", "이란"),
+    ("iq", "Iraq", "이라크"),
+    ("ie", "Republic of Ireland", "Ireland", "아일랜드"),
+    ("il", "Israel", "이스라엘"),
+    ("it", "Italy", "이탈리아"),
+    ("ci", "Ivory Coast", "Cote d'Ivoire", "Côte d'Ivoire", "코트디부아르"),
+    ("jm", "Jamaica", "자메이카"),
+    ("jp", "Japan", "일본"),
+    ("jo", "Jordan", "요르단"),
+    ("kz", "Kazakhstan", "카자흐스탄"),
+    ("ke", "Kenya", "케냐"),
+    ("xk", "Kosovo", "코소보"),
+    ("kw", "Kuwait", "쿠웨이트"),
+    ("kg", "Kyrgyzstan", "Kyrgyz Republic", "키르기스스탄"),
+    ("la", "Laos", "Lao PDR", "라오스"),
+    ("lv", "Latvia", "라트비아"),
+    ("lb", "Lebanon", "레바논"),
+    ("ls", "Lesotho", "레소토"),
+    ("lr", "Liberia", "라이베리아"),
+    ("ly", "Libya", "리비아"),
+    ("li", "Liechtenstein", "리히텐슈타인"),
+    ("lt", "Lithuania", "리투아니아"),
+    ("lu", "Luxembourg", "룩셈부르크"),
+    ("mo", "Macau", "Macao", "마카오"),
+    ("mg", "Madagascar", "마다가스카르"),
+    ("mw", "Malawi", "말라위"),
+    ("my", "Malaysia", "말레이시아"),
+    ("mv", "Maldives", "몰디브"),
+    ("ml", "Mali", "말리"),
+    ("mt", "Malta", "몰타"),
+    ("mr", "Mauritania", "모리타니"),
+    ("mu", "Mauritius", "모리셔스"),
+    ("mx", "Mexico", "멕시코"),
+    ("md", "Moldova", "몰도바"),
+    ("mn", "Mongolia", "몽골"),
+    ("me", "Montenegro", "몬테네그로"),
+    ("ma", "Morocco", "모로코"),
+    ("mz", "Mozambique", "모잠비크"),
+    ("mm", "Myanmar", "미얀마"),
+    ("na", "Namibia", "나미비아"),
+    ("np", "Nepal", "네팔"),
+    ("nl", "Netherlands", "Holland", "네덜란드"),
+    ("nc", "New Caledonia", "뉴칼레도니아"),
+    ("nz", "New Zealand", "뉴질랜드"),
+    ("ni", "Nicaragua", "니카라과"),
+    ("ne", "Niger", "니제르"),
+    ("ng", "Nigeria", "나이지리아"),
+    ("mk", "North Macedonia", "Macedonia FYR", "북마케도니아"),
+    ("gb-nir", "Northern Ireland", "북아일랜드"),
+    ("kp", "North Korea", "Korea DPR", "북한"),
+    ("no", "Norway", "노르웨이"),
+    ("om", "Oman", "오만"),
+    ("pk", "Pakistan", "파키스탄"),
+    ("ps", "Palestine", "팔레스타인"),
+    ("pa", "Panama", "파나마"),
+    ("pg", "Papua New Guinea", "파푸아뉴기니"),
+    ("py", "Paraguay", "파라과이"),
+    ("pe", "Peru", "페루"),
+    ("ph", "Philippines", "필리핀"),
+    ("pl", "Poland", "폴란드"),
+    ("pt", "Portugal", "포르투갈"),
+    ("pr", "Puerto Rico", "푸에르토리코"),
+    ("qa", "Qatar", "카타르"),
+    ("ro", "Romania", "루마니아"),
+    ("ru", "Russia", "러시아"),
+    ("rw", "Rwanda", "르완다"),
+    ("ws", "Samoa", "사모아"),
+    ("sm", "San Marino", "산마리노"),
+    ("sa", "Saudi Arabia", "사우디아라비아", "사우디"),
+    ("gb-sct", "Scotland", "스코틀랜드"),
+    ("sn", "Senegal", "세네갈"),
+    ("rs", "Serbia", "세르비아"),
+    ("sl", "Sierra Leone", "시에라리온"),
+    ("sg", "Singapore", "싱가포르"),
+    ("sk", "Slovakia", "슬로바키아"),
+    ("si", "Slovenia", "슬로베니아"),
+    ("sb", "Solomon Islands", "솔로몬 제도"),
+    ("so", "Somalia", "소말리아"),
+    ("za", "South Africa", "남아프리카공화국", "남아공"),
+    ("kr", "South Korea", "Korea Republic", "대한민국", "한국"),
+    ("ss", "South Sudan", "남수단"),
+    ("es", "Spain", "스페인"),
+    ("lk", "Sri Lanka", "스리랑카"),
+    ("sd", "Sudan", "수단"),
+    ("sr", "Suriname", "수리남"),
+    ("se", "Sweden", "스웨덴"),
+    ("ch", "Switzerland", "스위스"),
+    ("sy", "Syria", "시리아"),
+    ("tj", "Tajikistan", "타지키스탄"),
+    ("tz", "Tanzania", "탄자니아"),
+    ("th", "Thailand", "태국"),
+    ("tl", "Timor-Leste", "East Timor", "동티모르"),
+    ("tg", "Togo", "토고"),
+    ("to", "Tonga", "통가"),
+    ("tt", "Trinidad and Tobago", "트리니다드 토바고"),
+    ("tn", "Tunisia", "튀니지"),
+    ("tr", "Turkey", "Turkiye", "Türkiye", "튀르키예", "터키"),
+    ("tm", "Turkmenistan", "투르크메니스탄"),
+    ("ug", "Uganda", "우간다"),
+    ("ua", "Ukraine", "우크라이나"),
+    ("ae", "United Arab Emirates", "UAE", "아랍에미리트"),
+    ("us", "United States", "USA", "United States of America", "미국"),
+    ("uy", "Uruguay", "우루과이"),
+    ("uz", "Uzbekistan", "우즈베키스탄"),
+    ("ve", "Venezuela", "베네수엘라"),
+    ("vn", "Vietnam", "Viet Nam", "베트남"),
+    ("gb-wls", "Wales", "웨일스"),
+    ("ye", "Yemen", "예멘"),
+    ("zm", "Zambia", "잠비아"),
+    ("zw", "Zimbabwe", "짐바브웨"),
+)
+
+COUNTRY_FLAG_ISO_BY_ALIAS = {}
+COUNTRY_FLAG_NAME_BY_ISO = {}
+for _flag_iso, _flag_english, *_flag_aliases in _COUNTRY_FLAG_ROWS:
+    COUNTRY_FLAG_NAME_BY_ISO.setdefault(_flag_iso, _flag_english)
+    for _flag_alias in (_flag_english, *_flag_aliases):
+        _flag_alias_key = _country_alias_key(_flag_alias)
+        if _flag_alias_key:
+            COUNTRY_FLAG_ISO_BY_ALIAS[_flag_alias_key] = _flag_iso
+
+_NATIONAL_TEAM_SUFFIX_RE = re.compile(
+    r"^(?:(?:women|womens|woman|ladies|female|men|mens|male|national|nationalteam|"
+    r"olympic|youth|u\d{1,2}|under\d{1,2}|bteam|b)|(?:여자|여성|남자|남성|"
+    r"국가대표|대표팀|대표|올림픽|청소년|유스|\d{1,2}세이하))+$",
+    re.IGNORECASE,
+)
+
+
+def _national_team_country_code(team_name, api_team=None):
+    """Return a flag code only for an explicit national-team identity."""
+    api_team = api_team if isinstance(api_team, dict) else {}
+    api_national = api_team.get("national") is True
+    values = [team_name]
+    if api_national:
+        values.extend((api_team.get("country"), api_team.get("name")))
+
+    aliases = sorted(
+        COUNTRY_FLAG_ISO_BY_ALIAS.items(), key=lambda item: len(item[0]), reverse=True
+    )
+    for value in values:
+        key = _country_alias_key(value)
+        if not key:
+            continue
+        direct = COUNTRY_FLAG_ISO_BY_ALIAS.get(key)
+        if direct:
+            return direct
+        for alias_key, iso_code in aliases:
+            if not key.startswith(alias_key):
+                continue
+            suffix = key[len(alias_key):]
+            if suffix and _NATIONAL_TEAM_SUFFIX_RE.fullmatch(suffix):
+                return iso_code
+    return ""
+
+
+def _national_team_flag_url(team_name, api_team=None):
+    iso_code = _national_team_country_code(team_name, api_team)
+    return f"https://flagcdn.com/w160/{iso_code}.png" if iso_code else ""
+
+
+def _national_team_english_name(team_name):
+    iso_code = _national_team_country_code(team_name)
+    return COUNTRY_FLAG_NAME_BY_ISO.get(iso_code, "")
+
+def _resolve_team_logo(team_name, team_id=0, api_logo=None, api_team=None):
+    """Use verified crests and deterministic flags before the generic ball."""
     try:
         direct_logo = OFFICIAL_TEAM_LOGOS_BY_ID.get(int(team_id or 0))
         if direct_logo:
@@ -1385,6 +1673,15 @@ def _resolve_team_logo(team_name, team_id=0, api_logo=None):
     for mapped_name, official_logo in OFFICIAL_TEAM_LOGOS.items():
         if normalized_name == _normalize_team_alias(mapped_name):
             return official_logo
+    for mapped_name, mapped in DIRECT_TEAM_INFO.items():
+        if normalized_name != _normalize_team_alias(mapped_name):
+            continue
+        mapped_logo = str((mapped or {}).get("logo") or "").strip()
+        if mapped_logo and mapped_logo != DEFAULT_LOGO:
+            return mapped_logo
+    national_flag = _national_team_flag_url(team_name, api_team)
+    if national_flag:
+        return national_flag
     return api_logo or DEFAULT_LOGO
 
 def _team_id_from_resolved_logo(team_name):
@@ -1410,6 +1707,9 @@ def _team_id_from_resolved_logo(team_name):
 
 def _resolve_translated_team_name(team_name):
     """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
+    national_name = _national_team_english_name(team_name)
+    if national_name:
+        return national_name
     builtin_alias = _lookup_builtin_team_alias(team_name)
     if builtin_alias:
         return builtin_alias
@@ -1453,7 +1753,7 @@ def _load_verified_team_info(team_name):
         return None
     cached = dict(cached)
     cached["logo"] = _resolve_team_logo(
-        team_name, cached.get("id"), cached.get("logo")
+        team_name, cached.get("id"), cached.get("logo"), cached
     )
     return cached
 
@@ -1468,6 +1768,7 @@ def _remember_verified_team(team_name, api_team):
         team_name,
         team_id,
         result.get("logo") or f"https://media.api-sports.io/football/teams/{team_id}.png",
+        result,
     )
     result["verified_pair"] = True
     identity_key = _normalize_team_alias(team_name)
@@ -1486,10 +1787,13 @@ def _team_identity_retry_key(home_name, away_name, match_time=""):
     ))
 
 
-def queue_team_identity_retry(home_name, away_name, match_time="", reason="unresolved"):
+def queue_team_identity_retry(
+    home_name, away_name, match_time="", reason="unresolved", league_name=""
+):
     """Save unresolved IDs/logos/forms until they are genuinely completed."""
     home_name = str(home_name or "").strip()
     away_name = str(away_name or "").strip()
+    league_name = str(league_name or "").strip()
     if not home_name or not away_name:
         return False
     retry_key = _team_identity_retry_key(home_name, away_name, match_time)
@@ -1501,17 +1805,19 @@ def queue_team_identity_retry(home_name, away_name, match_time="", reason="unres
         conn.execute(
             """
             INSERT OR IGNORE INTO team_identity_retry_queue (
-                retry_key,home_name,away_name,match_time,status,attempts,
+                retry_key,home_name,away_name,match_time,league_name,status,attempts,
                 last_reason,next_retry_at,updated_at
-            ) VALUES (?,?,?,?, 'PENDING',0,?,?,CURRENT_TIMESTAMP)
+            ) VALUES (?,?,?,?,?, 'PENDING',0,?,?,CURRENT_TIMESTAMP)
             """,
-            (retry_key, home_name, away_name, str(match_time or ""),
+            (retry_key, home_name, away_name, str(match_time or ""), league_name,
              str(reason or "unresolved")[:300], now_iso),
         )
         conn.execute(
             """
             UPDATE team_identity_retry_queue
-            SET home_name=?,away_name=?,match_time=?,last_reason=?,
+            SET home_name=?,away_name=?,match_time=?,
+                league_name=CASE WHEN ?!='' THEN ? ELSE league_name END,
+                last_reason=?,
                 status=CASE WHEN status='RESOLVED' THEN status ELSE 'PENDING' END,
                 next_retry_at=CASE
                     WHEN status='RESOLVED' THEN next_retry_at
@@ -1520,7 +1826,7 @@ def queue_team_identity_retry(home_name, away_name, match_time="", reason="unres
                 updated_at=CURRENT_TIMESTAMP
             WHERE retry_key=?
             """,
-            (home_name, away_name, str(match_time or ""),
+            (home_name, away_name, str(match_time or ""), league_name, league_name,
              str(reason or "unresolved")[:300], now_iso, now_iso, retry_key),
         )
         conn.commit()
@@ -1585,7 +1891,7 @@ def process_team_identity_retry_queue(limit=4):
     try:
         rows = conn.execute(
             """
-            SELECT retry_key,home_name,away_name,match_time,attempts
+            SELECT retry_key,home_name,away_name,match_time,league_name,attempts
             FROM team_identity_retry_queue
             WHERE status!='RESOLVED' AND (next_retry_at IS NULL OR next_retry_at<=?)
             ORDER BY COALESCE(next_retry_at,''),updated_at,retry_key LIMIT ?
@@ -1596,7 +1902,7 @@ def process_team_identity_retry_queue(limit=4):
         conn.close()
 
     processed = resolved = 0
-    for retry_key, home_name, away_name, match_time, prior_attempts in rows:
+    for retry_key, home_name, away_name, match_time, league_name, prior_attempts in rows:
         processed += 1
         attempts = int(prior_attempts or 0) + 1
         reason = "team_identity_unresolved"
@@ -1605,7 +1911,8 @@ def process_team_identity_retry_queue(limit=4):
         try:
             with api_purpose_context("analysis"):
                 home_info, away_info, _ = resolve_match_team_pair(
-                    home_name, away_name, match_time, ttl_h=0.2
+                    home_name, away_name, match_time, ttl_h=0.2,
+                    league_name=league_name,
                 )
                 home_id = int((home_info or {}).get("id") or 0)
                 away_id = int((away_info or {}).get("id") or 0)
@@ -1658,6 +1965,79 @@ def _latin_team_key(value):
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii").casefold()
     return re.sub(r"[^0-9a-z]+", "", ascii_value)
+
+
+_HANGUL_INITIALS = (
+    "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "",
+    "j", "jj", "ch", "k", "t", "p", "h",
+)
+_HANGUL_VOWELS = (
+    "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae",
+    "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i",
+)
+_HANGUL_FINALS = (
+    "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lp",
+    "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "t",
+    "k", "t", "p", "h",
+)
+
+
+def _hangul_romanize(value):
+    """Romanize Hangul deterministically without a network translator."""
+    parts = []
+    for character in str(value or ""):
+        codepoint = ord(character)
+        if 0xAC00 <= codepoint <= 0xD7A3:
+            syllable = codepoint - 0xAC00
+            initial = syllable // 588
+            vowel = (syllable % 588) // 28
+            final = syllable % 28
+            parts.append(
+                _HANGUL_INITIALS[initial]
+                + _HANGUL_VOWELS[vowel]
+                + _HANGUL_FINALS[final]
+            )
+        elif character.isascii() and character.isalnum():
+            parts.append(character.casefold())
+        else:
+            parts.append(" ")
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
+
+
+def _romanized_team_key(value):
+    value = _hangul_romanize(value)
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii").casefold()
+    # Korean loanword vowels (eu/eo) are commonly absent or simplified in the
+    # provider's Latin spelling.  Normalize only for comparison, never for the
+    # public team name.
+    value = value.replace("eu", "").replace("eo", "o")
+    value = value.replace("ae", "e").replace("oe", "e").replace("ui", "i")
+    value = re.sub(
+        r"\b(?:footballclub|football|club|association|afc|fc|sc|cf|ac)\b",
+        " ", value,
+    )
+    value = re.sub(r"[^0-9a-z]+", "", value)
+    return re.sub(r"(?:footballclub|afc|fc|sc|cf)$", "", value)
+
+
+def _team_phonetic_key(value):
+    """Build a conservative consonant key for Korean/Latin spelling gaps."""
+    value = _romanized_team_key(value)
+    if not value:
+        return ""
+    substitutions = (
+        (r"tch|tsch|ch|dj|zh|j", "j"),
+        (r"ph|f|v|p|b", "p"),
+        (r"kh|q|g|k|c", "k"),
+        (r"th|d|t", "t"),
+        (r"sh|s|z|x", "s"),
+        (r"r|l", "l"),
+    )
+    for pattern, replacement in substitutions:
+        value = re.sub(pattern, replacement, value)
+    value = re.sub(r"[aeiouy]", "", value)
+    return re.sub(r"(.)\1+", r"\1", value)
 
 
 def known_team_id(team_name):
@@ -1803,7 +2183,7 @@ def fetch_team_info_api(team_name):
     cached_data = get_db_cache(cache_key, 8760)
     if cached_data and cached_data.get("id"):
         cached_data["logo"] = _resolve_team_logo(
-            team_name, cached_data.get("id"), cached_data.get("logo")
+            team_name, cached_data.get("id"), cached_data.get("logo"), cached_data
         )
         set_db_cache(cache_key, cached_data)
         return remember(cached_data)
@@ -1856,9 +2236,11 @@ def fetch_team_info_api(team_name):
                 )
 
             best_entry = max(data, key=similarity)
-            # 핵심 단어 검색 결과가 전혀 다른 팀이면 저장하지 않는다.
+            # 핵심/로마자 검색 결과가 다른 팀이면 저장하지 않는다.  The old
+            # 0.15 floor could permanently attach an unrelated club merely
+            # because the provider returned one fuzzy result.
             # 잘못 저장된 팀 ID는 로고·최근 전적·채점까지 모두 오염시키기 때문이다.
-            if similarity(best_entry) < 0.15:
+            if similarity(best_entry) < 0.55:
                 continue
             result = dict(best_entry.get('team', {}) or {})
             if not result.get("id"):
@@ -1880,7 +2262,7 @@ def fetch_team_info_api(team_name):
                 }
 
             result["logo"] = _resolve_team_logo(
-                team_name, result.get("id"), result.get("logo")
+                team_name, result.get("id"), result.get("logo"), result
             )
 
             if candidate.casefold() != candidates[0].casefold():
@@ -1949,7 +2331,7 @@ def get_cached_team_display_profile(team_name, form_ttl_h=24):
 
     info = dict(info or {})
     team_id = int(info.get("id") or 0)
-    logo = _resolve_team_logo(team_name, team_id, info.get("logo"))
+    logo = _resolve_team_logo(team_name, team_id, info.get("logo"), info)
     form = ""
     if team_id:
         cached_form = get_db_cache(
@@ -1998,13 +2380,18 @@ def parse_match_time(match_time_str):
 def _team_name_match_score(local_name, api_name):
     """고정 ID를 배제하고 이름만으로 동일 팀 신뢰도를 계산한다."""
     translated = _resolve_translated_team_name(local_name)
-    api_key = _latin_team_key(api_name)
+    national_name = _national_team_english_name(local_name)
+    api_key = _romanized_team_key(api_name)
     if not api_key:
         return 0.0
 
     scores = []
-    for candidate in (translated, local_name):
-        local_key = _latin_team_key(candidate)
+    compared = set()
+    for candidate in (translated, national_name, local_name, _hangul_romanize(local_name)):
+        local_key = _romanized_team_key(candidate)
+        if local_key in compared:
+            continue
+        compared.add(local_key)
         if not local_key:
             continue
         if local_key == api_key:
@@ -2016,7 +2403,50 @@ def _team_name_match_score(local_name, api_name):
             scores.append(0.96)
             continue
         scores.append(difflib.SequenceMatcher(None, local_key, api_key).ratio())
+
+        local_phonetic = _team_phonetic_key(candidate)
+        api_phonetic = _team_phonetic_key(api_name)
+        if min(len(local_phonetic), len(api_phonetic)) >= 4:
+            phonetic_ratio = difflib.SequenceMatcher(
+                None, local_phonetic, api_phonetic
+            ).ratio()
+            length_coverage = min(len(local_phonetic), len(api_phonetic)) / max(
+                len(local_phonetic), len(api_phonetic)
+            )
+            if length_coverage >= 0.55:
+                scores.append(0.90 * phonetic_ratio)
     return max(scores, default=0.0)
+
+
+def _league_name_match_score(local_league, api_league):
+    """Compare a Betman league hint without requiring a manual team entry."""
+    local_key = _latin_team_key(local_league)
+    api_key = _latin_team_key(api_league)
+    if not local_key or not api_key:
+        return 0.0
+    if local_key == api_key:
+        return 1.0
+    if min(len(local_key), len(api_key)) >= 4 and (
+        local_key in api_key or api_key in local_key
+    ):
+        return 0.96
+
+    # Official competition abbreviations displayed by Betman.
+    if local_key in {"acl2", "afccl2"} and (
+        "afcchampionsleaguetwo" in api_key or "afccup" in api_key
+    ):
+        return 1.0
+    if local_key in {"acle", "afccle"} and "afcchampionsleagueelite" in api_key:
+        return 1.0
+    if local_key in {"acl", "afccl"} and "afcchampionsleague" in api_key:
+        return 0.96
+
+    number_words = {"one": "1", "two": "2", "three": "3"}
+    api_tokens = re.findall(r"[a-z]+|\d+", str(api_league or "").casefold())
+    acronym = "".join(number_words.get(token, token[:1]) for token in api_tokens)
+    if local_key == acronym or (len(local_key) >= 3 and local_key in acronym):
+        return 0.90
+    return difflib.SequenceMatcher(None, local_key, api_key).ratio()
 
 
 def _fetch_date_fixtures_api(date_str, ttl_h=2, purpose="analysis"):
@@ -2056,7 +2486,9 @@ def _fixture_team_payload(fixture_data, side):
     return team
 
 
-def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
+def resolve_match_team_pair(
+    home_name, away_name, match_time_str, ttl_h=2, league_name=""
+):
     """실제 날짜별 경기표에서 홈·원정 두 팀을 동시에 확정한다.
 
     한 팀씩 검색하면 동명이인이나 오래된 잘못된 캐시가 상대 팀까지 오염시킬
@@ -2065,6 +2497,7 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
     """
     home_name = str(home_name or "").strip()
     away_name = str(away_name or "").strip()
+    league_name = str(league_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
 
     # 이미 검증된 쌍은 날짜 전체 경기표를 매 주기 다시 훑지 않는다.
@@ -2095,9 +2528,14 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                     else 99.0
                 )
                 time_bonus = max(0.0, 0.18 - min(time_delta, 12.0) * 0.015)
+                league_score = _league_name_match_score(
+                    league_name, fixture_data.get("league", {}).get("name")
+                )
+                league_bonus = 0.24 * league_score if league_name else 0.0
                 candidates.append(
-                    (home_score + away_score + time_bonus, home_score, away_score,
-                     time_delta, fixture_data, home_api, away_api)
+                    (home_score + away_score + time_bonus + league_bonus,
+                     home_score, away_score, time_delta, fixture_data,
+                     home_api, away_api, league_score)
                 )
 
             candidates.sort(key=lambda item: item[0], reverse=True)
@@ -2107,12 +2545,38 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                 if min(best[1], best[2]) >= 0.72 and best[1] + best[2] >= 1.52:
                     selected = best
 
+            # Korean phonetic matching is intentionally allowed only when the
+            # kickoff is tight, both names still have useful evidence and a
+            # supplied competition hint agrees.  A close runner-up blocks the
+            # write so an identity mistake cannot contaminate form/live data.
+            if selected is None and league_name:
+                phonetic_candidates = [
+                    item for item in candidates
+                    if item[3] <= 0.35 and item[7] >= 0.85
+                    and min(item[1], item[2]) >= 0.52
+                    and item[1] + item[2] >= 1.22
+                ]
+                unique_phonetic_pairs = {
+                    (int(item[5].get("id") or 0), int(item[6].get("id") or 0))
+                    for item in phonetic_candidates
+                }
+                if len(unique_phonetic_pairs) == 1 and phonetic_candidates:
+                    phonetic_candidates.sort(key=lambda item: item[0], reverse=True)
+                    selected = phonetic_candidates[0]
+
             # 베트맨의 새 축약명이 사전에 아직 없더라도, 한쪽 팀이 정확하고
             # 같은 시각 후보가 하나뿐이면 실제 상대 팀을 경기표에서 역확정한다.
             if selected is None:
                 partner_candidates = [
                     item for item in candidates
-                    if max(item[1], item[2]) >= 0.90 and item[3] <= 2.5
+                    if (
+                        max(item[1], item[2]) >= 0.90 and item[3] <= 2.5
+                    ) or (
+                        bool(league_name) and item[7] >= 0.90
+                        and max(item[1], item[2]) >= 0.80
+                        and min(item[1], item[2]) >= 0.20
+                        and item[3] <= 0.35
+                    )
                 ]
                 unique_pairs = {
                     (int(item[5].get("id") or 0), int(item[6].get("id") or 0))
@@ -2122,7 +2586,7 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                     selected = max(partner_candidates, key=lambda item: item[0])
 
             if selected is not None:
-                _, home_score, away_score, _, fixture_data, home_api, away_api = selected
+                _, home_score, away_score, _, fixture_data, home_api, away_api = selected[:7]
                 verified_home = _remember_verified_team(home_name, home_api)
                 verified_away = _remember_verified_team(away_name, away_api)
                 if (
@@ -2167,10 +2631,14 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                         if timestamp else 99.0
                     )
                     time_bonus = max(0.0, 0.18 - min(time_delta, 12.0) * 0.015)
+                    league_score = _league_name_match_score(
+                        league_name, fixture_data.get("league", {}).get("name")
+                    )
+                    league_bonus = 0.24 * league_score if league_name else 0.0
                     adjacent_candidates.append((
-                        home_score + away_score + time_bonus,
+                        home_score + away_score + time_bonus + league_bonus,
                         home_score, away_score, time_delta,
-                        fixture_data, home_api, away_api,
+                        fixture_data, home_api, away_api, league_score,
                     ))
                 adjacent_candidates.sort(key=lambda item: item[0], reverse=True)
                 if not adjacent_candidates:
@@ -2194,10 +2662,11 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
                     min(best[1], best[2]) < 0.72
                     or best[1] + best[2] < 1.52
                     or best[3] > 4.5
+                    or (league_name and best[7] < 0.70)
                     or ambiguous
                 ):
                     continue
-                _, home_score, away_score, _, fixture_data, home_api, away_api = best
+                _, home_score, away_score, _, fixture_data, home_api, away_api = best[:7]
                 verified_home = _remember_verified_team(home_name, home_api)
                 verified_away = _remember_verified_team(away_name, away_api)
                 if (
@@ -2224,7 +2693,8 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
             "연결되어 해당 결과를 사용하지 않습니다."
         )
         queue_team_identity_retry(
-            home_name, away_name, match_time_str, reason="duplicate_team_id"
+            home_name, away_name, match_time_str, reason="duplicate_team_id",
+            league_name=league_name,
         )
         return (
             {"id": 0, "name": home_name, "logo": None, "identity_error": "duplicate_id"},
@@ -2238,6 +2708,7 @@ def resolve_match_team_pair(home_name, away_name, match_time_str, ttl_h=2):
         queue_team_identity_retry(
             home_name, away_name, match_time_str,
             reason=f"missing_team_id:{missing_sides or 'unknown'}",
+            league_name=league_name,
         )
     return home_info, away_info, None
 

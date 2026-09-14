@@ -562,7 +562,7 @@ st.markdown("""
 
     .block-container {
         max-width: 1120px !important;
-        padding: 1.2rem 1.5rem 4rem !important;
+        padding: 1.2rem 1.5rem 8rem !important;
     }
 
     .brand-shell {
@@ -961,20 +961,41 @@ st.markdown("""
         word-break: keep-all;
         white-space: normal;
     }
-    .back-to-top-wrap { margin: 26px 0 8px; text-align: right; }
+    .back-to-top-wrap {
+        position: fixed;
+        right: 24px;
+        bottom: 72px;
+        z-index: 99999;
+        margin: 0;
+        text-align: right;
+        pointer-events: none;
+    }
     .back-to-top {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 38px;
-        padding: 8px 14px;
-        border: 1px solid rgba(25, 230, 242, .30);
-        border-radius: 10px;
-        background: rgba(25, 230, 242, .06);
-        color: #BEEEF2 !important;
-        font-size: 12px;
-        font-weight: 900;
+        min-height: 48px;
+        padding: 11px 18px;
+        border: 2px solid #9AFAFF;
+        border-radius: 999px;
+        background: #19E6F2;
+        color: #03131A !important;
+        font-size: 15px;
+        font-weight: 950;
+        line-height: 1;
+        letter-spacing: -.15px;
         text-decoration: none !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 4px rgba(25, 230, 242, .15);
+        pointer-events: auto;
+        white-space: nowrap;
+        transition: transform .15s ease, background .15s ease;
+    }
+    .back-to-top:hover, .back-to-top:focus-visible {
+        background: #A5FBFF;
+        color: #02090D !important;
+        transform: translateY(-2px);
+        outline: 3px solid rgba(255, 255, 255, .45);
+        outline-offset: 2px;
     }
     .stTextInput input, [data-baseweb="select"] > div {
         border-radius: 10px !important;
@@ -984,7 +1005,7 @@ st.markdown("""
 
     @media (max-width: 768px) {
         html, body, .stApp, [data-testid="stAppViewContainer"], .main { max-width: 100vw !important; overflow-x: hidden !important; }
-        .block-container { padding: .65rem .72rem 3rem !important; }
+        .block-container { padding: .65rem .72rem 7rem !important; }
         .block-container, [data-testid="stVerticalBlock"], [data-testid="stMarkdownContainer"] { min-width: 0 !important; max-width: 100% !important; }
         .brand-shell { width: 100%; max-width: 100%; overflow: hidden; padding: 25px 20px 22px; border-radius: 18px; margin-top: 3px; }
         .brand-row { align-items: flex-start; gap: 12px; min-width: 0; }
@@ -1061,8 +1082,14 @@ st.markdown("""
         .engine-score-grid, .engine-result-grid { grid-template-columns: minmax(0, 1fr) !important; }
         .engine-result-head { flex-direction: column; align-items: flex-start; gap: 5px; }
         .engine-result-pick { overflow-wrap: anywhere; word-break: break-word; }
-        .back-to-top-wrap { text-align: center; }
-        .back-to-top { width: 100%; box-sizing: border-box; }
+        .back-to-top-wrap { right: 12px; bottom: 70px; text-align: right; }
+        .back-to-top {
+            width: auto;
+            min-height: 46px;
+            padding: 10px 14px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
     }
     @media (max-width: 430px) {
         .brand-row { display: block; }
@@ -1918,14 +1945,17 @@ if latest_notice:
 
 # TOP3, 베트맨 전용, 해외·사설용 경기를 서로 섞지 않는다.
 st.markdown("<div id='dj-page-top'></div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='back-to-top-wrap'><a class='back-to-top' "
+    "href='#dj-page-top' target='_self' aria-label='화면 맨 위로 이동'>"
+    "↑ 맨 위로</a></div>",
+    unsafe_allow_html=True,
+)
 
 
 def _render_back_to_top():
-    st.markdown(
-        "<div class='back-to-top-wrap'><a class='back-to-top' "
-        "href='#dj-page-top' target='_self'>↑ 맨 위로 가기</a></div>",
-        unsafe_allow_html=True,
-    )
+    """Compatibility hook: one global floating control is rendered above."""
+    return None
 
 
 main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
