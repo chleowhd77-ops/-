@@ -5,14 +5,13 @@
       "supervisor_pid": 384252,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-15T18:05:45+00:00",
+      "heartbeat_at": "2026-09-15T18:06:15+00:00",
       "pid": 384252,
       "last_started_at": "2026-09-15T13:39:20+00:00",
       "active_jobs": {
-        "score": 384969
+        "live": 384971
       },
       "pending_jobs": [
-        "live",
         "master",
         "world"
       ],
@@ -22,14 +21,18 @@
     "live": {
       "last_failure_at": "2026-09-15T10:47:33+00:00",
       "last_failure_duration_seconds": 36.0,
-      "last_success_at": "2026-09-15T18:04:41+00:00",
-      "last_success_duration_seconds": 31.21,
+      "last_success_at": "2026-09-15T18:06:26+00:00",
+      "last_success_duration_seconds": 32.19,
       "run_id": "live-1789495553805322909",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T18:05:54+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T18:06:26+00:00",
       "pid": 384971,
-      "last_started_at": "2026-09-15T18:05:54+00:00"
+      "last_started_at": "2026-09-15T18:05:54+00:00",
+      "child_pid": 384971,
+      "elapsed_seconds": 22.0,
+      "overlap_skips": 0,
+      "duration_seconds": 32.19
     },
     "score": {
       "last_success_at": "2026-09-15T18:05:51+00:00",
@@ -105,7 +108,7 @@
       "duration_seconds": 6.67
     }
   },
-  "updated_at": "2026-09-15T18:05:54+00:00",
+  "updated_at": "2026-09-15T18:06:26+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -245,14 +248,14 @@
       },
       {
         "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/lineups",
-        "count": 23
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 25
       },
       {
         "metric": "cache_hit",
-        "purpose": "live",
-        "endpoint": "/fixtures",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/lineups",
         "count": 23
       },
       {
