@@ -5,12 +5,11 @@
       "supervisor_pid": 379577,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-15T12:11:33+00:00",
+      "heartbeat_at": "2026-09-15T12:12:03+00:00",
       "pid": 379577,
       "last_started_at": "2026-09-15T10:56:28+00:00",
       "active_jobs": {
-        "master": 380726,
-        "team": 380732
+        "master": 380726
       },
       "pending_jobs": [
         "live",
@@ -56,19 +55,21 @@
       "duration_seconds": 46.91
     },
     "master": {
-      "last_success_duration_seconds": 303.44,
-      "last_success_at": "2026-09-15T11:57:02+00:00",
+      "last_success_duration_seconds": 317.41,
+      "last_success_at": "2026-09-15T12:12:06+00:00",
       "last_failure_at": "2026-09-15T10:45:43+00:00",
       "last_failure_duration_seconds": 2700.2,
       "run_id": "master-1789474008997340994",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T12:11:33+00:00",
-      "pid": 379577,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T12:12:06+00:00",
+      "pid": 380726,
       "last_started_at": "2026-09-15T12:06:49+00:00",
       "child_pid": 380726,
-      "elapsed_seconds": 284.2,
-      "overlap_skips": 1
+      "elapsed_seconds": 314.3,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 317.41
     },
     "world": {
       "last_failure_at": "2026-09-15T08:51:01+00:00",
@@ -105,7 +106,7 @@
       "duration_seconds": 11.31
     }
   },
-  "updated_at": "2026-09-15T12:11:45+00:00",
+  "updated_at": "2026-09-15T12:12:06+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -210,6 +211,12 @@
       {
         "metric": "cache_hit",
         "purpose": "analysis",
+        "endpoint": "/teams",
+        "count": 32
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
         "endpoint": "/players/topassists",
         "count": 31
       },
@@ -218,12 +225,6 @@
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
         "count": 31
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/teams",
-        "count": 30
       },
       {
         "metric": "cache_hit",
