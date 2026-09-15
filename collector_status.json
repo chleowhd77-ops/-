@@ -82,15 +82,22 @@
       "duration_seconds": 205.56
     },
     "team": {
-      "last_success_at": "2026-09-15T22:40:22+00:00",
+      "last_success_at": "2026-09-15T22:45:23+00:00",
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "last_success_duration_seconds": 2.3,
+      "last_success_duration_seconds": 2.73,
       "run_id": "team-1789512319920740254",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T22:45:20+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T22:45:23+00:00",
       "pid": 390787,
-      "last_started_at": "2026-09-15T22:45:20+00:00"
+      "last_started_at": "2026-09-15T22:45:20+00:00",
+      "team_retry_processed": 6,
+      "team_retry_resolved": 139,
+      "team_retry_pending": 1,
+      "team_retry_due": 0,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 2.73
     },
     "backup": {
       "run_id": "backup-1789503506314605105",
@@ -113,7 +120,7 @@
       "last_success_duration_seconds": 85.42
     }
   },
-  "updated_at": "2026-09-15T22:45:20+00:00",
+  "updated_at": "2026-09-15T22:45:23+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -270,6 +277,12 @@
         "count": 39
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 26
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
@@ -280,12 +293,6 @@
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
         "count": 21
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 20
       },
       {
         "metric": "cache_hit",
