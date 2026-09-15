@@ -3,14 +3,13 @@
     "scheduler": {
       "supervisor_pid": 372705,
       "state": "running",
-      "heartbeat_at": "2026-09-15T00:23:12+00:00",
+      "heartbeat_at": "2026-09-15T00:25:14+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-12T06:03:09+00:00",
       "active_jobs": {
         "world": 374347,
         "score": 374417,
         "master": 374418,
-        "live": 374430,
         "team": 374431
       }
     },
@@ -29,15 +28,15 @@
     },
     "score": {
       "child_pid": 374417,
-      "state": "running",
-      "heartbeat_at": "2026-09-15T00:23:11+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-15T00:25:26+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T00:15:25+00:00",
-      "elapsed_seconds": 465.7,
+      "elapsed_seconds": 588.2,
       "overlap_skips": 1,
-      "duration_seconds": 659.3,
+      "duration_seconds": 600.7,
       "last_success_at": "2026-09-14T23:34:04+00:00",
-      "last_failure_at": "2026-09-15T00:10:56+00:00",
+      "last_failure_at": "2026-09-15T00:25:26+00:00",
       "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
@@ -45,15 +44,15 @@
       "last_stage": "grading_published_backup_pending",
       "grading_published_at": "2026-09-14T23:31:59+00:00",
       "db_backup_ok": false,
-      "last_error": "hard timeout after 659 seconds"
+      "last_error": "hard timeout after 600 seconds"
     },
     "master": {
       "child_pid": 374418,
       "state": "running",
-      "heartbeat_at": "2026-09-15T00:23:11+00:00",
+      "heartbeat_at": "2026-09-15T00:25:14+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T00:15:25+00:00",
-      "elapsed_seconds": 465.7,
+      "elapsed_seconds": 588.2,
       "overlap_skips": 1,
       "duration_seconds": 2766.6,
       "last_failure_at": "2026-09-15T00:10:26+00:00",
@@ -65,10 +64,10 @@
     "world": {
       "child_pid": 374347,
       "state": "running",
-      "heartbeat_at": "2026-09-15T00:23:11+00:00",
+      "heartbeat_at": "2026-09-15T00:25:14+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-14T23:35:14+00:00",
-      "elapsed_seconds": 2877.4,
+      "elapsed_seconds": 3000.0,
       "overlap_skips": 3,
       "duration_seconds": 2204.1,
       "last_success_at": "2026-09-14T23:26:55+00:00",
@@ -79,10 +78,10 @@
     "team": {
       "child_pid": 374431,
       "state": "running",
-      "heartbeat_at": "2026-09-15T00:23:11+00:00",
+      "heartbeat_at": "2026-09-15T00:25:14+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T00:21:03+00:00",
-      "elapsed_seconds": 128.4,
+      "elapsed_seconds": 250.9,
       "overlap_skips": 0,
       "last_stage": "complete",
       "team_retry_processed": 0,
@@ -96,7 +95,7 @@
       "last_error": "hard timeout after 601 seconds"
     }
   },
-  "updated_at": "2026-09-15T00:23:28+00:00",
+  "updated_at": "2026-09-15T00:25:26+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -109,18 +108,57 @@
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
         "calls": 1
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/injuries",
+        "calls": 1
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/odds",
+        "calls": 1
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topassists",
+        "calls": 1
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "calls": 1
       }
     ],
-    "runtime_metrics": [],
+    "runtime_metrics": [
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "count": 4
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/players/topassists",
+        "count": 2
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 2
+      }
+    ],
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-15",
     "reset_timezone": "UTC",
-    "local_calls": 3,
-    "provider_remaining": 7497,
+    "local_calls": 7,
+    "provider_remaining": 7493,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 2,
+    "world_calls": 6,
     "analysis_calls": 1,
     "live_calls": 0,
     "scoring_calls": 0,
