@@ -9,14 +9,19 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-formula-lab-all-history-v4"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-frozen-future-accuracy-goal-v5"
 OFFICIAL_PICK_POLICY_VERSION = "evidence-ensemble-accuracy-first-v2"
 LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-formula-evolution-v5"
-ROBOT_FORMULA_ENGINE_VERSION = "symbolic-formula-lab-v2-all-completed"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-formula-evolution-v6"
+ROBOT_FORMULA_ENGINE_VERSION = "symbolic-formula-lab-v3-frozen-future-goal"
+ROBOT_TARGET_ACCURACY = .70
+ROBOT_GOAL_MIN_VALIDATION = 40
+ROBOT_GOAL_MAX_VALIDATION = 120
+ROBOT_PRICE_SKILL_MIN_VALIDATION = 12
+ROBOT_GOAL_POLICY_VERSION = "prospective-frozen-pick-accuracy-70-v1"
 ROBOT_FEATURE_SCHEMA_VERSION = "robot-features.v2-all-evidence"
 ROBOT_COMPATIBLE_FEATURE_SCHEMAS = (
     "robot-features.v1",
@@ -352,11 +357,12 @@ def legacy_v4_choice(picks, features, return_reason=False):
 def autonomous_robot_choice(picks, confidence, return_reason=False):
     """Choose one independent pre-match pick across every supported market.
 
-    The learned path owns both the probabilities and the final answer.  There
+    The learned path owns both the probabilities and the final answer. There
     is no W/D/L anchor, odds floor, value gate, minimum sample count or market
-    quota: it simply selects its highest learned hit probability across every
-    settlement-compatible market.  Price is retained only as a deterministic
-    tie-break and for the public audit.  The function never changes old rows.
+    quota. When enough same-version frozen grades exist, its prospective goal
+    score is the primary decision variable; otherwise its learned probability
+    is used. Price is retained only as a deterministic tie-break and for the
+    public audit. The function never changes old rows.
     """
     available = [
         dict(pick) for pick in (picks or [])
@@ -389,20 +395,33 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
                 "robot_policy_version": AUTONOMOUS_ROBOT_POLICY_VERSION,
                 "robot_price_verified": odd > 1.0,
             })
+        goal_score_available = any(
+            pick.get("robot_goal_score") is not None for pick in available
+        )
         chosen = max(available, key=lambda pick: (
+            _finite_number(
+                pick.get("robot_goal_score"),
+                pick.get("robot_probability") or pick.get("prob") or 0,
+            ),
             _finite_number(pick.get("robot_probability"), pick.get("prob") or 0),
             _finite_number(pick.get("robot_score")),
             _finite_number(pick.get("odd")),
             str(pick.get("raw_pick") or ""),
         ))
-        reason = "robot_learned_probability"
-        chosen["robot_selection_axis"] = "learned_probability_all_markets"
+        reason = (
+            "robot_prospective_accuracy_goal"
+            if goal_score_available else "robot_learned_probability"
+        )
+        chosen["robot_selection_axis"] = (
+            "prospective_accuracy_goal_all_markets"
+            if goal_score_available else "learned_probability_all_markets"
+        )
         chosen["robot_fallback"] = False
         chosen["recommendation_status"] = "SELECTED"
         chosen["selection_reason"] = (
-            "로봇이 경기 전 원자료와 누적 채점에서 자체 득점·전 시장 확률을 만든 뒤 "
-            "승무패 우선순서, 최소 표본, 배당·가치 통과선 없이 자체 적중확률이 가장 "
-            "높은 한 방향을 골랐습니다."
+            "로봇이 경기 전 원자료와 같은 버전의 누적 채점으로 자체 득점·전 시장 "
+            "확률을 만들고, 승무패 우선순서나 시장별 할당 없이 미래 동결픽 70% "
+            "목표에 가장 가까운 한 방향을 골랐습니다."
         )
         return (chosen, reason) if return_reason else chosen
 
@@ -1452,6 +1471,8 @@ def _robot_rates_from_parameters(features, parameters=None):
     )))
     if not parameters:
         return base_h, base_a
+    if parameters.get("model_family") == "context_baseline":
+        return base_h, base_a
     formula_programs = parameters.get("formula_programs") or {}
     if (
         parameters.get("model_family") == "symbolic_formula"
@@ -1493,6 +1514,131 @@ def _robot_loss(rows, parameters=None):
     }
 
 
+def _robot_frozen_pick_metrics(rows, parameters=None):
+    """Score one pre-match robot answer per later fixture without leakage."""
+    correct = 0
+    squared_error = 0.0
+    claimed = 0.0
+    samples = 0
+    markets = {}
+    high_price_selected = {"samples": 0, "correct": 0, "gross_return": 0.0}
+    underdog_selected = {"samples": 0, "correct": 0, "gross_return": 0.0}
+    high_price_opportunities = {"samples": 0, "correct": 0, "gross_return": 0.0}
+    underdog_opportunities = {"samples": 0, "correct": 0, "gross_return": 0.0}
+
+    def add_price_result(cell, pick):
+        hit = pick.get("is_correct")
+        if hit not in (0, 1):
+            return
+        odd = _finite_number(pick.get("odd"))
+        cell["samples"] += 1
+        cell["correct"] += int(hit)
+        if odd > 1.0:
+            cell["gross_return"] += int(hit) * odd
+
+    def finish_price_result(cell):
+        count = int(cell.get("samples") or 0)
+        gross = float(cell.get("gross_return") or 0)
+        return {
+            "samples": count,
+            "correct": int(cell.get("correct") or 0),
+            "accuracy": round(float(cell.get("correct") or 0) / count, 8)
+            if count else None,
+            "gross_return": round(gross, 8),
+            "profit_units": round(gross - count, 8) if count else None,
+            "roi": round(gross / count - 1.0, 8) if count else None,
+        }
+    validation_artifact = {
+        "active": bool(parameters),
+        "parameters": parameters,
+        "samples": len(rows),
+        "validation_fixtures": 0,
+        "grading_experience": {},
+    }
+    for row in rows:
+        candidates = row.get("candidates") or []
+        if not isinstance(candidates, list) or not candidates:
+            continue
+        try:
+            scored = build_autonomous_robot_candidates(
+                candidates, row.get("features") or {}, validation_artifact
+            )
+            chosen = autonomous_robot_choice(scored, .5)
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        hit = chosen.get("is_correct")
+        if hit not in (0, 1):
+            continue
+        probability = max(0.0, min(1.0, _finite_number(
+            chosen.get("robot_probability"), chosen.get("prob") or 0
+        )))
+        market = str(chosen.get("market_key") or "1x2")
+        cell = markets.setdefault(market, {"samples": 0, "correct": 0})
+        cell["samples"] += 1
+        cell["correct"] += int(hit)
+        samples += 1
+        correct += int(hit)
+        claimed += probability
+        squared_error += (probability - int(hit)) ** 2
+        if _finite_number(chosen.get("odd")) >= 2.35:
+            add_price_result(high_price_selected, chosen)
+        if bool(chosen.get("is_true_underdog")):
+            add_price_result(underdog_selected, chosen)
+
+        high_price_pool = [
+            candidate for candidate in scored
+            if _finite_number(candidate.get("odd")) >= 2.35
+            and candidate.get("is_correct") in (0, 1)
+        ]
+        if high_price_pool:
+            add_price_result(high_price_opportunities, max(
+                high_price_pool,
+                key=lambda candidate: (
+                    _finite_number(candidate.get("robot_goal_score")),
+                    _finite_number(candidate.get("robot_probability")),
+                ),
+            ))
+        underdog_pool = [
+            candidate for candidate in scored
+            if bool(candidate.get("is_true_underdog"))
+            and candidate.get("is_correct") in (0, 1)
+        ]
+        if underdog_pool:
+            add_price_result(underdog_opportunities, max(
+                underdog_pool,
+                key=lambda candidate: (
+                    _finite_number(candidate.get("robot_goal_score")),
+                    _finite_number(candidate.get("robot_probability")),
+                ),
+            ))
+    for cell in markets.values():
+        cell["accuracy"] = round(
+            cell["correct"] / max(1, cell["samples"]), 8
+        )
+    accuracy = correct / samples if samples else None
+    mean_claimed = claimed / samples if samples else None
+    return {
+        "samples": samples,
+        "correct": correct,
+        "accuracy": round(accuracy, 8) if accuracy is not None else None,
+        "brier": round(squared_error / samples, 8) if samples else None,
+        "mean_claimed_probability": (
+            round(mean_claimed, 8) if mean_claimed is not None else None
+        ),
+        "calibration_gap": (
+            round(abs(mean_claimed - accuracy), 8)
+            if mean_claimed is not None and accuracy is not None else None
+        ),
+        "markets": markets,
+        "high_price_selected": finish_price_result(high_price_selected),
+        "underdog_selected": finish_price_result(underdog_selected),
+        "high_price_opportunities": finish_price_result(
+            high_price_opportunities
+        ),
+        "underdog_opportunities": finish_price_result(underdog_opportunities),
+    }
+
+
 def _clean_robot_examples(examples):
     unique = {}
     conflicts = set()
@@ -1517,6 +1663,10 @@ def _clean_robot_examples(examples):
             "fixture_key": fixture_key, "kickoff": kickoff,
             "features": features, "home_goals": int(home_goals),
             "away_goals": int(away_goals),
+            "candidates": (
+                example.get("candidates")
+                if isinstance(example.get("candidates"), list) else []
+            ),
         }
         if fixture_key in unique and unique[fixture_key] != row:
             conflicts.add(fixture_key)
@@ -1533,9 +1683,10 @@ def train_autonomous_robot(examples):
     The robot compares a learned linear program with formulas it generates
     from all observed pre-match fields. No market quota, W/D/L anchor, value
     gate or human-authored football weight chooses the winner. Every completed
-    historical result can participate in formula/model selection; no fixed
-    holdout portion is reserved. Source code and already published predictions
-    never change, so later real results remain the honest live scorecard.
+    historical result participates in the final refit, while the newest clean
+    block remains unseen during formula-family selection. Source code and
+    already published predictions never change, so later real results remain
+    the honest live scorecard.
     """
     rows = _clean_robot_examples(examples)
     artifact = {
@@ -1547,7 +1698,7 @@ def train_autonomous_robot(examples):
         "train_fixtures": 0,
         "validation_fixtures": 0,
         "reason": "첫 종료 경기 전 표본 대기",
-        "validation_scope": "all_completed_history_fit_then_frozen_future_scorecard",
+        "validation_scope": "chronological-family-test-then-all-history-refit-and-future-scorecard",
         "history_rewrite": False,
         "uses_post_kickoff_features": False,
         "minimum_sample_gate": False,
@@ -1556,6 +1707,12 @@ def train_autonomous_robot(examples):
         "human_market_quota": False,
         "human_formula_weights": False,
         "self_modifying_source_code": False,
+        "accuracy_goal": ROBOT_TARGET_ACCURACY,
+        "accuracy_goal_policy_version": ROBOT_GOAL_POLICY_VERSION,
+        "goal_validation_available": False,
+        "goal_validation_accuracy": None,
+        "goal_target_reached": False,
+        "goal_promotion_eligible": False,
     }
     if not rows:
         return artifact
@@ -1676,15 +1833,52 @@ def train_autonomous_robot(examples):
     if symbolic_final:
         final_models["symbolic_formula"] = symbolic_final
 
+    candidate_rows = [row for row in rows if row.get("candidates")]
+    family_validation = {}
+    goal_validation_rows = []
+    if len(candidate_rows) >= MIN_TRAIN + ROBOT_GOAL_MIN_VALIDATION:
+        validation_size = min(
+            ROBOT_GOAL_MAX_VALIDATION,
+            max(ROBOT_GOAL_MIN_VALIDATION, len(candidate_rows) // 5),
+        )
+        goal_training_rows = candidate_rows[:-validation_size]
+        goal_validation_rows = candidate_rows[-validation_size:]
+        validation_strength = len(goal_training_rows) / (
+            len(goal_training_rows) + 8.0
+        )
+        validation_models = {
+            "context_baseline": {
+                "model_family": "context_baseline",
+                "rho": -.15,
+                "learning_strength": 0.0,
+            },
+            "linear_residual": fit_linear_parameters(
+                goal_training_rows, validation_strength
+            ),
+        }
+        symbolic_validation = fit_symbolic_parameters(
+            goal_training_rows, validation_strength
+        )
+        if symbolic_validation:
+            validation_models["symbolic_formula"] = symbolic_validation
+        family_validation = {
+            family: _robot_frozen_pick_metrics(
+                goal_validation_rows, parameters
+            )
+            for family, parameters in validation_models.items()
+        }
+        final_models["context_baseline"] = validation_models[
+            "context_baseline"
+        ]
+
     baseline = _robot_loss(rows)
     final_losses = {
         family: _robot_loss(rows, parameters)
         for family, parameters in final_models.items()
     }
-    # The user chose unrestricted use of every completed historical answer.
-    # Families therefore compete on all available completed rows.  These fit
-    # diagnostics are not advertised as future accuracy: the honest score is
-    # produced only when subsequently frozen, pre-kickoff picks are graded.
+    # Fit diagnostics use all completed rows, but they do not decide the model
+    # when a later chronological validation block exists. The chosen family is
+    # then refitted on every row, so no completed history is discarded.
     family_fit_diagnostics = {}
     family_scores = []
     for family, loss in final_losses.items():
@@ -1703,19 +1897,94 @@ def train_autonomous_robot(examples):
         family_scores.append((score, family))
     family_scores.sort(key=lambda row: (row[0], row[1]))
     selected_family = family_scores[0][1]
+    baseline_future_metrics = family_validation.get("context_baseline") or {}
+
+    def price_skill_nonworse(metrics, segment):
+        baseline_segment = baseline_future_metrics.get(segment) or {}
+        challenger_segment = metrics.get(segment) or {}
+        baseline_samples = int(baseline_segment.get("samples") or 0)
+        challenger_samples = int(challenger_segment.get("samples") or 0)
+        if min(baseline_samples, challenger_samples) < ROBOT_PRICE_SKILL_MIN_VALIDATION:
+            return True
+        baseline_accuracy = _finite_number(
+            baseline_segment.get("accuracy"), -1.0
+        )
+        challenger_accuracy = _finite_number(
+            challenger_segment.get("accuracy"), -1.0
+        )
+        baseline_roi = _finite_number(baseline_segment.get("roi"), -10.0)
+        challenger_roi = _finite_number(challenger_segment.get("roi"), -10.0)
+        return bool(
+            challenger_accuracy + 1e-12 >= baseline_accuracy
+            and challenger_roi + 1e-12 >= baseline_roi
+        )
+
+    valid_future_families = [
+        (family, metrics) for family, metrics in family_validation.items()
+        if int(metrics.get("samples") or 0) >= ROBOT_GOAL_MIN_VALIDATION
+        and metrics.get("accuracy") is not None
+        and price_skill_nonworse(metrics, "high_price_opportunities")
+        and price_skill_nonworse(metrics, "underdog_opportunities")
+    ]
+    if valid_future_families:
+        selected_family = min(
+            valid_future_families,
+            key=lambda row: (
+                -_finite_number(row[1].get("accuracy")),
+                -_finite_number(
+                    (row[1].get("high_price_opportunities") or {}).get(
+                        "accuracy"
+                    ), -1.0,
+                ),
+                -_finite_number(
+                    (row[1].get("high_price_opportunities") or {}).get("roi"),
+                    -10.0,
+                ),
+                _finite_number(row[1].get("brier"), 1.0),
+                _finite_number(row[1].get("calibration_gap"), 1.0),
+                row[0],
+            ),
+        )[0]
 
     best_parameters = final_models.get(selected_family) or final_models["linear_residual"]
     fitted = final_losses.get(selected_family) or final_losses["linear_residual"]
     symbolic_programs = (symbolic_final or {}).get("formula_programs") or {}
     selected_programs = best_parameters.get("formula_programs") or {}
+    selected_goal_metrics = family_validation.get(selected_family) or {}
+    baseline_goal_metrics = family_validation.get("context_baseline") or {}
+    high_price_goal_metrics = (
+        selected_goal_metrics.get("high_price_opportunities") or {}
+    )
+    underdog_goal_metrics = (
+        selected_goal_metrics.get("underdog_opportunities") or {}
+    )
+    goal_accuracy = selected_goal_metrics.get("accuracy")
+    goal_validated = bool(
+        int(selected_goal_metrics.get("samples") or 0)
+        >= ROBOT_GOAL_MIN_VALIDATION
+    )
+    baseline_accuracy = baseline_goal_metrics.get("accuracy")
+    goal_promotion_eligible = bool(
+        goal_validated
+        and goal_accuracy is not None
+        and (
+            baseline_accuracy is None
+            or float(goal_accuracy) >= float(baseline_accuracy)
+            or selected_family == "context_baseline"
+        )
+    )
 
     artifact.update({
         "active": True,
         "learning_started_from_first_result": True,
         "train_fixtures": len(rows),
-        "validation_fixtures": 0,
-        "validation_windows": 0,
-        "validation_strategy": "no-reserved-holdout-all-completed-results-used",
+        "validation_fixtures": int(selected_goal_metrics.get("samples") or 0),
+        "validation_windows": 1 if goal_validation_rows else 0,
+        "validation_strategy": (
+            "chronological-latest-block-family-selection-final-refit-all-history"
+            if goal_validation_rows else
+            "insufficient-candidate-history-final-fit-all-completed"
+        ),
         "baseline_brier": round(baseline["brier"], 6),
         "fitted_brier": round(fitted["brier"], 6),
         "baseline_log_loss": round(baseline["log_loss"], 6),
@@ -1745,12 +2014,35 @@ def train_autonomous_robot(examples):
             side: str((selected_programs.get(side) or {}).get("program_text") or "")
             for side in ("home", "away")
         },
-        "model_family_validation": {},
+        "model_family_validation": family_validation,
         "model_family_completed_history_fit": family_fit_diagnostics,
         "online_learning_strength": round(learning_strength, 6),
+        "accuracy_goal": ROBOT_TARGET_ACCURACY,
+        "accuracy_goal_policy_version": ROBOT_GOAL_POLICY_VERSION,
+        "goal_validation_available": goal_validated,
+        "goal_validation_accuracy": goal_accuracy,
+        "goal_validation_baseline_accuracy": baseline_accuracy,
+        "goal_target_reached": bool(
+            goal_validated and float(goal_accuracy) >= ROBOT_TARGET_ACCURACY
+        ),
+        "goal_gap": (
+            round(ROBOT_TARGET_ACCURACY - float(goal_accuracy), 8)
+            if goal_accuracy is not None else None
+        ),
+        "goal_promotion_eligible": goal_promotion_eligible,
+        "price_skill_policy": (
+            "no-quota-high-price-and-underdog-accuracy-roi-nonworse"
+        ),
+        "price_skill_min_validation": ROBOT_PRICE_SKILL_MIN_VALIDATION,
+        "high_price_validation": high_price_goal_metrics,
+        "underdog_validation": underdog_goal_metrics,
         "reason": (
-            f"완료된 과거 정답 전부로 {selected_family} 자율 계산식 선택 · "
-            f"다음 시작 전 동결픽부터 실제 성적 채점 · 종료표본 {len(rows)}경기"
+            f"시간순 미래 {int(selected_goal_metrics.get('samples') or 0)}경기에서 "
+            f"한 픽 적중률 {float(goal_accuracy) * 100:.1f}%로 {selected_family} 선택 · "
+            f"전체 종료표본 {len(rows)}경기로 최종 재학습"
+            if goal_validated else
+            f"미래검증 최소 {ROBOT_GOAL_MIN_VALIDATION}경기 전까지 {selected_family} "
+            f"자율 계산식 계속 학습 · 종료표본 {len(rows)}경기"
         ),
     })
     if selected_family == "symbolic_formula":
@@ -1764,7 +2056,7 @@ def train_autonomous_robot(examples):
             }
             for side in ("home", "away")
         ]
-    else:
+    elif selected_family == "linear_residual":
         labels = list(best_parameters.get("feature_names") or []) + [
             f"{left}×{right}"
             for left, right in (best_parameters.get("interactions") or [])
@@ -1780,6 +2072,8 @@ def train_autonomous_robot(examples):
             {"feature": label, "importance": round(value, 6)}
             for value, label in sorted(importance, reverse=True)[:15]
         ]
+    else:
+        artifact["feature_importance"] = []
     artifact["parameters"] = best_parameters
     return artifact
 
@@ -1846,6 +2140,9 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
     # cannot be mixed into one generic market-rate cell.
     experience = artifact.get("grading_experience") or {}
     market_cells = experience.get("markets") or {}
+    selection_markets = experience.get("selection_markets") or {}
+    price_cells = experience.get("price_segments") or {}
+    selection_price_cells = experience.get("selection_price_segments") or {}
     grouped = {}
     for pick in result:
         market = str(pick.get("market_key") or "1x2")
@@ -1874,12 +2171,37 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
                 base_probability * (1.0 - learning_weight)
                 + observed * learning_weight
             )
+            odd = _finite_number(pick.get("odd"))
+            price_segment = (
+                "true_underdog" if bool(pick.get("is_true_underdog"))
+                else "high_price" if odd >= 2.35
+                else "regular_price" if odd > 1.0 else ""
+            )
+            price_cell = price_cells.get(price_segment) or {}
+            price_samples = max(0, int(price_cell.get("samples") or 0))
+            price_observed = _finite_number(
+                price_cell.get("accuracy"), calibrated
+            )
+            price_weight = (
+                min(.25, price_samples / (price_samples + 24.0))
+                if price_samples else 0.0
+            )
+            calibrated = (
+                calibrated * (1.0 - price_weight)
+                + price_observed * price_weight
+            )
             adjusted.append(max(1e-9, calibrated))
             pick.update({
                 "robot_pre_grading_probability": base_probability,
                 "robot_grading_calibration_samples": samples,
                 "robot_grading_calibration_weight": round(learning_weight, 8),
                 "robot_grading_observed_rate": observed if samples else None,
+                "robot_price_skill_segment": price_segment,
+                "robot_price_skill_samples": price_samples,
+                "robot_price_skill_accuracy": (
+                    price_observed if price_samples else None
+                ),
+                "robot_price_skill_weight": round(price_weight, 8),
                 "robot_minimum_sample_gate": False,
             })
         normalization = sum(adjusted)
@@ -1902,4 +2224,55 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
                 "robust_edge": probability - fair if 0 < fair < 1 else 0.0,
                 "robust_ev": probability * odd if odd > 1 else 0.0,
             })
+
+    # Cross-market choice is guided only by the robot's same-version frozen
+    # grades. This is a soft reliability estimate, not a human market quota:
+    # every supported market continues to compete for the one final answer.
+    for pick in result:
+        market = str(pick.get("market_key") or "1x2")
+        performance = selection_markets.get(market) or {}
+        samples = max(0, int(performance.get("samples") or 0))
+        observed = _finite_number(
+            performance.get("accuracy"), pick.get("robot_probability") or 0
+        )
+        goal_weight = min(.50, samples / (samples + 24.0)) if samples else 0.0
+        probability = _finite_number(pick.get("robot_probability"))
+        goal_score = probability * (1.0 - goal_weight) + observed * goal_weight
+        price_segment = str(pick.get("robot_price_skill_segment") or "")
+        price_performance = selection_price_cells.get(price_segment) or {}
+        price_samples = max(0, int(price_performance.get("samples") or 0))
+        price_accuracy = _finite_number(
+            price_performance.get("accuracy"), goal_score
+        )
+        price_roi = _finite_number(price_performance.get("roi"))
+        price_weight = (
+            min(.30, price_samples / (price_samples + 30.0))
+            if price_samples else 0.0
+        )
+        goal_score = (
+            goal_score * (1.0 - price_weight)
+            + price_accuracy * price_weight
+        )
+        # ROI is a small tie-shaping lesson only after real same-version
+        # selections. It cannot override the accuracy objective or create a
+        # high-odds quota.
+        roi_adjustment = max(-.015, min(.015, price_roi * price_weight * .05))
+        goal_score = max(0.0, min(1.0, goal_score + roi_adjustment))
+        pick.update({
+            "robot_accuracy_goal": ROBOT_TARGET_ACCURACY,
+            "robot_accuracy_goal_policy_version": ROBOT_GOAL_POLICY_VERSION,
+            "robot_goal_score": round(goal_score, 8),
+            "robot_goal_market_samples": samples,
+            "robot_goal_market_accuracy": observed if samples else None,
+            "robot_goal_market_weight": round(goal_weight, 8),
+            "robot_goal_price_segment": price_segment,
+            "robot_goal_price_samples": price_samples,
+            "robot_goal_price_accuracy": (
+                price_accuracy if price_samples else None
+            ),
+            "robot_goal_price_roi": price_roi if price_samples else None,
+            "robot_goal_price_weight": round(price_weight, 8),
+            "robot_goal_price_roi_adjustment": round(roi_adjustment, 8),
+            "robot_goal_is_market_quota": False,
+        })
     return result

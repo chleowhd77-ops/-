@@ -17,6 +17,7 @@ from football_model import (clean_records, train_challenger, predict_goals,
                             build_autonomous_robot_candidates, train_autonomous_robot,
                             OFFICIAL_PICK_POLICY_VERSION,
                             AUTONOMOUS_ROBOT_POLICY_VERSION, ROBOT_MODEL_VERSION,
+                            ROBOT_TARGET_ACCURACY,
                             ROBOT_FEATURE_SCHEMA_VERSION,
                             ROBOT_COMPATIBLE_FEATURE_SCHEMAS,
                             ROBOT_MEMORY_SCHEMA_VERSION,
@@ -47,11 +48,11 @@ ANALYSIS_VERSION = "V7.12.8-separated-production-tracks"
 FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
 CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
 PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
-ROBOT_PICK_VERSION = "robot-self-learning-online-v5-formula-lab-separated-tracks"
+ROBOT_PICK_VERSION = "robot-self-learning-online-v6-frozen-future-70-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.10-operational-recovery-identity-gate"
+SYSTEM_VERSION = "R7.12.12-prospective-accuracy-goal"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -323,7 +324,8 @@ API_RUNTIME_DB = "api_runtime.db"  # Local only: never upload or restore from Gi
 
 
 def _runtime_connect():
-    conn = sqlite3.connect(API_RUNTIME_DB, timeout=5)
+    conn = sqlite3.connect(API_RUNTIME_DB, timeout=30)
+    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS api_usage_daily (
             usage_day TEXT PRIMARY KEY, calls INTEGER DEFAULT 0,
@@ -339,6 +341,10 @@ def _runtime_connect():
             PRIMARY KEY(usage_day,metric,purpose,endpoint));
         CREATE TABLE IF NOT EXISTS request_cache (
             key TEXT PRIMARY KEY, body TEXT, expires REAL DEFAULT 0, lease REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS general_cache (
+            cache_key TEXT PRIMARY KEY,
+            cache_value TEXT NOT NULL,
+            updated_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS team_identity_retry_queue (
             retry_key TEXT PRIMARY KEY,
             home_name TEXT NOT NULL,
@@ -1142,25 +1148,68 @@ def init_cache_db():
         conn.close()
     except Exception as e: print(f"❌ [DB 에러] 초기화 실패: {e}")
 
-def get_db_cache(key, ttl_hours):
-    for attempt in range(len(SQLITE_BUSY_RETRY_DELAYS) + 1):
-        conn = None
-        try:
-            conn = _sqlite_connect()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?",
-                (key,),
-            )
-            row = cursor.fetchone()
-            if row:
-                val, updated_at = row
-                updated_time = datetime.strptime(
-                    updated_at, "%Y-%m-%d %H:%M:%S"
-                ).replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - updated_time < timedelta(hours=ttl_hours):
-                    return json.loads(val)
+def _get_runtime_general_cache(key, ttl_hours):
+    conn = None
+    try:
+        conn = _runtime_connect()
+        row = conn.execute(
+            "SELECT cache_value, updated_at FROM general_cache WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+        if not row:
             return None
+        encoded, updated_at = row
+        if time.time() - float(updated_at or 0) >= float(ttl_hours) * 3600:
+            return None
+        return json.loads(encoded)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _get_legacy_main_db_cache(key, ttl_hours):
+    """Read old cache rows without writing to the production predictions DB."""
+    conn = None
+    try:
+        if not os.path.exists("ai_predictions.db"):
+            return None
+        conn = sqlite3.connect(
+            "file:ai_predictions.db?mode=ro", uri=True, timeout=2
+        )
+        conn.execute("PRAGMA busy_timeout=2000")
+        row = conn.execute(
+            "SELECT cache_value, updated_at FROM api_cache WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+        if not row:
+            return None
+        encoded, updated_at = row
+        updated_time = datetime.strptime(
+            updated_at, "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - updated_time >= timedelta(hours=ttl_hours):
+            return None
+        return json.loads(encoded)
+    except (sqlite3.OperationalError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_db_cache(key, ttl_hours):
+    # API/team/model cache churn belongs in the small local runtime database.
+    # Old main-DB rows remain readable during the transition, but are never
+    # deleted or rewritten here.
+    for attempt in range(len(SQLITE_BUSY_RETRY_DELAYS) + 1):
+        try:
+            cached = _get_runtime_general_cache(key, ttl_hours)
+            if cached is not None:
+                return cached
+            legacy = _get_legacy_main_db_cache(key, ttl_hours)
+            if legacy is not None:
+                set_db_cache(key, legacy)
+            return legacy
         except sqlite3.OperationalError as error:
             if _is_sqlite_busy(error) and attempt < len(SQLITE_BUSY_RETRY_DELAYS):
                 time.sleep(SQLITE_BUSY_RETRY_DELAYS[attempt])
@@ -1170,10 +1219,119 @@ def get_db_cache(key, ttl_hours):
         except Exception as error:
             print(f"⚠️ [관제 봇 떡밥] DB 캐시 읽기 실패 ({key}): {error}")
             return None
-        finally:
-            if conn is not None:
-                conn.close()
     return None
+
+
+def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=8):
+    """Rank independent robot picks for the administrator's daily shortlist.
+
+    The shortlist does not manufacture a new prediction or alter a frozen
+    answer. It ranks one already-frozen robot answer per future fixture using
+    the robot's prospective accuracy goal score, probability calibration and
+    verified price evidence. Underdogs and favourites use the same learned
+    comparison; there is no market or price quota.
+    """
+    try:
+        minimum_target = max(1, int(minimum_target))
+        maximum_target = max(minimum_target, min(20, int(maximum_target)))
+    except (TypeError, ValueError):
+        minimum_target, maximum_target = 5, 8
+    ranked = []
+    seen = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        robot = extract_robot_pick(item) or {}
+        if str(robot.get("robot_pick_version") or "") != ROBOT_PICK_VERSION:
+            continue
+        match = item.get("match") if isinstance(item.get("match"), dict) else item
+        identity = str(
+            item.get("api_fixture_id") or match.get("api_fixture_id")
+            or match.get("fixture_id") or match.get("id") or ""
+        ).strip()
+        raw_pick = str(robot.get("raw_pick") or "").strip()
+        if not identity or identity in seen or not raw_pick:
+            continue
+        try:
+            probability = float(robot.get("prob", robot.get("probability", 0)) or 0)
+            goal_score = float(robot.get("robot_goal_score", probability) or probability)
+            odd = float(robot.get("odd") or 0)
+            edge = float(robot.get("robot_edge", robot.get("robust_edge", 0)) or 0)
+            expected_value = float(robot.get("robot_ev", robot.get("robust_ev", 0)) or 0)
+        except (TypeError, ValueError):
+            continue
+        if not 0 < probability <= 1 or not 0 < goal_score <= 1:
+            continue
+        true_underdog = bool(robot.get("is_true_underdog"))
+        high_price = bool(odd >= 2.35)
+        high_probability = probability >= .65
+        regular_quality = goal_score >= .54 and probability >= .50
+        high_price_quality = bool(
+            high_price and goal_score >= .54 and probability >= .45 and odd > 1
+            and edge >= .03 and expected_value >= 1.06
+        )
+        if not (regular_quality or high_price_quality):
+            continue
+        price_strength = (
+            max(-.05, min(.15, expected_value - 1.0)) if odd > 1 else 0.0
+        )
+        calibration_strength = max(-.05, min(.10, edge)) if odd > 1 else 0.0
+        rank_score = (
+            goal_score * .78 + probability * .14
+            + price_strength * .05 + calibration_strength * .03
+        )
+        tier = (
+            "역배 자신픽" if true_underdog
+            else "고배당 자신픽" if high_price
+            else "고확률 자신픽" if high_probability
+            else "균형 자신픽"
+        )
+        seen.add(identity)
+        ranked.append((
+            (rank_score, goal_score, probability, edge, expected_value, raw_pick),
+            {
+                "fixture_id": identity,
+                "home": str(match.get("home") or item.get("home_team") or ""),
+                "away": str(match.get("away") or item.get("away_team") or ""),
+                "league": str(match.get("league") or item.get("league") or ""),
+                "match_time": str(
+                    item.get("final_match_time") or match.get("match_time")
+                    or match.get("time") or ""
+                ),
+                "pick": raw_pick,
+                "market_key": str(robot.get("market_key") or ""),
+                "probability": round(probability, 8),
+                "goal_score": round(goal_score, 8),
+                "odd": round(odd, 4),
+                "edge": round(edge, 8),
+                "expected_value": round(expected_value, 8),
+                "is_underdog": true_underdog,
+                "is_high_price": high_price,
+                "tier": tier,
+                "robot_pick_version": ROBOT_PICK_VERSION,
+                "robot_model_version": str(robot.get("robot_model_version") or ""),
+            },
+        ))
+    ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
+    selected = [row for _score, row in ordered[:maximum_target]]
+    qualified_high_price = [
+        row for _score, row in ordered
+        if row.get("is_high_price") and not row.get("is_underdog")
+    ]
+    return {
+        "schema_version": "robot-daily-shortlist.v1",
+        "policy": "prospective-accuracy-plus-price-no-market-quota-v1",
+        "accuracy_goal": ROBOT_TARGET_ACCURACY,
+        "minimum_target": minimum_target,
+        "maximum_target": maximum_target,
+        "qualified_count": len(ranked),
+        "selected_count": len(selected),
+        "target_range_reached": minimum_target <= len(selected) <= maximum_target,
+        "forced_fill": False,
+        "qualified_high_price_count": len(qualified_high_price),
+        "high_price_included": any(row.get("is_high_price") for row in selected),
+        "picks": selected,
+    }
 
 
 def set_db_cache(key, value):
@@ -1181,12 +1339,11 @@ def set_db_cache(key, value):
     for attempt in range(len(SQLITE_BUSY_RETRY_DELAYS) + 1):
         conn = None
         try:
-            conn = _sqlite_connect()
-            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            conn = _runtime_connect()
             conn.execute(
-                "INSERT OR REPLACE INTO api_cache "
+                "INSERT OR REPLACE INTO general_cache "
                 "(cache_key, cache_value, updated_at) VALUES (?, ?, ?)",
-                (key, encoded, now_str),
+                (key, encoded, time.time()),
             )
             conn.commit()
             return True

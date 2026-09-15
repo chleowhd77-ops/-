@@ -14,7 +14,7 @@ from html import escape
 from api_engine import (
     ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
     PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION, extract_robot_pick,
-    toto14_display_meta,
+    build_robot_daily_shortlist, toto14_display_meta,
 )
 
 from grading_postmortem import (
@@ -3619,6 +3619,57 @@ with main_tab3:
         <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
     </div>
     """, unsafe_allow_html=True)
+    if active_role == ROLE_ADMIN:
+        robot_daily_source = [
+            item for item in dashboard_data.get("proto", [])
+            if _recommendation_is_upcoming(item)
+        ]
+        for world_item in globals().get("world_matches", []) or []:
+            try:
+                normalized_world = _world_live_item(world_item, proto_by_fixture)
+            except (TypeError, ValueError, KeyError):
+                continue
+            if _recommendation_is_upcoming(normalized_world):
+                robot_daily_source.append(normalized_world)
+        robot_daily = build_robot_daily_shortlist(robot_daily_source, 5, 8)
+        robot_daily_rows = robot_daily.get("picks") or []
+        target_note = (
+            "목표 범위 충족"
+            if robot_daily.get("target_range_reached") else
+            "기준 통과 경기 부족 · 약한 픽 강제 추가 안 함"
+        )
+        st.markdown(
+            "<div class='match-card' style='border-color:#A78BFA;padding:18px;"
+            "margin-bottom:20px;'>"
+            "<div style='font-weight:900;color:#C4B5FD;font-size:18px;'>"
+            "🤖 로봇 일일 자신픽 5~8경기 후보판</div>"
+            f"<div style='color:#94A3B8;font-size:12px;margin-top:6px;'>"
+            f"미래 동결픽 70% 목표 · 정배/역배 자유 선택 · {target_note} · "
+            f"현재 {int(robot_daily.get('selected_count') or 0)}경기</div></div>",
+            unsafe_allow_html=True,
+        )
+        for robot_index, row in enumerate(robot_daily_rows, 1):
+            odd_text = (
+                f" · {float(row.get('odd') or 0):.2f}배"
+                if float(row.get("odd") or 0) > 1 else ""
+            )
+            st.markdown(
+                "<div class='engine-result-card' style='margin-bottom:8px;'>"
+                "<div class='engine-result-head'>"
+                f"<b>#{robot_index} {escape(str(row.get('tier') or '로봇 자신픽'))}</b>"
+                f"<span>{escape(str(row.get('match_time') or ''))}</span></div>"
+                f"<div style='color:#F8FAFC;font-weight:900;'>"
+                f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))}</div>"
+                f"<div style='color:#C4B5FD;font-weight:900;margin-top:5px;'>"
+                f"{escape(_human_pick_label(row.get('pick'), row.get('home')))}"
+                f" · 확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
+                f"<small style='color:#94A3B8;'>70% 목표점수 "
+                f"{float(row.get('goal_score') or 0) * 100:.1f}% · "
+                f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p</small></div>",
+                unsafe_allow_html=True,
+            )
+        if not robot_daily_rows:
+            st.caption("현재 같은 버전의 검증 기준을 통과한 로봇 자신픽이 없습니다.")
     honey_combo = dashboard_data.get("honey_two_pick") or {}
     combo_rows = honey_combo.get("picks") or []
     can_view_honey_combo = active_role in {ROLE_SUPPORTER, ROLE_ADMIN}
@@ -3757,31 +3808,32 @@ def _render_three_engine_scorecard(snapshot):
                 f"오늘 실제 결과 {today_correct}/{today_graded} · {float(today_accuracy) * 100:.1f}%"
                 if today_accuracy is not None else "오늘 종료 경기 채점 대기"
             )
-            hold_text = (
-                " · 다음 점검까지 공식식 수정 보류"
-                if engine_key == "official"
-                and bool(value.get("reached_70_percent_today"))
-                else ""
+            target_gap = value.get("target_gap")
+            target_text = (
+                "70% 목표 달성"
+                if value.get("target_reached") else
+                f"70% 목표까지 {max(0.0, float(target_gap or 0)) * 100:.1f}%p"
+                if target_gap is not None else "70% 목표 · 채점 대기"
             )
             cards.append(
                 "<div class='engine-result-card'>"
                 f"<div style='color:{colors[engine_key]};font-weight:900;'>{labels[engine_key]}</div>"
                 f"<div style='color:#F8FAFC;font-size:24px;font-weight:900;margin-top:6px;'>{accuracy_text}</div>"
-                f"<small>{correct}/{graded} 적중<br>{today_text}{hold_text}</small></div>"
+                f"<small>{correct}/{graded} 적중 · {target_text}<br>{today_text}</small></div>"
             )
         formula_hold = bool(
             review.get("official_formula_hold_until_next_check")
         )
         formula_status = (
-            "오늘 실제 적중률 70% 이상: 다음 점검까지 Codex 공식식 수정 보류"
+            "현행버전 누적 70% 이상: 새 오답이 생기면 시간순 검증으로 재검토"
             if formula_hold else
-            "오늘 실제 적중률 70% 미만 또는 표본 없음: 다음 점검에서 공식식 검토"
+            "현행버전 누적 70% 미만: 시간순 미래검증을 통과한 개선식만 적용"
         )
         st.markdown(
             f"<h4 style='color:#F8FAFC;font-weight:900;margin:28px 0 10px;'>{track_labels[track_key]}</h4>"
             "<div class='engine-score-grid'>" + "".join(cards) + "</div>"
             "<div style='margin:10px 0 14px;padding:10px 12px;border:1px solid #1E293B;border-radius:9px;color:#94A3B8;font-size:12px;'>"
-            f"{formula_status}<br>자율 로봇 학습은 70% 도달 여부와 관계없이 계속됩니다.</div>",
+            f"{formula_status}<br>자율 로봇도 새 동결픽 누적 70%를 목표로 계속 학습하며, 과거 성적은 바꾸지 않습니다.</div>",
             unsafe_allow_html=True,
         )
         if finished:

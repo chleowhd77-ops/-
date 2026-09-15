@@ -94,7 +94,7 @@ TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
 # heavy enrichment call to finish. This limits one cycle, never a match's total
 # learning lifetime.
 MASTER_ANALYSIS_SOFT_SECONDS = max(
-    300, min(1800, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "900")))
+    120, min(900, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "240")))
 )
 TEAM_IDENTITY_RETRY_BATCH = max(
     2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "12")))
@@ -148,7 +148,7 @@ WORLD_ANALYSIS_INTERVAL_MINUTES = max(
     10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
 )
 WORLD_ANALYSIS_SOFT_SECONDS = max(
-    600, min(3000, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "1800")))
+    180, min(900, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "420")))
 )
 WORLD_MARKET_WATCH_HORIZON_HOURS = max(
     3, min(48, int(os.getenv("WORLD_MARKET_WATCH_HORIZON_HOURS", "24")))
@@ -312,6 +312,15 @@ WORLD_PUBLIC_CANDIDATE_FIELDS = (
     "robot_decision_reason", "robot_selection_axis",
     "robot_grading_experience_samples", "robot_grading_calibration_samples",
     "robot_grading_calibration_weight", "robot_minimum_sample_gate",
+    "robot_accuracy_goal", "robot_accuracy_goal_policy_version",
+    "robot_goal_score", "robot_goal_market_samples",
+    "robot_goal_market_accuracy", "robot_goal_market_weight",
+    "robot_price_skill_segment", "robot_price_skill_samples",
+    "robot_price_skill_accuracy", "robot_price_skill_weight",
+    "robot_goal_price_segment", "robot_goal_price_samples",
+    "robot_goal_price_accuracy", "robot_goal_price_roi",
+    "robot_goal_price_weight", "robot_goal_price_roi_adjustment",
+    "robot_goal_is_market_quota", "robot_edge", "robot_ev",
     "legacy_v4_policy_version", "legacy_v4_expected_goals",
 )
 WORLD_PUBLIC_INPUT_FIELDS = (
@@ -3985,6 +3994,14 @@ def _three_engine_grading_payload(conn):
                 "reached_70_percent_today": bool(
                     today_values and today_accuracy >= 0.70
                 ),
+                "target_accuracy": 0.70,
+                "target_reached": bool(
+                    values and (sum(values) / len(values)) >= 0.70
+                ),
+                "target_gap": (
+                    round(0.70 - (sum(values) / len(values)), 8)
+                    if values else None
+                ),
             }
         return {
             "summary": summary,
@@ -3993,11 +4010,14 @@ def _three_engine_grading_payload(conn):
             "pending_summary": pending_summary,
             "formula_review": {
                 "threshold": 0.70,
-                "basis": "today_finished_actual_results",
+                "basis": "current-version-frozen-picks-cumulative",
                 "official_formula_hold_until_next_check": bool(
-                    summary["official"]["reached_70_percent_today"]
+                    summary["official"]["target_reached"]
                 ),
                 "robot_training_continues": True,
+                "robot_accuracy_goal": ROBOT_TARGET_ACCURACY,
+                "no_accuracy_guarantee": True,
+                "history_rewrite": False,
             },
         }
 
@@ -5102,25 +5122,68 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
     """
     _ensure_autonomous_robot_tables(conn)
     cells = {}
+    price_segments = {}
+    selection_price_segments = {}
     selection_samples = 0
     selection_correct = 0
     track_where, track_params = _robot_track_sql(source)
     rows = conn.execute(
         f"""
-        SELECT candidate_results_json,robot_pick_correct
+        SELECT candidate_results_json,robot_pick_correct,robot_pick_json
         FROM robot_learning_samples
         WHERE result_known_timestamp IS NOT NULL
           AND actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
           AND candidate_results_json NOT IN ('','[]','null')
+          AND robot_pick_version=?
           AND {track_where}
         ORDER BY kickoff_timestamp,id
         """,
-        track_params,
+        (ROBOT_PICK_VERSION,) + tuple(track_params),
     ).fetchall()
-    for candidate_json, robot_pick_correct in rows:
+    selection_markets = {}
+
+    def price_segment_keys(pick):
+        try:
+            odd = float((pick or {}).get("odd") or 0)
+        except (TypeError, ValueError):
+            odd = 0.0
+        keys = []
+        if odd >= 2.35:
+            keys.append("high_price")
+        elif odd > 1.0:
+            keys.append("regular_price")
+        if bool((pick or {}).get("is_true_underdog")):
+            keys.append("true_underdog")
+        return keys, odd
+
+    def add_price_grade(target, pick, hit):
+        keys, odd = price_segment_keys(pick)
+        for key in keys:
+            cell = target.setdefault(
+                key, {"samples": 0, "correct": 0, "gross_return": 0.0}
+            )
+            cell["samples"] += 1
+            cell["correct"] += int(hit)
+            if odd > 1.0:
+                cell["gross_return"] += int(hit) * odd
+
+    for candidate_json, robot_pick_correct, robot_pick_json in rows:
         if robot_pick_correct in (0, 1):
             selection_samples += 1
             selection_correct += int(robot_pick_correct)
+            try:
+                frozen_pick = json.loads(robot_pick_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                frozen_pick = {}
+            market = str((frozen_pick or {}).get("market_key") or "1x2")
+            market_cell = selection_markets.setdefault(
+                market, {"samples": 0, "correct": 0}
+            )
+            market_cell["samples"] += 1
+            market_cell["correct"] += int(robot_pick_correct)
+            add_price_grade(
+                selection_price_segments, frozen_pick, robot_pick_correct
+            )
         try:
             candidates = json.loads(candidate_json or "[]")
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -5143,6 +5206,7 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
             )
             cell["samples"] += 1
             cell["correct"] += int(candidate["is_correct"])
+            add_price_grade(price_segments, candidate, candidate["is_correct"])
 
     total = 0
     for market_cells in cells.values():
@@ -5151,10 +5215,24 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
             cell["observed_rate"] = round(
                 float(cell["correct"]) / max(1, int(cell["samples"])), 8
             )
+    for cell in selection_markets.values():
+        cell["accuracy"] = round(
+            float(cell["correct"]) / max(1, int(cell["samples"])), 8
+        )
+    for segment_cells in (price_segments, selection_price_segments):
+        for cell in segment_cells.values():
+            samples = max(1, int(cell["samples"]))
+            cell["gross_return"] = round(float(cell["gross_return"]), 8)
+            cell["accuracy"] = round(float(cell["correct"]) / samples, 8)
+            cell["profit_units"] = round(float(cell["gross_return"]) - samples, 8)
+            cell["roi"] = round(float(cell["gross_return"]) / samples - 1.0, 8)
     return {
-        "schema_version": "robot-self-grading-experience.v2",
+        "schema_version": "robot-self-grading-experience.v4-price-skill",
         "samples": total,
         "markets": cells,
+        "price_segments": price_segments,
+        "selection_markets": selection_markets,
+        "selection_price_segments": selection_price_segments,
         "selection_samples": selection_samples,
         "selection_correct": selection_correct,
         "selection_accuracy": (
@@ -5163,6 +5241,7 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
         ),
         "minimum_sample_gate": False,
         "official_grading_used": False,
+        "robot_pick_version": ROBOT_PICK_VERSION,
         "learning_track": _robot_learning_track(source),
         "history_rewrite": False,
     }
@@ -5218,7 +5297,8 @@ def _load_autonomous_robot_artifact(source="PROTO"):
                    COALESCE(observation.captured_timestamp,sample.captured_timestamp),
                    sample.result_known_timestamp,
                    COALESCE(observation.features_json,sample.features_json),
-                   sample.actual_home_goals,sample.actual_away_goals
+                   sample.actual_home_goals,sample.actual_away_goals,
+                   sample.candidate_results_json
             FROM robot_learning_samples AS sample
             LEFT JOIN robot_pre_match_observations AS observation
               ON observation.id=(
@@ -5238,9 +5318,13 @@ def _load_autonomous_robot_artifact(source="PROTO"):
             """,
             tuple(compatible_schemas) + tuple(track_params_alias),
         ).fetchall()
-        for fixture_key, kickoff, captured, known, features_json, goals_h, goals_a in rows:
+        for (
+            fixture_key, kickoff, captured, known, features_json,
+            goals_h, goals_a, candidates_json,
+        ) in rows:
             try:
                 features = json.loads(features_json or "{}")
+                candidates = json.loads(candidates_json or "[]")
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             examples.append({
@@ -5248,6 +5332,7 @@ def _load_autonomous_robot_artifact(source="PROTO"):
                 "captured_at": float(captured), "known_at": float(known),
                 "features": features, "home_goals": int(goals_h),
                 "away_goals": int(goals_a),
+                "candidates": candidates if isinstance(candidates, list) else [],
             })
         artifact = train_autonomous_robot(examples)
         artifact["learning_track"] = track
@@ -5367,22 +5452,42 @@ def save_autonomous_robot_sample(
             key: candidate.get(key) for key in (
                 "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
                 "market_prob", "handicap_base", "totals_base", "robot_probability",
+                "is_true_underdog", "is_qualified_underdog",
                 "robot_expected_goals", "robot_model_version",
                 "robot_learning_revision",
                 "robot_pre_grading_probability", "robot_grading_experience_samples",
                 "robot_grading_calibration_samples", "robot_grading_calibration_weight",
+                "robot_price_skill_segment", "robot_price_skill_samples",
+                "robot_price_skill_accuracy", "robot_price_skill_weight",
+                "robot_accuracy_goal", "robot_accuracy_goal_policy_version",
+                "robot_goal_score", "robot_goal_market_samples",
+                "robot_goal_market_accuracy", "robot_goal_market_weight",
+                "robot_goal_price_segment", "robot_goal_price_samples",
+                "robot_goal_price_accuracy", "robot_goal_price_roi",
+                "robot_goal_price_weight", "robot_goal_price_roi_adjustment",
+                "robot_edge", "robot_ev",
             )
         })
     compact_pick = {
         key: robot_pick.get(key) for key in (
             "market_key", "selection_side", "raw_pick", "odd", "fair_prob",
             "handicap_base", "totals_base", "prob", "robot_probability",
+            "is_true_underdog", "is_qualified_underdog",
             "robot_expected_goals", "robot_model_version", "robot_model_active",
             "robot_training_samples", "robot_validation_fixtures",
             "robot_learning_revision",
             "robot_decision_reason", "robot_selection_axis",
             "robot_grading_experience_samples", "robot_grading_calibration_samples",
             "robot_grading_calibration_weight", "robot_minimum_sample_gate",
+            "robot_price_skill_segment", "robot_price_skill_samples",
+            "robot_price_skill_accuracy", "robot_price_skill_weight",
+            "robot_accuracy_goal", "robot_accuracy_goal_policy_version",
+            "robot_goal_score", "robot_goal_market_samples",
+            "robot_goal_market_accuracy", "robot_goal_market_weight",
+            "robot_goal_price_segment", "robot_goal_price_samples",
+            "robot_goal_price_accuracy", "robot_goal_price_roi",
+            "robot_goal_price_weight", "robot_goal_price_roi_adjustment",
+            "robot_goal_is_market_quota", "robot_edge", "robot_ev",
         )
     }
     conn = None
@@ -5884,8 +5989,9 @@ def robot_pick_report(robot_pick, home_team=""):
         f"{_human_pick_label(robot_pick.get('raw_pick'), home_team)} · "
         f"로봇 자체확률 {probability * 100:.1f}% · {value_text} · {edge_text}. "
         "공식 확률을 재정렬한 값이 아니라 경기 전 원자료에서 로봇이 만든 득점·전 시장 확률로 비교한 답입니다. "
-        f"{learning_text}. 최소 경기 수 대기 없이 첫 채점부터 미래 픽에 반영하며, "
-        "경기 시작 뒤 자료는 사용하지 않습니다."
+        f"{learning_text}. 목표는 새로 동결되는 실제 픽 누적 70%이며, 같은 버전의 "
+        "채점과 시간순 미래검증으로 계산식·시장 선택을 갱신합니다. 첫 채점부터 "
+        "학습하되 경기 시작 뒤 자료와 구버전 확률보정은 사용하지 않습니다."
     )
 
 
@@ -14485,20 +14591,53 @@ def _execute_job(job_name):
 
 
 _JOB_PROCESSES = {}
+_PENDING_JOBS = {}
+MAX_CONCURRENT_WORKERS = max(
+    1, min(3, int(os.getenv("MAX_CONCURRENT_WORKERS", "2")))
+)
+MIN_AVAILABLE_MEMORY_MB = max(
+    64, min(512, int(os.getenv("MIN_AVAILABLE_MEMORY_MB", "180")))
+)
+# These jobs either scan, update, checkpoint, or snapshot ai_predictions.db.
+# On the 1 GiB production host only one may run at a time.  The team identity
+# job uses the small runtime DB and may occupy the second worker slot.
+MAIN_DB_JOBS = frozenset({"live", "score", "master", "world", "backup"})
+JOB_PRIORITY = {
+    "live": 0,
+    "score": 1,
+    "team": 2,
+    "master": 3,
+    "world": 4,
+    "backup": 5,
+}
+PENDING_JOB_AGE_SECONDS = max(
+    600, min(3600, int(os.getenv("PENDING_JOB_AGE_SECONDS", "1800")))
+)
 
 
-def _launch_isolated_job(job_name):
+def _available_memory_mb():
+    """Return Linux MemAvailable without spawning another process."""
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _active_job_names():
+    return {
+        name
+        for name, info in _JOB_PROCESSES.items()
+        if info["process"].poll() is None
+    }
+
+
+def _start_isolated_job(job_name):
     existing = _JOB_PROCESSES.get(job_name)
     if existing and existing["process"].poll() is None:
-        _update_collector_status(
-            job_name,
-            "running",
-            child_pid=existing["process"].pid,
-            elapsed_seconds=round(time.monotonic() - existing["started"], 1),
-            overlap_skips=int(existing.get("overlap_skips", 0)) + 1,
-        )
-        existing["overlap_skips"] = int(existing.get("overlap_skips", 0)) + 1
-        print(f"⏭️ {job_name} 이전 실행이 남아 있어 이번 주기를 겹치지 않습니다.")
         return False
 
     run_id = f"{job_name}-{time.time_ns()}"
@@ -14535,6 +14674,62 @@ def _launch_isolated_job(job_name):
     )
     print(f"🚀 분리 작업 시작: {job_name} (PID {process.pid})")
     return True
+
+
+def _pending_sort_key(job_name, now):
+    requested_at = float(_PENDING_JOBS[job_name])
+    waited = max(0.0, now - requested_at)
+    # Once a task has waited thirty minutes (configurable), oldest wins so
+    # WORLD/master/backup cannot be starved by recurring five-minute jobs.
+    if waited >= PENDING_JOB_AGE_SECONDS:
+        return (0, requested_at)
+    return (1, JOB_PRIORITY.get(job_name, 99), requested_at)
+
+
+def _drain_pending_jobs():
+    started_any = False
+    while _PENDING_JOBS:
+        active = _active_job_names()
+        if len(active) >= MAX_CONCURRENT_WORKERS:
+            break
+        if active:
+            available_mb = _available_memory_mb()
+            if available_mb is not None and available_mb < MIN_AVAILABLE_MEMORY_MB:
+                break
+        main_db_busy = bool(active & MAIN_DB_JOBS)
+        eligible = [
+            name for name in _PENDING_JOBS
+            if name not in active
+            and not (name in MAIN_DB_JOBS and main_db_busy)
+        ]
+        if not eligible:
+            break
+        now = time.monotonic()
+        job_name = min(eligible, key=lambda name: _pending_sort_key(name, now))
+        if not _start_isolated_job(job_name):
+            break
+        _PENDING_JOBS.pop(job_name, None)
+        started_any = True
+    return started_any
+
+
+def _launch_isolated_job(job_name):
+    existing = _JOB_PROCESSES.get(job_name)
+    if existing and existing["process"].poll() is None:
+        _update_collector_status(
+            job_name,
+            "running",
+            child_pid=existing["process"].pid,
+            elapsed_seconds=round(time.monotonic() - existing["started"], 1),
+            overlap_skips=int(existing.get("overlap_skips", 0)) + 1,
+        )
+        existing["overlap_skips"] = int(existing.get("overlap_skips", 0)) + 1
+        print(f"⏭️ {job_name} 이전 실행이 남아 있어 이번 주기를 겹치지 않습니다.")
+        return False
+    if job_name not in _PENDING_JOBS:
+        _PENDING_JOBS[job_name] = time.monotonic()
+        print(f"🕒 작업 대기열 등록: {job_name}")
+    return _drain_pending_jobs()
 
 
 def _terminate_process_tree(process):
@@ -14591,6 +14786,7 @@ def _reap_job_processes():
                     last_error=f"worker exited with code {return_code}",
                 )
             _JOB_PROCESSES.pop(job_name, None)
+    _drain_pending_jobs()
 
 
 def _heartbeat_active_jobs():
@@ -14620,7 +14816,8 @@ def run_scheduler():
         raise RuntimeError("수집기 DB 초기화 실패")
 
     schedule.clear()
-    # Live and scoring start immediately and independently; master may take 20+ min.
+    # Requests start immediately only when the low-memory/main-DB admission
+    # rules allow it. Remaining work stays queued and is drained after reaping.
     _launch_isolated_job("live")
     _launch_isolated_job("score")
     _launch_isolated_job("master")
@@ -14661,6 +14858,9 @@ def run_scheduler():
                         for name, info in _JOB_PROCESSES.items()
                         if info["process"].poll() is None
                     },
+                    pending_jobs=sorted(_PENDING_JOBS),
+                    max_concurrent_workers=MAX_CONCURRENT_WORKERS,
+                    min_available_memory_mb=MIN_AVAILABLE_MEMORY_MB,
                 )
                 last_heartbeat = time.monotonic()
             time.sleep(2)
@@ -14702,5 +14902,25 @@ def main(argv=None):
     return _execute_job(args.mode)
 
 
+def _exit_one_shot_worker(exit_code):
+    # Some imported networking/browser libraries keep non-daemon cleanup or
+    # buffered I/O alive after the one-shot result was already published.
+    # Flush the observable result, then terminate only this isolated child.
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    finally:
+        os._exit(int(exit_code))
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    requested_mode = "scheduler"
+    for index, argument in enumerate(sys.argv[1:]):
+        if argument.startswith("--mode="):
+            requested_mode = argument.split("=", 1)[1]
+        elif argument == "--mode" and index + 2 <= len(sys.argv[1:]):
+            requested_mode = sys.argv[index + 2]
+    if requested_mode != "scheduler":
+        _exit_one_shot_worker(code)
+    raise SystemExit(code)
