@@ -3,36 +3,37 @@
     "scheduler": {
       "supervisor_pid": 372705,
       "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:04+00:00",
+      "heartbeat_at": "2026-09-15T01:18:36+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-12T06:03:09+00:00",
       "active_jobs": {
         "world": 374455,
         "master": 374498,
         "score": 374512,
-        "live": 374516
+        "live": 374516,
+        "team": 374517
       }
     },
     "live": {
       "child_pid": 374516,
-      "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:03+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-15T01:18:46+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T01:15:45+00:00",
-      "elapsed_seconds": 18.2,
+      "elapsed_seconds": 170.8,
       "overlap_skips": 0,
-      "duration_seconds": 181.7,
-      "last_failure_at": "2026-09-15T01:13:46+00:00",
+      "duration_seconds": 181.4,
+      "last_failure_at": "2026-09-15T01:18:46+00:00",
       "last_success_at": "2026-09-14T23:32:07+00:00",
       "last_error": "hard timeout after 181 seconds"
     },
     "score": {
       "child_pid": 374512,
       "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:03+00:00",
+      "heartbeat_at": "2026-09-15T01:18:36+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T01:10:45+00:00",
-      "elapsed_seconds": 318.3,
+      "elapsed_seconds": 471.0,
       "overlap_skips": 1,
       "duration_seconds": 601.3,
       "last_success_at": "2026-09-14T23:34:04+00:00",
@@ -49,10 +50,10 @@
     "master": {
       "child_pid": 374498,
       "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:03+00:00",
+      "heartbeat_at": "2026-09-15T01:18:36+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T01:00:40+00:00",
-      "elapsed_seconds": 922.8,
+      "elapsed_seconds": 1075.5,
       "overlap_skips": 3,
       "duration_seconds": 2701.6,
       "last_failure_at": "2026-09-15T01:00:27+00:00",
@@ -64,10 +65,10 @@
     "world": {
       "child_pid": 374455,
       "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:03+00:00",
+      "heartbeat_at": "2026-09-15T01:18:36+00:00",
       "pid": 372705,
       "last_started_at": "2026-09-15T00:35:18+00:00",
-      "elapsed_seconds": 2445.3,
+      "elapsed_seconds": 2597.9,
       "overlap_skips": 2,
       "duration_seconds": 3600.9,
       "last_success_at": "2026-09-14T23:26:55+00:00",
@@ -79,11 +80,11 @@
     "team": {
       "child_pid": 374517,
       "state": "running",
-      "heartbeat_at": "2026-09-15T01:16:20+00:00",
-      "pid": 374517,
+      "heartbeat_at": "2026-09-15T01:18:36+00:00",
+      "pid": 372705,
       "last_started_at": "2026-09-15T01:16:14+00:00",
-      "elapsed_seconds": 600.6,
-      "overlap_skips": 2,
+      "elapsed_seconds": 142.2,
+      "overlap_skips": 0,
       "last_stage": "complete",
       "team_retry_processed": 0,
       "team_retry_resolved": 127,
@@ -96,7 +97,7 @@
       "last_error": "hard timeout after 600 seconds"
     }
   },
-  "updated_at": "2026-09-15T01:16:20+00:00",
+  "updated_at": "2026-09-15T01:18:46+00:00",
   "version": 1,
   "api_usage": {
     "top_endpoints": [
@@ -107,17 +108,17 @@
       },
       {
         "purpose": "world",
-        "endpoint": "/fixtures",
-        "calls": 2
-      },
-      {
-        "purpose": "world",
         "endpoint": "/injuries",
-        "calls": 2
+        "calls": 3
       },
       {
         "purpose": "world",
         "endpoint": "/odds",
+        "calls": 3
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures",
         "calls": 2
       },
       {
@@ -188,12 +189,12 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-15",
     "reset_timezone": "UTC",
-    "local_calls": 13,
-    "provider_remaining": 7487,
+    "local_calls": 15,
+    "provider_remaining": 7485,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 8,
+    "world_calls": 10,
     "analysis_calls": 5,
     "live_calls": 0,
     "scoring_calls": 0,
