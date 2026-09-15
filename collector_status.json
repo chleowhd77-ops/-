@@ -5,12 +5,11 @@
       "supervisor_pid": 379577,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-15T11:26:30+00:00",
+      "heartbeat_at": "2026-09-15T11:27:00+00:00",
       "pid": 379577,
       "last_started_at": "2026-09-15T10:56:28+00:00",
       "active_jobs": {
-        "master": 380232,
-        "team": 380234
+        "master": 380232
       },
       "pending_jobs": [
         "live",
@@ -56,19 +55,21 @@
       "duration_seconds": 49.62
     },
     "master": {
-      "last_success_at": "2026-09-15T11:18:39+00:00",
-      "last_success_duration_seconds": 303.17,
+      "last_success_at": "2026-09-15T11:27:26+00:00",
+      "last_success_duration_seconds": 295.68,
       "last_failure_at": "2026-09-15T10:45:43+00:00",
       "last_failure_duration_seconds": 2700.2,
       "run_id": "master-1789471350272830759",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T11:26:30+00:00",
-      "pid": 379577,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T11:27:26+00:00",
+      "pid": 380232,
       "last_started_at": "2026-09-15T11:22:31+00:00",
       "child_pid": 380232,
-      "elapsed_seconds": 240.2,
-      "overlap_skips": 1
+      "elapsed_seconds": 270.2,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 295.68
     },
     "world": {
       "last_success_at": "2026-09-15T11:12:35+00:00",
@@ -105,7 +106,7 @@
       "duration_seconds": 10.38
     }
   },
-  "updated_at": "2026-09-15T11:26:41+00:00",
+  "updated_at": "2026-09-15T11:27:26+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -209,15 +210,15 @@
       },
       {
         "metric": "cache_hit",
-        "purpose": "world",
-        "endpoint": "/fixtures/statistics",
+        "purpose": "analysis",
+        "endpoint": "/teams",
         "count": 20
       },
       {
         "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/teams",
-        "count": 18
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "count": 20
       },
       {
         "metric": "cache_hit",
