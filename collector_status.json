@@ -5,12 +5,11 @@
       "supervisor_pid": 379577,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-15T12:17:03+00:00",
+      "heartbeat_at": "2026-09-15T12:20:33+00:00",
       "pid": 379577,
       "last_started_at": "2026-09-15T10:56:28+00:00",
       "active_jobs": {
-        "world": 380740,
-        "team": 381166
+        "world": 380740
       },
       "pending_jobs": [
         "live",
@@ -74,17 +73,19 @@
     },
     "world": {
       "last_failure_at": "2026-09-15T08:51:01+00:00",
-      "last_success_at": "2026-09-15T12:05:37+00:00",
-      "last_success_duration_seconds": 454.32,
+      "last_success_at": "2026-09-15T12:20:45+00:00",
+      "last_success_duration_seconds": 453.7,
       "run_id": "world-1789474391327097803",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T12:17:03+00:00",
-      "pid": 379577,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T12:20:45+00:00",
+      "pid": 380740,
       "last_started_at": "2026-09-15T12:13:12+00:00",
       "child_pid": 380740,
-      "elapsed_seconds": 232.2,
-      "overlap_skips": 0
+      "elapsed_seconds": 442.4,
+      "overlap_skips": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 453.7
     },
     "team": {
       "last_success_duration_seconds": 9.36,
@@ -108,19 +109,24 @@
       "duration_seconds": 9.36
     }
   },
-  "updated_at": "2026-09-15T12:17:03+00:00",
+  "updated_at": "2026-09-15T12:20:45+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 210
+        "calls": 221
       },
       {
         "purpose": "world",
         "endpoint": "/odds",
-        "calls": 113
+        "calls": 121
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/fixtures",
+        "calls": 111
       },
       {
         "purpose": "scoring",
@@ -129,13 +135,8 @@
       },
       {
         "purpose": "world",
-        "endpoint": "/fixtures",
-        "calls": 109
-      },
-      {
-        "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "calls": 88
+        "calls": 90
       },
       {
         "purpose": "analysis",
@@ -145,7 +146,17 @@
       {
         "purpose": "world",
         "endpoint": "/injuries",
-        "calls": 55
+        "calls": 58
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topassists",
+        "calls": 57
+      },
+      {
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "calls": 57
       },
       {
         "purpose": "world",
@@ -158,16 +169,6 @@
         "calls": 52
       },
       {
-        "purpose": "world",
-        "endpoint": "/players/topassists",
-        "calls": 50
-      },
-      {
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "calls": 50
-      },
-      {
         "purpose": "analysis",
         "endpoint": "/odds",
         "calls": 47
@@ -178,19 +179,19 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
-        "count": 189
+        "count": 222
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 189
+        "count": 222
       },
       {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "count": 112
+        "count": 139
       },
       {
         "metric": "cache_hit",
@@ -208,7 +209,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/coachs",
-        "count": 36
+        "count": 45
       },
       {
         "metric": "cache_hit",
@@ -274,13 +275,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-15",
     "reset_timezone": "UTC",
-    "local_calls": 1200,
-    "provider_remaining": 6300,
+    "local_calls": 1240,
+    "provider_remaining": 6260,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 638,
-    "analysis_calls": 410,
+    "world_calls": 667,
+    "analysis_calls": 421,
     "live_calls": 29,
     "scoring_calls": 123,
     "world_daily_limit": 4000,
