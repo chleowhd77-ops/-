@@ -87,14 +87,21 @@
     },
     "team": {
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "last_success_at": "2026-09-15T23:35:28+00:00",
-      "last_success_duration_seconds": 4.0,
+      "last_success_at": "2026-09-15T23:40:32+00:00",
+      "last_success_duration_seconds": 4.95,
       "run_id": "team-1789515625954094095",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T23:40:27+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T23:40:32+00:00",
       "pid": 391126,
-      "last_started_at": "2026-09-15T23:40:27+00:00"
+      "last_started_at": "2026-09-15T23:40:27+00:00",
+      "team_retry_processed": 12,
+      "team_retry_resolved": 152,
+      "team_retry_pending": 41,
+      "team_retry_due": 37,
+      "team_retry_seeded": 27,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 4.95
     },
     "backup": {
       "run_id": "backup-1789503506314605105",
@@ -117,7 +124,7 @@
       "last_success_duration_seconds": 85.42
     }
   },
-  "updated_at": "2026-09-15T23:40:27+00:00",
+  "updated_at": "2026-09-15T23:40:32+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -205,13 +212,13 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/fixtures",
-        "count": 423
+        "count": 500
       },
       {
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 352
+        "count": 353
       },
       {
         "metric": "cache_hit",
@@ -226,16 +233,16 @@
         "count": 256
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 228
+      },
+      {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/coachs",
         "count": 190
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 174
       },
       {
         "metric": "cache_hit",
