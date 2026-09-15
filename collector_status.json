@@ -5,7 +5,7 @@
       "supervisor_pid": 384252,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-15T22:29:56+00:00",
+      "heartbeat_at": "2026-09-15T22:32:56+00:00",
       "pid": 384252,
       "last_started_at": "2026-09-15T13:39:20+00:00",
       "active_jobs": {
@@ -72,18 +72,20 @@
       "duration_seconds": 36.03
     },
     "world": {
-      "last_success_duration_seconds": 474.48,
-      "last_success_at": "2026-09-15T22:19:42+00:00",
+      "last_success_duration_seconds": 487.33,
+      "last_success_at": "2026-09-15T22:33:11+00:00",
       "last_failure_at": "2026-09-15T08:51:01+00:00",
       "run_id": "world-1789511103804448738",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-15T22:29:56+00:00",
-      "pid": 384252,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-15T22:33:11+00:00",
+      "pid": 390746,
       "last_started_at": "2026-09-15T22:25:04+00:00",
       "child_pid": 390746,
-      "elapsed_seconds": 292.4,
-      "overlap_skips": 0
+      "elapsed_seconds": 472.7,
+      "overlap_skips": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 487.33
     },
     "team": {
       "last_success_at": "2026-09-15T22:30:22+00:00",
@@ -124,7 +126,7 @@
       "last_success_duration_seconds": 85.42
     }
   },
-  "updated_at": "2026-09-15T22:30:22+00:00",
+  "updated_at": "2026-09-15T22:33:11+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -209,16 +211,16 @@
         "count": 1303
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/fixtures",
+        "count": 367
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
         "count": 292
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/fixtures",
-        "count": 267
       },
       {
         "metric": "cache_hit",
@@ -231,6 +233,12 @@
         "purpose": "world",
         "endpoint": "/coachs",
         "count": 190
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 168
       },
       {
         "metric": "cache_hit",
@@ -249,12 +257,6 @@
         "purpose": "analysis",
         "endpoint": "/teams",
         "count": 139
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 118
       },
       {
         "metric": "cache_hit",
