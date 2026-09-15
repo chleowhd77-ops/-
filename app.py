@@ -3738,6 +3738,7 @@ def _render_three_engine_scorecard(snapshot):
         summary = payload.get("summary") or {}
         finished = list(payload.get("finished") or [])
         pending = list(payload.get("pending") or [])
+        pending_summary = payload.get("pending_summary") or {}
         review = payload.get("formula_review") or {}
         cards = []
         for engine_key in ("official", "robot"):
@@ -3805,14 +3806,36 @@ def _render_three_engine_scorecard(snapshot):
                 unsafe_allow_html=True,
             )
         if pending:
+            scheduled_count = int(pending_summary.get("scheduled") or 0)
+            grace_count = int(pending_summary.get("grace") or 0)
+            delayed_count = int(pending_summary.get("delayed") or 0)
+            unknown_count = int(pending_summary.get("unknown") or 0)
+            pending_breakdown = (
+                f"시작 전 {scheduled_count} · 105분 유예 {grace_count} · "
+                f"채점 지연 {delayed_count}"
+            )
+            if unknown_count:
+                pending_breakdown += f" · 시각 확인 {unknown_count}"
             with st.expander(
-                f"{track_labels[track_key]} 채점 대기 {len(pending)}경기"
+                f"{track_labels[track_key]} 채점 대기 {len(pending)}경기 · {pending_breakdown}"
             ):
                 for row in pending:
                     engines = row.get("engines") or {}
+                    status_key = str(row.get("pending_status") or "unknown")
+                    status_label = str(row.get("pending_status_label") or "시각 확인 필요")
+                    status_colors = {
+                        "scheduled": "#38BDF8",
+                        "grace": "#F59E0B",
+                        "delayed": "#EF4444",
+                        "unknown": "#94A3B8",
+                    }
+                    status_color = status_colors.get(status_key, "#94A3B8")
+                    due_at = str(row.get("grading_due_at") or "")
+                    due_text = f" · 채점 기준 {escape(due_at)}" if due_at else ""
                     st.markdown(
                         f"**{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}**  "
-                        f"{escape(str(row.get('kickoff_at') or ''))}<br>"
+                        f"{escape(str(row.get('kickoff_at') or ''))} "
+                        f"<b style='color:{status_color};'>[{escape(status_label)}]</b>{due_text}<br>"
                         f"Codex: {escape(str((engines.get('official') or {}).get('raw_pick') or '대기'))} · "
                         f"로봇: {escape(str((engines.get('robot') or {}).get('raw_pick') or '대기'))}",
                         unsafe_allow_html=True,

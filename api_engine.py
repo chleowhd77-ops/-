@@ -51,7 +51,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v5-formula-lab-separated-tracks
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.9-team-identity-national-flags-floating-top"
+SYSTEM_VERSION = "R7.12.10-operational-recovery-identity-gate"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1818,16 +1818,18 @@ def queue_team_identity_retry(
             SET home_name=?,away_name=?,match_time=?,
                 league_name=CASE WHEN ?!='' THEN ? ELSE league_name END,
                 last_reason=?,
-                status=CASE WHEN status='RESOLVED' THEN status ELSE 'PENDING' END,
+                attempts=CASE WHEN status='RESOLVED' THEN 0 ELSE attempts END,
+                status='PENDING',
+                resolved_at=NULL,
                 next_retry_at=CASE
-                    WHEN status='RESOLVED' THEN next_retry_at
+                    WHEN status='RESOLVED' THEN ?
                     WHEN next_retry_at IS NULL OR next_retry_at>? THEN ?
                     ELSE next_retry_at END,
                 updated_at=CURRENT_TIMESTAMP
             WHERE retry_key=?
             """,
             (home_name, away_name, str(match_time or ""), league_name, league_name,
-             str(reason or "unresolved")[:300], now_iso, now_iso, retry_key),
+             str(reason or "unresolved")[:300], now_iso, now_iso, now_iso, retry_key),
         )
         conn.commit()
         return True

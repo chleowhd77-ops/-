@@ -57,6 +57,7 @@ APP_DIR = Path(__file__).resolve().parent
 STATUS_FILE = APP_DIR / "collector_status.json"
 WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
+DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
@@ -69,6 +70,9 @@ GITHUB_DB_SNAPSHOT_MAX_BYTES = min(
 )
 DB_BACKUP_DEFER_HOURS = max(
     1, min(24, int(os.getenv("DB_BACKUP_DEFER_HOURS", "6")))
+)
+DB_BACKUP_INTERVAL_MINUTES = max(
+    30, min(1440, int(os.getenv("DB_BACKUP_INTERVAL_MINUTES", "360")))
 )
 # 종료 상태는 화면 표시용이 아니라 중복 추적 방지용 내부 캐시로만 잠시 보존합니다.
 LIVE_RETENTION_HOURS = max(1, int(os.getenv("LIVE_RETENTION_HOURS", "2")))
@@ -635,32 +639,52 @@ def _utc_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_STATUS_HISTORY_FIELDS = {
+    "last_success_at", "last_failure_at", "last_success_duration_seconds",
+    "last_failure_duration_seconds",
+}
+
+
 def _update_collector_status(job_name, state, **details):
     fd, lock_path = _try_acquire_lock("status", stale_after=30, wait_seconds=2)
     if fd is None:
         return
     try:
+        new_run = bool(details.pop("_new_run", False))
         status = _read_json(STATUS_FILE, {})
         if not isinstance(status, dict):
             status = {}
         jobs = status.setdefault("jobs", {})
         previous = jobs.get(job_name, {}) if isinstance(jobs.get(job_name), dict) else {}
-        entry = dict(previous)
+        if new_run:
+            # A new worker must not inherit counters/stages from an older run.
+            # Keep only explicit historical timestamps and durations.
+            entry = {
+                key: previous[key]
+                for key in _STATUS_HISTORY_FIELDS
+                if key in previous
+            }
+        else:
+            entry = dict(previous)
         entry.update(details)
         entry["state"] = state
         entry["heartbeat_at"] = _utc_iso()
         entry["pid"] = os.getpid()
         if state == "running":
-            if previous.get("state") != "running" or not entry.get("last_started_at"):
+            if new_run or previous.get("state") != "running" or not entry.get("last_started_at"):
                 entry["last_started_at"] = entry["heartbeat_at"]
         elif state == "success":
             entry["last_success_at"] = entry["heartbeat_at"]
+            if "duration_seconds" in entry:
+                entry["last_success_duration_seconds"] = entry["duration_seconds"]
             entry.pop("last_error", None)
         elif state == "failed":
             entry["last_failure_at"] = entry["heartbeat_at"]
+            if "duration_seconds" in entry:
+                entry["last_failure_duration_seconds"] = entry["duration_seconds"]
         jobs[job_name] = entry
         status["updated_at"] = entry["heartbeat_at"]
-        status["version"] = 1
+        status["version"] = 2
         if state in {"success", "failed"}:
             try:
                 status["api_usage"] = get_api_usage_status()
@@ -702,6 +726,12 @@ def _parse_kst_match_time(value):
         return None
 
 def _validate_sqlite_file(path):
+    """Perform a bounded preflight check suitable for recurring workers.
+
+    This deliberately does not scan every database page.  Full integrity
+    checks are maintenance operations and must never sit in the common startup
+    path of LIVE, scoring, team repair, or analysis workers.
+    """
     path = _local_path(path)
     try:
         if not path.exists() or path.stat().st_size < 100:
@@ -710,22 +740,49 @@ def _validate_sqlite_file(path):
             if file.read(16) != b"SQLite format 3\x00":
                 return False
         uri = path.resolve().as_uri() + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=10)
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
         try:
-            check = conn.execute("PRAGMA quick_check").fetchone()
+            conn.execute("PRAGMA query_only = ON")
+            schema_version = conn.execute("PRAGMA schema_version").fetchone()
             tables = {
                 str(row[0])
                 for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name IN ('predictions','db_meta')"
                 ).fetchall()
             }
             return bool(
-                check and str(check[0]).lower() == "ok" and "predictions" in tables
+                schema_version
+                and int(schema_version[0] or 0) >= 0
+                and "predictions" in tables
             )
         finally:
             conn.close()
     except Exception as error:
         print(f"⚠️ SQLite 검증 실패({path.name}): {error}")
+        return False
+
+
+def _validate_sqlite_integrity_offline(path):
+    """Full page scan for explicit offline maintenance only.
+
+    No scheduler or worker calls this function.  The service must be stopped
+    and the operator must run it deliberately when a full integrity audit is
+    required.
+    """
+    path = _local_path(path)
+    if not _validate_sqlite_file(path):
+        return False
+    try:
+        uri = path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=30)
+        try:
+            check = conn.execute("PRAGMA quick_check").fetchone()
+            return bool(check and str(check[0]).casefold() == "ok")
+        finally:
+            conn.close()
+    except Exception as error:
+        print(f"⚠️ SQLite 전체 무결성검사 실패({path.name}): {error}")
         return False
 
 
@@ -954,6 +1011,63 @@ def upload_sqlite_to_github(db_path="ai_predictions.db"):
         _release_lock(publish_fd, publish_lock)
 
 
+def _request_db_backup(source):
+    """Record a coalesced backup request without blocking product workers."""
+    fd, lock_path = _try_acquire_lock(
+        "db-backup-request", stale_after=60, wait_seconds=2
+    )
+    if fd is None:
+        return False
+    try:
+        payload = _read_json(DB_BACKUP_REQUEST_FILE, {})
+        if not isinstance(payload, dict):
+            payload = {}
+        sources = {
+            str(value).strip()
+            for value in (payload.get("sources") or [])
+            if str(value).strip()
+        }
+        sources.add(str(source or "unknown"))
+        payload.update({
+            "requested_at": payload.get("requested_at") or _utc_iso(),
+            "updated_at": _utc_iso(),
+            "sources": sorted(sources),
+        })
+        _atomic_write_json(DB_BACKUP_REQUEST_FILE, payload, indent=2)
+        return True
+    finally:
+        _release_lock(fd, lock_path)
+
+
+def run_db_backup_job():
+    """Create/upload a DB snapshot only in its own low-frequency worker."""
+    request = _read_json(DB_BACKUP_REQUEST_FILE, {})
+    if not isinstance(request, dict) or not request:
+        _update_collector_status(
+            "backup", "running", last_stage="complete_no_request"
+        )
+        return True
+    backup_ok = upload_sqlite_to_github("ai_predictions.db")
+    if backup_ok:
+        try:
+            DB_BACKUP_REQUEST_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        _update_collector_status(
+            "backup", "running", last_stage="complete", db_backup_ok=True,
+            requested_sources=list(request.get("sources") or []),
+        )
+    else:
+        # A GitHub size/defer warning is not a product-worker failure. Keep the
+        # request so the next scheduled backup can retry without blocking LIVE.
+        _update_collector_status(
+            "backup", "running", last_stage="backup_deferred",
+            db_backup_ok=False,
+            requested_sources=list(request.get("sources") or []),
+        )
+    return True
+
+
 def _normalize_toto14_picks(picks):
     normalized = []
     for pick in picks or []:
@@ -1063,6 +1177,8 @@ def _toto14_from_canonical_proto(match, proto_items):
         return None
     matches = []
     for item in proto_items:
+        if not _published_team_identity_ready(item):
+            continue
         source = item.get("match") or {}
         source_when = _parse_kst_match_time(item.get("final_match_time") or source.get("match_time"))
         vector = item.get("wdl_forecast") or {}
@@ -1088,7 +1204,7 @@ def _toto14_from_canonical_proto(match, proto_items):
     if any(tuple(probs) != tuple(matches[0][1]) for _, probs in matches):
         return None
     item, probs = matches[0]
-    result = {k: item.get(k) for k in ("home_logo", "away_logo", "analysis_version", "analysis_confidence",
+    result = {k: item.get(k) for k in ("home_team_id", "away_team_id", "home_logo", "away_logo", "analysis_version", "analysis_confidence",
               "analysis_stage", "home_form", "away_form", "h_rank_html", "a_rank_html", "h_inj_html", "a_inj_html")}
     pct_h, pct_d = round(probs[0]*100, 1), round(probs[1]*100, 1)
     result.update(match=dict(match), api_fixture_id=item["api_fixture_id"], _pending_toto_save=True,
@@ -3754,6 +3870,36 @@ def _grade_three_engine_picks(conn):
     return graded
 
 
+def _grading_pending_state(kickoff_at, now=None):
+    """Classify an ungraded row without hiding future or grace-period games."""
+    now = now or datetime.now(KST)
+    try:
+        kickoff = datetime.fromisoformat(
+            str(kickoff_at or "").replace("Z", "+00:00")
+        )
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=KST)
+        kickoff = kickoff.astimezone(KST)
+    except (TypeError, ValueError):
+        return {
+            "pending_status": "unknown",
+            "pending_status_label": "시각 확인 필요",
+            "grading_due_at": "",
+        }
+    grading_due = kickoff + timedelta(minutes=105)
+    if now < kickoff:
+        state, label = "scheduled", "시작 전"
+    elif now < grading_due:
+        state, label = "grace", "105분 유예 중"
+    else:
+        state, label = "delayed", "채점 지연"
+    return {
+        "pending_status": state,
+        "pending_status_label": label,
+        "grading_due_at": grading_due.isoformat(timespec="minutes"),
+    }
+
+
 def _three_engine_grading_payload(conn):
     """Return current-version grades split into PROTO/WORLD and TOTO14 tracks."""
     _ensure_three_engine_tables(conn)
@@ -3810,8 +3956,16 @@ def _three_engine_grading_payload(conn):
                 for engine in row["engines"].values()
             )
         ]
+        now = datetime.now(KST)
         pending = [row for row in track_matches if row not in finished]
-        today = datetime.now(KST).date()
+        for row in pending:
+            row.update(_grading_pending_state(row.get("kickoff_at"), now))
+        pending_summary = {
+            key: sum(1 for row in pending if row.get("pending_status") == key)
+            for key in ("scheduled", "grace", "delayed", "unknown")
+        }
+        pending_summary["total"] = len(pending)
+        today = now.date()
         summary = {}
         for engine_key in ("official", "robot"):
             values = [row["engines"][engine_key]["is_correct"] for row in finished]
@@ -3836,6 +3990,7 @@ def _three_engine_grading_payload(conn):
             "summary": summary,
             "finished": finished,
             "pending": pending,
+            "pending_summary": pending_summary,
             "formula_review": {
                 "threshold": 0.70,
                 "basis": "today_finished_actual_results",
@@ -9274,8 +9429,31 @@ def _proto_item_has_usable_pick(item, match):
     return bool(str(selected.get("raw_pick") or "").strip())
 
 
+def _published_team_identity_ready(item, require_fixture=True):
+    """Require verified match/team identity before publishing a future pick."""
+    if not isinstance(item, dict):
+        return False
+    try:
+        home_id = int(item.get("home_team_id") or 0)
+        away_id = int(item.get("away_team_id") or 0)
+        fixture_id = int(item.get("api_fixture_id") or 0)
+    except (TypeError, ValueError):
+        return False
+    logos_ready = bool(
+        item.get("home_logo") not in (None, "", DEFAULT_LOGO)
+        and item.get("away_logo") not in (None, "", DEFAULT_LOGO)
+    )
+    return bool(
+        home_id > 0
+        and away_id > 0
+        and home_id != away_id
+        and logos_ready
+        and (fixture_id > 0 or not require_fixture)
+    )
+
+
 def _proto_item_has_three_engine_picks(item):
-    """A pre-match card is complete when official and robot picks both exist."""
+    """A future card is complete only with picks and verified identity."""
     if not isinstance(item, dict):
         return False
     official = (item.get("pick_categories") or {}).get("high_probability") or {}
@@ -9288,6 +9466,7 @@ def _proto_item_has_three_engine_picks(item):
     )
     return bool(
         picks_exist
+        and _published_team_identity_ready(item)
         and str(item.get("analysis_version") or "") == ANALYSIS_VERSION
         and str(robot.get("robot_pick_version") or "") == ROBOT_PICK_VERSION
     )
@@ -9348,6 +9527,49 @@ def _refresh_dashboard_team_profiles(path="dashboard_data.json"):
         source_meta["team_profile_card_updates"] = changed_count
         _atomic_write_json(path, payload)
     return changed_count
+
+
+def _queue_incomplete_dashboard_team_profiles(path="dashboard_data.json"):
+    """Reopen every visibly incomplete card without changing its saved pick."""
+    payload = _read_json(path, {})
+    if not isinstance(payload, dict):
+        return 0
+    queued = set()
+    for collection_name in ("proto", "toto14", "top3"):
+        items = payload.get(collection_name) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            match = item.get("match") or {}
+            if not isinstance(match, dict):
+                continue
+            _, profile_complete = _hydrate_published_team_data(item, match)
+            if profile_complete and _published_team_identity_ready(
+                item, require_fixture=False
+            ):
+                continue
+            home_name = str(match.get("home") or "").strip()
+            away_name = str(match.get("away") or "").strip()
+            match_time = str(
+                item.get("final_match_time")
+                or match.get("match_time")
+                or match.get("time")
+                or ""
+            )
+            retry_key = (home_name, away_name, match_time)
+            if not home_name or not away_name or retry_key in queued:
+                continue
+            if queue_team_identity_retry(
+                home_name,
+                away_name,
+                match_time,
+                reason="published_card_identity_logo_or_form_incomplete",
+                league_name=match.get("league") or item.get("league") or "",
+            ):
+                queued.add(retry_key)
+    return len(queued)
 
 
 def _resumable_proto_item(match, previous=None, require_current_stage=False):
@@ -9425,6 +9647,8 @@ def _pending_proto_item(match):
         "pick_categories": {},
         "analysis_stage": "PENDING_RESUMABLE_ANALYSIS",
         "analysis_refresh_pending": True,
+        "public_pick_blocked": True,
+        "public_pick_block_reason": "fixture_and_team_identity_required",
         "detailed_report": (
             "전체 경기표를 먼저 공개했습니다. 이 경기는 다음 자동 주기에서 "
             "저장 지점부터 분석합니다. 시작 전에는 최신 공식·로봇픽으로 "
@@ -9576,11 +9800,37 @@ def build_dashboard_data():
             deferred_proto_count += 1
             continue
 
-        analyzed_proto_count += 1
-        home_info, away_info, _ = resolve_match_team_pair(
+        home_info, away_info, identity_fixture = resolve_match_team_pair(
             home_team, away_team, final_match_time, ttl_h=2,
             league_name=m.get("league") or "",
         )
+        home_id = int(home_info.get("id") or 0)
+        away_id = int(away_info.get("id") or 0)
+        identity_ready = bool(
+            home_id > 0
+            and away_id > 0
+            and home_id != away_id
+            and home_info.get("logo") not in (None, "", DEFAULT_LOGO)
+            and away_info.get("logo") not in (None, "", DEFAULT_LOGO)
+        )
+        if not identity_ready:
+            queue_team_identity_retry(
+                home_team, away_team, final_match_time,
+                reason="proto_identity_and_logo_required_before_public_pick",
+                league_name=m.get("league") or "",
+            )
+            pending = _pending_proto_item(m)
+            pending.update({
+                "home_team_id": home_id,
+                "away_team_id": away_id,
+                "api_fixture_id": int(identity_fixture or 0),
+                "home_logo": home_info.get("logo") or DEFAULT_LOGO,
+                "away_logo": away_info.get("logo") or DEFAULT_LOGO,
+                "data_warning": "양 팀 신원·마크 확인 대기 · 기본값으로 예측하지 않음",
+            })
+            dashboard_proto.append(pending)
+            deferred_proto_count += 1
+            continue
 
         now = datetime.now(timezone(timedelta(hours=9)))
         diff_hours = (m_dt - now).total_seconds() / 3600.0
@@ -9669,7 +9919,26 @@ def build_dashboard_data():
             home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time,
             include_odds=0 < diff_hours <= 24,
         )
-        api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
+        api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
+        if api_fixture_id <= 0:
+            queue_team_identity_retry(
+                home_team, away_team, final_match_time,
+                reason="proto_fixture_identity_required_before_public_pick",
+                league_name=m.get("league") or "",
+            )
+            pending = _pending_proto_item(m)
+            pending.update({
+                "home_team_id": home_id,
+                "away_team_id": away_id,
+                "api_fixture_id": 0,
+                "home_logo": home_info.get("logo") or DEFAULT_LOGO,
+                "away_logo": away_info.get("logo") or DEFAULT_LOGO,
+                "data_warning": "공식 경기 연결 확인 대기 · 기본값으로 예측하지 않음",
+            })
+            dashboard_proto.append(pending)
+            deferred_proto_count += 1
+            continue
+        analyzed_proto_count += 1
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
         proto_movement = _detect_odds_movement({}, {})
@@ -10349,6 +10618,8 @@ def build_dashboard_data():
                              "generated_at": datetime.now(timezone.utc).isoformat(),
                              "fixture_id": int(api_fixture_id or 0)},
             "api_fixture_id": int(api_fixture_id or 0),
+            "home_team_id": int(home_info.get("id") or 0),
+            "away_team_id": int(away_info.get("id") or 0),
             "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
             "story": story, "ev_sorted_picks": ev_sorted_picks,
             "pick_categories": pick_categories,
@@ -10508,6 +10779,19 @@ def build_dashboard_data():
             frozen_item = _unavailable_toto14_item(m)
             freeze_needs_persist = kickoff_passed  # Unknown schedules may recover later.
 
+        # Preserve started tickets, but a scheduled reusable ticket must pass
+        # the same identity gate as a newly analysed one.
+        if frozen_item is not None and not kickoff_passed and scheduled_dt is not None:
+            _hydrate_published_team_data(frozen_item, m)
+            if not _published_team_identity_ready(frozen_item):
+                queue_team_identity_retry(
+                    home_team, away_team, match_time,
+                    reason="toto14_frozen_identity_required_before_public_pick",
+                    league_name=m.get("league") or "",
+                )
+                frozen_item = None
+                freeze_needs_persist = False
+
         # A reusable current/locked card needs no new heavy analysis call. A
         # missing ID is repaired by the bounded scoring queue.
 
@@ -10565,13 +10849,22 @@ def build_dashboard_data():
             home_team, away_team, match_time, ttl_h=2,
             league_name=m.get("league") or "",
         )
-        if not home_info.get('id') or not away_info.get('id') or home_info.get('id') == away_info.get('id'):
-            unavailable = dict(migration_fallback or _unavailable_toto14_item(m))
+        if (
+            not home_info.get('id')
+            or not away_info.get('id')
+            or home_info.get('id') == away_info.get('id')
+            or home_info.get("logo") in (None, "", DEFAULT_LOGO)
+            or away_info.get("logo") in (None, "", DEFAULT_LOGO)
+        ):
+            queue_team_identity_retry(
+                home_team, away_team, match_time,
+                reason="toto14_identity_and_logo_required_before_public_pick",
+                league_name=m.get("league") or "",
+            )
+            unavailable = dict(_unavailable_toto14_item(m))
             unavailable["match"] = dict(m)
             unavailable['data_warning'] = (
-                '새 버전 팀 신원 확인 대기 · 구버전 시작 전 동결값을 임시 보존'
-                if migration_fallback
-                else '양 팀 신원 확인 대기 · 기본값으로 예측하지 않음'
+                '양 팀 신원·마크 확인 대기 · 기본값으로 예측하지 않음'
             )
             dashboard_toto14.append(unavailable)
             continue
@@ -10582,7 +10875,20 @@ def build_dashboard_data():
         lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
         os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, m.get("match_time") or "시간 미정")
-        api_fixture_id = os_data.get("fixture_id", 0) if os_data else 0
+        api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
+        if api_fixture_id <= 0:
+            queue_team_identity_retry(
+                home_team, away_team, match_time,
+                reason="toto14_fixture_identity_required_before_public_pick",
+                league_name=m.get("league") or "",
+            )
+            unavailable = dict(_unavailable_toto14_item(m))
+            unavailable["match"] = dict(m)
+            unavailable["data_warning"] = (
+                "공식 경기 연결 확인 대기 · 기본값으로 예측하지 않음"
+            )
+            dashboard_toto14.append(unavailable)
+            continue
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
         toto_movement = _detect_odds_movement({}, {})
@@ -10994,6 +11300,8 @@ def build_dashboard_data():
             toto_item = {
                 "_pending_toto_save": True, "api_fixture_id": api_fixture_id,
                 "_policy_migration": policy_migration,
+                "home_team_id": int(home_info.get("id") or 0),
+                "away_team_id": int(away_info.get("id") or 0),
                 "match": m, "home_logo": home_info.get("logo"), "away_logo": away_info.get("logo"),
                 "best_pick_display": best_pick_display, "p_h": pct_h, "p_d": pct_d, "p_a": pct_a,
                 "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
@@ -11811,8 +12119,19 @@ def _finalize_toto14_round(items):
             continue
         match = item['match']
         kickoff = _parse_kst_match_time(match.get('match_time'))
+        identity_ready = _published_team_identity_ready(item)
         if kickoff is None or datetime.now(KST) >= kickoff:
+            # Started/unknown-time records keep only their existing pre-kickoff
+            # frozen answer. The new identity gate never rewrites history.
             items[index] = _locked_toto14_fallback(match) or _unavailable_toto14_item(match)
+        elif not identity_ready:
+            queue_team_identity_retry(
+                str(match.get("home") or ""), str(match.get("away") or ""),
+                str(match.get("match_time") or ""),
+                reason="toto14_final_publication_identity_gate",
+                league_name=match.get("league") or "",
+            )
+            items[index] = _unavailable_toto14_item(match)
     _allocate_toto14_round(items)
     for index, item in enumerate(items):
         if not item.pop('_pending_toto_save', False):
@@ -13872,7 +14191,10 @@ def run_live_score_job():
     success = update_live_scores()
     if not success:
         return False
-    return upload_to_github("live_scores.json")
+    published = upload_to_github("live_scores.json")
+    if published:
+        _update_collector_status("live", "running", last_stage="complete")
+    return published
 
 
 def run_master_job():
@@ -13892,6 +14214,7 @@ def run_master_job():
     # the local runtime DB until genuinely complete; the configured batch is
     # only a per-cycle API safety cap, never a total retry limit.
     try:
+        seeded_cards = _queue_incomplete_dashboard_team_profiles()
         retry_summary = process_team_identity_retry_queue(
             limit=TEAM_IDENTITY_RETRY_BATCH
         )
@@ -13906,22 +14229,23 @@ def run_master_job():
                 f"이번 {retry_summary.get('processed', 0)}건 / "
                 f"완료 {retry_summary.get('resolved', 0)}건 / "
                 f"계속 대기 {retry_summary.get('pending', 0)}건 / "
-                f"화면 갱신 {repaired_cards}장"
+                f"화면 재등록 {seeded_cards}건 / 화면 갱신 {repaired_cards}장"
             )
     except Exception as error:
         print(f"⚠️ 팀 자료 재탐색 작업 오류(다음 주기 계속): {error}")
-    backup_ok = upload_sqlite_to_github("ai_predictions.db")
+    backup_requested = _request_db_backup("master")
     _update_collector_status(
         "master",
         "running",
-        db_backup_ok=backup_ok,
-        last_stage="complete" if backup_ok else "dashboard_published_backup_pending",
+        db_backup_requested=backup_requested,
+        last_stage="complete",
     )
     return True
 
 
 def run_team_identity_job():
     """Repair team IDs/logos/forms independently from the heavy master pass."""
+    seeded_cards = _queue_incomplete_dashboard_team_profiles()
     summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
     repaired_cards = _refresh_dashboard_team_profiles()
     if repaired_cards and not upload_to_github("dashboard_data.json"):
@@ -13934,6 +14258,7 @@ def run_team_identity_job():
         team_retry_resolved=int(summary.get("resolved") or 0),
         team_retry_pending=int(summary.get("pending") or 0),
         team_retry_due=int(summary.get("due") or 0),
+        team_retry_seeded=int(seeded_cards),
         team_profile_card_updates=int(repaired_cards),
     )
     if summary.get("processed") or summary.get("pending") or repaired_cards:
@@ -13942,7 +14267,7 @@ def run_team_identity_job():
             f"이번 {summary.get('processed', 0)}건 / "
             f"성공 {summary.get('resolved', 0)}건 / "
             f"계속 대기 {summary.get('pending', 0)}건 / "
-            f"화면 갱신 {repaired_cards}장"
+            f"화면 재등록 {seeded_cards}건 / 화면 갱신 {repaired_cards}장"
         )
     return True
 
@@ -13965,11 +14290,13 @@ def run_score_job():
     _update_collector_status("score", "running", last_stage="grading_published",
                              grading_published_at=snapshot.get("generated_at"))
     # Keep legacy consumers current locally; the website prefers the separate
-    # feed. DB backup still runs, but its failure is recorded independently.
+    # feed. The large DB snapshot runs later in its own worker.
     _refresh_dashboard_grading_snapshot()
-    backup_ok = upload_sqlite_to_github("ai_predictions.db")
-    _update_collector_status("score", "running", db_backup_ok=backup_ok,
-                             last_stage="complete" if backup_ok else "grading_published_backup_pending")
+    backup_requested = _request_db_backup("score")
+    _update_collector_status(
+        "score", "running", db_backup_requested=backup_requested,
+        last_stage="complete",
+    )
     return True
 
 
@@ -14058,21 +14385,29 @@ def run_world_job():
                 "world", "running", last_stage="world_grading_publish_failed"
             )
             return False
-        backup_ok = upload_sqlite_to_github("ai_predictions.db")
+        backup_requested = _request_db_backup("world")
         _update_collector_status(
             "world",
             "running",
-            db_backup_ok=backup_ok,
-            last_stage="complete" if backup_ok else "world_published_backup_pending",
+            db_backup_requested=backup_requested,
+            last_stage="complete",
         )
+    else:
+        _update_collector_status("world", "running", last_stage="complete")
     return True
 
 
-def _initialize_db_safely():
+def _initialize_db_safely(force_init=False):
+    # Every recurring child normally returns here after a bounded read-only
+    # schema preflight. The scheduler alone performs schema creation once.
+    if not force_init and _validate_sqlite_file("ai_predictions.db"):
+        return True
     fd, lock_path = _try_acquire_lock("db-init", stale_after=180, wait_seconds=45)
     if fd is None:
         return _validate_sqlite_file("ai_predictions.db")
     try:
+        if not force_init and _validate_sqlite_file("ai_predictions.db"):
+            return True
         init_cache_db()
         return _validate_sqlite_file("ai_predictions.db")
     finally:
@@ -14085,6 +14420,7 @@ JOB_FUNCTIONS = {
     "score": run_score_job,
     "world": run_world_job,
     "team": run_team_identity_job,
+    "backup": run_db_backup_job,
 }
 JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
@@ -14092,6 +14428,7 @@ JOB_TIMEOUTS = {
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
     "world": max(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "3600"))),
     "team": max(180, int(os.getenv("TEAM_JOB_TIMEOUT_SECONDS", "600"))),
+    "backup": max(1800, int(os.getenv("BACKUP_JOB_TIMEOUT_SECONDS", "7200"))),
 }
 
 
@@ -14110,16 +14447,25 @@ def _execute_job(job_name):
             print(f"⏭️ {job_name} 작업이 이미 실행 중이어서 중복 실행을 건너뜁니다.")
             return 0
         started = time.monotonic()
-        _update_collector_status(job_name, "running")
+        run_id = os.getenv("DJ_JOB_RUN_ID") or f"{job_name}-{time.time_ns()}"
+        _update_collector_status(
+            job_name, "running", _new_run=True, run_id=run_id,
+            last_stage="initializing",
+        )
         _publish_status()
         try:
             if not _initialize_db_safely():
                 raise RuntimeError("ai_predictions.db 초기화/검증 실패")
+            _update_collector_status(
+                job_name, "running", run_id=run_id, last_stage="executing"
+            )
             success = JOB_FUNCTIONS[job_name]()
             duration = round(time.monotonic() - started, 2)
             if success is False:
                 raise RuntimeError(f"{job_name} 작업이 정상 결과를 게시하지 못함")
-            _update_collector_status(job_name, "success", duration_seconds=duration)
+            _update_collector_status(
+                job_name, "success", run_id=run_id, duration_seconds=duration
+            )
             _publish_status()
             return 0
         except Exception as error:
@@ -14130,6 +14476,7 @@ def _execute_job(job_name):
             _update_collector_status(
                 job_name,
                 "failed",
+                run_id=run_id,
                 duration_seconds=duration,
                 last_error=error_text[:1000],
             )
@@ -14154,10 +14501,15 @@ def _launch_isolated_job(job_name):
         print(f"⏭️ {job_name} 이전 실행이 남아 있어 이번 주기를 겹치지 않습니다.")
         return False
 
+    run_id = f"{job_name}-{time.time_ns()}"
     command = [sys.executable, "-u", str(Path(__file__).resolve()), "--mode", job_name]
     popen_kwargs = {
         "cwd": str(APP_DIR),
-        "env": {**os.environ, "PYTHONUNBUFFERED": "1"},
+        "env": {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "DJ_JOB_RUN_ID": run_id,
+        },
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -14175,8 +14527,12 @@ def _launch_isolated_job(job_name):
         "started": time.monotonic(),
         "timeout": JOB_TIMEOUTS[job_name],
         "overlap_skips": 0,
+        "run_id": run_id,
     }
-    _update_collector_status(job_name, "running", child_pid=process.pid)
+    _update_collector_status(
+        job_name, "running", _new_run=True, run_id=run_id,
+        child_pid=process.pid, last_stage="starting",
+    )
     print(f"🚀 분리 작업 시작: {job_name} (PID {process.pid})")
     return True
 
@@ -14218,6 +14574,7 @@ def _reap_job_processes():
                 job_name,
                 "failed",
                 child_pid=process.pid,
+                run_id=info.get("run_id"),
                 duration_seconds=round(elapsed, 1),
                 last_error=f"hard timeout after {int(elapsed)} seconds",
             )
@@ -14229,6 +14586,7 @@ def _reap_job_processes():
                     job_name,
                     "failed",
                     child_pid=process.pid,
+                    run_id=info.get("run_id"),
                     duration_seconds=round(elapsed, 1),
                     last_error=f"worker exited with code {return_code}",
                 )
@@ -14244,6 +14602,7 @@ def _heartbeat_active_jobs():
                 job_name,
                 "running",
                 child_pid=process.pid,
+                run_id=info.get("run_id"),
                 elapsed_seconds=round(now - info["started"], 1),
                 overlap_skips=int(info.get("overlap_skips", 0)),
             )
@@ -14251,9 +14610,13 @@ def _heartbeat_active_jobs():
 
 def run_scheduler():
     os.chdir(APP_DIR)
-    _update_collector_status("scheduler", "running", supervisor_pid=os.getpid())
+    scheduler_run_id = f"scheduler-{time.time_ns()}"
+    _update_collector_status(
+        "scheduler", "running", _new_run=True, run_id=scheduler_run_id,
+        supervisor_pid=os.getpid(), last_stage="initializing",
+    )
     download_latest_db_from_github()
-    if not _initialize_db_safely():
+    if not _initialize_db_safely(force_init=True):
         raise RuntimeError("수집기 DB 초기화 실패")
 
     schedule.clear()
@@ -14272,10 +14635,14 @@ def run_scheduler():
         _launch_isolated_job, "world"
     )
     schedule.every(5).minutes.do(_launch_isolated_job, "team")
+    schedule.every(DB_BACKUP_INTERVAL_MINUTES).minutes.do(
+        _launch_isolated_job, "backup"
+    )
 
     print(
-        "\n🚀 [감시 스케줄러] master/live/score/world/team 분리 · 중복 방지 · "
-        f"WORLD {WORLD_ANALYSIS_INTERVAL_MINUTES}분 분석/{WORLD_SCHEDULE_REFRESH_HOURS}시간 일정"
+        "\n🚀 [감시 스케줄러] master/live/score/world/team/backup 분리 · 중복 방지 · "
+        f"WORLD {WORLD_ANALYSIS_INTERVAL_MINUTES}분 분석/{WORLD_SCHEDULE_REFRESH_HOURS}시간 일정 · "
+        f"DB 백업 {DB_BACKUP_INTERVAL_MINUTES}분"
     )
     last_heartbeat = 0.0
     while True:
@@ -14287,6 +14654,7 @@ def run_scheduler():
                 _update_collector_status(
                     "scheduler",
                     "running",
+                    run_id=scheduler_run_id,
                     supervisor_pid=os.getpid(),
                     active_jobs={
                         name: info["process"].pid
@@ -14312,7 +14680,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "live", "score", "world", "team"),
+        choices=("scheduler", "master", "live", "score", "world", "team", "backup"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )
