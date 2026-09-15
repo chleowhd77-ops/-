@@ -5259,6 +5259,49 @@ def _robot_fixture_key(match_id, fixture_id, home_team, away_team, kickoff, sour
     ))
 
 
+def _select_autonomous_robot_artifact(
+    conn, artifact, source, track, signature, grading_experience=None,
+):
+    """Restore the same promoted model a fresh one-shot worker would select."""
+    challenger = dict(artifact or {})
+    experience = grading_experience
+    if not isinstance(experience, dict):
+        experience = _load_robot_self_grading_experience(conn, source)
+    challenger["learning_track"] = track
+    challenger["learning_revision_marker"] = signature
+    challenger["grading_experience"] = experience
+    challenger["grading_experience_samples"] = int(experience.get("samples") or 0)
+    selected_artifact = challenger
+    if not challenger.get("active"):
+        champion_row = conn.execute(
+            """
+            SELECT artifact_json FROM robot_model_promotions
+            WHERE robot_pick_version=? AND model_version=? AND active=1
+              AND sample_signature LIKE ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION, track + ":%"),
+        ).fetchone()
+        if champion_row:
+            try:
+                champion = json.loads(champion_row[0] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                champion = {}
+            if champion.get("parameters"):
+                champion = dict(champion)
+                champion["learning_track"] = track
+                champion["grading_experience"] = experience
+                champion["grading_experience_samples"] = int(
+                    experience.get("samples") or 0
+                )
+                champion["latest_challenger_samples"] = challenger.get("samples", 0)
+                champion["latest_challenger_reason"] = challenger.get("reason", "")
+                champion["learning_revision_marker"] = signature
+                selected_artifact = champion
+    selected_artifact["learning_revision_marker"] = signature
+    return selected_artifact
+
+
 def _load_autonomous_robot_artifact(source="PROTO"):
     track = _robot_learning_track(source)
     conn = None
@@ -5287,6 +5330,40 @@ def _load_autonomous_robot_artifact(source="PROTO"):
             and isinstance((_AUTONOMOUS_ROBOT_CACHE.get(track) or {}).get("artifact"), dict)
         ):
             return _AUTONOMOUS_ROBOT_CACHE[track]["artifact"]
+        # Master/WORLD run in short-lived child processes. Their process-local
+        # cache starts empty each time, so reuse the immutable model promotion
+        # for this exact result signature instead of repeating the full formula
+        # search every cycle. A newly graded result changes the signature and
+        # therefore still triggers a fresh training pass.
+        persisted_row = conn.execute(
+            """
+            SELECT artifact_json FROM robot_model_promotions
+            WHERE robot_pick_version=? AND model_version=?
+              AND substr(sample_signature,1,?)=?
+              AND substr(sample_signature,?+1,1)=':'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (
+                ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION,
+                len(signature), signature, len(signature),
+            ),
+        ).fetchone()
+        if persisted_row:
+            try:
+                persisted_artifact = json.loads(persisted_row[0] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                persisted_artifact = {}
+            if isinstance(persisted_artifact, dict) and persisted_artifact:
+                selected_artifact = _select_autonomous_robot_artifact(
+                    conn, persisted_artifact, source, track, signature
+                )
+                _ROBOT_LEARNING_MARKER_CACHE[track] = {
+                    "checked_at": time.monotonic(), "value": signature,
+                }
+                _AUTONOMOUS_ROBOT_CACHE[track] = {
+                    "signature": signature, "artifact": selected_artifact,
+                }
+                return selected_artifact
         examples = []
         compatible_schemas = tuple(ROBOT_COMPATIBLE_FEATURE_SCHEMAS)
         schema_marks = ",".join("?" for _ in compatible_schemas)
@@ -5361,32 +5438,10 @@ def _load_autonomous_robot_artifact(source="PROTO"):
             ),
         )
         conn.commit()
-        selected_artifact = artifact
-        if not artifact.get("active"):
-            champion_row = conn.execute(
-                """
-                SELECT artifact_json FROM robot_model_promotions
-                WHERE robot_pick_version=? AND model_version=? AND active=1
-                  AND sample_signature LIKE ?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION, track + ":%"),
-            ).fetchone()
-            if champion_row:
-                try:
-                    champion = json.loads(champion_row[0] or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    champion = {}
-                if champion.get("parameters"):
-                    champion["grading_experience"] = artifact["grading_experience"]
-                    champion["grading_experience_samples"] = artifact[
-                        "grading_experience_samples"
-                    ]
-                    champion["latest_challenger_samples"] = artifact.get("samples", 0)
-                    champion["latest_challenger_reason"] = artifact.get("reason", "")
-                    champion["learning_revision_marker"] = signature
-                    selected_artifact = champion
-        selected_artifact["learning_revision_marker"] = signature
+        selected_artifact = _select_autonomous_robot_artifact(
+            conn, artifact, source, track, signature,
+            grading_experience=artifact["grading_experience"],
+        )
         _ROBOT_LEARNING_MARKER_CACHE[track] = {
             "checked_at": time.monotonic(), "value": signature,
         }
