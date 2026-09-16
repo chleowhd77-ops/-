@@ -5,25 +5,36 @@
       "supervisor_pid": 393347,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T20:57:51+00:00",
+      "heartbeat_at": "2026-09-16T20:58:22+00:00",
       "pid": 393347,
       "last_started_at": "2026-09-16T03:21:45+00:00",
-      "active_jobs": {},
-      "pending_jobs": [],
+      "active_jobs": {
+        "live": 395696,
+        "team": 395697
+      },
+      "pending_jobs": [
+        "master",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 8.1,
-      "last_failure_at": "2026-09-16T20:54:27+00:00",
+      "last_failure_duration_seconds": 5.35,
+      "last_failure_at": "2026-09-16T20:58:24+00:00",
       "last_success_duration_seconds": 11.28,
       "last_success_at": "2026-09-16T19:53:53+00:00",
       "run_id": "live-1789592297987023137",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T20:58:19+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-16T20:58:24+00:00",
       "pid": 395696,
-      "last_started_at": "2026-09-16T20:58:18+00:00"
+      "last_started_at": "2026-09-16T20:58:18+00:00",
+      "child_pid": 395696,
+      "elapsed_seconds": 4.0,
+      "overlap_skips": 0,
+      "duration_seconds": 5.35,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_success_duration_seconds": 82.48,
@@ -85,11 +96,14 @@
       "last_success_at": "2026-09-16T20:53:23+00:00",
       "last_success_duration_seconds": 3.05,
       "run_id": "team-1789592300006728443",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T20:58:20+00:00",
+      "heartbeat_at": "2026-09-16T20:58:22+00:00",
       "pid": 395697,
-      "last_started_at": "2026-09-16T20:58:20+00:00"
+      "last_started_at": "2026-09-16T20:58:20+00:00",
+      "child_pid": 395697,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 31.38,
@@ -112,7 +126,7 @@
       "duration_seconds": 31.38
     }
   },
-  "updated_at": "2026-09-16T20:58:20+00:00",
+  "updated_at": "2026-09-16T20:58:24+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -142,7 +156,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 8312
+        "count": 8315
       },
       {
         "metric": "singleflight_block",
