@@ -5,13 +5,17 @@
       "supervisor_pid": 384252,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T02:05:14+00:00",
+      "heartbeat_at": "2026-09-16T02:10:14+00:00",
       "pid": 384252,
       "last_started_at": "2026-09-15T13:39:20+00:00",
       "active_jobs": {
         "world": 391323
       },
-      "pending_jobs": [],
+      "pending_jobs": [
+        "live",
+        "master",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -68,18 +72,20 @@
       "duration_seconds": 666.16
     },
     "world": {
-      "last_success_at": "2026-09-16T01:48:07+00:00",
-      "last_success_duration_seconds": 466.95,
+      "last_success_at": "2026-09-16T02:10:20+00:00",
+      "last_success_duration_seconds": 475.05,
       "last_failure_at": "2026-09-15T08:51:01+00:00",
       "run_id": "world-1789524144303340857",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T02:05:14+00:00",
-      "pid": 384252,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-16T02:10:20+00:00",
+      "pid": 391323,
       "last_started_at": "2026-09-16T02:02:25+00:00",
       "child_pid": 391323,
-      "elapsed_seconds": 170.1,
-      "overlap_skips": 0
+      "elapsed_seconds": 470.7,
+      "overlap_skips": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 475.05
     },
     "team": {
       "last_success_duration_seconds": 4.2,
@@ -120,7 +126,7 @@
       "duration_seconds": 33.45
     }
   },
-  "updated_at": "2026-09-16T02:05:41+00:00",
+  "updated_at": "2026-09-16T02:10:20+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -150,19 +156,19 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/fixtures",
-        "count": 446
+        "count": 497
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 331
       },
       {
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
         "count": 318
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 298
       },
       {
         "metric": "singleflight_block",
