@@ -5,13 +5,16 @@
       "supervisor_pid": 384252,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T01:35:11+00:00",
+      "heartbeat_at": "2026-09-16T01:36:41+00:00",
       "pid": 384252,
       "last_started_at": "2026-09-15T13:39:20+00:00",
       "active_jobs": {
         "master": 391286
       },
-      "pending_jobs": [],
+      "pending_jobs": [
+        "live",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -51,19 +54,21 @@
       "duration_seconds": 78.68
     },
     "master": {
-      "last_success_at": "2026-09-16T01:17:29+00:00",
+      "last_success_at": "2026-09-16T01:36:52+00:00",
       "last_failure_duration_seconds": 2700.2,
       "last_failure_at": "2026-09-15T10:45:43+00:00",
-      "last_success_duration_seconds": 634.07,
+      "last_success_duration_seconds": 287.68,
       "run_id": "master-1789522323645336614",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T01:35:29+00:00",
-      "pid": 384252,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-16T01:36:52+00:00",
+      "pid": 391286,
       "last_started_at": "2026-09-16T01:32:04+00:00",
       "child_pid": 391286,
-      "elapsed_seconds": 206.1,
-      "overlap_skips": 1
+      "elapsed_seconds": 278.2,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 287.68
     },
     "world": {
       "last_success_at": "2026-09-16T01:30:29+00:00",
@@ -120,7 +125,7 @@
       "last_success_duration_seconds": 85.42
     }
   },
-  "updated_at": "2026-09-16T01:35:38+00:00",
+  "updated_at": "2026-09-16T01:36:52+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -150,7 +155,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 284
+        "count": 297
       },
       {
         "metric": "singleflight_block",
@@ -168,13 +173,13 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 70
+        "count": 77
       },
       {
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures/headtohead",
-        "count": 60
+        "count": 65
       },
       {
         "metric": "cache_hit",
