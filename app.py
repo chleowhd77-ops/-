@@ -158,6 +158,24 @@ def _is_current_robot_public_snapshot(snapshot):
     )
 
 
+def _has_usable_grading_history(snapshot):
+    """Keep a valid prior publication visible during a version handoff."""
+    if not isinstance(snapshot, dict) or snapshot.get("error"):
+        return False
+    if snapshot.get("finished") or snapshot.get("pending"):
+        return True
+    tracks = ((snapshot.get("three_engine") or {}).get("tracks") or {})
+    for payload in tracks.values() if isinstance(tracks, dict) else ():
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("finished") or payload.get("pending"):
+            return True
+        for value in (payload.get("summary") or {}).values():
+            if int((value or {}).get("graded") or 0) > 0:
+                return True
+    return False
+
+
 def load_prediction_results(grading_snapshot=None):
     """채점 DB의 종료 상태와 최종 점수를 화면 카드에 직접 연결한다."""
     embedded_rows = []
@@ -182,6 +200,8 @@ def load_prediction_results(grading_snapshot=None):
     # A valid empty reset feed means exactly 0-0. Never fall back to the local
     # legacy DB, because that would briefly republish the hidden old history.
     if _is_current_robot_public_snapshot(grading_snapshot):
+        return {}
+    if bool((grading_snapshot or {}).get("_public_score_stale")):
         return {}
     try:
         conn = sqlite3.connect("ai_predictions.db", timeout=5)
@@ -1780,23 +1800,24 @@ if isinstance(dashboard_data, dict):
         ]
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
 if not _is_current_robot_public_snapshot(grading_snapshot):
-    # App deployment can precede the collector's first R7.9 publish by a few
-    # moments. Hide every legacy feed immediately instead of displaying it
-    # during that transition. The SQLite rows themselves remain untouched.
-    grading_snapshot = {
-        "schema_version": "grading-results.v1",
-        "analysis_version": ANALYSIS_VERSION,
-        "system_version": SYSTEM_VERSION,
-        "public_history_mode": "current-robot-version-only",
-        "public_score_version": PUBLIC_SCORE_VERSION,
-        "public_score_label": "새 로봇 독립픽 공개 성적",
-        "legacy_rows_hidden": len(
-            (dashboard_data.get("grading", {}) or {}).get("finished", []) or []
-        ),
-        "finished": [],
-        "pending": [],
-        "generated_at": "",
-    }
+    if _has_usable_grading_history(grading_snapshot):
+        # Keep the last valid publication visible while app and collector
+        # versions cross. It is replaced as soon as the matching feed arrives.
+        grading_snapshot = dict(grading_snapshot)
+        grading_snapshot["_public_score_stale"] = True
+    else:
+        grading_snapshot = {
+            "schema_version": "grading-results.v1",
+            "analysis_version": ANALYSIS_VERSION,
+            "system_version": SYSTEM_VERSION,
+            "public_history_mode": "current-robot-version-only",
+            "public_score_version": PUBLIC_SCORE_VERSION,
+            "public_score_label": "새 로봇 독립픽 공개 성적",
+            "legacy_rows_hidden": 0,
+            "finished": [],
+            "pending": [],
+            "generated_at": "",
+        }
 prediction_results_data = load_prediction_results(grading_snapshot)
 
 proto_total = len(dashboard_data.get("proto", []))
@@ -3769,6 +3790,11 @@ def _render_three_engine_scorecard(snapshot):
         f"<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>현행 버전만 공개 집계 · 이전 버전 {hidden_count}행은 삭제하지 않고 감사용으로 보존</p>",
         unsafe_allow_html=True,
     )
+    if snapshot.get("_public_score_stale"):
+        st.warning(
+            "새 채점판을 교체하는 중입니다. 마지막으로 확인된 성적을 유지해 표시하며 "
+            "새 채점 자료가 도착하면 자동으로 바뀝니다."
+        )
 
     def engine_result_line(engine_key, engines):
         engine = (engines or {}).get(engine_key) or {}
@@ -3791,6 +3817,7 @@ def _render_three_engine_scorecard(snapshot):
         pending = list(payload.get("pending") or [])
         pending_summary = payload.get("pending_summary") or {}
         review = payload.get("formula_review") or {}
+        previous_robot = payload.get("previous_robot_summary") or {}
         cards = []
         for engine_key in ("official", "robot"):
             value = summary.get(engine_key) or {}
@@ -3836,6 +3863,14 @@ def _render_three_engine_scorecard(snapshot):
             f"{formula_status}<br>자율 로봇도 새 동결픽 누적 70%를 목표로 계속 학습하며, 과거 성적은 바꾸지 않습니다.</div>",
             unsafe_allow_html=True,
         )
+        if int(previous_robot.get("graded") or 0) > 0:
+            previous_accuracy = float(previous_robot.get("accuracy") or 0) * 100
+            st.caption(
+                "이전 로봇판 보존 성적 · "
+                f"{int(previous_robot.get('correct') or 0)}/"
+                f"{int(previous_robot.get('graded') or 0)} 적중 · "
+                f"{previous_accuracy:.1f}% · 현재 로봇판 집계와 분리"
+            )
         if finished:
             st.markdown(
                 "<p style='color:#CBD5E1;font-size:13px;font-weight:900;margin:12px 0 8px;'>종료 경기 채점·복기</p>",

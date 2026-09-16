@@ -3925,6 +3925,21 @@ def _three_engine_grading_payload(conn):
         dict(row) if isinstance(row, sqlite3.Row) else dict(zip(columns, row))
         for row in cursor.fetchall()
     ]
+    previous_cursor = conn.execute(
+        "SELECT * FROM three_engine_pick_snapshots "
+        "WHERE engine_key='robot' "
+        "AND NOT (engine_version=? OR engine_version LIKE ?) "
+        "ORDER BY id DESC",
+        (ROBOT_PICK_VERSION, ROBOT_PICK_VERSION + ":%"),
+    )
+    previous_columns = [
+        str(description[0]) for description in previous_cursor.description
+    ]
+    previous_robot_rows = [
+        dict(row) if isinstance(row, sqlite3.Row)
+        else dict(zip(previous_columns, row))
+        for row in previous_cursor.fetchall()
+    ]
     grouped = {}
     for row in rows:
         group = grouped.setdefault(row["comparison_key"], {
@@ -3956,17 +3971,51 @@ def _three_engine_grading_payload(conn):
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(KST).date()
 
-    def track_payload(track_matches):
+    def previous_robot_summary(track_key):
+        candidates = []
+        for row in previous_robot_rows:
+            is_toto14 = str(row.get("source") or "").upper() == "TOTO14"
+            if (track_key == "toto14") != is_toto14:
+                continue
+            if row.get("is_correct") not in (0, 1):
+                continue
+            candidates.append(row)
+        if not candidates:
+            return {}
+        version_family = str(candidates[0].get("engine_version") or "").split(":", 1)[0]
+        latest_by_match = {}
+        for row in candidates:
+            row_family = str(row.get("engine_version") or "").split(":", 1)[0]
+            if row_family != version_family:
+                continue
+            latest_by_match.setdefault(str(row.get("comparison_key") or ""), row)
+        values = [int(row["is_correct"]) for row in latest_by_match.values()]
+        if not values:
+            return {}
+        return {
+            "engine_version": version_family,
+            "graded": len(values),
+            "correct": sum(values),
+            "accuracy": sum(values) / len(values),
+            "history_rewrite": False,
+        }
+
+    def track_payload(track_matches, track_key):
         finished = [
             row for row in track_matches
-            if len(row["engines"]) == 2
-            and all(
+            if any(
                 engine.get("is_correct") in (0, 1)
                 for engine in row["engines"].values()
             )
         ]
         now = datetime.now(KST)
-        pending = [row for row in track_matches if row not in finished]
+        pending = [
+            row for row in track_matches
+            if not any(
+                engine.get("is_correct") in (0, 1)
+                for engine in row["engines"].values()
+            )
+        ]
         for row in pending:
             row.update(_grading_pending_state(row.get("kickoff_at"), now))
         pending_summary = {
@@ -3977,9 +4026,18 @@ def _three_engine_grading_payload(conn):
         today = now.date()
         summary = {}
         for engine_key in ("official", "robot"):
-            values = [row["engines"][engine_key]["is_correct"] for row in finished]
+            graded_rows = [
+                row for row in track_matches
+                if (row.get("engines", {}).get(engine_key) or {}).get("is_correct")
+                    in (0, 1)
+            ]
+            values = [
+                int(row["engines"][engine_key]["is_correct"])
+                for row in graded_rows
+            ]
             today_values = [
-                row["engines"][engine_key]["is_correct"] for row in finished
+                int(row["engines"][engine_key]["is_correct"])
+                for row in graded_rows
                 if kst_date(row.get("kickoff_at")) == today
             ]
             today_accuracy = (
@@ -4008,6 +4066,7 @@ def _three_engine_grading_payload(conn):
             "finished": finished,
             "pending": pending,
             "pending_summary": pending_summary,
+            "previous_robot_summary": previous_robot_summary(track_key),
             "formula_review": {
                 "threshold": 0.70,
                 "basis": "current-version-frozen-picks-cumulative",
@@ -4028,8 +4087,8 @@ def _three_engine_grading_payload(conn):
         row for row in matches if str(row.get("source") or "").upper() == "TOTO14"
     ]
     tracks = {
-        "proto_world": track_payload(proto_world_matches),
-        "toto14": track_payload(toto14_matches),
+        "proto_world": track_payload(proto_world_matches, "proto_world"),
+        "toto14": track_payload(toto14_matches, "toto14"),
     }
     all_current_ids = {int(row.get("id") or 0) for row in rows}
     total_engine_rows = int(conn.execute(
