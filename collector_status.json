@@ -5,27 +5,36 @@
       "supervisor_pid": 393347,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T23:58:29+00:00",
+      "heartbeat_at": "2026-09-16T23:58:59+00:00",
       "pid": 393347,
       "last_started_at": "2026-09-16T03:21:45+00:00",
       "active_jobs": {
-        "master": 396601
+        "live": 396603,
+        "team": 396604
       },
-      "pending_jobs": [],
+      "pending_jobs": [
+        "master",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_at": "2026-09-16T23:56:28+00:00",
+      "last_failure_at": "2026-09-16T23:59:01+00:00",
       "last_success_duration_seconds": 11.28,
       "last_success_at": "2026-09-16T19:53:53+00:00",
-      "last_failure_duration_seconds": 8.1,
+      "last_failure_duration_seconds": 5.06,
       "run_id": "live-1789603135335098627",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T23:58:57+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-16T23:59:01+00:00",
       "pid": 396603,
-      "last_started_at": "2026-09-16T23:58:56+00:00"
+      "last_started_at": "2026-09-16T23:58:56+00:00",
+      "child_pid": 396603,
+      "elapsed_seconds": 4.0,
+      "overlap_skips": 0,
+      "duration_seconds": 5.06,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_failure_at": "2026-09-15T10:53:16+00:00",
@@ -87,11 +96,14 @@
       "last_failure_at": "2026-09-15T09:58:09+00:00",
       "last_success_at": "2026-09-16T23:54:01+00:00",
       "run_id": "team-1789603137356744645",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T23:58:58+00:00",
+      "heartbeat_at": "2026-09-16T23:58:59+00:00",
       "pid": 396604,
-      "last_started_at": "2026-09-16T23:58:58+00:00"
+      "last_started_at": "2026-09-16T23:58:58+00:00",
+      "child_pid": 396604,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_at": "2026-09-16T21:22:18+00:00",
@@ -114,7 +126,7 @@
       "duration_seconds": 29.49
     }
   },
-  "updated_at": "2026-09-16T23:58:58+00:00",
+  "updated_at": "2026-09-16T23:59:01+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
