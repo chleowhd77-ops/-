@@ -5,16 +5,15 @@
       "supervisor_pid": 393347,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T22:43:13+00:00",
+      "heartbeat_at": "2026-09-16T22:43:44+00:00",
       "pid": 393347,
       "last_started_at": "2026-09-16T03:21:45+00:00",
       "active_jobs": {
-        "world": 396460
+        "score": 396478,
+        "team": 396479
       },
       "pending_jobs": [
-        "live",
-        "master",
-        "score"
+        "master"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -45,8 +44,11 @@
       "last_stage": "executing",
       "state": "running",
       "heartbeat_at": "2026-09-16T22:43:44+00:00",
-      "pid": 396478,
-      "last_started_at": "2026-09-16T22:43:42+00:00"
+      "pid": 393347,
+      "last_started_at": "2026-09-16T22:43:42+00:00",
+      "child_pid": 396478,
+      "elapsed_seconds": 2.4,
+      "overlap_skips": 0
     },
     "master": {
       "last_success_duration_seconds": 40.93,
@@ -82,15 +84,25 @@
       "duration_seconds": 316.07
     },
     "team": {
-      "last_success_at": "2026-09-16T22:38:45+00:00",
-      "last_success_duration_seconds": 4.01,
+      "last_success_at": "2026-09-16T22:43:46+00:00",
+      "last_success_duration_seconds": 3.69,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
       "run_id": "team-1789598621912311021",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T22:43:43+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-16T22:43:46+00:00",
       "pid": 396479,
-      "last_started_at": "2026-09-16T22:43:43+00:00"
+      "last_started_at": "2026-09-16T22:43:43+00:00",
+      "child_pid": 396479,
+      "elapsed_seconds": 2.4,
+      "overlap_skips": 0,
+      "team_retry_processed": 12,
+      "team_retry_resolved": 169,
+      "team_retry_pending": 24,
+      "team_retry_due": 18,
+      "team_retry_seeded": 19,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 3.69
     },
     "backup": {
       "last_success_at": "2026-09-16T21:22:18+00:00",
@@ -113,7 +125,7 @@
       "duration_seconds": 29.49
     }
   },
-  "updated_at": "2026-09-16T22:43:44+00:00",
+  "updated_at": "2026-09-16T22:43:46+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -143,7 +155,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 9022
+        "count": 9023
       },
       {
         "metric": "singleflight_block",
