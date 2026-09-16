@@ -5,15 +5,13 @@
       "supervisor_pid": 393347,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-16T06:28:02+00:00",
+      "heartbeat_at": "2026-09-16T06:29:02+00:00",
       "pid": 393347,
       "last_started_at": "2026-09-16T03:21:45+00:00",
       "active_jobs": {
-        "score": 393812
+        "master": 393813
       },
-      "pending_jobs": [
-        "master"
-      ],
+      "pending_jobs": [],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -55,14 +53,19 @@
     "master": {
       "last_failure_at": "2026-09-15T10:45:43+00:00",
       "last_failure_duration_seconds": 2700.2,
-      "last_success_at": "2026-09-16T06:25:25+00:00",
-      "last_success_duration_seconds": 49.97,
+      "last_success_at": "2026-09-16T06:29:15+00:00",
+      "last_success_duration_seconds": 43.74,
       "run_id": "master-1789540110701105504",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-16T06:28:31+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-16T06:29:15+00:00",
       "pid": 393813,
-      "last_started_at": "2026-09-16T06:28:31+00:00"
+      "last_started_at": "2026-09-16T06:28:31+00:00",
+      "child_pid": 393813,
+      "elapsed_seconds": 32.0,
+      "overlap_skips": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 43.74
     },
     "world": {
       "last_failure_at": "2026-09-15T08:51:01+00:00",
@@ -119,7 +122,7 @@
       "duration_seconds": 33.45
     }
   },
-  "updated_at": "2026-09-16T06:28:31+00:00",
+  "updated_at": "2026-09-16T06:29:15+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -149,7 +152,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 2020
+        "count": 2077
       },
       {
         "metric": "singleflight_block",
@@ -185,7 +188,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/teams",
-        "count": 79
+        "count": 85
       },
       {
         "metric": "cache_hit",
