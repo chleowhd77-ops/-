@@ -52,7 +52,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v6-frozen-future-70-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.14-independent-grading-continuity"
+SYSTEM_VERSION = "R7.12.15-admin-picks-workspace"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1222,20 +1222,154 @@ def get_db_cache(key, ttl_hours):
     return None
 
 
-def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=8):
-    """Rank independent robot picks for the administrator's daily shortlist.
+def extract_official_pick(item):
+    """Recover the saved official pick without recalculating the fixture."""
+    if not isinstance(item, dict):
+        return None
+    analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    containers = [
+        item.get("selected"),
+        (item.get("pick_categories") or {}).get("high_probability")
+        if isinstance(item.get("pick_categories"), dict) else None,
+        (item.get("categories") or {}).get("high_probability")
+        if isinstance(item.get("categories"), dict) else None,
+        analysis.get("selected"),
+        (analysis.get("categories") or {}).get("high_probability")
+        if isinstance(analysis.get("categories"), dict) else None,
+        (item.get("decision") or {}).get("selected")
+        if isinstance(item.get("decision"), dict) else None,
+        (analysis.get("decision") or {}).get("selected")
+        if isinstance(analysis.get("decision"), dict) else None,
+    ]
+    for source in containers:
+        if not isinstance(source, dict):
+            continue
+        raw_pick = str(source.get("raw_pick") or source.get("pick") or "").strip()
+        if not raw_pick or source.get("display_only"):
+            continue
+        if str(source.get("recommendation_status") or "").upper() == "WITHHELD":
+            continue
+        recovered = dict(source)
+        recovered["raw_pick"] = raw_pick
+        recovered["prob"] = recovered.get(
+            "prob", recovered.get("probability", 0)
+        )
+        recovered["fair_prob"] = recovered.get(
+            "fair_prob", recovered.get("fair_probability")
+        )
+        return recovered
+    return None
 
-    The shortlist does not manufacture a new prediction or alter a frozen
-    answer. It ranks one already-frozen robot answer per future fixture using
-    the robot's prospective accuracy goal score, probability calibration and
-    verified price evidence. Underdogs and favourites use the same learned
-    comparison; there is no market or price quota.
+
+def _shortlist_match(item):
+    match = item.get("match") if isinstance(item.get("match"), dict) else item
+    identity = str(
+        item.get("api_fixture_id") or match.get("api_fixture_id")
+        or match.get("fixture_id") or match.get("id") or ""
+    ).strip()
+    return match, identity
+
+
+def _shortlist_number(value, default=0.0):
+    try:
+        value = float(value)
+        return value if math.isfinite(value) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
+    """Rank saved Codex official picks for the private PROTO workspace.
+
+    This never manufactures or replaces a fixture prediction.  It compares the
+    already-saved official answer from each future PROTO fixture and exposes the
+    strongest rows only to the administrator.
     """
     try:
         minimum_target = max(1, int(minimum_target))
         maximum_target = max(minimum_target, min(20, int(maximum_target)))
     except (TypeError, ValueError):
-        minimum_target, maximum_target = 5, 8
+        minimum_target, maximum_target = 5, 10
+    ranked, seen = [], set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        official = extract_official_pick(item) or {}
+        match, identity = _shortlist_match(item)
+        raw_pick = str(official.get("raw_pick") or "").strip()
+        if not identity or identity in seen or not raw_pick:
+            continue
+        probability = _shortlist_number(
+            official.get("prob", official.get("probability"))
+        )
+        robust_probability = _shortlist_number(
+            official.get("robust_probability"), probability
+        )
+        if not 0 < probability <= 1 or not 0 < robust_probability <= 1:
+            continue
+        balanced_score = _shortlist_number(
+            official.get("balanced_score"), robust_probability
+        )
+        odd = _shortlist_number(official.get("odd"))
+        edge = _shortlist_number(official.get("robust_edge"))
+        expected_value = _shortlist_number(official.get("robust_ev"))
+        seen.add(identity)
+        ranked.append((
+            (
+                balanced_score, robust_probability, probability,
+                edge, expected_value, raw_pick,
+            ),
+            {
+                "fixture_id": identity,
+                "home": str(match.get("home") or item.get("home_team") or ""),
+                "away": str(match.get("away") or item.get("away_team") or ""),
+                "league": str(match.get("league") or item.get("league") or ""),
+                "match_time": str(
+                    item.get("final_match_time") or match.get("match_time")
+                    or match.get("time") or ""
+                ),
+                "pick": raw_pick,
+                "market_key": str(official.get("market_key") or ""),
+                "probability": round(probability, 8),
+                "goal_score": round(balanced_score, 8),
+                "odd": round(odd, 4),
+                "edge": round(edge, 8),
+                "expected_value": round(expected_value, 8),
+                "tier": "Codex 공식 자신픽",
+                "analysis_version": str(
+                    item.get("analysis_version") or ANALYSIS_VERSION
+                ),
+            },
+        ))
+    ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
+    selected = [row for _score, row in ordered[:maximum_target]]
+    return {
+        "schema_version": "official-daily-shortlist.v1",
+        "policy": "saved-official-pick-independent-ranking-v1",
+        "minimum_target": minimum_target,
+        "maximum_target": maximum_target,
+        "qualified_count": len(ranked),
+        "selected_count": len(selected),
+        "target_range_reached": minimum_target <= len(selected) <= maximum_target,
+        "forced_fill": False,
+        "picks": selected,
+    }
+
+
+def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
+    """Rank independent robot picks for the administrator's daily shortlist.
+
+    The shortlist does not manufacture a new prediction or alter a frozen
+    answer. It ranks one already-frozen robot answer per future fixture using
+    the robot's prospective accuracy goal score, probability calibration and
+    verified price evidence. There is no human probability gate, price gate,
+    market quota or favourite/underdog quota at this presentation layer.
+    """
+    try:
+        minimum_target = max(1, int(minimum_target))
+        maximum_target = max(minimum_target, min(20, int(maximum_target)))
+    except (TypeError, ValueError):
+        minimum_target, maximum_target = 5, 10
     ranked = []
     seen = set()
     for item in items or []:
@@ -1244,11 +1378,7 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=8):
         robot = extract_robot_pick(item) or {}
         if str(robot.get("robot_pick_version") or "") != ROBOT_PICK_VERSION:
             continue
-        match = item.get("match") if isinstance(item.get("match"), dict) else item
-        identity = str(
-            item.get("api_fixture_id") or match.get("api_fixture_id")
-            or match.get("fixture_id") or match.get("id") or ""
-        ).strip()
+        match, identity = _shortlist_match(item)
         raw_pick = str(robot.get("raw_pick") or "").strip()
         if not identity or identity in seen or not raw_pick:
             continue
@@ -1264,28 +1394,8 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=8):
             continue
         true_underdog = bool(robot.get("is_true_underdog"))
         high_price = bool(odd >= 2.35)
-        high_probability = probability >= .65
-        regular_quality = goal_score >= .54 and probability >= .50
-        high_price_quality = bool(
-            high_price and goal_score >= .54 and probability >= .45 and odd > 1
-            and edge >= .03 and expected_value >= 1.06
-        )
-        if not (regular_quality or high_price_quality):
-            continue
-        price_strength = (
-            max(-.05, min(.15, expected_value - 1.0)) if odd > 1 else 0.0
-        )
-        calibration_strength = max(-.05, min(.10, edge)) if odd > 1 else 0.0
-        rank_score = (
-            goal_score * .78 + probability * .14
-            + price_strength * .05 + calibration_strength * .03
-        )
-        tier = (
-            "역배 자신픽" if true_underdog
-            else "고배당 자신픽" if high_price
-            else "고확률 자신픽" if high_probability
-            else "균형 자신픽"
-        )
+        rank_score = goal_score
+        tier = "자율 로봇 자신픽"
         seen.add(identity)
         ranked.append((
             (rank_score, goal_score, probability, edge, expected_value, raw_pick),
@@ -1319,8 +1429,8 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=8):
         if row.get("is_high_price") and not row.get("is_underdog")
     ]
     return {
-        "schema_version": "robot-daily-shortlist.v1",
-        "policy": "prospective-accuracy-plus-price-no-market-quota-v1",
+        "schema_version": "robot-daily-shortlist.v2",
+        "policy": "robot-owned-score-no-human-gate-or-quota-v2",
         "accuracy_goal": ROBOT_TARGET_ACCURACY,
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,

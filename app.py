@@ -14,7 +14,8 @@ from html import escape
 from api_engine import (
     ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
     PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION, extract_robot_pick,
-    build_robot_daily_shortlist, toto14_display_meta,
+    build_official_daily_shortlist, build_robot_daily_shortlist,
+    toto14_display_meta,
 )
 
 from grading_postmortem import (
@@ -1979,9 +1980,21 @@ def _render_back_to_top():
     return None
 
 
-main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = st.tabs([
-    "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14", "채점 노트", "인증 게시판"
-])
+main_tab_labels = [
+    "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14",
+    "채점 노트", "인증 게시판",
+]
+if active_role == ROLE_ADMIN:
+    main_tab_labels.insert(0, "관리자픽")
+main_tabs = st.tabs(main_tab_labels)
+if active_role == ROLE_ADMIN:
+    (
+        main_tab_admin, main_tab3, main_tab1, main_tab6,
+        main_tab2, main_tab4, main_tab5,
+    ) = main_tabs
+else:
+    main_tab_admin = None
+    main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = main_tabs
 
 if st.session_state.get('role') == ROLE_ADMIN:
     source_meta = dashboard_data.get("source_meta", {})
@@ -3237,6 +3250,7 @@ def generate_pred_boxes(
     robot = extract_robot_pick(analysis_item)
     if (
         viewer_role == globals().get("ROLE_ADMIN", "admin")
+        and not is_top3_tab
         and isinstance(robot, dict)
         and str(robot.get("raw_pick") or "").strip()
     ):
@@ -3274,6 +3288,70 @@ def generate_pred_boxes(
     return pick_html + robot_html + _final_pick_validation_html(
         analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
+
+
+def _render_admin_shortlist(title, color, payload):
+    rows = payload.get("picks") or []
+    target_note = (
+        "5~10경기 범위"
+        if payload.get("target_range_reached") else
+        "현재 저장된 유효 픽만 표시"
+    )
+    st.markdown(
+        "<div class='match-card' style='padding:16px 18px;margin-bottom:12px;"
+        f"border-color:{color};'>"
+        f"<div style='color:{color};font-size:18px;font-weight:900;'>{escape(title)}</div>"
+        f"<div style='color:#94A3B8;font-size:12px;margin-top:5px;'>{target_note} · "
+        f"현재 {int(payload.get('selected_count') or 0)}경기 · 약한 픽 임의 생성 없음</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    for index, row in enumerate(rows, 1):
+        odd = float(row.get("odd") or 0)
+        odd_text = f" · 실제 배당 {odd:.2f}배" if odd > 1 else ""
+        st.markdown(
+            "<div class='engine-result-card' style='margin-bottom:8px;'>"
+            "<div class='engine-result-head'>"
+            f"<b>#{index} {escape(str(row.get('tier') or '자신픽'))}</b>"
+            f"<span>{escape(str(row.get('match_time') or ''))}</span></div>"
+            f"<div style='color:#F8FAFC;font-weight:900;'>"
+            f"{escape(str(row.get('home') or ''))} vs "
+            f"{escape(str(row.get('away') or ''))}</div>"
+            f"<div style='color:{color};font-weight:900;margin-top:5px;'>"
+            f"{escape(_human_pick_label(row.get('pick'), row.get('home')))}"
+            f" · 확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
+            f"<small style='color:#94A3B8;'>독립 순위점수 "
+            f"{float(row.get('goal_score') or 0) * 100:.1f}% · "
+            f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p</small></div>",
+            unsafe_allow_html=True,
+        )
+    if not rows:
+        st.caption("현재 시작 전 프로토 LIVE 경기에서 표시할 저장 픽이 없습니다.")
+
+
+if main_tab_admin is not None:
+    with main_tab_admin:
+        st.markdown(
+            "<div class='section-intro'><div><h2>관리자픽</h2>"
+            "<p>프로토 LIVE 시작 전 경기만 대상으로 두 분석가가 서로 독립적으로 고른 "
+            "5~10경기 후보입니다.</p></div></div>",
+            unsafe_allow_html=True,
+        )
+        admin_pick_source = [
+            item for item in dashboard_data.get("proto", [])
+            if _recommendation_is_upcoming(item)
+        ]
+        official_daily = build_official_daily_shortlist(admin_pick_source, 5, 10)
+        robot_daily = build_robot_daily_shortlist(admin_pick_source, 5, 10)
+        official_column, robot_column = st.columns(2)
+        with official_column:
+            _render_admin_shortlist("① Codex 공식 관리자픽", "#00F2FE", official_daily)
+        with robot_column:
+            _render_admin_shortlist("② 자율 로봇 관리자픽", "#C4B5FD", robot_daily)
+        st.caption(
+            "두 후보판은 공개 TOP3와 분리되며 경기 시작 뒤에는 픽·확률·배당을 바꾸지 않습니다."
+        )
+        _render_back_to_top()
 
 # -----------------------------------------------------------------------------
 # [TAB 1] 프로토 LIVE
@@ -3640,57 +3718,6 @@ with main_tab3:
         <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
     </div>
     """, unsafe_allow_html=True)
-    if active_role == ROLE_ADMIN:
-        robot_daily_source = [
-            item for item in dashboard_data.get("proto", [])
-            if _recommendation_is_upcoming(item)
-        ]
-        for world_item in globals().get("world_matches", []) or []:
-            try:
-                normalized_world = _world_live_item(world_item, proto_by_fixture)
-            except (TypeError, ValueError, KeyError):
-                continue
-            if _recommendation_is_upcoming(normalized_world):
-                robot_daily_source.append(normalized_world)
-        robot_daily = build_robot_daily_shortlist(robot_daily_source, 5, 8)
-        robot_daily_rows = robot_daily.get("picks") or []
-        target_note = (
-            "목표 범위 충족"
-            if robot_daily.get("target_range_reached") else
-            "기준 통과 경기 부족 · 약한 픽 강제 추가 안 함"
-        )
-        st.markdown(
-            "<div class='match-card' style='border-color:#A78BFA;padding:18px;"
-            "margin-bottom:20px;'>"
-            "<div style='font-weight:900;color:#C4B5FD;font-size:18px;'>"
-            "🤖 로봇 일일 자신픽 5~8경기 후보판</div>"
-            f"<div style='color:#94A3B8;font-size:12px;margin-top:6px;'>"
-            f"미래 동결픽 70% 목표 · 정배/역배 자유 선택 · {target_note} · "
-            f"현재 {int(robot_daily.get('selected_count') or 0)}경기</div></div>",
-            unsafe_allow_html=True,
-        )
-        for robot_index, row in enumerate(robot_daily_rows, 1):
-            odd_text = (
-                f" · {float(row.get('odd') or 0):.2f}배"
-                if float(row.get("odd") or 0) > 1 else ""
-            )
-            st.markdown(
-                "<div class='engine-result-card' style='margin-bottom:8px;'>"
-                "<div class='engine-result-head'>"
-                f"<b>#{robot_index} {escape(str(row.get('tier') or '로봇 자신픽'))}</b>"
-                f"<span>{escape(str(row.get('match_time') or ''))}</span></div>"
-                f"<div style='color:#F8FAFC;font-weight:900;'>"
-                f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))}</div>"
-                f"<div style='color:#C4B5FD;font-weight:900;margin-top:5px;'>"
-                f"{escape(_human_pick_label(row.get('pick'), row.get('home')))}"
-                f" · 확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
-                f"<small style='color:#94A3B8;'>70% 목표점수 "
-                f"{float(row.get('goal_score') or 0) * 100:.1f}% · "
-                f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p</small></div>",
-                unsafe_allow_html=True,
-            )
-        if not robot_daily_rows:
-            st.caption("현재 같은 버전의 검증 기준을 통과한 로봇 자신픽이 없습니다.")
     honey_combo = dashboard_data.get("honey_two_pick") or {}
     combo_rows = honey_combo.get("picks") or []
     can_view_honey_combo = active_role in {ROLE_SUPPORTER, ROLE_ADMIN}
