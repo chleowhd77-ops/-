@@ -44,7 +44,7 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.12.16-chronological-pick-learning"
+ANALYSIS_VERSION = "V7.12.17-verified-comparative-pick-learning"
 FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
 CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
 PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
@@ -52,7 +52,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v7-value-accuracy-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.16-prospective-value-accuracy-learning"
+SYSTEM_VERSION = "R7.12.17-verified-comparison-investment-picks"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1273,18 +1273,26 @@ def _shortlist_match(item):
 def _shortlist_number(value, default=0.0):
     try:
         value = float(value)
-        return value if math.isfinite(value) else default
+        if math.isfinite(value):
+            return value
     except (TypeError, ValueError):
-        return default
+        pass
+    try:
+        default = float(default)
+        return default if math.isfinite(default) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _manager_value_rank(probability, learned_score, odd, edge, expected_value, market_key):
-    """Rank administrator investment picks on confidence *and* verified price.
+    """Compare confidence and real price by conservative expected log growth.
 
-    This presentation gate does not constrain either analyser's market choice or
-    learning.  It only prevents the private investment board from presenting a
-    short-priced/low-confidence answer as a "best value" pick.  The board may
-    therefore contain fewer than the requested range.
+    There is no fixed odds, market, favourite/underdog or 70%-display quota.
+    Seventy percent is the future scorecard goal, not a number that may be
+    manufactured on screen.  A row is investable only when the lower of the
+    analyser's model probability and its learned goal score still has positive
+    expected value at the saved decimal price.  A quarter-Kelly log-growth
+    score then balances hit probability and payout without forcing 5-10 rows.
     """
     probability = max(0.0, min(1.0, _shortlist_number(probability)))
     learned_score = max(0.0, min(1.0, _shortlist_number(learned_score, probability)))
@@ -1296,40 +1304,103 @@ def _manager_value_rank(probability, learned_score, odd, edge, expected_value, m
     if saved_expected_value <= 0 and odd > 1.0:
         saved_expected_value = probability * odd
     confidence = min(probability, learned_score)
-    # Never let stale/synthetic EV metadata make a low-confidence or short-price
-    # row look investable.  Both the saved EV and the displayed confidence must
-    # support the return independently.
+    # Never let stale/synthetic EV metadata make a candidate look investable.
+    # The current conservative probability must independently support the price.
     confidence_ev = confidence * odd if odd > 1.0 else 0.0
     expected_value = min(saved_expected_value, confidence_ev)
     neutral = .5 if str(market_key or "") == "totals" else 1.0 / 3.0
+    full_kelly = (
+        max(0.0, min(1.0, (expected_value - 1.0) / max(odd - 1.0, 1e-9)))
+        if odd > 1.0 else 0.0
+    )
+    stake_fraction = full_kelly * .25
+    expected_log_growth = (
+        confidence * math.log1p(stake_fraction * (odd - 1.0))
+        + (1.0 - confidence) * math.log(max(1e-9, 1.0 - stake_fraction))
+        if stake_fraction > 0 else 0.0
+    )
     qualified = bool(
-        odd >= 1.50 and expected_value >= 1.05
-        and probability >= .70 and learned_score >= .70
+        odd > 1.0 and confidence > neutral and expected_value > 1.0
+        and expected_log_growth > 0.0
     )
     price_score = max(0.0, min(1.0, math.log(max(1.0, odd), 6.0)))
+    growth_score = max(0.0, min(1.0, expected_log_growth / .05))
     value_score = max(-1.0, min(1.0, (expected_value - 1.0) / .35))
     edge_score = max(-1.0, min(1.0, edge / .12))
     score = (
-        confidence * .45
-        + price_score * .25
-        + max(0.0, value_score) * .20
-        + max(0.0, edge_score) * .10
+        confidence * .50
+        + growth_score * .25
+        + price_score * .15
+        + max(0.0, value_score) * .07
+        + max(0.0, edge_score) * .03
     )
     return {
         "qualified": qualified,
         "score": round(score, 8),
         "expected_value": expected_value,
+        "conservative_probability": confidence,
+        "full_kelly": round(full_kelly, 8),
+        "stake_fraction": round(stake_fraction, 8),
+        "expected_log_growth": round(expected_log_growth, 8),
         "neutral_probability": neutral,
-        "policy": "verified-high-confidence-high-price-no-forced-fill-v2",
+        "policy": "independent-positive-log-growth-no-forced-fill-v3",
     }
 
 
-def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
-    """Rank saved Codex official picks for the private PROTO workspace.
+def _manager_candidate_pool(item, analyst):
+    """Return one analyst's auditable all-market candidates for a fixture."""
+    if analyst == "robot":
+        candidates = item.get("robot_candidates") or []
+        fallback = extract_robot_pick(item)
+    else:
+        candidates = item.get("display_candidates") or item.get("ev_sorted_picks") or []
+        fallback = extract_official_pick(item)
+    pool = [dict(row) for row in candidates if isinstance(row, dict)]
+    if not pool and isinstance(fallback, dict):
+        pool = [dict(fallback)]
+    return pool
 
-    This never manufactures or replaces a fixture prediction.  It compares the
-    already-saved official answer from each future PROTO fixture and exposes the
-    strongest rows only to the administrator.
+
+def _manager_candidate_metrics(candidate, analyst):
+    if analyst == "robot":
+        probability = _shortlist_number(
+            candidate.get("robot_probability"),
+            candidate.get("prob", candidate.get("probability")),
+        )
+        goal_score = _shortlist_number(
+            candidate.get("robot_goal_score"), probability
+        )
+        edge = _shortlist_number(
+            candidate.get("robot_edge"), candidate.get("robust_edge")
+        )
+        expected_value = _shortlist_number(
+            candidate.get("robot_ev"), candidate.get("robust_ev")
+        )
+    else:
+        probability = _shortlist_number(
+            candidate.get("robust_probability"),
+            candidate.get("model_probability", candidate.get("prob")),
+        )
+        goal_score = _shortlist_number(
+            candidate.get("official_goal_score"),
+            candidate.get("official_learned_probability", probability),
+        )
+        edge = _shortlist_number(
+            candidate.get("robust_edge"), candidate.get("edge")
+        )
+        expected_value = _shortlist_number(candidate.get("robust_ev"))
+    odd = _shortlist_number(candidate.get("odd"))
+    if expected_value <= 0 and odd > 1.0:
+        expected_value = probability * odd
+    return probability, goal_score, odd, edge, expected_value
+
+
+def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
+    """Build a private Codex investment list independently of customer picks.
+
+    Every saved pre-kickoff 1X2/handicap/totals candidate competes.  Selecting
+    an administrator candidate never rewrites the customer-facing official
+    answer, its probability, its price or its later grade.
     """
     try:
         minimum_target = max(1, int(minimum_target))
@@ -1340,38 +1411,45 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
     for item in items or []:
         if not isinstance(item, dict):
             continue
-        official = extract_official_pick(item) or {}
         match, identity = _shortlist_match(item)
-        raw_pick = str(official.get("raw_pick") or "").strip()
-        if not identity or identity in seen or not raw_pick:
+        if not identity or identity in seen:
             continue
-        probability = _shortlist_number(
-            official.get("prob", official.get("probability"))
-        )
-        robust_probability = _shortlist_number(
-            official.get("robust_probability"), probability
-        )
-        if not 0 < probability <= 1 or not 0 < robust_probability <= 1:
+        fixture_candidates = []
+        for official in _manager_candidate_pool(item, "official"):
+            raw_pick = str(official.get("raw_pick") or official.get("pick") or "").strip()
+            if not raw_pick or official.get("display_only"):
+                continue
+            if str(official.get("recommendation_status") or "").upper() == "WITHHELD":
+                continue
+            probability, learned_score, odd, edge, expected_value = (
+                _manager_candidate_metrics(official, "official")
+            )
+            if not 0 < probability <= 1 or not 0 < learned_score <= 1:
+                continue
+            market_key = str(official.get("market_key") or "")
+            value_rank = _manager_value_rank(
+                probability, learned_score, odd, edge, expected_value, market_key
+            )
+            if not value_rank["qualified"]:
+                continue
+            fixture_candidates.append((
+                (
+                    value_rank["score"],
+                    value_rank["expected_log_growth"], learned_score,
+                    value_rank["expected_value"], odd, probability, raw_pick,
+                ),
+                official, raw_pick, market_key, probability, learned_score,
+                odd, edge, value_rank,
+            ))
+        if not fixture_candidates:
             continue
-        learned_score = _shortlist_number(
-            official.get("official_goal_score"),
-            official.get("official_learned_probability", robust_probability),
-        )
-        odd = _shortlist_number(official.get("odd"))
-        edge = _shortlist_number(official.get("robust_edge"))
-        expected_value = _shortlist_number(official.get("robust_ev"))
-        value_rank = _manager_value_rank(
-            probability, learned_score, odd, edge, expected_value,
-            official.get("market_key"),
-        )
-        if not value_rank["qualified"]:
-            continue
+        (
+            fixture_score, official, raw_pick, market_key, probability,
+            learned_score, odd, edge, value_rank,
+        ) = max(fixture_candidates, key=lambda entry: entry[0])
         seen.add(identity)
         ranked.append((
-            (
-                value_rank["score"], learned_score, expected_value,
-                odd, robust_probability, raw_pick,
-            ),
+            fixture_score,
             {
                 "fixture_id": identity,
                 "home": str(match.get("home") or item.get("home_team") or ""),
@@ -1382,20 +1460,39 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
                     or match.get("time") or ""
                 ),
                 "pick": raw_pick,
-                "market_key": str(official.get("market_key") or ""),
+                "market_key": market_key,
                 "probability": round(probability, 8),
                 "goal_score": round(learned_score, 8),
+                "conservative_probability": round(
+                    value_rank["conservative_probability"], 8
+                ),
                 "manager_value_score": value_rank["score"],
                 "odd": round(odd, 4),
                 "edge": round(edge, 8),
                 "expected_value": round(value_rank["expected_value"], 8),
+                "expected_log_growth": value_rank["expected_log_growth"],
+                "suggested_fraction": value_rank["stake_fraction"],
                 "learning_active": bool(
                     official.get("official_learning_active")
                 ),
                 "learning_samples": int(
                     official.get("official_learning_samples") or 0
                 ),
-                "tier": "Codex 공식 자신픽",
+                "validation_accuracy": official.get(
+                    "official_learning_validation_accuracy"
+                ),
+                "validation_baseline_accuracy": official.get(
+                    "official_learning_baseline_accuracy"
+                ),
+                "validation_promoted": bool(
+                    official.get("official_learning_active")
+                ),
+                "tier": "Codex 관리자 투자후보",
+                "independent_from_customer_pick": bool(
+                    raw_pick != str((extract_official_pick(item) or {}).get("raw_pick") or "")
+                ),
+                "accuracy_target": .70,
+                "target_is_guarantee": False,
                 "analysis_version": str(
                     item.get("analysis_version") or ANALYSIS_VERSION
                 ),
@@ -1404,8 +1501,10 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
     ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
     selected = [row for _score, row in ordered[:maximum_target]]
     return {
-        "schema_version": "official-daily-shortlist.v3",
-        "policy": "verified-high-confidence-high-price-no-forced-fill-v2",
+        "schema_version": "official-daily-shortlist.v4",
+        "policy": "independent-all-market-positive-log-growth-v3",
+        "accuracy_target": .70,
+        "target_is_guarantee": False,
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
         "qualified_count": len(ranked),
@@ -1419,11 +1518,10 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
 def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
     """Rank independent robot picks for the administrator's daily shortlist.
 
-    The shortlist does not manufacture a new prediction or alter a frozen
-    answer. It ranks one already-frozen robot answer per future fixture using
-    the robot's prospective accuracy goal score, probability calibration and
-    verified price evidence. There is no human probability gate, price gate,
-    market quota or favourite/underdog quota at this presentation layer.
+    Every robot-owned saved candidate may compete.  The private investment
+    answer can differ from the robot's one public comparison pick, while both
+    remain frozen pre-kickoff audit rows.  There is no human 70%-probability
+    gate, odds floor, market quota or favourite/underdog quota.
     """
     try:
         minimum_target = max(1, int(minimum_target))
@@ -1435,36 +1533,53 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
     for item in items or []:
         if not isinstance(item, dict):
             continue
-        robot = extract_robot_pick(item) or {}
-        if str(robot.get("robot_pick_version") or "") != ROBOT_PICK_VERSION:
-            continue
         match, identity = _shortlist_match(item)
-        raw_pick = str(robot.get("raw_pick") or "").strip()
-        if not identity or identity in seen or not raw_pick:
+        if not identity or identity in seen:
             continue
-        try:
-            probability = float(robot.get("prob", robot.get("probability", 0)) or 0)
-            goal_score = float(robot.get("robot_goal_score", probability) or probability)
-            odd = float(robot.get("odd") or 0)
-            edge = float(robot.get("robot_edge", robot.get("robust_edge", 0)) or 0)
-            expected_value = float(robot.get("robot_ev", robot.get("robust_ev", 0)) or 0)
-        except (TypeError, ValueError):
+        fixture_candidates = []
+        for robot in _manager_candidate_pool(item, "robot"):
+            pick_version = str(
+                robot.get("robot_pick_version")
+                or (extract_robot_pick(item) or {}).get("robot_pick_version")
+                or ROBOT_PICK_VERSION
+            )
+            if pick_version != ROBOT_PICK_VERSION:
+                continue
+            raw_pick = str(robot.get("raw_pick") or robot.get("pick") or "").strip()
+            if not raw_pick:
+                continue
+            probability, goal_score, odd, edge, expected_value = (
+                _manager_candidate_metrics(robot, "robot")
+            )
+            if not 0 < probability <= 1 or not 0 < goal_score <= 1:
+                continue
+            market_key = str(robot.get("market_key") or "")
+            value_rank = _manager_value_rank(
+                probability, goal_score, odd, edge, expected_value, market_key
+            )
+            if not value_rank["qualified"]:
+                continue
+            fixture_candidates.append((
+                (
+                    value_rank["score"],
+                    value_rank["expected_log_growth"], goal_score,
+                    value_rank["expected_value"], odd, probability, raw_pick,
+                ),
+                robot, raw_pick, market_key, probability, goal_score,
+                odd, edge, value_rank,
+            ))
+        if not fixture_candidates:
             continue
-        if not 0 < probability <= 1 or not 0 < goal_score <= 1:
-            continue
+        (
+            fixture_score, robot, raw_pick, market_key, probability,
+            goal_score, odd, edge, value_rank,
+        ) = max(fixture_candidates, key=lambda entry: entry[0])
         true_underdog = bool(robot.get("is_true_underdog"))
         high_price = bool(odd >= 2.35)
-        value_rank = _manager_value_rank(
-            probability, goal_score, odd, edge, expected_value,
-            robot.get("market_key"),
-        )
-        if not value_rank["qualified"]:
-            continue
-        rank_score = value_rank["score"]
         tier = "자율 로봇 자신픽"
         seen.add(identity)
         ranked.append((
-            (rank_score, goal_score, probability, edge, expected_value, raw_pick),
+            fixture_score,
             {
                 "fixture_id": identity,
                 "home": str(match.get("home") or item.get("home_team") or ""),
@@ -1475,18 +1590,34 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
                     or match.get("time") or ""
                 ),
                 "pick": raw_pick,
-                "market_key": str(robot.get("market_key") or ""),
+                "market_key": market_key,
                 "probability": round(probability, 8),
                 "goal_score": round(goal_score, 8),
+                "conservative_probability": round(
+                    value_rank["conservative_probability"], 8
+                ),
                 "manager_value_score": value_rank["score"],
                 "odd": round(odd, 4),
                 "edge": round(edge, 8),
                 "expected_value": round(value_rank["expected_value"], 8),
+                "expected_log_growth": value_rank["expected_log_growth"],
+                "suggested_fraction": value_rank["stake_fraction"],
                 "is_underdog": true_underdog,
                 "is_high_price": high_price,
                 "tier": tier,
+                "independent_from_robot_public_pick": bool(
+                    raw_pick != str((extract_robot_pick(item) or {}).get("raw_pick") or "")
+                ),
+                "accuracy_target": ROBOT_TARGET_ACCURACY,
+                "target_is_guarantee": False,
                 "robot_pick_version": ROBOT_PICK_VERSION,
                 "robot_model_version": str(robot.get("robot_model_version") or ""),
+                "validation_accuracy": robot.get(
+                    "robot_goal_validation_accuracy"
+                ),
+                "validation_promoted": bool(
+                    robot.get("robot_goal_target_reached")
+                ),
             },
         ))
     ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
@@ -1496,9 +1627,10 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
         if row.get("is_high_price") and not row.get("is_underdog")
     ]
     return {
-        "schema_version": "robot-daily-shortlist.v4",
-        "policy": "robot-verified-high-confidence-high-price-no-forced-fill-v2",
+        "schema_version": "robot-daily-shortlist.v5",
+        "policy": "robot-independent-all-market-positive-log-growth-v3",
         "accuracy_goal": ROBOT_TARGET_ACCURACY,
+        "target_is_guarantee": False,
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
         "qualified_count": len(ranked),

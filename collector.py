@@ -16,6 +16,7 @@ import traceback
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from html import unescape as html_unescape
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -1213,7 +1214,10 @@ def _toto14_from_canonical_proto(match, proto_items, probability_policy=None):
     if any(tuple(probs) != tuple(matches[0][1]) for _, probs in matches):
         return None
     item, raw_probs = matches[0]
-    probs = apply_toto14_probability_policy(raw_probs, probability_policy)
+    probs = apply_toto14_probability_policy(
+        raw_probs, probability_policy,
+        [match.get("vote_h"), match.get("vote_d"), match.get("vote_a")],
+    )
     result = {k: item.get(k) for k in ("home_team_id", "away_team_id", "home_logo", "away_logo", "analysis_version", "analysis_confidence",
               "analysis_stage", "home_form", "away_form", "h_rank_html", "a_rank_html", "h_inj_html", "a_inj_html")}
     pct_h, pct_d = round(probs[0]*100, 1), round(probs[1]*100, 1)
@@ -2670,11 +2674,28 @@ def _apply_toto14_probability_parameters(probabilities, parameters):
     return [value / weight_total for value in weights]
 
 
-def apply_toto14_probability_policy(probabilities, policy):
-    """Use only a policy that won an untouched later-round validation."""
+def apply_toto14_probability_policy(
+    probabilities, policy, public_probabilities=None
+):
+    """Use only a policy that won chronological later-round validation."""
     raw = _apply_toto14_probability_parameters(probabilities, {})
     if not raw or not isinstance(policy, dict) or not policy.get("active"):
         return raw
+    try:
+        public_weight = max(
+            0.0, min(.8, float(policy.get("public_vote_weight") or 0.0))
+        )
+    except (TypeError, ValueError):
+        public_weight = 0.0
+    if public_weight:
+        public = _apply_toto14_probability_parameters(
+            public_probabilities, {}
+        )
+        if len(public) == 3:
+            raw = [
+                (1.0 - public_weight) * model + public_weight * crowd
+                for model, crowd in zip(raw, public)
+            ]
     calibrated = _apply_toto14_probability_parameters(
         raw, policy.get("parameters") or {}
     )
@@ -2685,7 +2706,7 @@ def validate_toto14_probability_policy(records):
     """Promote W/D/L calibration only after a completely later pools round."""
     policy = {
         "active": False,
-        "policy_version": "toto14-later-round-probability-calibration-v1",
+        "policy_version": "toto14-chronological-model-public-comparison-v2",
         "target_accuracy": .70,
         "train_fixtures": 0,
         "validation_fixtures": 0,
@@ -2695,7 +2716,7 @@ def validate_toto14_probability_policy(records):
         "validation_brier": None,
         "parameters": {},
         "history_rewrite": False,
-        "validation_scope": "earlier-complete-rounds-to-later-untouched-round",
+        "validation_scope": "earlier-round-train-middle-round-tune-later-untouched-block",
         "reason": "승무패14 완료 회차 표본 부족 · 기존 확률 유지",
     }
     unique = {}
@@ -2708,6 +2729,9 @@ def validate_toto14_probability_policy(records):
                 record.get("probabilities"), {}
             )
             outcome = int(record.get("outcome"))
+            public_probabilities = _apply_toto14_probability_parameters(
+                record.get("public_probabilities"), {}
+            )
         except (TypeError, ValueError, AttributeError):
             continue
         if not key or not round_key or kickoff <= 0 or len(probabilities) != 3:
@@ -2717,6 +2741,7 @@ def validate_toto14_probability_policy(records):
         unique.setdefault(key, {
             "key": key, "round_key": round_key, "kickoff": kickoff,
             "probabilities": probabilities, "outcome": outcome,
+            "public_probabilities": public_probabilities,
         })
     ordered = sorted(unique.values(), key=lambda row: (row["kickoff"], row["key"]))
     rounds = {}
@@ -2733,6 +2758,132 @@ def validate_toto14_probability_policy(records):
     validation_round = round_order[-1]
     validation = list(rounds[validation_round])
     training = [row for key in round_order[:-1] for row in rounds[key]]
+
+    # The public share is one pre-kickoff signal, never an answer. It may be
+    # blended only after an earlier train block, a later tuning block, and a
+    # still later untouched block all confirm the prospective change.
+    if len(round_order) >= 3:
+        tuning_round = round_order[-2]
+        public_training = [
+            row for key in round_order[:-2] for row in rounds[key]
+            if len(row.get("public_probabilities") or []) == 3
+        ]
+        tuning = [
+            row for row in rounds[tuning_round]
+            if len(row.get("public_probabilities") or []) == 3
+        ]
+        public_validation = [
+            row for row in validation
+            if len(row.get("public_probabilities") or []) == 3
+        ]
+
+        def public_score(rows, public_weight):
+            correct = 0
+            brier = 0.0
+            log_loss = 0.0
+            selections = []
+            for row in rows:
+                values = [
+                    (1.0 - public_weight) * model + public_weight * public
+                    for model, public in zip(
+                        row["probabilities"], row["public_probabilities"]
+                    )
+                ]
+                values = _apply_toto14_probability_parameters(values, {})
+                choice = max(range(3), key=lambda index: values[index])
+                outcome = int(row["outcome"])
+                correct += int(choice == outcome)
+                brier += sum(
+                    (value - int(index == outcome)) ** 2
+                    for index, value in enumerate(values)
+                ) / 3.0
+                log_loss -= math.log(max(1e-9, values[outcome]))
+                selections.append(choice)
+            count = max(1, len(rows))
+            return {
+                "accuracy": correct / count,
+                "brier": brier / count,
+                "log_loss": log_loss / count,
+                "selections": selections,
+            }
+
+        if (
+            len(public_training) >= 12 and len(tuning) >= 5
+            and len(public_validation) >= 5
+            and max(row["kickoff"] for row in public_training) + 6 * 3600
+                < min(row["kickoff"] for row in tuning)
+            and max(row["kickoff"] for row in tuning) + 6 * 3600
+                < min(row["kickoff"] for row in public_validation)
+        ):
+            training_baseline = public_score(public_training, 0.0)
+            public_candidates = [
+                (weight, public_score(public_training, weight))
+                for weight in (.2, .4, .6, .8)
+            ]
+            public_weight, training_best = min(
+                public_candidates,
+                key=lambda row: (
+                    -row[1]["accuracy"], row[1]["brier"],
+                    row[1]["log_loss"], row[0],
+                ),
+            )
+            tuning_baseline = public_score(tuning, 0.0)
+            tuning_best = public_score(tuning, public_weight)
+            validation_baseline = public_score(public_validation, 0.0)
+            validation_best = public_score(public_validation, public_weight)
+            validation_changed = sum(
+                int(old != new) for old, new in zip(
+                    validation_baseline["selections"],
+                    validation_best["selections"],
+                )
+            )
+            training_improved = bool(
+                training_best["accuracy"] > training_baseline["accuracy"]
+                or (
+                    training_best["accuracy"] == training_baseline["accuracy"]
+                    and training_best["brier"] < training_baseline["brier"]
+                    and training_best["log_loss"] < training_baseline["log_loss"]
+                )
+            )
+            tuning_confirmed = bool(
+                tuning_best["accuracy"] >= tuning_baseline["accuracy"]
+                and tuning_best["brier"] < tuning_baseline["brier"]
+                and tuning_best["log_loss"] < tuning_baseline["log_loss"]
+            )
+            future_improved = bool(
+                validation_changed > 0
+                and validation_best["accuracy"] > validation_baseline["accuracy"]
+                and validation_best["brier"] < validation_baseline["brier"]
+                and validation_best["log_loss"] < validation_baseline["log_loss"]
+            )
+            if training_improved and tuning_confirmed and future_improved:
+                policy.update({
+                    "active": True,
+                    "train_fixtures": len(public_training),
+                    "tuning_fixtures": len(tuning),
+                    "validation_fixtures": len(public_validation),
+                    "tuning_round": tuning_round,
+                    "validation_round": validation_round,
+                    "training_accuracy": round(training_best["accuracy"], 8),
+                    "tuning_baseline_accuracy": round(tuning_baseline["accuracy"], 8),
+                    "tuning_accuracy": round(tuning_best["accuracy"], 8),
+                    "baseline_accuracy": round(validation_baseline["accuracy"], 8),
+                    "validation_accuracy": round(validation_best["accuracy"], 8),
+                    "baseline_brier": round(validation_baseline["brier"], 8),
+                    "validation_brier": round(validation_best["brier"], 8),
+                    "baseline_log_loss": round(validation_baseline["log_loss"], 8),
+                    "validation_log_loss": round(validation_best["log_loss"], 8),
+                    "validation_changed_selections": validation_changed,
+                    "public_vote_weight": public_weight,
+                    "parameters": {},
+                    "goal_reached": bool(validation_best["accuracy"] >= .70),
+                    "reason": (
+                        f"시간순 마지막 {len(public_validation)}경기 단통이 기존 "
+                        f"{validation_baseline['accuracy'] * 100:.1f}% → 비교학습 "
+                        f"{validation_best['accuracy'] * 100:.1f}%로 개선"
+                    ),
+                })
+                return policy
     if len(training) < 12 or len(validation) < 5:
         policy["available_fixtures"] = len(ordered)
         policy["available_rounds"] = len(round_order)
@@ -2881,11 +3032,18 @@ def _verified_toto14_probability_policy(conn):
                 float(payload.get("p_d")) / 100.0,
                 float(payload.get("p_a")) / 100.0,
             ]
+            match_payload = payload.get("match") or {}
+            public_probabilities = [
+                float(match_payload.get("vote_h")) / 100.0,
+                float(match_payload.get("vote_d")) / 100.0,
+                float(match_payload.get("vote_a")) / 100.0,
+            ]
             records.append({
                 "key": str(match_id),
                 "round_key": str(match_id).rsplit("_", 1)[0],
                 "kickoff": kickoff,
                 "probabilities": probabilities,
+                "public_probabilities": public_probabilities,
                 "outcome": outcome,
             })
         except (TypeError, ValueError, AttributeError, json.JSONDecodeError):
@@ -4109,6 +4267,12 @@ def build_pick_selection_audit(
             "official_learning_correction": _audit_number(
                 item.get("official_learning_correction"), 0.0
             ),
+            "official_learning_validation_accuracy": _audit_number(
+                item.get("official_learning_validation_accuracy")
+            ),
+            "official_learning_baseline_accuracy": _audit_number(
+                item.get("official_learning_baseline_accuracy")
+            ),
             "official_learning_axis": str(
                 item.get("official_learning_axis") or ""
             ),
@@ -4117,6 +4281,12 @@ def build_pick_selection_audit(
             "robot_expected_goals": dict(item.get("robot_expected_goals") or {}),
             "robot_model_version": str(item.get("robot_model_version") or ""),
             "robot_model_active": bool(item.get("robot_model_active")),
+            "robot_goal_validation_accuracy": _audit_number(
+                item.get("robot_goal_validation_accuracy")
+            ),
+            "robot_goal_target_reached": bool(
+                item.get("robot_goal_target_reached")
+            ),
             "robot_training_samples": int(item.get("robot_training_samples") or 0),
             "robot_validation_fixtures": int(item.get("robot_validation_fixtures") or 0),
             "robot_learning_revision": str(
@@ -6262,6 +6432,7 @@ def save_autonomous_robot_sample(
                 "robot_price_skill_segment", "robot_price_skill_samples",
                 "robot_price_skill_accuracy", "robot_price_skill_weight",
                 "robot_accuracy_goal", "robot_accuracy_goal_policy_version",
+                "robot_goal_validation_accuracy", "robot_goal_target_reached",
                 "robot_goal_score", "robot_goal_market_samples",
                 "robot_goal_market_accuracy", "robot_goal_market_weight",
                 "robot_goal_price_segment", "robot_goal_price_samples",
@@ -6284,6 +6455,7 @@ def save_autonomous_robot_sample(
             "robot_price_skill_segment", "robot_price_skill_samples",
             "robot_price_skill_accuracy", "robot_price_skill_weight",
             "robot_accuracy_goal", "robot_accuracy_goal_policy_version",
+            "robot_goal_validation_accuracy", "robot_goal_target_reached",
             "robot_goal_score", "robot_goal_market_samples",
             "robot_goal_market_accuracy", "robot_goal_market_weight",
             "robot_goal_price_segment", "robot_goal_price_samples",
@@ -11544,6 +11716,56 @@ def build_dashboard_data():
             "legacy_v4_pick": legacy_v4_pick,
             "legacy_v4_candidates": legacy_v4_candidates,
             "robot_pick": robot_pick,
+            # Private administrator investment selection compares the robot's
+            # full pre-kickoff candidate set.  Keep only auditable numeric
+            # fields in the dashboard payload; the larger evidence snapshot
+            # remains in robot_learning_samples.
+            "robot_candidates": [
+                {
+                    "raw_pick": candidate.get("raw_pick"),
+                    "market_key": candidate.get("market_key"),
+                    "selection_side": candidate.get("selection_side"),
+                    "handicap_base": candidate.get("handicap_base"),
+                    "totals_base": candidate.get("totals_base"),
+                    "prob": candidate.get("prob"),
+                    "robot_probability": candidate.get("robot_probability"),
+                    "robot_goal_score": candidate.get("robot_goal_score"),
+                    "robot_goal_validation_accuracy": candidate.get(
+                        "robot_goal_validation_accuracy"
+                    ),
+                    "robot_goal_target_reached": bool(
+                        candidate.get("robot_goal_target_reached")
+                    ),
+                    "odd": candidate.get("odd"),
+                    "fair_prob": candidate.get("fair_prob"),
+                    "robot_edge": candidate.get("robot_edge"),
+                    "robot_ev": candidate.get("robot_ev"),
+                    "robust_edge": candidate.get("robust_edge"),
+                    "robust_ev": candidate.get("robust_ev"),
+                    "robot_goal_market_samples": candidate.get(
+                        "robot_goal_market_samples"
+                    ),
+                    "robot_goal_market_accuracy": candidate.get(
+                        "robot_goal_market_accuracy"
+                    ),
+                    "robot_goal_price_samples": candidate.get(
+                        "robot_goal_price_samples"
+                    ),
+                    "robot_goal_price_accuracy": candidate.get(
+                        "robot_goal_price_accuracy"
+                    ),
+                    "robot_goal_price_roi": candidate.get(
+                        "robot_goal_price_roi"
+                    ),
+                    "is_true_underdog": bool(
+                        candidate.get("is_true_underdog")
+                    ),
+                    "robot_model_version": candidate.get("robot_model_version"),
+                    "robot_pick_version": ROBOT_PICK_VERSION,
+                }
+                for candidate in robot_candidates
+                if isinstance(candidate, dict)
+            ],
             "robot_wdl_probabilities": {
                 str(candidate.get("selection_side")): round(float(candidate.get("robot_probability") or 0), 8)
                 for candidate in robot_candidates
@@ -12030,7 +12252,8 @@ def build_dashboard_data():
         )
         raw_h_win, raw_draw, raw_a_win = probabilities[:3]
         h_win, draw, a_win = apply_toto14_probability_policy(
-            [raw_h_win, raw_draw, raw_a_win], toto14_probability_policy
+            [raw_h_win, raw_draw, raw_a_win], toto14_probability_policy,
+            [m.get("vote_h"), m.get("vote_d"), m.get("vote_a")],
         )
         goal_model_audit["joint_forecast"] = joint_audit
         goal_model_audit["toto14_probability_learning"] = {
@@ -14089,36 +14312,78 @@ def parse_betman_toto14_html(html, round_id="current"):
     if not rows:
         # Betman has occasionally omitted the tbody id while keeping the table id.
         rows = soup.select("table#grid_victory tbody > tr")
+    try:
+        rows = list(rows)
+    except TypeError:
+        rows = []
+
+    row_values = []
     for row in rows:
         cells = row.find_all("td", recursive=False)
         if len(cells) < 6:
             continue
-        num_match = re.search(r'(\d+)\s*경기', cells[0].get_text(" ", strip=True))
-        if not num_match:
-            continue
-        num = int(num_match.group(1))
-
-        raw_time = cells[1].get_text(" ", strip=True)
-        time_match = re.search(r'(?:\d{2}\.)?(\d{2}\.\d{2}\s*\([^)]+\)\s*\d{2}:\d{2})', raw_time)
-        match_time = re.sub(r'\s+', ' ', time_match.group(1)).strip() if time_match else "시간 미정"
-
         teams_box = cells[2].select_one(".vsDIv") or cells[2]
         team_parts = teams_box.find_all("div", recursive=False)
         if len(team_parts) >= 2:
             home = team_parts[0].get_text(" ", strip=True)
-            away = re.sub(r'^\s*v\s*s\s*', '', team_parts[1].get_text(" ", strip=True), flags=re.IGNORECASE).strip()
+            away = re.sub(
+                r'^\s*v\s*s\s*', '',
+                team_parts[1].get_text(" ", strip=True),
+                flags=re.IGNORECASE,
+            ).strip()
+            team_text = f"{home} vs {away}"
         else:
             team_text = teams_box.get_text(" ", strip=True)
-            split_teams = re.split(r'\s+v\s*s\s+', team_text, maxsplit=1, flags=re.IGNORECASE)
-            if len(split_teams) != 2:
-                continue
-            home, away = (part.strip() for part in split_teams)
+        row_values.append([
+            cell.get_text(" ", strip=True) if index != 2 else team_text
+            for index, cell in enumerate(cells[:6])
+        ])
+
+    # Keep the parser testable and the collector recoverable when BeautifulSoup
+    # is temporarily unavailable. This path only extracts the six official
+    # table cells; it does not infer or fabricate any fixture data.
+    if not row_values:
+        def plain_text(fragment):
+            fragment = re.sub(r'<(?:br|/p)\s*/?>', ' ', fragment, flags=re.IGNORECASE)
+            fragment = re.sub(r'<[^>]+>', ' ', fragment)
+            return re.sub(r'\s+', ' ', html_unescape(fragment)).strip()
+
+        table_match = re.search(
+            r'<table\b[^>]*id=["\']grid_victory["\'][^>]*>(.*?)</table>',
+            str(html or ''), re.IGNORECASE | re.DOTALL,
+        )
+        table_html = table_match.group(1) if table_match else str(html or '')
+        for row_html in re.findall(
+            r'<tr\b[^>]*>(.*?)</tr>', table_html, re.IGNORECASE | re.DOTALL
+        ):
+            cells = re.findall(
+                r'<td\b[^>]*>(.*?)</td>', row_html, re.IGNORECASE | re.DOTALL
+            )
+            if len(cells) >= 6:
+                row_values.append([plain_text(cell) for cell in cells[:6]])
+
+    for cells in row_values:
+        num_match = re.search(r'(\d+)\s*경기', cells[0])
+        if not num_match:
+            continue
+        num = int(num_match.group(1))
+
+        raw_time = cells[1]
+        time_match = re.search(r'(?:\d{2}\.)?(\d{2}\.\d{2}\s*\([^)]+\)\s*\d{2}:\d{2})', raw_time)
+        match_time = re.sub(r'\s+', ' ', time_match.group(1)).strip() if time_match else "시간 미정"
+
+        split_teams = re.split(
+            r'\s+v\s*s\s+', cells[2], maxsplit=1, flags=re.IGNORECASE
+        )
+        if len(split_teams) != 2:
+            continue
+        home, away = (part.strip() for part in split_teams)
         if not home or not away:
             continue
 
         vote_values = []
         for cell in cells[3:6]:
-            vote_match = re.search(r'(\d+(?:\.\d+)?)\s*%', cell.get_text(" ", strip=True))
+            vote_match = re.search(r'(\d+(?:\.\d+)?)\s*%', cell)
             vote_values.append(float(vote_match.group(1)) if vote_match else None)
 
         parsed.append({

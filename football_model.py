@@ -2260,6 +2260,12 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
             "robot_model_active": active,
             "robot_training_samples": int(artifact.get("samples") or 0),
             "robot_validation_fixtures": int(artifact.get("validation_fixtures") or 0),
+            "robot_goal_validation_accuracy": artifact.get(
+                "goal_validation_accuracy"
+            ),
+            "robot_goal_target_reached": bool(
+                artifact.get("goal_target_reached")
+            ),
             "robot_learning_revision": str(
                 artifact.get("learning_revision_marker") or ""
             ),

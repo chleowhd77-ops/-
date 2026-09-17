@@ -3306,9 +3306,9 @@ def generate_pred_boxes(
 def _render_admin_shortlist(title, color, payload):
     rows = payload.get("picks") or []
     target_note = (
-        "고확률·실배당·양의 기대수익 동시 확인"
+        "실배당과 보수확률 기준 양의 기대성장 후보"
         if payload.get("target_range_reached") else
-        "현재 기준을 모두 통과한 픽만 표시"
+        "현재 양의 기대성장을 통과한 후보만 표시"
     )
     st.markdown(
         "<div class='match-card' style='padding:16px 18px;margin-bottom:12px;"
@@ -3322,6 +3322,11 @@ def _render_admin_shortlist(title, color, payload):
     for index, row in enumerate(rows, 1):
         odd = float(row.get("odd") or 0)
         odd_text = f" · 실제 배당 {odd:.2f}배" if odd > 1 else ""
+        validation = row.get("validation_accuracy")
+        validation_text = (
+            f" · 시간순 검증 {float(validation) * 100:.1f}%"
+            if validation is not None else " · 시간순 검증 표본 대기"
+        )
         st.markdown(
             "<div class='engine-result-card' style='margin-bottom:8px;'>"
             "<div class='engine-result-head'>"
@@ -3333,16 +3338,18 @@ def _render_admin_shortlist(title, color, payload):
             f"<div style='color:{color};font-weight:900;margin-top:5px;'>"
             f"{escape(_human_pick_label(row.get('pick'), row.get('home')))}"
             f" · 모델확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
-            f"<small style='color:#94A3B8;'>검증 목표점수 "
-            f"{float(row.get('goal_score') or 0) * 100:.1f}% · "
+            f"<small style='color:#94A3B8;'>보수 비교확률 "
+            f"{float(row.get('conservative_probability') or 0) * 100:.1f}% · "
             f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p · "
-            f"보수 기대수익 {float(row.get('expected_value') or 0):.2f}</small></div>",
+            f"보수 기대수익 {float(row.get('expected_value') or 0):.2f} · "
+            f"기대성장 {float(row.get('expected_log_growth') or 0) * 100:.2f}%"
+            f"{validation_text}</small></div>",
             unsafe_allow_html=True,
         )
     if not rows:
         st.caption(
-            "현재 시작 전 프로토 LIVE에서 모델확률 70% 이상·실제 배당 1.50배 이상·"
-            "보수 기대수익 1.05 이상을 동시에 확인한 저장 픽이 없습니다."
+            "현재 시작 전 프로토 LIVE에서 보수확률과 실제 배당을 함께 계산했을 때 "
+            "양의 기대성장이 확인된 저장 후보가 없습니다. 개수를 억지로 채우지 않습니다."
         )
 
 
@@ -3366,7 +3373,9 @@ if main_tab_admin is not None:
         with robot_column:
             _render_admin_shortlist("② 자율 로봇 관리자픽", "#C4B5FD", robot_daily)
         st.caption(
-            "두 후보판은 공개 TOP3와 분리되며 경기 시작 뒤에는 픽·확률·배당을 바꾸지 않습니다."
+            "두 후보판은 공개 TOP3와 분리되며 각 분석가의 전체 시장 후보를 독립 비교합니다. "
+            "70%는 미래 실전 채점 목표이지 표시 확률 보장이 아니며, 경기 시작 뒤에는 "
+            "픽·확률·배당을 바꾸지 않습니다."
         )
         _render_back_to_top()
 
