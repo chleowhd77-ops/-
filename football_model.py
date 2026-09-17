@@ -9,14 +9,14 @@ import math
 from collections import Counter
 
 MODEL_VERSION = "time-weighted-opponent-dixon-coles-v2"
-AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-frozen-future-accuracy-goal-v5"
-OFFICIAL_PICK_POLICY_VERSION = "evidence-ensemble-accuracy-first-v2"
+AUTONOMOUS_ROBOT_POLICY_VERSION = "self-learning-frozen-future-value-accuracy-v6"
+OFFICIAL_PICK_POLICY_VERSION = "chronological-candidate-learning-accuracy-v3"
 LEGACY_V4_POLICY_VERSION = "legacy-v4-reconstructed-20260821-v1"
 MIN_TRAIN = 160
 MIN_VALIDATION = 40
 MIN_RHO_LOW_SCORE_TRAIN = 30
-ROBOT_MODEL_VERSION = "autonomous-pre-match-formula-evolution-v6"
-ROBOT_FORMULA_ENGINE_VERSION = "symbolic-formula-lab-v3-frozen-future-goal"
+ROBOT_MODEL_VERSION = "autonomous-pre-match-formula-evolution-v7"
+ROBOT_FORMULA_ENGINE_VERSION = "symbolic-formula-lab-v4-frozen-value-accuracy"
 ROBOT_TARGET_ACCURACY = .70
 ROBOT_GOAL_MIN_VALIDATION = 40
 ROBOT_GOAL_MAX_VALIDATION = 120
@@ -29,6 +29,63 @@ ROBOT_COMPATIBLE_FEATURE_SCHEMAS = (
 )
 ROBOT_MEMORY_SCHEMA_VERSION = "robot-memory.v2-all-pre-match-context"
 ROBOT_LINEUP_SCHEMA_VERSION = "robot-lineup-learning.v1"
+
+
+def _official_policy_segment_keys(pick):
+    """Return broad, auditable cohorts learned from frozen candidate grades."""
+    market = str(pick.get("market_key") or "1x2")
+    side = str(pick.get("selection_side") or "unknown")
+    probability = max(0.0, min(1.0, _finite_number(
+        pick.get("robust_probability"), pick.get("prob") or 0
+    )))
+    odd = _finite_number(pick.get("odd"))
+    price_band = (
+        "no_price" if odd <= 1.0 else "below_1_50" if odd < 1.5
+        else "1_50_to_2_00" if odd < 2.0
+        else "2_00_to_3_00" if odd < 3.0 else "3_plus"
+    )
+    probability_band = str(min(9, max(0, int(probability * 10))))
+    keys = [
+        "global",
+        f"market:{market}",
+        f"market_side:{market}:{side}",
+        f"market_price:{market}:{price_band}",
+        f"market_probability:{market}:{probability_band}",
+    ]
+    if bool(pick.get("is_true_underdog")):
+        keys.append("opportunity:true_underdog")
+    if odd >= 2.35:
+        keys.append("opportunity:high_price")
+    return keys
+
+
+def _official_policy_probability(pick, policy):
+    """Apply only a chronologically promoted residual reliability policy."""
+    base = max(0.0, min(1.0, _finite_number(
+        pick.get("robust_probability"), pick.get("prob") or 0
+    )))
+    if not isinstance(policy, dict) or not policy.get("active"):
+        return base, {"active": False, "samples": 0, "correction": 0.0}
+    cells = policy.get("cells") or {}
+    eligible = [
+        cells[key] for key in _official_policy_segment_keys(pick)
+        if key in cells and int((cells[key] or {}).get("samples") or 0) >= 20
+    ]
+    if not eligible:
+        return base, {"active": False, "samples": 0, "correction": 0.0}
+    weights = [math.sqrt(max(1, int(cell.get("samples") or 0))) for cell in eligible]
+    correction = sum(
+        weight * _finite_number(cell.get("correction"))
+        for weight, cell in zip(weights, eligible)
+    ) / max(1e-9, sum(weights))
+    correction *= max(0.0, min(1.0, _finite_number(policy.get("selected_weight"), 0.0)))
+    correction = max(-.12, min(.12, correction))
+    return max(.001, min(.999, base + correction)), {
+        "active": True,
+        "samples": max(int(cell.get("samples") or 0) for cell in eligible),
+        "correction": correction,
+        "segments": len(eligible),
+    }
 
 
 def price_eligible(pick, confidence):
@@ -101,12 +158,20 @@ def all_evidence_choice(picks, confidence, return_reason=False):
             if pick.get("robust_probability") is not None
             else raw_probability
         )))
+        policy = pick.get("official_selection_policy") or {}
+        learned_probability, policy_audit = _official_policy_probability(
+            pick, policy
+        )
         interval = pick.get("probability_interval") or {}
         try:
             lower_bound = float(interval.get("low"))
         except (TypeError, ValueError):
             lower_bound = probability
         lower_bound = max(0.0, min(probability, lower_bound))
+        learned_floor = max(
+            0.0,
+            min(learned_probability, lower_bound + policy_audit["correction"]),
+        )
         uncertainty = max(0.0, raw_probability - lower_bound)
         odd = float(pick.get("odd") or 0)
         fair = pick.get("fair_prob")
@@ -120,20 +185,18 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         context = _evidence_alignment(pick)
         support_count = int(pick.get("independent_support_count") or 0)
         support = min(.025, support_count * .005)
-        # The official answer is now an accuracy-first ensemble.  Cross-market
-        # candidates are ranked by their conservative chance of settling as a
-        # win, not by Kelly or a high price.  Price is retained only as a small
-        # calibration-agreement and final tie-break signal.  Context is already
-        # inside the coherent score distribution; the bounded term below only
-        # rewards independent agreement and cannot manufacture a new forecast.
+        # Only a policy that beat the saved official answers on a later
+        # chronological block may alter the decision probability.  The live
+        # selector therefore learns from the grading notebook without letting
+        # a good in-sample fit rewrite an already published answer.
         market_confirmation = fair if priced else probability
         market_disagreement = abs(probability - fair) if priced else 0.0
         context_support = context * .035
         value_tiebreak = max(-.008, min(.008, (expected_return - 1.0) * .02)) if priced else 0.0
         score = (
-            probability * .85
-            + lower_bound * .05
-            + raw_probability * .10
+            learned_probability * .88
+            + learned_floor * .04
+            + probability * .08
             + market_confirmation * .02
             + context_support * 1.5
             + support * 1.5
@@ -143,7 +206,18 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         ) * (.95 + confidence * .05)
         pick.update({
             "official_score": round(score, 6),
+            "official_goal_score": round(learned_probability, 6),
             "official_accuracy_probability": round(probability, 6),
+            "official_learned_probability": round(learned_probability, 6),
+            "official_learning_active": bool(policy_audit["active"]),
+            "official_learning_samples": int(policy_audit["samples"]),
+            "official_learning_correction": round(policy_audit["correction"], 6),
+            "official_learning_validation_accuracy": policy.get(
+                "validation_accuracy"
+            ),
+            "official_learning_baseline_accuracy": policy.get(
+                "baseline_accuracy"
+            ),
             "official_probability_floor": round(lower_bound, 6),
             "official_uncertainty": round(uncertainty, 6),
             "official_market_confirmation": round(market_confirmation, 6),
@@ -152,6 +226,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
             "official_price_verified": priced,
             "official_policy_version": OFFICIAL_PICK_POLICY_VERSION,
             "selection_axis": "evidence_ensemble_accuracy_first",
+            "official_learning_axis": "chronological_candidate_learning_accuracy_first",
         })
 
     chosen = max(
@@ -168,9 +243,10 @@ def all_evidence_choice(picks, confidence, return_reason=False):
     chosen["selection_reason"] = (
         "경기 전 전체 지표가 반영된 동일 점수분포에서 승무패·3방향 핸디캡·"
         "언더오버를 모두 비교하고, 배당수익보다 보수적인 실제 적중확률과 "
-        "불확실성·독립근거 합치를 우선해 한 방향을 선택했습니다."
+        "불확실성·독립근거 합치와 시간순 미래검증을 통과한 후보 채점 학습을 "
+        "우선해 한 방향을 선택했습니다."
     )
-    reason = "evidence_ensemble_accuracy_first"
+    reason = "chronological_candidate_learning_accuracy_first"
     return (chosen, reason) if return_reason else chosen
 
 
@@ -1707,6 +1783,9 @@ def train_autonomous_robot(examples):
         "human_market_quota": False,
         "human_formula_weights": False,
         "self_modifying_source_code": False,
+        "api_evidence_allowed": True,
+        "api_usage_policy": "cached-first-pre-match-only-no-duplicate-check-calls",
+        "learning_scope": "all-available-site-and-api-pre-match-evidence",
         "accuracy_goal": ROBOT_TARGET_ACCURACY,
         "accuracy_goal_policy_version": ROBOT_GOAL_POLICY_VERSION,
         "goal_validation_available": False,
@@ -1972,6 +2051,12 @@ def train_autonomous_robot(examples):
             or float(goal_accuracy) >= float(baseline_accuracy)
             or selected_family == "context_baseline"
         )
+        and (
+            selected_family == "context_baseline"
+            or baseline_goal_metrics.get("brier") is None
+            or _finite_number(selected_goal_metrics.get("brier"), 1.0)
+                <= _finite_number(baseline_goal_metrics.get("brier"), 1.0)
+        )
     )
 
     artifact.update({
@@ -2030,6 +2115,10 @@ def train_autonomous_robot(examples):
             if goal_accuracy is not None else None
         ),
         "goal_promotion_eligible": goal_promotion_eligible,
+        "deployment_eligible": goal_promotion_eligible,
+        "deployment_policy": (
+            "chronological-accuracy-brier-and-price-skill-nonworse"
+        ),
         "price_skill_policy": (
             "no-quota-high-price-and-underdog-accuracy-roi-nonworse"
         ),
@@ -2076,6 +2165,56 @@ def train_autonomous_robot(examples):
         artifact["feature_importance"] = []
     artifact["parameters"] = best_parameters
     return artifact
+
+
+def _robot_price_skill_segments(pick):
+    """Describe value opportunities without imposing a selection quota."""
+    odd = _finite_number((pick or {}).get("odd"))
+    expected_return = _finite_number(
+        (pick or {}).get("robot_ev"),
+        _finite_number((pick or {}).get("robot_probability")) * odd
+        if odd > 1.0 else 0.0,
+    )
+    segments = []
+    if odd >= 3.5:
+        segments.extend(["very_high_price", "high_price"])
+    elif odd >= 2.35:
+        segments.append("high_price")
+    elif odd > 1.0:
+        segments.append("regular_price")
+    if bool((pick or {}).get("is_true_underdog")):
+        segments.append("true_underdog")
+    if expected_return >= 1.02:
+        segments.append("positive_value")
+    return list(dict.fromkeys(segments))
+
+
+def _robot_segment_experience(cells, segment_keys, fallback):
+    """Aggregate overlapping robot-owned cohorts with bounded influence."""
+    observed = []
+    for key in segment_keys:
+        cell = (cells or {}).get(key) or {}
+        samples = max(0, int(cell.get("samples") or 0))
+        if not samples:
+            continue
+        observed.append((
+            samples,
+            _finite_number(cell.get("accuracy"), fallback),
+            _finite_number(cell.get("roi")),
+            key,
+        ))
+    if not observed:
+        return fallback, 0.0, 0.0, 0, []
+    weights = [math.sqrt(samples) for samples, _accuracy, _roi, _key in observed]
+    accuracy = sum(
+        weight * row[1] for weight, row in zip(weights, observed)
+    ) / max(1e-9, sum(weights))
+    roi = sum(
+        weight * row[2] for weight, row in zip(weights, observed)
+    ) / max(1e-9, sum(weights))
+    samples = max(row[0] for row in observed)
+    weight = min(.30, samples / (samples + 30.0))
+    return accuracy, roi, weight, samples, [row[3] for row in observed]
 
 
 def build_autonomous_robot_candidates(picks, features, artifact=None):
@@ -2125,6 +2264,13 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
                 artifact.get("learning_revision_marker") or ""
             ),
             "robot_learning_reason": str(artifact.get("reason") or "종료된 경기 전 표본 수집 중"),
+            "robot_api_evidence_allowed": bool(
+                artifact.get("api_evidence_allowed", True)
+            ),
+            "robot_api_usage_policy": str(
+                artifact.get("api_usage_policy")
+                or "cached-first-pre-match-only-no-duplicate-check-calls"
+            ),
             "robot_grading_experience_samples": int(
                 artifact.get("grading_experience_samples") or 0
             ),
@@ -2172,20 +2318,13 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
                 + observed * learning_weight
             )
             odd = _finite_number(pick.get("odd"))
-            price_segment = (
-                "true_underdog" if bool(pick.get("is_true_underdog"))
-                else "high_price" if odd >= 2.35
-                else "regular_price" if odd > 1.0 else ""
+            price_segments = _robot_price_skill_segments(pick)
+            price_observed, _price_roi, price_weight, price_samples, used_segments = (
+                _robot_segment_experience(
+                    price_cells, price_segments, calibrated
+                )
             )
-            price_cell = price_cells.get(price_segment) or {}
-            price_samples = max(0, int(price_cell.get("samples") or 0))
-            price_observed = _finite_number(
-                price_cell.get("accuracy"), calibrated
-            )
-            price_weight = (
-                min(.25, price_samples / (price_samples + 24.0))
-                if price_samples else 0.0
-            )
+            price_weight = min(.25, price_weight)
             calibrated = (
                 calibrated * (1.0 - price_weight)
                 + price_observed * price_weight
@@ -2196,7 +2335,8 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
                 "robot_grading_calibration_samples": samples,
                 "robot_grading_calibration_weight": round(learning_weight, 8),
                 "robot_grading_observed_rate": observed if samples else None,
-                "robot_price_skill_segment": price_segment,
+                "robot_price_skill_segment": used_segments[0] if used_segments else "",
+                "robot_price_skill_segments": used_segments,
                 "robot_price_skill_samples": price_samples,
                 "robot_price_skill_accuracy": (
                     price_observed if price_samples else None
@@ -2238,16 +2378,11 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
         goal_weight = min(.50, samples / (samples + 24.0)) if samples else 0.0
         probability = _finite_number(pick.get("robot_probability"))
         goal_score = probability * (1.0 - goal_weight) + observed * goal_weight
-        price_segment = str(pick.get("robot_price_skill_segment") or "")
-        price_performance = selection_price_cells.get(price_segment) or {}
-        price_samples = max(0, int(price_performance.get("samples") or 0))
-        price_accuracy = _finite_number(
-            price_performance.get("accuracy"), goal_score
-        )
-        price_roi = _finite_number(price_performance.get("roi"))
-        price_weight = (
-            min(.30, price_samples / (price_samples + 30.0))
-            if price_samples else 0.0
+        price_segments = _robot_price_skill_segments(pick)
+        price_accuracy, price_roi, price_weight, price_samples, used_segments = (
+            _robot_segment_experience(
+                selection_price_cells, price_segments, goal_score
+            )
         )
         goal_score = (
             goal_score * (1.0 - price_weight)
@@ -2265,7 +2400,8 @@ def build_autonomous_robot_candidates(picks, features, artifact=None):
             "robot_goal_market_samples": samples,
             "robot_goal_market_accuracy": observed if samples else None,
             "robot_goal_market_weight": round(goal_weight, 8),
-            "robot_goal_price_segment": price_segment,
+            "robot_goal_price_segment": used_segments[0] if used_segments else "",
+            "robot_goal_price_segments": used_segments,
             "robot_goal_price_samples": price_samples,
             "robot_goal_price_accuracy": (
                 price_accuracy if price_samples else None

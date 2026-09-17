@@ -1179,7 +1179,7 @@ def _choose_toto14_picks(probs_dict, current_combinations, max_combinations=None
     return _normalize_toto14_picks(picks), first_pct, wants_double and not can_afford_double
 
 
-def _toto14_from_canonical_proto(match, proto_items):
+def _toto14_from_canonical_proto(match, proto_items, probability_policy=None):
     """Reuse current same-fixture WDL; never rewrite a previously frozen ticket."""
     when = _parse_kst_match_time(match.get("match_time"))
     if when is None or when <= datetime.now(KST):
@@ -1212,14 +1212,25 @@ def _toto14_from_canonical_proto(match, proto_items):
     # Ambiguous snapshots for one fixture cannot silently choose different WDL.
     if any(tuple(probs) != tuple(matches[0][1]) for _, probs in matches):
         return None
-    item, probs = matches[0]
+    item, raw_probs = matches[0]
+    probs = apply_toto14_probability_policy(raw_probs, probability_policy)
     result = {k: item.get(k) for k in ("home_team_id", "away_team_id", "home_logo", "away_logo", "analysis_version", "analysis_confidence",
               "analysis_stage", "home_form", "away_form", "h_rank_html", "a_rank_html", "h_inj_html", "a_inj_html")}
     pct_h, pct_d = round(probs[0]*100, 1), round(probs[1]*100, 1)
     result.update(match=dict(match), api_fixture_id=item["api_fixture_id"], _pending_toto_save=True,
                   p_h=pct_h, p_d=pct_d, p_a=round(100-pct_h-pct_d, 1),
                   goal_model_audit=item.get("goal_model_audit"),
-                  wdl_forecast=dict(item["wdl_forecast"]), probability_source="canonical_proto_same_fixture")
+                  wdl_forecast={
+                      **dict(item["wdl_forecast"]),
+                      "uncalibrated_probabilities": list(raw_probs),
+                      "probabilities": list(probs),
+                      "toto14_probability_policy": dict(probability_policy or {}),
+                  },
+                  probability_source=(
+                      "canonical_proto_same_fixture+toto14_validated_calibration"
+                      if (probability_policy or {}).get("active")
+                      else "canonical_proto_same_fixture"
+                  ))
     official_side = max(
         (("home", probs[0]), ("draw", probs[1]), ("away", probs[2])),
         key=lambda row: float(row[1]),
@@ -2320,9 +2331,11 @@ def load_market_performance(league_name=None):
         diagnostics = _candidate_learning_diagnostics(conn)
         price_policy = _verified_price_policy(conn)
         movement_policy = _verified_movement_policy(conn)
+        official_selection_policy = _verified_official_selection_policy(conn)
         for market in summary:
             summary[market].update(diagnostics.get(market, {}))
             summary[market]["price_policy"] = price_policy
+            summary[market]["official_selection_policy"] = official_selection_policy
         conn.close()
     except Exception:
         summary["_movement_policy"] = movement_policy
@@ -2426,6 +2439,568 @@ def validate_time_ordered_calibration(groups):
             "baseline_brier": baseline_loss/evaluated if evaluated else None,
             "corrected_brier": corrected_loss/evaluated if evaluated else None,
             "method": "result-availability-aware-prequential-v1"}
+
+
+def _official_selection_segment_keys(candidate):
+    market = str(candidate.get("market_key") or "1x2")
+    side = str(candidate.get("selection_side") or "unknown")
+    probability = max(0.0, min(1.0, float(
+        candidate.get("robust_probability")
+        if candidate.get("robust_probability") is not None
+        else candidate.get("prob") or 0
+    )))
+    odd = float(candidate.get("odd") or 0)
+    price_band = (
+        "no_price" if odd <= 1.0 else "below_1_50" if odd < 1.5
+        else "1_50_to_2_00" if odd < 2.0
+        else "2_00_to_3_00" if odd < 3.0 else "3_plus"
+    )
+    keys = [
+        "global", f"market:{market}", f"market_side:{market}:{side}",
+        f"market_price:{market}:{price_band}",
+        f"market_probability:{market}:{min(9, max(0, int(probability * 10)))}",
+    ]
+    if candidate.get("is_true_underdog"):
+        keys.append("opportunity:true_underdog")
+    if odd >= 2.35:
+        keys.append("opportunity:high_price")
+    return keys
+
+
+def _fit_official_selection_cells(groups):
+    cells = {}
+    for group in groups:
+        for candidate in group.get("candidates") or []:
+            probability = float(candidate.get("prob") or 0)
+            outcome = candidate.get("outcome")
+            if not 0 < probability < 1 or outcome not in (0, 1):
+                continue
+            for key in _official_selection_segment_keys(candidate):
+                cell = cells.setdefault(
+                    key, {"samples": 0, "error_sum": 0.0, "correct": 0}
+                )
+                cell["samples"] += 1
+                cell["error_sum"] += int(outcome) - probability
+                cell["correct"] += int(outcome)
+    for cell in cells.values():
+        samples = int(cell["samples"])
+        cell["correction"] = round(max(
+            -.12, min(.12, float(cell["error_sum"]) / (samples + 30.0))
+        ), 8)
+        cell["accuracy"] = round(float(cell["correct"]) / samples, 8)
+        cell["error_sum"] = round(float(cell["error_sum"]), 8)
+    return cells
+
+
+def _official_selection_probability(candidate, cells, weight):
+    base = max(0.0, min(1.0, float(candidate.get("prob") or 0)))
+    eligible = [
+        cells[key] for key in _official_selection_segment_keys(candidate)
+        if key in cells and int(cells[key].get("samples") or 0) >= 20
+    ]
+    if not eligible:
+        return base
+    cohort_weights = [math.sqrt(int(cell["samples"])) for cell in eligible]
+    correction = sum(
+        cohort_weight * float(cell.get("correction") or 0)
+        for cohort_weight, cell in zip(cohort_weights, eligible)
+    ) / max(1e-9, sum(cohort_weights))
+    return max(.001, min(.999, base + float(weight) * correction))
+
+
+def validate_official_selection_policy(groups):
+    """Promote a grading-note selector only on a later chronological block."""
+    policy = {
+        "active": False,
+        "policy_version": "official-chronological-candidate-reliability-v2",
+        "target_accuracy": .70,
+        "train_fixtures": 0,
+        "tuning_fixtures": 0,
+        "validation_fixtures": 0,
+        "baseline_accuracy": None,
+        "validation_accuracy": None,
+        "selected_weight": 0.0,
+        "cells": {},
+        "history_rewrite": False,
+        "validation_scope": "frozen-prekickoff-features-chronological-holdout",
+        "reason": "시간순 미래검증 표본 부족 · 현 공식 선택법 유지",
+    }
+    ordered = sorted(
+        [group for group in groups if group.get("candidates")],
+        key=lambda group: (float(group.get("kickoff") or 0), str(group.get("key") or "")),
+    )
+    if len(ordered) < 120:
+        policy["available_fixtures"] = len(ordered)
+        return policy
+    validation_size = min(80, max(30, len(ordered) // 5))
+    tuning_size = min(80, max(30, len(ordered) // 5))
+    # Candidate grades may have been backfilled long after the match.  Their
+    # frozen feature snapshot still predates kickoff, so an earlier-match
+    # training block and a completely untouched later-match holdout is a valid
+    # offline chronological study.  ``captured < kickoff < graded`` is checked
+    # while loading; validation outcomes never enter the fitted cells.
+    training = list(ordered[:-(validation_size + tuning_size)])
+    tuning = ordered[-(validation_size + tuning_size):-validation_size]
+    validation = ordered[-validation_size:]
+    if len(training) < 60 or len(tuning) < 30 or len(validation) < 30:
+        policy["available_fixtures"] = len(ordered)
+        return policy
+    training_cells = _fit_official_selection_cells(training)
+
+    def replay(rows, cells, weight):
+        correct = 0
+        brier = 0.0
+        changed = 0
+        for group in rows:
+            candidates = list(group.get("candidates") or [])
+            current = next(
+                (candidate for candidate in candidates if candidate.get("was_selected")),
+                max(candidates, key=lambda candidate: (
+                    float(candidate.get("official_score") or candidate.get("prob") or 0),
+                    str(candidate.get("raw_pick") or ""),
+                )),
+            )
+            if weight is None:
+                chosen = current
+                probability = float(chosen.get("prob") or 0)
+            else:
+                chosen = max(candidates, key=lambda candidate: (
+                    _official_selection_probability(candidate, cells, weight),
+                    float(candidate.get("official_score") or 0),
+                    float(candidate.get("odd") or 0),
+                    str(candidate.get("raw_pick") or ""),
+                ))
+                probability = _official_selection_probability(chosen, cells, weight)
+                changed += int(chosen.get("raw_pick") != current.get("raw_pick"))
+            outcome = int(chosen.get("outcome") or 0)
+            correct += outcome
+            brier += (probability - outcome) ** 2
+        count = max(1, len(rows))
+        return {
+            "samples": len(rows), "correct": correct,
+            "accuracy": correct / count, "brier": brier / count,
+            "changed_selections": changed,
+        }
+
+    tuning_baseline = replay(tuning, training_cells, None)
+    tuning_candidates = [
+        (weight, replay(tuning, training_cells, weight))
+        for weight in (.35, .65, 1.0)
+    ]
+    best_weight, tuning_best = min(
+        tuning_candidates,
+        key=lambda row: (
+            -row[1]["accuracy"], row[1]["brier"], row[0]
+        ),
+    )
+    # The weight is selected only on the middle chronological block.  The
+    # final block below remains untouched until this one evaluation, so it is
+    # a true future-style promotion test rather than a tuned-on-holdout score.
+    validation_cells = _fit_official_selection_cells(training + list(tuning))
+    baseline = replay(validation, validation_cells, None)
+    best = replay(validation, validation_cells, best_weight)
+    tuning_improved = bool(
+        tuning_best["accuracy"] > tuning_baseline["accuracy"]
+        or (
+            tuning_best["accuracy"] == tuning_baseline["accuracy"]
+            and tuning_best["brier"] < tuning_baseline["brier"]
+        )
+    )
+    improved = bool(
+        tuning_improved
+        and
+        tuning_best["changed_selections"] > 0
+        and best["changed_selections"] > 0
+        and (
+            best["accuracy"] > baseline["accuracy"]
+            or (
+                best["accuracy"] == baseline["accuracy"]
+                and best["brier"] < baseline["brier"]
+            )
+        )
+    )
+    policy.update({
+        "active": improved,
+        "train_fixtures": len(training),
+        "tuning_fixtures": len(tuning),
+        "validation_fixtures": len(validation),
+        "tuning_baseline_accuracy": round(tuning_baseline["accuracy"], 8),
+        "tuning_accuracy": round(tuning_best["accuracy"], 8),
+        "baseline_accuracy": round(baseline["accuracy"], 8),
+        "baseline_brier": round(baseline["brier"], 8),
+        "validation_accuracy": round(best["accuracy"], 8),
+        "validation_brier": round(best["brier"], 8),
+        "validation_changed_selections": int(best["changed_selections"]),
+        "selected_weight": best_weight if improved else 0.0,
+        "cells": _fit_official_selection_cells(ordered) if improved else {},
+        "goal_reached": bool(best["accuracy"] >= .70),
+        "reason": (
+            f"시간순 미래 {len(validation)}경기에서 기존 "
+            f"{baseline['accuracy'] * 100:.1f}% → 학습 {best['accuracy'] * 100:.1f}%"
+            if improved else
+            f"시간순 미래 {len(validation)}경기에서 기존보다 개선되지 않아 현 공식 선택법 유지"
+        ),
+    })
+    return policy
+
+
+def _apply_toto14_probability_parameters(probabilities, parameters):
+    """Apply a small learned 1X2 calibration without fabricating certainty."""
+    try:
+        raw = [max(1e-9, float(value)) for value in list(probabilities)[:3]]
+    except (TypeError, ValueError):
+        return []
+    if len(raw) != 3 or not all(math.isfinite(value) for value in raw):
+        return []
+    total = sum(raw)
+    if total <= 0:
+        return []
+    raw = [value / total for value in raw]
+    parameters = parameters if isinstance(parameters, dict) else {}
+    temperature = max(.55, min(1.8, float(parameters.get("temperature") or 1.0)))
+    biases = [
+        0.0,
+        max(-.45, min(.45, float(parameters.get("draw_bias") or 0.0))),
+        max(-.45, min(.45, float(parameters.get("away_bias") or 0.0))),
+    ]
+    logits = [math.log(value) / temperature + bias for value, bias in zip(raw, biases)]
+    ceiling = max(logits)
+    weights = [math.exp(value - ceiling) for value in logits]
+    weight_total = sum(weights)
+    return [value / weight_total for value in weights]
+
+
+def apply_toto14_probability_policy(probabilities, policy):
+    """Use only a policy that won an untouched later-round validation."""
+    raw = _apply_toto14_probability_parameters(probabilities, {})
+    if not raw or not isinstance(policy, dict) or not policy.get("active"):
+        return raw
+    calibrated = _apply_toto14_probability_parameters(
+        raw, policy.get("parameters") or {}
+    )
+    return calibrated or raw
+
+
+def validate_toto14_probability_policy(records):
+    """Promote W/D/L calibration only after a completely later pools round."""
+    policy = {
+        "active": False,
+        "policy_version": "toto14-later-round-probability-calibration-v1",
+        "target_accuracy": .70,
+        "train_fixtures": 0,
+        "validation_fixtures": 0,
+        "baseline_accuracy": None,
+        "validation_accuracy": None,
+        "baseline_brier": None,
+        "validation_brier": None,
+        "parameters": {},
+        "history_rewrite": False,
+        "validation_scope": "earlier-complete-rounds-to-later-untouched-round",
+        "reason": "승무패14 완료 회차 표본 부족 · 기존 확률 유지",
+    }
+    unique = {}
+    for record in records or []:
+        try:
+            key = str(record.get("key") or "")
+            round_key = str(record.get("round_key") or "")
+            kickoff = float(record.get("kickoff") or 0)
+            probabilities = _apply_toto14_probability_parameters(
+                record.get("probabilities"), {}
+            )
+            outcome = int(record.get("outcome"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not key or not round_key or kickoff <= 0 or len(probabilities) != 3:
+            continue
+        if outcome not in (0, 1, 2):
+            continue
+        unique.setdefault(key, {
+            "key": key, "round_key": round_key, "kickoff": kickoff,
+            "probabilities": probabilities, "outcome": outcome,
+        })
+    ordered = sorted(unique.values(), key=lambda row: (row["kickoff"], row["key"]))
+    rounds = {}
+    for row in ordered:
+        rounds.setdefault(row["round_key"], []).append(row)
+    round_order = sorted(
+        rounds,
+        key=lambda key: (min(row["kickoff"] for row in rounds[key]), key),
+    )
+    if len(round_order) < 2:
+        policy["available_fixtures"] = len(ordered)
+        policy["available_rounds"] = len(round_order)
+        return policy
+    validation_round = round_order[-1]
+    validation = list(rounds[validation_round])
+    training = [row for key in round_order[:-1] for row in rounds[key]]
+    if len(training) < 12 or len(validation) < 5:
+        policy["available_fixtures"] = len(ordered)
+        policy["available_rounds"] = len(round_order)
+        return policy
+    if max(row["kickoff"] for row in training) + 6 * 3600 >= min(
+        row["kickoff"] for row in validation
+    ):
+        policy.update(
+            available_fixtures=len(ordered), available_rounds=len(round_order),
+            reason="이전 회차 결과 확정과 다음 회차 시작 간격 미확인 · 기존 확률 유지",
+        )
+        return policy
+
+    def score(rows, parameters):
+        correct = 0
+        brier = 0.0
+        log_loss = 0.0
+        selections = []
+        for row in rows:
+            calibrated = _apply_toto14_probability_parameters(
+                row["probabilities"], parameters
+            )
+            choice = max(range(3), key=lambda index: calibrated[index])
+            outcome = int(row["outcome"])
+            correct += int(choice == outcome)
+            brier += sum(
+                (probability - int(index == outcome)) ** 2
+                for index, probability in enumerate(calibrated)
+            ) / 3.0
+            log_loss -= math.log(max(1e-9, calibrated[outcome]))
+            selections.append(choice)
+        count = max(1, len(rows))
+        return {
+            "accuracy": correct / count,
+            "brier": brier / count,
+            "log_loss": log_loss / count,
+            "selections": selections,
+        }
+
+    identity = {"temperature": 1.0, "draw_bias": 0.0, "away_bias": 0.0}
+    training_baseline = score(training, identity)
+    candidates = []
+    for temperature in (.7, .85, 1.0, 1.2, 1.45):
+        for draw_bias in (-.35, -.18, 0.0, .18, .35):
+            for away_bias in (-.35, -.18, 0.0, .18, .35):
+                parameters = {
+                    "temperature": temperature,
+                    "draw_bias": draw_bias,
+                    "away_bias": away_bias,
+                }
+                result = score(training, parameters)
+                complexity = (
+                    abs(temperature - 1.0) + abs(draw_bias) + abs(away_bias)
+                )
+                candidates.append((parameters, result, complexity))
+    parameters, training_best, _ = min(
+        candidates,
+        key=lambda row: (
+            -row[1]["accuracy"], row[1]["brier"], row[1]["log_loss"], row[2]
+        ),
+    )
+    baseline = score(validation, identity)
+    best = score(validation, parameters)
+    changed = sum(
+        int(old != new)
+        for old, new in zip(baseline["selections"], best["selections"])
+    )
+    training_improved = bool(
+        training_best["accuracy"] > training_baseline["accuracy"]
+        and training_best["brier"] <= training_baseline["brier"]
+        or (
+            training_best["accuracy"] == training_baseline["accuracy"]
+            and training_best["brier"] < training_baseline["brier"]
+            and training_best["log_loss"] < training_baseline["log_loss"]
+        )
+    )
+    improved = bool(
+        training_improved
+        and (
+            best["accuracy"] > baseline["accuracy"]
+            and best["brier"] <= baseline["brier"]
+            or (
+                best["accuracy"] == baseline["accuracy"]
+                and best["brier"] < baseline["brier"]
+                and best["log_loss"] < baseline["log_loss"]
+            )
+        )
+    )
+    policy.update({
+        "active": improved,
+        "train_fixtures": len(training),
+        "validation_fixtures": len(validation),
+        "validation_round": validation_round,
+        "training_accuracy": round(training_best["accuracy"], 8),
+        "baseline_accuracy": round(baseline["accuracy"], 8),
+        "validation_accuracy": round(best["accuracy"], 8),
+        "baseline_brier": round(baseline["brier"], 8),
+        "validation_brier": round(best["brier"], 8),
+        "baseline_log_loss": round(baseline["log_loss"], 8),
+        "validation_log_loss": round(best["log_loss"], 8),
+        "validation_changed_selections": changed,
+        "parameters": parameters if improved else {},
+        "goal_reached": bool(best["accuracy"] >= .70),
+        "reason": (
+            f"다음 완전 회차 {len(validation)}경기에서 기존 "
+            f"{baseline['accuracy'] * 100:.1f}% → 학습 {best['accuracy'] * 100:.1f}%"
+            if improved else
+            f"다음 완전 회차 {len(validation)}경기에서 확률·적중이 함께 개선되지 않아 기존 확률 유지"
+        ),
+    })
+    return policy
+
+
+def _verified_toto14_probability_policy(conn):
+    records = []
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.match_id,p.match_time,p.actual_score,f.payload_json,f.frozen_at
+            FROM predictions AS p
+            JOIN toto14_prediction_freezes AS f ON f.match_id=p.match_id
+            WHERE p.is_toto14=1 AND p.actual_result='FINISHED'
+              AND p.actual_score LIKE '%:%'
+            ORDER BY p.match_time,p.match_id
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return validate_toto14_probability_policy([])
+    for match_id, match_time, actual_score, payload_json, frozen_at in rows:
+        try:
+            kickoff = _parse_kst_match_time(match_time).timestamp()
+            captured = datetime.fromisoformat(
+                str(frozen_at).replace("Z", "+00:00")
+            )
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=timezone.utc)
+            if captured.timestamp() >= kickoff:
+                continue
+            home_goals, away_goals = [
+                int(value) for value in str(actual_score).split(":", 1)
+            ]
+            outcome = 0 if home_goals > away_goals else 2 if home_goals < away_goals else 1
+            payload = json.loads(payload_json or "{}")
+            probabilities = [
+                float(payload.get("p_h")) / 100.0,
+                float(payload.get("p_d")) / 100.0,
+                float(payload.get("p_a")) / 100.0,
+            ]
+            records.append({
+                "key": str(match_id),
+                "round_key": str(match_id).rsplit("_", 1)[0],
+                "kickoff": kickoff,
+                "probabilities": probabilities,
+                "outcome": outcome,
+            })
+        except (TypeError, ValueError, AttributeError, json.JSONDecodeError):
+            continue
+    policy = validate_toto14_probability_policy(records)
+    policy["cohort_fixtures"] = len(records)
+    return policy
+
+
+def load_toto14_probability_policy():
+    """Read the local frozen scorecard once; never calls a sports API."""
+    conn = None
+    try:
+        conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=10)
+        return _verified_toto14_probability_policy(conn)
+    except sqlite3.Error:
+        return validate_toto14_probability_policy([])
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _verified_official_selection_policy(conn):
+    """Rebuild a read-only candidate policy from timestamp-proven snapshots."""
+    groups = {}
+    chosen_snapshots = {}
+    payloads = {}
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.api_fixture_id,p.match_id,p.match_time,s.id,s.created_at,
+                   s.candidates_json,r.raw_pick,r.market_key,r.model_probability,
+                   r.fair_probability,r.odd,r.is_correct,r.graded_at,r.selected_as
+            FROM prediction_analysis_snapshots AS s
+            JOIN predictions AS p ON p.match_id=s.match_id
+            JOIN prediction_candidate_results AS r ON r.analysis_snapshot_id=s.id
+            WHERE p.actual_result='FINISHED' AND COALESCE(p.is_toto14,0)=0
+              AND COALESCE(p.api_fixture_id,0)>0
+            ORDER BY s.id DESC,r.id DESC LIMIT 12000
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return validate_official_selection_policy([])
+
+    def stamp(value):
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.timestamp()
+
+    for (
+        fixture, match_id, match_time, snapshot_id, created_at, payload,
+        raw_pick, market, probability, fair_probability, odd, outcome,
+        graded_at, selected_as,
+    ) in rows:
+        try:
+            kickoff = _parse_kst_match_time(match_time).timestamp()
+            captured = stamp(created_at)
+            known_at = stamp(graded_at)
+            if not captured < kickoff < known_at or outcome not in (0, 1):
+                continue
+            fixture_key = str(int(fixture))
+            chosen_snapshots.setdefault(fixture_key, int(snapshot_id))
+            if chosen_snapshots[fixture_key] != int(snapshot_id):
+                continue
+            if snapshot_id not in payloads:
+                payloads[snapshot_id] = {
+                    str(item.get("raw_pick") or ""): item
+                    for item in json.loads(payload or "[]")
+                    if isinstance(item, dict)
+                }
+            saved = dict(payloads[snapshot_id].get(str(raw_pick or "")) or {})
+            probability = float(
+                saved.get("model_probability")
+                if saved.get("model_probability") is not None else probability
+            )
+            if not 0 < probability < 1:
+                continue
+            try:
+                memberships = json.loads(selected_as or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                memberships = []
+            candidate = {
+                **saved,
+                "raw_pick": str(raw_pick or ""),
+                "market_key": str(market or saved.get("market_key") or "1x2"),
+                "selection_side": str(saved.get("selection_side") or ""),
+                "prob": probability,
+                "robust_probability": float(
+                    saved.get("robust_probability")
+                    if saved.get("robust_probability") is not None else probability
+                ),
+                "fair_prob": saved.get("fair_probability", fair_probability),
+                "odd": float(saved.get("odd") or odd or 0),
+                "official_score": float(saved.get("official_score") or probability),
+                "outcome": int(outcome),
+                "was_selected": "high_probability" in memberships,
+            }
+            group = groups.setdefault(fixture_key, {
+                "key": fixture_key, "kickoff": kickoff,
+                "known_at": known_at, "candidates": [],
+            })
+            group["known_at"] = max(float(group["known_at"]), known_at)
+            if not any(row.get("raw_pick") == candidate["raw_pick"] for row in group["candidates"]):
+                group["candidates"].append(candidate)
+        except (TypeError, ValueError, AttributeError, KeyError, json.JSONDecodeError):
+            continue
+    complete = [
+        group for group in groups.values()
+        if len(group["candidates"]) >= 5
+        and len({row["market_key"] for row in group["candidates"]}) >= 2
+    ]
+    policy = validate_official_selection_policy(complete)
+    policy["cohort_fixtures"] = len(complete)
+    return policy
 
 
 def _verified_price_policy(conn):
@@ -2869,6 +3444,9 @@ def calibrate_market_candidates(picks, market_performance, confidence):
                                              "calibration_validated", "validation_fixtures", "baseline_brier", "corrected_brier")}
             pick["data_confidence"] = round(confidence, 4)
             pick["price_policy"] = history.get("price_policy") or {}
+            pick["official_selection_policy"] = (
+                history.get("official_selection_policy") or {}
+            )
             pick["error_margin"] = round(error_margin, 4)
             pick["probability_interval"] = {
                 "low": round(max(0.0, probability - error_margin), 6),
@@ -3353,7 +3931,26 @@ def build_pick_selection_audit(
             "robust_edge": _audit_number(selected.get("robust_edge"), 0.0),
             "context_alignment": _audit_number(selected.get("context_alignment"), 0.0),
             "official_score": _audit_number(selected.get("official_score"), 0.0),
+            "official_goal_score": _audit_number(
+                selected.get("official_goal_score"), selected.get("prob") or 0.0
+            ),
+            "official_learned_probability": _audit_number(
+                selected.get("official_learned_probability"),
+                selected.get("prob") or 0.0,
+            ),
+            "official_learning_active": bool(
+                selected.get("official_learning_active")
+            ),
+            "official_learning_samples": int(
+                selected.get("official_learning_samples") or 0
+            ),
+            "official_learning_correction": _audit_number(
+                selected.get("official_learning_correction"), 0.0
+            ),
             "official_policy_version": str(selected.get("official_policy_version") or PICK_POLICY_VERSION),
+            "official_learning_axis": str(
+                selected.get("official_learning_axis") or ""
+            ),
             "value_pick_tier": str(selected.get("value_pick_tier") or ""),
             "final_pick_grade": str(selected.get("final_pick_grade") or "standard"),
             "learning_robot": dict(selected.get("learning_robot") or {}),
@@ -3499,6 +4096,22 @@ def build_pick_selection_audit(
             ),
             "context_alignment": _audit_number(item.get("context_alignment"), 0.0),
             "official_score": _audit_number(item.get("official_score"), 0.0),
+            "official_goal_score": _audit_number(
+                item.get("official_goal_score"), item.get("prob") or 0.0
+            ),
+            "official_learned_probability": _audit_number(
+                item.get("official_learned_probability"), item.get("prob") or 0.0
+            ),
+            "official_learning_active": bool(item.get("official_learning_active")),
+            "official_learning_samples": int(
+                item.get("official_learning_samples") or 0
+            ),
+            "official_learning_correction": _audit_number(
+                item.get("official_learning_correction"), 0.0
+            ),
+            "official_learning_axis": str(
+                item.get("official_learning_axis") or ""
+            ),
             "robot_score": _audit_number(item.get("robot_score"), 0.0),
             "robot_probability": _audit_number(item.get("robot_probability")),
             "robot_expected_goals": dict(item.get("robot_expected_goals") or {}),
@@ -3747,6 +4360,10 @@ def _three_engine_compact_pick(pick):
             "market_key", "selection_side", "raw_pick", "prob", "probability",
             "odd", "fair_prob", "handicap_base", "totals_base",
             "selection_reason", "selection_axis", "official_policy_version",
+            "official_goal_score", "official_learned_probability",
+            "official_learning_active", "official_learning_samples",
+            "official_learning_correction",
+            "official_learning_axis",
             "legacy_v4_policy_version", "legacy_v4_expected_goals",
             "robot_pick_version", "robot_model_version", "robot_expected_goals",
             "robot_training_samples", "robot_learning_revision",
@@ -4802,8 +5419,11 @@ def select_pick_categories(picks, confidence):
     )
     high_source["official_final_pick"] = True
     high_source["recommendation_status"] = "SELECTED"
-    reason_text = "경기 전 전체 지표와 승무패·핸디캡·언더오버를 함께 계산하고 실제 적중 가능성을 우선해 가장 강한 한 방향을 선택"
+    reason_text = "경기 전 전체 지표와 승무패·핸디캡·언더오버를 함께 계산하고 시간순 미래검증을 통과한 후보 채점 학습으로 가장 강한 한 방향을 선택"
     high_source["selection_axis"] = "evidence_ensemble_accuracy_first"
+    high_source["official_learning_axis"] = (
+        "chronological_candidate_learning_accuracy_first"
+    )
     high_source["cross_market_decision"] = choice_reason
     high_source["selection_reason"] = (
         f"{reason_text}했습니다. 선택 배당 "
@@ -4823,7 +5443,7 @@ def select_pick_categories(picks, confidence):
         high_source["selection_warning"] = ""
     high_source["selection_policy"] = {"minimum_odds": None,
                                        "policy_version": PICK_POLICY_VERSION,
-                                       "decision_axis": "evidence_ensemble_accuracy_first",
+                                       "decision_axis": "chronological_candidate_learning_accuracy_first",
                                        "cross_market_decision": choice_reason,
                                        "minimum_edge_advantage": None,
                                        "price_tradeoff_validated": False,
@@ -5188,18 +5808,20 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
     track_where, track_params = _robot_track_sql(source)
     rows = conn.execute(
         f"""
-        SELECT candidate_results_json,robot_pick_correct,robot_pick_json
+        SELECT candidate_results_json,robot_pick_correct,robot_pick_json,
+               candidates_json,robot_pick_version
         FROM robot_learning_samples
         WHERE result_known_timestamp IS NOT NULL
           AND actual_home_goals IS NOT NULL AND actual_away_goals IS NOT NULL
           AND candidate_results_json NOT IN ('','[]','null')
-          AND robot_pick_version=?
+          AND robot_pick_version LIKE 'robot-self-learning-online-%'
           AND {track_where}
         ORDER BY kickoff_timestamp,id
         """,
-        (ROBOT_PICK_VERSION,) + tuple(track_params),
+        tuple(track_params),
     ).fetchall()
     selection_markets = {}
+    source_versions = set()
 
     def price_segment_keys(pick):
         try:
@@ -5207,12 +5829,24 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
         except (TypeError, ValueError):
             odd = 0.0
         keys = []
-        if odd >= 2.35:
+        if odd >= 3.5:
+            keys.extend(["very_high_price", "high_price"])
+        elif odd >= 2.35:
             keys.append("high_price")
         elif odd > 1.0:
             keys.append("regular_price")
         if bool((pick or {}).get("is_true_underdog")):
             keys.append("true_underdog")
+        try:
+            expected_return = float(
+                (pick or {}).get("robot_ev")
+                or (float((pick or {}).get("robot_probability") or 0) * odd)
+                or 0
+            )
+        except (TypeError, ValueError):
+            expected_return = 0.0
+        if expected_return >= 1.02:
+            keys.append("positive_value")
         return keys, odd
 
     def add_price_grade(target, pick, hit):
@@ -5226,7 +5860,20 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
             if odd > 1.0:
                 cell["gross_return"] += int(hit) * odd
 
-    for candidate_json, robot_pick_correct, robot_pick_json in rows:
+    for candidate_json, robot_pick_correct, robot_pick_json, original_json, source_version in rows:
+        source_versions.add(str(source_version or ""))
+        try:
+            original_candidates = json.loads(original_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            original_candidates = []
+        original_by_identity = {
+            (
+                str(candidate.get("market_key") or "1x2"),
+                str(candidate.get("raw_pick") or ""),
+            ): candidate
+            for candidate in original_candidates
+            if isinstance(candidate, dict)
+        }
         if robot_pick_correct in (0, 1):
             selection_samples += 1
             selection_correct += int(robot_pick_correct)
@@ -5250,6 +5897,12 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
         for candidate in candidates if isinstance(candidates, list) else []:
             if not isinstance(candidate, dict) or candidate.get("is_correct") not in (0, 1):
                 continue
+            original = original_by_identity.get((
+                str(candidate.get("market_key") or "1x2"),
+                str(candidate.get("raw_pick") or ""),
+            )) or {}
+            if original:
+                candidate = {**original, **candidate}
             try:
                 probability = float(candidate.get("robot_probability"))
             except (TypeError, ValueError):
@@ -5292,6 +5945,8 @@ def _load_robot_self_grading_experience(conn, source="PROTO"):
         "price_segments": price_segments,
         "selection_markets": selection_markets,
         "selection_price_segments": selection_price_segments,
+        "source_robot_versions": sorted(version for version in source_versions if version),
+        "compatibility_policy": "all-frozen-robot-candidate-grades-v1",
         "selection_samples": selection_samples,
         "selection_correct": selection_correct,
         "selection_accuracy": (
@@ -5330,8 +5985,13 @@ def _select_autonomous_robot_artifact(
     challenger["learning_revision_marker"] = signature
     challenger["grading_experience"] = experience
     challenger["grading_experience_samples"] = int(experience.get("samples") or 0)
-    selected_artifact = challenger
-    if not challenger.get("active"):
+    eligibility_is_explicit = "deployment_eligible" in challenger
+    challenger_eligible = bool(
+        challenger.get("deployment_eligible")
+        if eligibility_is_explicit else challenger.get("active")
+    )
+    selected_artifact = challenger if challenger_eligible else None
+    if not challenger_eligible:
         champion_row = conn.execute(
             """
             SELECT artifact_json FROM robot_model_promotions
@@ -5357,6 +6017,30 @@ def _select_autonomous_robot_artifact(
                 champion["latest_challenger_reason"] = challenger.get("reason", "")
                 champion["learning_revision_marker"] = signature
                 selected_artifact = champion
+    if selected_artifact is None:
+        # Candidate grading still calibrates every market from result one, but
+        # a goal-formula challenger cannot alter future goals until it proves
+        # itself on a later chronological block.  This safety baseline is a
+        # deployed model, not a fabricated old prediction.
+        selected_artifact = {
+            **challenger,
+            "active": True,
+            "parameters": {
+                "model_family": "context_baseline",
+                "rho": -.15,
+                "learning_strength": 0.0,
+            },
+            "selected_model_family": "context_baseline",
+            "deployed_model_family": "context_baseline",
+            "deployment_eligible": False,
+            "latest_challenger_samples": challenger.get("samples", 0),
+            "latest_challenger_reason": challenger.get("reason", ""),
+            "reason": (
+                "새 계산식의 시간순 미래검증 전 · 전체 경기 전 자료 기초모형과 "
+                "자체 후보 채점 보정 사용"
+            ),
+        }
+    selected_artifact["challenger_deployment_eligible"] = challenger_eligible
     selected_artifact["learning_revision_marker"] = signature
     return selected_artifact
 
@@ -5493,7 +6177,11 @@ def _load_autonomous_robot_artifact(source="PROTO"):
                 ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION,
                 signature + ":" + fingerprint[:16],
                 json.dumps(artifact, ensure_ascii=False, sort_keys=True),
-                int(bool(artifact.get("active"))), _utc_iso(),
+                int(bool(
+                    artifact.get("deployment_eligible")
+                    if "deployment_eligible" in artifact
+                    else artifact.get("active")
+                )), _utc_iso(),
             ),
         )
         conn.commit()
@@ -5919,6 +6607,15 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
                 "raw_pick": candidate.get("raw_pick"),
                 "robot_probability": candidate.get("robot_probability"),
                 "odd": candidate.get("odd"),
+                "fair_prob": candidate.get("fair_prob"),
+                "robot_edge": candidate.get("robot_edge"),
+                "robot_ev": candidate.get("robot_ev"),
+                "robot_goal_score": candidate.get("robot_goal_score"),
+                "is_true_underdog": bool(candidate.get("is_true_underdog")),
+                "independent_support_count": int(
+                    candidate.get("independent_support_count") or 0
+                ),
+                "context_alignment": candidate.get("context_alignment"),
                 "is_correct": evaluate_single_pick(
                     candidate.get("raw_pick"), home_team, away_team,
                     int(goals_h), int(goals_a),
@@ -9946,6 +10643,7 @@ def build_dashboard_data():
 
     # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
     market_performance_cache = {}
+    toto14_probability_policy = load_toto14_probability_policy()
     proto_cycle_started = time.monotonic()
     proto_soft_deadline = proto_cycle_started + MASTER_ANALYSIS_SOFT_SECONDS
     resumed_proto_count = 0
@@ -11058,7 +11756,9 @@ def build_dashboard_data():
             frozen_prediction_count += 1
             continue
 
-        canonical_toto = _toto14_from_canonical_proto(m, dashboard_proto)
+        canonical_toto = _toto14_from_canonical_proto(
+            m, dashboard_proto, toto14_probability_policy
+        )
         if canonical_toto is not None:
             canonical_toto["_policy_migration"] = policy_migration
             dashboard_toto14.append(canonical_toto)
@@ -11245,6 +11945,11 @@ def build_dashboard_data():
         a_recent = fetch_team_recent_form_metrics(away_info.get("id"), heavy_ttl)
          
         league_n_14 = (os_data or {}).get("league_name") or m.get('league', '')
+        if league_n_14 not in market_performance_cache:
+            market_performance_cache[league_n_14] = load_market_performance(
+                league_n_14
+            )
+        toto_market_performance = market_performance_cache[league_n_14]
         h_stats = fetch_recent_team_stats_api(home_info.get("id"), heavy_ttl)
         a_stats = fetch_recent_team_stats_api(away_info.get("id"), heavy_ttl)
 
@@ -11320,11 +12025,23 @@ def build_dashboard_data():
             market_odds = [os_data["odd_h"], os_data["odd_d"], os_data["odd_a"]]
         probabilities, joint_audit, _ = coherent_match_forecast(
             exp_h, exp_a, 0, 2.5, market_odds, analysis_confidence,
-            market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
+            toto_market_performance.get("1x2"), goal_model_audit.get("rho", -.15),
             None, toto_context_audit.get("wdl_log_adjustment"),
         )
-        h_win, draw, a_win = probabilities[:3]
+        raw_h_win, raw_draw, raw_a_win = probabilities[:3]
+        h_win, draw, a_win = apply_toto14_probability_policy(
+            [raw_h_win, raw_draw, raw_a_win], toto14_probability_policy
+        )
         goal_model_audit["joint_forecast"] = joint_audit
+        goal_model_audit["toto14_probability_learning"] = {
+            key: toto14_probability_policy.get(key)
+            for key in (
+                "active", "policy_version", "cohort_fixtures",
+                "train_fixtures", "validation_fixtures",
+                "baseline_accuracy", "validation_accuracy",
+                "baseline_brier", "validation_brier", "reason",
+            )
+        }
 
         pct_h = round(h_win * 100, 1)
         pct_d = round(draw * 100, 1)
@@ -11340,35 +12057,51 @@ def build_dashboard_data():
         robot_wdl_candidates = [
             {
                 "market_key": "1x2", "selection_side": "home",
-                "raw_pick": f"{home_team} 승", "prob": h_win,
+                "raw_pick": f"{home_team} 승", "prob": raw_h_win,
                 "odd": float(market_odds[0]) if len(market_odds) == 3 else 0.0,
                 "market_prob": robot_wdl_market[0], "fair_prob": robot_wdl_market[0],
                 "settlement_supported": True,
             },
             {
                 "market_key": "1x2", "selection_side": "draw",
-                "raw_pick": "무승부", "prob": draw,
+                "raw_pick": "무승부", "prob": raw_draw,
                 "odd": float(market_odds[1]) if len(market_odds) == 3 else 0.0,
                 "market_prob": robot_wdl_market[1], "fair_prob": robot_wdl_market[1],
                 "settlement_supported": True,
             },
             {
                 "market_key": "1x2", "selection_side": "away",
-                "raw_pick": f"{away_team} 승", "prob": a_win,
+                "raw_pick": f"{away_team} 승", "prob": raw_a_win,
                 "odd": float(market_odds[2]) if len(market_odds) == 3 else 0.0,
                 "market_prob": robot_wdl_market[2], "fair_prob": robot_wdl_market[2],
                 "settlement_supported": True,
             },
         ]
+        official_toto_candidates = [
+            {**candidate, "prob": calibrated_probability}
+            for candidate, calibrated_probability in zip(
+                robot_wdl_candidates, (h_win, draw, a_win)
+            )
+        ]
         official_toto_pick = max(
-            robot_wdl_candidates,
+            official_toto_candidates,
             key=lambda candidate: float(candidate.get("prob") or 0),
         )
         official_toto_pick = dict(
             official_toto_pick,
             official_policy_version=OFFICIAL_PICK_POLICY_VERSION,
-            selection_axis="toto14_single_direction_accuracy",
-            selection_reason="공식 승무패14 확률표에서 가장 높은 단일 방향",
+            selection_axis="toto14_validated_probability_accuracy",
+            selection_reason=(
+                "시간순 다음 회차 검증을 통과한 승무패14 확률표에서 가장 높은 단일 방향"
+                if toto14_probability_policy.get("active") else
+                "승무패14 학습안이 다음 회차 검증을 통과하지 않아 기존 확률표의 가장 높은 단일 방향"
+            ),
+            toto14_probability_learning_active=bool(
+                toto14_probability_policy.get("active")
+            ),
+            toto14_probability_policy_version=str(
+                toto14_probability_policy.get("policy_version") or ""
+            ),
         )
         lineup_learning = {
             "schema_version": ROBOT_LINEUP_SCHEMA_VERSION,

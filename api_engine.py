@@ -44,15 +44,15 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.12.8-separated-production-tracks"
+ANALYSIS_VERSION = "V7.12.16-chronological-pick-learning"
 FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
 CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
 PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
-ROBOT_PICK_VERSION = "robot-self-learning-online-v6-frozen-future-70-goal"
+ROBOT_PICK_VERSION = "robot-self-learning-online-v7-value-accuracy-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.15-admin-picks-workspace"
+SYSTEM_VERSION = "R7.12.16-prospective-value-accuracy-learning"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1278,6 +1278,40 @@ def _shortlist_number(value, default=0.0):
         return default
 
 
+def _manager_value_rank(probability, learned_score, odd, edge, expected_value, market_key):
+    """Rank confidence and payout together; never fill with negative value."""
+    probability = max(0.0, min(1.0, _shortlist_number(probability)))
+    learned_score = max(0.0, min(1.0, _shortlist_number(learned_score, probability)))
+    odd = _shortlist_number(odd)
+    edge = _shortlist_number(edge)
+    expected_value = _shortlist_number(
+        expected_value, probability * odd if odd > 1.0 else 0.0
+    )
+    if expected_value <= 0 and odd > 1.0:
+        expected_value = probability * odd
+    neutral = .5 if str(market_key or "") == "totals" else 1.0 / 3.0
+    qualified = bool(
+        odd > 1.0 and expected_value >= 1.0
+        and learned_score >= neutral
+    )
+    price_score = max(0.0, min(1.0, math.log(max(1.0, odd), 5.0)))
+    value_score = max(-1.0, min(1.0, (expected_value - 1.0) / .35))
+    edge_score = max(-1.0, min(1.0, edge / .12))
+    score = (
+        learned_score * .68
+        + max(0.0, value_score) * .12
+        + price_score * .12
+        + max(0.0, edge_score) * .08
+    )
+    return {
+        "qualified": qualified,
+        "score": round(score, 8),
+        "expected_value": expected_value,
+        "neutral_probability": neutral,
+        "policy": "learned-confidence-plus-positive-value-no-forced-fill-v1",
+    }
+
+
 def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
     """Rank saved Codex official picks for the private PROTO workspace.
 
@@ -1307,17 +1341,24 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
         )
         if not 0 < probability <= 1 or not 0 < robust_probability <= 1:
             continue
-        balanced_score = _shortlist_number(
-            official.get("balanced_score"), robust_probability
+        learned_score = _shortlist_number(
+            official.get("official_goal_score"),
+            official.get("official_learned_probability", robust_probability),
         )
         odd = _shortlist_number(official.get("odd"))
         edge = _shortlist_number(official.get("robust_edge"))
         expected_value = _shortlist_number(official.get("robust_ev"))
+        value_rank = _manager_value_rank(
+            probability, learned_score, odd, edge, expected_value,
+            official.get("market_key"),
+        )
+        if not value_rank["qualified"]:
+            continue
         seen.add(identity)
         ranked.append((
             (
-                balanced_score, robust_probability, probability,
-                edge, expected_value, raw_pick,
+                value_rank["score"], learned_score, expected_value,
+                odd, robust_probability, raw_pick,
             ),
             {
                 "fixture_id": identity,
@@ -1331,10 +1372,17 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
                 "pick": raw_pick,
                 "market_key": str(official.get("market_key") or ""),
                 "probability": round(probability, 8),
-                "goal_score": round(balanced_score, 8),
+                "goal_score": round(learned_score, 8),
+                "manager_value_score": value_rank["score"],
                 "odd": round(odd, 4),
                 "edge": round(edge, 8),
-                "expected_value": round(expected_value, 8),
+                "expected_value": round(value_rank["expected_value"], 8),
+                "learning_active": bool(
+                    official.get("official_learning_active")
+                ),
+                "learning_samples": int(
+                    official.get("official_learning_samples") or 0
+                ),
                 "tier": "Codex 공식 자신픽",
                 "analysis_version": str(
                     item.get("analysis_version") or ANALYSIS_VERSION
@@ -1344,8 +1392,8 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
     ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
     selected = [row for _score, row in ordered[:maximum_target]]
     return {
-        "schema_version": "official-daily-shortlist.v1",
-        "policy": "saved-official-pick-independent-ranking-v1",
+        "schema_version": "official-daily-shortlist.v2",
+        "policy": "learned-confidence-plus-positive-value-no-forced-fill-v1",
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
         "qualified_count": len(ranked),
@@ -1394,7 +1442,13 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
             continue
         true_underdog = bool(robot.get("is_true_underdog"))
         high_price = bool(odd >= 2.35)
-        rank_score = goal_score
+        value_rank = _manager_value_rank(
+            probability, goal_score, odd, edge, expected_value,
+            robot.get("market_key"),
+        )
+        if not value_rank["qualified"]:
+            continue
+        rank_score = value_rank["score"]
         tier = "자율 로봇 자신픽"
         seen.add(identity)
         ranked.append((
@@ -1412,9 +1466,10 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
                 "market_key": str(robot.get("market_key") or ""),
                 "probability": round(probability, 8),
                 "goal_score": round(goal_score, 8),
+                "manager_value_score": value_rank["score"],
                 "odd": round(odd, 4),
                 "edge": round(edge, 8),
-                "expected_value": round(expected_value, 8),
+                "expected_value": round(value_rank["expected_value"], 8),
                 "is_underdog": true_underdog,
                 "is_high_price": high_price,
                 "tier": tier,
@@ -1429,8 +1484,8 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
         if row.get("is_high_price") and not row.get("is_underdog")
     ]
     return {
-        "schema_version": "robot-daily-shortlist.v2",
-        "policy": "robot-owned-score-no-human-gate-or-quota-v2",
+        "schema_version": "robot-daily-shortlist.v3",
+        "policy": "robot-learned-confidence-plus-positive-value-no-forced-fill-v1",
         "accuracy_goal": ROBOT_TARGET_ACCURACY,
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
