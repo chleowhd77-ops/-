@@ -3191,10 +3191,23 @@ def generate_pred_boxes(
             + _final_pick_validation_html(analysis_item,pick)
         )
     if not pick:
+        refresh_pending = bool(
+            isinstance(analysis_item, dict)
+            and (
+                analysis_item.get("analysis_refresh_pending")
+                or str(analysis_item.get("analysis_stage") or "").lower()
+                in {"pending", "deferred", "identity-pending"}
+            )
+        )
+        empty_text = (
+            "시작 전 픽 재분석 중입니다."
+            if refresh_pending else
+            "저장된 경기 전 최종픽이 없습니다."
+        )
         return (
             "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
             "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
-            "<span class='pred-value' style='color:#94A3B8;'>분석 가능한 선택지가 없습니다.</span>"
+            f"<span class='pred-value' style='color:#94A3B8;'>{empty_text}</span>"
             "</div>"
         )
 
@@ -3293,9 +3306,9 @@ def generate_pred_boxes(
 def _render_admin_shortlist(title, color, payload):
     rows = payload.get("picks") or []
     target_note = (
-        "5~10경기 범위"
+        "고확률·실배당·양의 기대수익 동시 확인"
         if payload.get("target_range_reached") else
-        "현재 저장된 유효 픽만 표시"
+        "현재 기준을 모두 통과한 픽만 표시"
     )
     st.markdown(
         "<div class='match-card' style='padding:16px 18px;margin-bottom:12px;"
@@ -3319,14 +3332,18 @@ def _render_admin_shortlist(title, color, payload):
             f"{escape(str(row.get('away') or ''))}</div>"
             f"<div style='color:{color};font-weight:900;margin-top:5px;'>"
             f"{escape(_human_pick_label(row.get('pick'), row.get('home')))}"
-            f" · 확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
-            f"<small style='color:#94A3B8;'>독립 순위점수 "
+            f" · 모델확률 {float(row.get('probability') or 0) * 100:.1f}%{odd_text}</div>"
+            f"<small style='color:#94A3B8;'>검증 목표점수 "
             f"{float(row.get('goal_score') or 0) * 100:.1f}% · "
-            f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p</small></div>",
+            f"가치차 {float(row.get('edge') or 0) * 100:+.1f}%p · "
+            f"보수 기대수익 {float(row.get('expected_value') or 0):.2f}</small></div>",
             unsafe_allow_html=True,
         )
     if not rows:
-        st.caption("현재 시작 전 프로토 LIVE 경기에서 표시할 저장 픽이 없습니다.")
+        st.caption(
+            "현재 시작 전 프로토 LIVE에서 모델확률 70% 이상·실제 배당 1.50배 이상·"
+            "보수 기대수익 1.05 이상을 동시에 확인한 저장 픽이 없습니다."
+        )
 
 
 if main_tab_admin is not None:
