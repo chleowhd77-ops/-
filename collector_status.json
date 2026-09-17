@@ -5,12 +5,12 @@
       "supervisor_pid": 393347,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-17T00:40:03+00:00",
+      "heartbeat_at": "2026-09-17T00:44:03+00:00",
       "pid": 393347,
       "last_started_at": "2026-09-16T03:21:45+00:00",
       "active_jobs": {
         "master": 396656,
-        "team": 396661
+        "team": 396667
       },
       "pending_jobs": [
         "live",
@@ -57,18 +57,20 @@
     },
     "master": {
       "last_failure_duration_seconds": 2700.2,
-      "last_success_duration_seconds": 348.74,
+      "last_success_duration_seconds": 809.93,
       "last_failure_at": "2026-09-15T10:45:43+00:00",
-      "last_success_at": "2026-09-17T00:06:21+00:00",
+      "last_success_at": "2026-09-17T00:44:07+00:00",
       "run_id": "master-1789605036483826037",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-17T00:40:03+00:00",
-      "pid": 393347,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-17T00:44:07+00:00",
+      "pid": 396656,
       "last_started_at": "2026-09-17T00:30:37+00:00",
       "child_pid": 396656,
-      "elapsed_seconds": 566.6,
-      "overlap_skips": 2
+      "elapsed_seconds": 806.9,
+      "overlap_skips": 3,
+      "db_backup_requested": true,
+      "duration_seconds": 809.93
     },
     "world": {
       "last_success_at": "2026-09-17T00:29:01+00:00",
@@ -87,22 +89,18 @@
       "duration_seconds": 1237.59
     },
     "team": {
-      "last_success_at": "2026-09-17T00:40:06+00:00",
-      "last_success_duration_seconds": 2.79,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "run_id": "team-1789605601005075027",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-17T00:40:06+00:00",
-      "pid": 396661,
-      "last_started_at": "2026-09-17T00:40:03+00:00",
-      "team_retry_processed": 0,
-      "team_retry_resolved": 192,
-      "team_retry_pending": 1,
-      "team_retry_due": 0,
-      "team_retry_seeded": 0,
-      "team_profile_card_updates": 0,
-      "duration_seconds": 2.79
+      "last_success_duration_seconds": 2.79,
+      "last_success_at": "2026-09-17T00:40:06+00:00",
+      "run_id": "team-1789605841330568348",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-09-17T00:44:03+00:00",
+      "pid": 393347,
+      "last_started_at": "2026-09-17T00:44:02+00:00",
+      "child_pid": 396667,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_at": "2026-09-16T21:22:18+00:00",
@@ -125,14 +123,14 @@
       "duration_seconds": 29.49
     }
   },
-  "updated_at": "2026-09-17T00:40:06+00:00",
+  "updated_at": "2026-09-17T00:44:07+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 99
+        "calls": 102
       },
       {
         "purpose": "analysis",
@@ -185,8 +183,8 @@
         "calls": 15
       },
       {
-        "purpose": "scoring",
-        "endpoint": "/fixtures/lineups",
+        "purpose": "analysis",
+        "endpoint": "/odds",
         "calls": 15
       }
     ],
@@ -202,6 +200,12 @@
         "purpose": "world",
         "endpoint": "/players/topscorers",
         "count": 27
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 21
       },
       {
         "metric": "cache_hit",
@@ -231,13 +235,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-17",
     "reset_timezone": "UTC",
-    "local_calls": 510,
-    "provider_remaining": 5834,
+    "local_calls": 520,
+    "provider_remaining": 5824,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 202,
-    "analysis_calls": 285,
+    "analysis_calls": 295,
     "live_calls": 4,
     "scoring_calls": 19,
     "world_daily_limit": 4000,
