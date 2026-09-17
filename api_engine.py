@@ -1279,36 +1279,48 @@ def _shortlist_number(value, default=0.0):
 
 
 def _manager_value_rank(probability, learned_score, odd, edge, expected_value, market_key):
-    """Rank confidence and payout together; never fill with negative value."""
+    """Rank administrator investment picks on confidence *and* verified price.
+
+    This presentation gate does not constrain either analyser's market choice or
+    learning.  It only prevents the private investment board from presenting a
+    short-priced/low-confidence answer as a "best value" pick.  The board may
+    therefore contain fewer than the requested range.
+    """
     probability = max(0.0, min(1.0, _shortlist_number(probability)))
     learned_score = max(0.0, min(1.0, _shortlist_number(learned_score, probability)))
     odd = _shortlist_number(odd)
     edge = _shortlist_number(edge)
-    expected_value = _shortlist_number(
+    saved_expected_value = _shortlist_number(
         expected_value, probability * odd if odd > 1.0 else 0.0
     )
-    if expected_value <= 0 and odd > 1.0:
-        expected_value = probability * odd
+    if saved_expected_value <= 0 and odd > 1.0:
+        saved_expected_value = probability * odd
+    confidence = min(probability, learned_score)
+    # Never let stale/synthetic EV metadata make a low-confidence or short-price
+    # row look investable.  Both the saved EV and the displayed confidence must
+    # support the return independently.
+    confidence_ev = confidence * odd if odd > 1.0 else 0.0
+    expected_value = min(saved_expected_value, confidence_ev)
     neutral = .5 if str(market_key or "") == "totals" else 1.0 / 3.0
     qualified = bool(
-        odd > 1.0 and expected_value >= 1.0
-        and learned_score >= neutral
+        odd >= 1.50 and expected_value >= 1.05
+        and probability >= .70 and learned_score >= .70
     )
-    price_score = max(0.0, min(1.0, math.log(max(1.0, odd), 5.0)))
+    price_score = max(0.0, min(1.0, math.log(max(1.0, odd), 6.0)))
     value_score = max(-1.0, min(1.0, (expected_value - 1.0) / .35))
     edge_score = max(-1.0, min(1.0, edge / .12))
     score = (
-        learned_score * .68
-        + max(0.0, value_score) * .12
-        + price_score * .12
-        + max(0.0, edge_score) * .08
+        confidence * .45
+        + price_score * .25
+        + max(0.0, value_score) * .20
+        + max(0.0, edge_score) * .10
     )
     return {
         "qualified": qualified,
         "score": round(score, 8),
         "expected_value": expected_value,
         "neutral_probability": neutral,
-        "policy": "learned-confidence-plus-positive-value-no-forced-fill-v1",
+        "policy": "verified-high-confidence-high-price-no-forced-fill-v2",
     }
 
 
@@ -1392,8 +1404,8 @@ def build_official_daily_shortlist(items, minimum_target=5, maximum_target=10):
     ordered = sorted(ranked, key=lambda entry: entry[0], reverse=True)
     selected = [row for _score, row in ordered[:maximum_target]]
     return {
-        "schema_version": "official-daily-shortlist.v2",
-        "policy": "learned-confidence-plus-positive-value-no-forced-fill-v1",
+        "schema_version": "official-daily-shortlist.v3",
+        "policy": "verified-high-confidence-high-price-no-forced-fill-v2",
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
         "qualified_count": len(ranked),
@@ -1484,8 +1496,8 @@ def build_robot_daily_shortlist(items, minimum_target=5, maximum_target=10):
         if row.get("is_high_price") and not row.get("is_underdog")
     ]
     return {
-        "schema_version": "robot-daily-shortlist.v3",
-        "policy": "robot-learned-confidence-plus-positive-value-no-forced-fill-v1",
+        "schema_version": "robot-daily-shortlist.v4",
+        "policy": "robot-verified-high-confidence-high-price-no-forced-fill-v2",
         "accuracy_goal": ROBOT_TARGET_ACCURACY,
         "minimum_target": minimum_target,
         "maximum_target": maximum_target,
