@@ -5,13 +5,18 @@
       "supervisor_pid": 402480,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-18T07:21:43+00:00",
+      "heartbeat_at": "2026-09-18T07:27:43+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-17T21:09:23+00:00",
       "active_jobs": {
         "master": 403945
       },
-      "pending_jobs": [],
+      "pending_jobs": [
+        "live",
+        "score",
+        "team",
+        "world"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -51,16 +56,21 @@
       "duration_seconds": 99.68
     },
     "master": {
-      "last_success_duration_seconds": 399.0,
+      "last_success_duration_seconds": 360.8,
       "last_failure_at": "2026-09-17T08:20:35+00:00",
       "last_failure_duration_seconds": 870.8,
-      "last_success_at": "2026-09-18T07:08:12+00:00",
+      "last_success_at": "2026-09-18T07:27:45+00:00",
       "run_id": "master-1789716103452011322",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T07:21:44+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T07:27:45+00:00",
       "pid": 403945,
-      "last_started_at": "2026-09-18T07:21:44+00:00"
+      "last_started_at": "2026-09-18T07:21:44+00:00",
+      "child_pid": 403945,
+      "elapsed_seconds": 360.4,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 360.8
     },
     "world": {
       "last_success_duration_seconds": 574.65,
@@ -118,7 +128,7 @@
       "duration_seconds": 20.33
     }
   },
-  "updated_at": "2026-09-18T07:21:44+00:00",
+  "updated_at": "2026-09-18T07:27:45+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -188,7 +198,13 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 2033
+        "count": 2035
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/statistics",
+        "count": 112
       },
       {
         "metric": "cache_hit",
@@ -201,12 +217,6 @@
         "purpose": "world",
         "endpoint": "/players/topscorers",
         "count": 111
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/statistics",
-        "count": 104
       },
       {
         "metric": "cache_hit",
