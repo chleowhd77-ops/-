@@ -5,14 +5,13 @@
       "supervisor_pid": 402480,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-18T13:46:51+00:00",
+      "heartbeat_at": "2026-09-18T13:48:21+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-17T21:09:23+00:00",
       "active_jobs": {
-        "live": 404484
+        "master": 404485
       },
       "pending_jobs": [
-        "master",
         "world"
       ],
       "max_concurrent_workers": 2,
@@ -57,16 +56,21 @@
       "duration_seconds": 256.67
     },
     "master": {
-      "last_success_at": "2026-09-18T13:41:53+00:00",
+      "last_success_at": "2026-09-18T13:48:31+00:00",
       "last_failure_at": "2026-09-17T08:20:35+00:00",
       "last_failure_duration_seconds": 870.8,
-      "last_success_duration_seconds": 112.5,
+      "last_success_duration_seconds": 94.11,
       "run_id": "master-1789739217111264940",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T13:46:57+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T13:48:31+00:00",
       "pid": 404485,
-      "last_started_at": "2026-09-18T13:46:57+00:00"
+      "last_started_at": "2026-09-18T13:46:57+00:00",
+      "child_pid": 404485,
+      "elapsed_seconds": 84.1,
+      "overlap_skips": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 94.11
     },
     "world": {
       "last_failure_at": "2026-09-17T08:28:58+00:00",
@@ -127,7 +131,7 @@
       "duration_seconds": 28.77
     }
   },
-  "updated_at": "2026-09-18T13:46:57+00:00",
+  "updated_at": "2026-09-18T13:48:31+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -203,7 +207,7 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 1177
+        "count": 1322
       },
       {
         "metric": "cache_hit",
