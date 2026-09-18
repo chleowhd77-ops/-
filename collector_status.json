@@ -88,15 +88,22 @@
       "overlap_skips": 0
     },
     "team": {
-      "last_success_at": "2026-09-18T07:30:31+00:00",
-      "last_success_duration_seconds": 4.13,
+      "last_success_at": "2026-09-18T07:38:25+00:00",
+      "last_success_duration_seconds": 7.82,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
       "run_id": "team-1789717096695245109",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T07:38:17+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T07:38:25+00:00",
       "pid": 403959,
-      "last_started_at": "2026-09-18T07:38:17+00:00"
+      "last_started_at": "2026-09-18T07:38:17+00:00",
+      "team_retry_processed": 12,
+      "team_retry_resolved": 260,
+      "team_retry_pending": 61,
+      "team_retry_due": 59,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 7.82
     },
     "backup": {
       "last_success_duration_seconds": 20.33,
@@ -119,7 +126,7 @@
       "duration_seconds": 20.33
     }
   },
-  "updated_at": "2026-09-18T07:38:17+00:00",
+  "updated_at": "2026-09-18T07:38:25+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -189,7 +196,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 2059
+        "count": 2069
       },
       {
         "metric": "cache_hit",
@@ -210,6 +217,18 @@
         "count": 111
       },
       {
+        "metric": "singleflight_block",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 56
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/fixtures/statistics",
+        "count": 51
+      },
+      {
         "metric": "cache_hit",
         "purpose": "scoring",
         "endpoint": "/fixtures/lineups",
@@ -228,18 +247,6 @@
         "count": 45
       },
       {
-        "metric": "singleflight_block",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
-        "count": 44
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "world",
-        "endpoint": "/fixtures/statistics",
-        "count": 43
-      },
-      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/injuries",
@@ -255,7 +262,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/coachs",
-        "count": 6
+        "count": 8
       },
       {
         "metric": "cache_hit",
