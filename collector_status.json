@@ -5,13 +5,16 @@
       "supervisor_pid": 402480,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-18T13:45:50+00:00",
+      "heartbeat_at": "2026-09-18T13:46:21+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-17T21:09:23+00:00",
       "active_jobs": {
-        "score": 404482
+        "score": 404482,
+        "team": 404483
       },
       "pending_jobs": [
+        "live",
+        "master",
         "world"
       ],
       "max_concurrent_workers": 2,
@@ -38,11 +41,11 @@
       "run_id": "score-1789738938402067719",
       "last_stage": "grading_published",
       "state": "running",
-      "heartbeat_at": "2026-09-18T13:46:10+00:00",
+      "heartbeat_at": "2026-09-18T13:46:20+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-18T13:42:19+00:00",
       "child_pid": 404482,
-      "elapsed_seconds": 232.5,
+      "elapsed_seconds": 242.6,
       "overlap_skips": 1,
       "due_count": 15,
       "graded_count": 0,
@@ -85,15 +88,25 @@
       "duration_seconds": 1049.82
     },
     "team": {
-      "last_success_at": "2026-09-18T13:41:22+00:00",
-      "last_success_duration_seconds": 8.59,
+      "last_success_at": "2026-09-18T13:46:23+00:00",
+      "last_success_duration_seconds": 9.05,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
       "run_id": "team-1789739172912301671",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T13:46:14+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T13:46:23+00:00",
       "pid": 404483,
-      "last_started_at": "2026-09-18T13:46:14+00:00"
+      "last_started_at": "2026-09-18T13:46:14+00:00",
+      "child_pid": 404483,
+      "elapsed_seconds": 8.0,
+      "overlap_skips": 0,
+      "team_retry_processed": 12,
+      "team_retry_resolved": 227,
+      "team_retry_pending": 94,
+      "team_retry_due": 93,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 9.05
     },
     "backup": {
       "last_success_duration_seconds": 28.77,
@@ -116,14 +129,14 @@
       "duration_seconds": 28.77
     }
   },
-  "updated_at": "2026-09-18T13:46:14+00:00",
+  "updated_at": "2026-09-18T13:46:23+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "scoring",
         "endpoint": "/fixtures/lineups",
-        "calls": 339
+        "calls": 342
       },
       {
         "purpose": "analysis",
@@ -148,7 +161,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures",
-        "calls": 60
+        "calls": 61
       },
       {
         "purpose": "world",
@@ -228,7 +241,7 @@
         "metric": "cache_hit",
         "purpose": "scoring",
         "endpoint": "/fixtures/lineups",
-        "count": 67
+        "count": 70
       },
       {
         "metric": "cache_hit",
@@ -306,15 +319,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-18",
     "reset_timezone": "UTC",
-    "local_calls": 1633,
-    "provider_remaining": 1229,
+    "local_calls": 1637,
+    "provider_remaining": 1225,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 439,
     "analysis_calls": 674,
     "live_calls": 121,
-    "scoring_calls": 399,
+    "scoring_calls": 403,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
