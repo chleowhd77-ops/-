@@ -89,15 +89,22 @@
       "duration_seconds": 718.05
     },
     "team": {
-      "last_success_duration_seconds": 11.06,
+      "last_success_duration_seconds": 12.63,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "last_success_at": "2026-09-18T09:10:51+00:00",
+      "last_success_at": "2026-09-18T09:16:18+00:00",
       "run_id": "team-1789722938646463016",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T09:16:05+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T09:16:18+00:00",
       "pid": 404088,
-      "last_started_at": "2026-09-18T09:16:05+00:00"
+      "last_started_at": "2026-09-18T09:16:05+00:00",
+      "team_retry_processed": 12,
+      "team_retry_resolved": 256,
+      "team_retry_pending": 65,
+      "team_retry_due": 64,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 12.63
     },
     "backup": {
       "last_success_duration_seconds": 20.33,
@@ -120,7 +127,7 @@
       "duration_seconds": 20.33
     }
   },
-  "updated_at": "2026-09-18T09:16:05+00:00",
+  "updated_at": "2026-09-18T09:16:18+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -190,7 +197,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 2187
+        "count": 2197
       },
       {
         "metric": "cache_hit",
@@ -262,7 +269,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 5
+        "count": 6
       },
       {
         "metric": "cache_hit",
@@ -279,6 +286,12 @@
       {
         "metric": "singleflight_block",
         "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 2
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
         "endpoint": "/fixtures/headtohead",
         "count": 2
       },
@@ -287,12 +300,6 @@
         "purpose": "analysis",
         "endpoint": "/injuries",
         "count": 2
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 1
       },
       {
         "metric": "singleflight_block",
