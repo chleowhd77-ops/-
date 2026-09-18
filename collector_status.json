@@ -5,13 +5,16 @@
       "supervisor_pid": 402480,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-18T21:31:56+00:00",
+      "heartbeat_at": "2026-09-18T21:32:56+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-17T21:09:23+00:00",
       "active_jobs": {
         "master": 405888
       },
-      "pending_jobs": [],
+      "pending_jobs": [
+        "live",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -52,18 +55,20 @@
     },
     "master": {
       "last_failure_duration_seconds": 870.8,
-      "last_success_at": "2026-09-18T21:25:07+00:00",
+      "last_success_at": "2026-09-18T21:33:19+00:00",
       "last_failure_at": "2026-09-17T08:20:35+00:00",
-      "last_success_duration_seconds": 103.84,
+      "last_success_duration_seconds": 112.67,
       "run_id": "master-1789767086292553467",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-18T21:32:06+00:00",
-      "pid": 402480,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-18T21:33:19+00:00",
+      "pid": 405888,
       "last_started_at": "2026-09-18T21:31:26+00:00",
       "child_pid": 405888,
-      "elapsed_seconds": 40.1,
-      "overlap_skips": 1
+      "elapsed_seconds": 90.2,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 112.67
     },
     "world": {
       "last_success_duration_seconds": 47.76,
@@ -121,7 +126,7 @@
       "duration_seconds": 24.0
     }
   },
-  "updated_at": "2026-09-18T21:32:22+00:00",
+  "updated_at": "2026-09-18T21:33:19+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
