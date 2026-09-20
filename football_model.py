@@ -236,7 +236,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
             float(pick.get("official_score") or 0),
             str(pick.get("raw_pick") or ""),
         ),
-    )
+        )
     chosen["recommendation_status"] = "SELECTED"
     chosen["selection_reason"] = (
         "경기 전 전체 지표가 반영된 동일 점수분포에서 승무패·3방향 핸디캡·"
