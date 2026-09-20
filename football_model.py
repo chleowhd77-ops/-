@@ -229,7 +229,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
             "official_learning_axis": "chronological_candidate_learning_accuracy_first",
         })
 
-chosen = max(
+    chosen = max(
         available,
         key=lambda pick: (
             float(pick.get("robust_probability") or pick.get("prob") or 0),
