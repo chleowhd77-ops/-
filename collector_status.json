@@ -66,12 +66,12 @@
       "run_id": "master-1789904405817916273",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-09-20T11:46:36+00:00",
+      "heartbeat_at": "2026-09-20T11:46:58+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-20T11:40:06+00:00",
       "child_pid": 410500,
-      "elapsed_seconds": 390.6,
-      "overlap_skips": 1
+      "elapsed_seconds": 412.8,
+      "overlap_skips": 2
     },
     "world": {
       "last_success_at": "2026-09-20T11:36:41+00:00",
@@ -91,15 +91,22 @@
       "duration_seconds": 1309.16
     },
     "team": {
-      "last_success_duration_seconds": 4.48,
+      "last_success_duration_seconds": 3.87,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "last_success_at": "2026-09-20T11:37:04+00:00",
+      "last_success_at": "2026-09-20T11:46:59+00:00",
       "run_id": "team-1789904814486011384",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-20T11:46:55+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-20T11:46:59+00:00",
       "pid": 410502,
-      "last_started_at": "2026-09-20T11:46:55+00:00"
+      "last_started_at": "2026-09-20T11:46:55+00:00",
+      "team_retry_processed": 1,
+      "team_retry_resolved": 324,
+      "team_retry_pending": 2,
+      "team_retry_due": 0,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 3.87
     },
     "backup": {
       "last_success_at": "2026-09-20T09:44:36+00:00",
@@ -119,7 +126,7 @@
       "duration_seconds": 10.15
     }
   },
-  "updated_at": "2026-09-20T11:46:55+00:00",
+  "updated_at": "2026-09-20T11:46:59+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -267,6 +274,12 @@
         "metric": "cache_hit",
         "purpose": "scoring",
         "endpoint": "/fixtures",
+        "count": 1
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/injuries",
         "count": 1
       }
     ],
