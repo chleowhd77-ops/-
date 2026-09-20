@@ -83,14 +83,21 @@
     },
     "team": {
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "last_success_at": "2026-09-19T23:55:54+00:00",
-      "last_success_duration_seconds": 6.16,
+      "last_success_at": "2026-09-20T00:01:02+00:00",
+      "last_success_duration_seconds": 12.59,
       "run_id": "team-1789862448804205958",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-20T00:00:49+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-20T00:01:02+00:00",
       "pid": 408905,
-      "last_started_at": "2026-09-20T00:00:49+00:00"
+      "last_started_at": "2026-09-20T00:00:49+00:00",
+      "team_retry_processed": 1,
+      "team_retry_resolved": 324,
+      "team_retry_pending": 2,
+      "team_retry_due": 0,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "duration_seconds": 12.59
     },
     "backup": {
       "last_success_duration_seconds": 21.49,
@@ -113,14 +120,24 @@
       "duration_seconds": 21.49
     }
   },
-  "updated_at": "2026-09-20T00:00:49+00:00",
+  "updated_at": "2026-09-20T00:01:02+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "calls": 3
+      },
+      {
         "purpose": "live",
         "endpoint": "/fixtures",
         "calls": 3
+      },
+      {
+        "purpose": "analysis",
+        "endpoint": "/teams",
+        "calls": 1
       }
     ],
     "runtime_metrics": [
@@ -134,13 +151,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-20",
     "reset_timezone": "UTC",
-    "local_calls": 3,
-    "provider_remaining": 3591,
+    "local_calls": 7,
+    "provider_remaining": 3587,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 0,
+    "analysis_calls": 4,
     "live_calls": 3,
     "scoring_calls": 0,
     "world_daily_limit": 4000,
