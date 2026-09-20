@@ -232,9 +232,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
 chosen = max(
         available,
         key=lambda pick: (
-            # 1순위: 무조건 '확률'이 제일 높은 놈으로 가져와! (배당 무시)
             float(pick.get("robust_probability") or pick.get("prob") or 0),
-            # 2순위: 확률이 완전히 똑같다면 그때만 점수 비교
             float(pick.get("official_score") or 0),
             str(pick.get("raw_pick") or ""),
         ),
