@@ -5,12 +5,11 @@
       "supervisor_pid": 402480,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-20T06:33:07+00:00",
+      "heartbeat_at": "2026-09-20T06:36:08+00:00",
       "pid": 402480,
       "last_started_at": "2026-09-17T21:09:23+00:00",
       "active_jobs": {
-        "world": 409489,
-        "team": 409496
+        "world": 409489
       },
       "pending_jobs": [
         "live",
@@ -77,18 +76,20 @@
     },
     "world": {
       "last_failure_duration_seconds": 434.5,
-      "last_success_at": "2026-09-20T05:31:19+00:00",
-      "last_success_duration_seconds": 1288.78,
+      "last_success_at": "2026-09-20T06:36:12+00:00",
+      "last_success_duration_seconds": 489.82,
       "last_failure_at": "2026-09-17T08:28:58+00:00",
       "run_id": "world-1789885681467364016",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-20T06:33:07+00:00",
-      "pid": 402480,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-20T06:36:12+00:00",
+      "pid": 409489,
       "last_started_at": "2026-09-20T06:28:02+00:00",
       "child_pid": 409489,
-      "elapsed_seconds": 306.4,
-      "overlap_skips": 1
+      "elapsed_seconds": 486.7,
+      "overlap_skips": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 489.82
     },
     "team": {
       "last_failure_at": "2026-09-15T09:58:09+00:00",
@@ -129,7 +130,7 @@
       "duration_seconds": 11.31
     }
   },
-  "updated_at": "2026-09-20T06:33:26+00:00",
+  "updated_at": "2026-09-20T06:36:12+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -146,12 +147,12 @@
       {
         "purpose": "world",
         "endpoint": "/odds",
-        "calls": 107
+        "calls": 108
       },
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 68
+        "calls": 69
       },
       {
         "purpose": "live",
@@ -161,12 +162,12 @@
       {
         "purpose": "world",
         "endpoint": "/fixtures",
-        "calls": 38
+        "calls": 42
       },
       {
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "calls": 36
+        "calls": 38
       },
       {
         "purpose": "analysis",
@@ -186,12 +187,12 @@
       {
         "purpose": "world",
         "endpoint": "/coachs",
-        "calls": 22
+        "calls": 24
       },
       {
         "purpose": "world",
         "endpoint": "/standings",
-        "calls": 22
+        "calls": 24
       }
     ],
     "runtime_metrics": [
@@ -223,7 +224,19 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
-        "count": 17
+        "count": 19
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/players/topassists",
+        "count": 18
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "world",
+        "endpoint": "/players/topscorers",
+        "count": 18
       },
       {
         "metric": "cache_hit",
@@ -235,18 +248,6 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 15
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "world",
-        "endpoint": "/players/topassists",
-        "count": 15
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "world",
-        "endpoint": "/players/topscorers",
         "count": 15
       },
       {
@@ -283,13 +284,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-20",
     "reset_timezone": "UTC",
-    "local_calls": 964,
-    "provider_remaining": 2630,
+    "local_calls": 982,
+    "provider_remaining": 2612,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
-    "world_calls": 280,
-    "analysis_calls": 479,
+    "world_calls": 297,
+    "analysis_calls": 480,
     "live_calls": 57,
     "scoring_calls": 148,
     "world_daily_limit": 4000,
