@@ -229,7 +229,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
             "official_learning_axis": "chronological_candidate_learning_accuracy_first",
         })
 
-chosen = max(
+     chosen = max(
         available,
         key=lambda pick: (
             # 1순위: 무조건 '확률'이 제일 높은 놈으로 가져와! (배당 무시)
