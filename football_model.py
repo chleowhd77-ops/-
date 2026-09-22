@@ -245,7 +245,7 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         "불확실성·독립근거 합치와 시간순 미래검증을 통과한 후보 채점 학습을 "
         "우선해 한 방향을 선택했습니다."
     )
-reason = "chronological_candidate_learning_accuracy_first"
+    reason = "chronological_candidate_learning_accuracy_first"
     
     try:
         h_odd = d_odd = a_odd = 0.0
@@ -257,7 +257,7 @@ reason = "chronological_candidate_learning_accuracy_first"
                 elif s == "away": a_odd = float(p.get("odd") or 0)
         
         v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
-        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배/이변)" if v2_result == "A" else "분석중"
+        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
         
         chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
         chosen["v2_ai_pick"] = v2_result 
