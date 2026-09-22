@@ -296,6 +296,7 @@ def _refresh_world_source_meta(payload):
 
 
 WORLD_PUBLIC_CANDIDATE_FIELDS = (
+    "engine", "engine_version", "code", "pre_match_only",
     "market_key", "label", "raw_pick", "selection_side", "handicap_base",
     "totals_base", "sort_id", "prob", "probability", "model_probability",
     "fair_prob", "fair_probability", "odd", "edge", "robust_probability",
@@ -332,13 +333,13 @@ WORLD_PUBLIC_DECISION_FIELDS = (
     "analysis_version", "schema_version", "data_confidence", "selected_market",
     "selected_pick", "selection_reason", "selection_warning", "final_pick_grade",
     "value_badge", "probability_fallback", "market_candidate_counts",
-    "missing_markets",
+    "missing_markets", "alphago_pick",
 )
 WORLD_PUBLIC_ANALYSIS_FIELDS = (
     "analysis_version", "system_version", "analysis_stage", "analyzed_at",
     "frozen_at", "data_quality_score", "data_quality_grade", "missing_data",
     "lineup_confirmed", "odds_snapshot", "odds_movement", "evidence",
-    "categories", "selected", "legacy_v4_pick", "robot_pick",
+    "categories", "selected", "legacy_v4_pick", "robot_pick", "alphago_pick",
     "robot_wdl_probabilities", "alternative", "learning_robot", "report",
     "public_pick_frozen", "public_pick_frozen_at",
     "public_pick_analysis_version", "public_pick_analysis_stage",
@@ -382,7 +383,7 @@ def _compact_world_public_analysis(analysis):
             )
             for key, candidate in categories.items()
         }
-    for key in ("selected", "legacy_v4_pick", "robot_pick", "alternative"):
+    for key in ("selected", "legacy_v4_pick", "robot_pick", "alphago_pick", "alternative"):
         if isinstance(analysis.get(key), dict):
             public[key] = _compact_world_public_candidate(analysis[key])
     public["candidates"] = [
@@ -4059,6 +4060,33 @@ def _audit_number(value, default=None):
         return default
 
 
+ALPHAGO_PICK_DISPLAY_VERSION = "v2-ai-display-v1"
+
+
+def _alphago_pick_payload(source_pick):
+    """Expose an already-calculated V2 result without changing any pick.
+
+    The V2 result is produced by ``football_model.py`` as ``v2_ai_pick``.
+    This adapter only gives that existing H/D/A code a display-safe shape.
+    It never calls the V2 model, does not select a replacement pick, and does
+    not make a retrospective result for a match that has already started.
+    """
+    if not isinstance(source_pick, dict):
+        return {}
+    code = str(source_pick.get("v2_ai_pick") or "").strip().upper()
+    side = {"H": "home", "D": "draw", "A": "away"}.get(code)
+    if not side:
+        return {}
+    return {
+        "engine": "v2-ai",
+        "engine_version": ALPHAGO_PICK_DISPLAY_VERSION,
+        "code": code,
+        "market_key": "1x2",
+        "selection_side": side,
+        "pre_match_only": True,
+    }
+
+
 def build_pick_selection_audit(
     candidates, categories, confidence, robot_pick=None, lineup_prediction=None,
 ):
@@ -4172,6 +4200,7 @@ def build_pick_selection_audit(
             "robot_selection_axis": str(
                 robot_pick.get("robot_selection_axis") or "all_markets"
             ),
+            "v2_ai_pick": str(robot_pick.get("v2_ai_pick") or "").strip().upper(),
             "selection_reason": str(robot_pick.get("selection_reason") or ""),
             "recommendation_status": "SELECTED",
             "robot_fallback": bool(robot_pick.get("robot_fallback")),
@@ -4368,6 +4397,7 @@ def build_pick_selection_audit(
         }),
         "robot_pick_version": ROBOT_PICK_VERSION,
         "robot_pick": compact_robot,
+        "alphago_pick": _alphago_pick_payload(robot_pick),
         "robot_selector": AUTONOMOUS_ROBOT_POLICY_VERSION,
         "robot_uses_prekickoff_inputs_only": True,
         "robot_history_rewrite": False,
@@ -4529,6 +4559,7 @@ def _three_engine_compact_pick(pick):
         key: pick.get(key) for key in (
             "market_key", "selection_side", "raw_pick", "prob", "probability",
             "odd", "fair_prob", "handicap_base", "totals_base",
+            "v2_ai_pick",
             "selection_reason", "selection_axis", "official_policy_version",
             "official_goal_score", "official_learned_probability",
             "official_learning_active", "official_learning_samples",
@@ -5243,6 +5274,9 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         )
         if robot_pick:
             frozen_categories["robot_independent"] = robot_pick
+    alphago_pick = dict(decision.get("alphago_pick") or {})
+    if not alphago_pick:
+        alphago_pick = _alphago_pick_payload(robot_pick)
 
     if not candidates:
         candidates = [dict(selected)]
@@ -5276,6 +5310,7 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         "categories": frozen_categories,
         "legacy_v4_pick": {},
         "robot_pick": robot_pick,
+        "alphago_pick": alphago_pick,
         "candidates": candidates,
         "decision": decision,
         "report": report,
@@ -5329,6 +5364,12 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
     ):
         current_robot = {}
     public_robot = bundle.get("robot_pick") or current_robot
+    current_alphago = current.get("alphago_pick")
+    if not isinstance(current_alphago, dict):
+        current_alphago = {}
+    public_alphago = bundle.get("alphago_pick") or current_alphago
+    if not isinstance(public_alphago, dict):
+        public_alphago = {}
     public_categories = dict(bundle["categories"])
     if public_robot:
         public_categories["robot_independent"] = dict(public_robot)
@@ -5357,6 +5398,7 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         "pick_categories": public_categories,
         "legacy_v4_pick": {},
         "robot_pick": dict(public_robot or {}),
+        "alphago_pick": dict(public_alphago),
         "ev_sorted_picks": bundle["candidates"],
         "display_candidates": bundle["candidates"],
         "display_candidates_saved_at": bundle["frozen_at"],
@@ -5406,6 +5448,14 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
     if bundle.get("robot_pick"):
         decision["robot_pick"] = dict(bundle["robot_pick"])
         decision["robot_pick_version"] = ROBOT_PICK_VERSION
+    current_alphago = current_analysis.get("alphago_pick")
+    if not isinstance(current_alphago, dict):
+        current_alphago = {}
+    public_alphago = bundle.get("alphago_pick") or current_alphago
+    if not isinstance(public_alphago, dict):
+        public_alphago = {}
+    if public_alphago:
+        decision["alphago_pick"] = dict(public_alphago)
     current_stage = str(current_analysis.get("analysis_stage") or "")
     current_report = str(current_analysis.get("report") or "").strip()
     frozen_report = str(bundle.get("report") or "").strip()
@@ -5431,6 +5481,7 @@ def _public_world_analysis_from_first_snapshot(match, current_analysis):
         "categories": bundle["categories"],
         "legacy_v4_pick": {},
         "robot_pick": dict(bundle.get("robot_pick") or {}),
+        "alphago_pick": dict(public_alphago),
         "candidates": bundle["candidates"],
         "decision": decision,
         "report": report,
@@ -7507,6 +7558,7 @@ def _world_market_preview_analysis(item, now=None):
     robot_pick = select_autonomous_robot_pick(
         candidate_rows, preview_confidence, source="WORLD"
     )
+    alphago_pick = _alphago_pick_payload(robot_pick)
     audited_candidates, compact_categories, decision = build_pick_selection_audit(
         candidate_rows,
         {
@@ -7566,6 +7618,7 @@ def _world_market_preview_analysis(item, now=None):
         "categories": compact_categories,
         "selected": compact_selected,
         "robot_pick": dict(compact_categories.get("robot_independent") or {}),
+        "alphago_pick": alphago_pick,
         "alternative": {},
         "learning_robot": {"applied": False, "reason": "정밀분석 대기"},
         "decision": decision,
@@ -9007,6 +9060,9 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
             robot_pick.get("raw_pick"),
             (proto_item.get("match") or {}).get("home", ""),
         )
+    alphago_pick = proto_item.get("alphago_pick")
+    if not isinstance(alphago_pick, dict):
+        alphago_pick = _alphago_pick_payload(robot_pick)
     try:
         quality_score = int(round(float(proto_item.get("data_coverage") or 0) * 100))
     except (TypeError, ValueError):
@@ -9025,6 +9081,7 @@ def _world_analysis_from_proto_item(proto_item, previous_analysis=None):
         "selected": selected,
         "legacy_v4_pick": {},
         "robot_pick": robot_pick,
+        "alphago_pick": dict(alphago_pick),
         "report": str(
             proto_item.get("detailed_report")
             or proto_item.get("analysis_detail")
@@ -9768,6 +9825,7 @@ def _analyze_world_match(item, now, market_performance):
     robot_pick = select_autonomous_robot_pick(
         robot_candidates, confidence, robot_features, source="WORLD"
     )
+    alphago_pick = _alphago_pick_payload(robot_pick)
     # World VIP is a future paid-grade candidate.  A strong price alone cannot
     # bypass the separately agreed 90/100 input-quality gate.
     if quality_score < 90:
@@ -9899,6 +9957,7 @@ def _analyze_world_match(item, now, market_performance):
         "legacy_v4_pick": legacy_v4_pick,
         "legacy_v4_candidates": legacy_v4_candidates,
         "robot_pick": dict(compact_categories.get("robot_independent") or {}),
+        "alphago_pick": alphago_pick,
         "robot_features": robot_features,
         "robot_full_evidence": world_full_evidence,
         "robot_lineup_prediction": lineup_learning,
@@ -11887,6 +11946,7 @@ def build_dashboard_data():
             robot_candidates, analysis_confidence, robot_features,
             source="PROTO",
         )
+        alphago_pick = _alphago_pick_payload(robot_pick)
         highest_prob_pick = pick_categories["high_probability"]
         honey_pick = pick_categories["honey"]
         vip_underdog_pick = pick_categories["vip_underdog"]
@@ -12084,6 +12144,7 @@ def build_dashboard_data():
             "legacy_v4_pick": legacy_v4_pick,
             "legacy_v4_candidates": legacy_v4_candidates,
             "robot_pick": robot_pick,
+            "alphago_pick": alphago_pick,
             # Private administrator investment selection compares the robot's
             # full pre-kickoff candidate set.  Keep only auditable numeric
             # fields in the dashboard payload; the larger evidence snapshot

@@ -3144,6 +3144,64 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
     )
 
 
+def _extract_alphago_pick(analysis_item):
+    """Read the existing V2 result without treating it as a robot or official pick."""
+    item = analysis_item if isinstance(analysis_item, dict) else {}
+    nested = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    candidates = []
+    for source in (item, nested):
+        candidates.append(source.get("alphago_pick"))
+        decision = source.get("decision")
+        if isinstance(decision, dict):
+            candidates.append(decision.get("alphago_pick"))
+        robot = source.get("robot_pick")
+        if isinstance(robot, dict):
+            candidates.append({"code": robot.get("v2_ai_pick")})
+        categories = source.get("pick_categories") or source.get("categories") or {}
+        if isinstance(categories, dict):
+            robot = categories.get("robot_independent")
+            if isinstance(robot, dict):
+                candidates.append({"code": robot.get("v2_ai_pick")})
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        code = str(candidate.get("code") or candidate.get("v2_ai_pick") or "").strip().upper()
+        side = {"H": "home", "D": "draw", "A": "away"}.get(code)
+        if side:
+            return {"code": code, "selection_side": side}
+    return {}
+
+
+def _alphago_pick_html(analysis_item, home_team="", away_team=""):
+    """Render the V2 AI answer as a distinct, non-scored display card."""
+    alphago = _extract_alphago_pick(analysis_item)
+    code = str(alphago.get("code") or "")
+    pick_text = {
+        "H": f"{home_team or '홈팀'} 승",
+        "D": "무승부",
+        "A": f"{away_team or '원정팀'} 승",
+    }.get(code)
+    if not pick_text:
+        return (
+            "<div class='pred-box' style='background:rgba(251,191,36,.05);"
+            "border-color:#FBBF24;border-style:dashed;'>"
+            "<div class='pred-label' style='color:#FCD34D;'>🧠 알파고픽 (V2 AI)</div>"
+            "<span class='pred-value' style='color:#CBD5E1;'>분석 결과 대기</span>"
+            "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
+            "현재 카드에 전달된 V2 승무패 결과가 없습니다.</span></div>"
+        )
+    return (
+        "<div class='pred-box' style='background:rgba(251,191,36,.07);"
+        "border-color:#FBBF24;'>"
+        "<div class='pred-label' style='color:#FCD34D;'>🧠 알파고픽 (V2 AI)</div>"
+        f"<span class='pred-value'>{escape(pick_text)}</span>"
+        "<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>"
+        "V2 딥러닝 AI의 별도 승무패 결과</span>"
+        "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
+        "공식 추천픽·자율학습 로봇픽을 변경하지 않습니다.</span></div>"
+    )
+
+
 def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
@@ -3161,6 +3219,10 @@ def generate_pred_boxes(
             pick_categories = display_item.get("pick_categories")
             picks = display_item.get("ev_sorted_picks")
     picks = picks or []
+    away_team = ""
+    if isinstance(analysis_item, dict):
+        away_team = str((analysis_item.get("match") or {}).get("away") or "")
+    alphago_html = _alphago_pick_html(analysis_item, home_team, away_team)
     categories = {
         "high_probability": None,
         "honey": None,
@@ -3188,7 +3250,7 @@ def generate_pred_boxes(
         return (
             "<div class='pred-box'><div class='pred-label'>최종 추천픽</div>"
             "<span class='pred-value'>분석 원본 확인 중</span><small>경기 전 저장 후보 연결이 필요합니다.</small></div>"
-            + _final_pick_validation_html(analysis_item,pick)
+            + alphago_html + _final_pick_validation_html(analysis_item,pick)
         )
     if not pick:
         stage = str(
@@ -3212,7 +3274,7 @@ def generate_pred_boxes(
             "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
             "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
             f"<span class='pred-value' style='color:#94A3B8;'>{empty_text}</span>"
-            "</div>"
+            "</div>" + alphago_html
         )
 
     same_raw = str(pick.get("raw_pick") or "")
@@ -3302,7 +3364,7 @@ def generate_pred_boxes(
             f"{' · '.join(robot_meta)}</span>"
             f"<span class='pred-prob'>{robot_probability * 100:.1f}%</span></div>"
         )
-    return pick_html + robot_html + _final_pick_validation_html(
+    return pick_html + robot_html + alphago_html + _final_pick_validation_html(
         analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
 
