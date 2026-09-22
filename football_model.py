@@ -269,7 +269,6 @@ reason = "chronological_candidate_learning_accuracy_first"
         pass # 에러가 나도 기존 시스템이 멈추지 않도록 강력한 방어막을 칩니다.
 
     return (chosen, reason) if return_reason else chosen
-
 def _legacy_v4_numeric(features, key, default=0.0):
     return _finite_number((features or {}).get(key), default)
 
