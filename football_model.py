@@ -4,6 +4,7 @@ No network, database writes or dependency on the collector. All completed
 history may train and select the next formula. Reported live accuracy comes
 only from later picks that were frozen before kickoff.
 """
+from v2_ml_engine import get_v2_ai_pick
 import hashlib
 import math
 from collections import Counter
@@ -244,9 +245,30 @@ def all_evidence_choice(picks, confidence, return_reason=False):
         "불확실성·독립근거 합치와 시간순 미래검증을 통과한 후보 채점 학습을 "
         "우선해 한 방향을 선택했습니다."
     )
-    reason = "chronological_candidate_learning_accuracy_first"
-    return (chosen, reason) if return_reason else chosen
+reason = "chronological_candidate_learning_accuracy_first"
+    
+    # 🧠 [V2 딥러닝 알파고 뇌 이식 수술] 🧠
+    try:
+        h_odd = d_odd = a_odd = 0.0
+        # 로봇이 긁어온 수많은 데이터 중 '승/무/패 1순위 배당'만 쏙 뽑아냅니다.
+        for p in available:
+            if p.get("market_key") == "1x2":
+                s = str(p.get("selection_side") or "")
+                if s == "home": h_odd = float(p.get("odd") or 0)
+                elif s == "draw": d_odd = float(p.get("odd") or 0)
+                elif s == "away": a_odd = float(p.get("odd") or 0)
+        
+        # V2 뇌에 배당을 먹이고 픽을 받아옵니다.
+        v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
+        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배/이변)" if v2_result == "A" else "분석중"
+        
+        # 기존 로봇의 코멘트 뒤에 V2 딥러닝 픽을 은밀하게 이어 붙여 대시보드로 보냅니다.
+        chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
+        chosen["v2_ai_pick"] = v2_result 
+    except Exception as e:
+        pass # 에러가 나도 기존 시스템이 멈추지 않도록 강력한 방어막을 칩니다.
 
+    return (chosen, reason) if return_reason else chosen
 
 def _legacy_v4_numeric(features, key, default=0.0):
     return _finite_number((features or {}).get(key), default)
