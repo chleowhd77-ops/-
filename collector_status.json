@@ -5,16 +5,17 @@
       "supervisor_pid": 419245,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-22T20:25:45+00:00",
+      "heartbeat_at": "2026-09-22T20:36:17+00:00",
       "pid": 419245,
       "last_started_at": "2026-09-22T05:57:19+00:00",
       "active_jobs": {
-        "master": 423140,
-        "team": 423154
+        "master": 423140
       },
       "pending_jobs": [
         "live",
-        "score"
+        "score",
+        "team",
+        "world"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -57,17 +58,19 @@
     "master": {
       "last_failure_duration_seconds": 2700.7,
       "last_failure_at": "2026-09-19T20:53:59+00:00",
-      "last_success_at": "2026-09-22T20:06:17+00:00",
-      "last_success_duration_seconds": 2019.3,
+      "last_success_at": "2026-09-22T20:36:24+00:00",
+      "last_success_duration_seconds": 791.63,
       "run_id": "master-1790108591154140768",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-22T20:25:45+00:00",
-      "pid": 419245,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-22T20:36:24+00:00",
+      "pid": 423140,
       "last_started_at": "2026-09-22T20:23:12+00:00",
       "child_pid": 423140,
-      "elapsed_seconds": 154.3,
-      "overlap_skips": 1
+      "elapsed_seconds": 786.5,
+      "overlap_skips": 3,
+      "db_backup_requested": true,
+      "duration_seconds": 791.63
     },
     "world": {
       "last_failure_duration_seconds": 434.5,
@@ -125,7 +128,7 @@
       "duration_seconds": 1.23
     }
   },
-  "updated_at": "2026-09-22T20:25:51+00:00",
+  "updated_at": "2026-09-22T20:36:24+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -195,13 +198,13 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 235
+        "count": 239
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 194
+        "count": 196
       },
       {
         "metric": "cache_hit",
