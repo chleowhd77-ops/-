@@ -432,14 +432,14 @@ def legacy_v4_choice(picks, features, return_reason=False):
     ))
     chosen = dict(chosen)
     chosen.update({
-            "recommendation_status": "SELECTED",
-            "selection_axis": "legacy_v4_raw_probability",
-            "legacy_v4_policy_version": LEGACY_V4_POLICY_VERSION,
-            "selection_reason": (
-                "복원 V4 방식으로 홈·원정, 최근 흐름, 순위, 결장·체력, 동기와 "
-                "맞대결 상성을 기대득점에 직접 반영하고 전 시장에서 가장 높은 "
-                "원시 적중확률 한 방향을 선택했습니다."
-            ),
+        "recommendation_status": "SELECTED",
+        "selection_axis": "legacy_v4_raw_probability",
+        "legacy_v4_policy_version": LEGACY_V4_POLICY_VERSION,
+        "selection_reason": (
+            "복원 V4 방식으로 홈·원정, 최근 흐름, 순위, 결장·체력, 동기와 "
+            "맞대결 상성을 기대득점에 직접 반영하고 전 시장에서 가장 높은 "
+            "원시 적중확률 한 방향을 선택했습니다."
+        ),
         })
     reason = "legacy_v4_raw_probability"
     
@@ -460,7 +460,7 @@ def legacy_v4_choice(picks, features, return_reason=False):
     except Exception:
         pass
 
-        return (chosen, reason) if return_reason else chosen
+    return (chosen, reason) if return_reason else chosen
 
 
 def autonomous_robot_choice(picks, confidence, return_reason=False):
@@ -528,29 +528,29 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
         chosen["robot_fallback"] = False
         chosen["recommendation_status"] = "SELECTED"
         chosen["selection_reason"] = (
-                    "로봇이 경기 전 원자료와 같은 버전의 누적 채점으로 자체 득점·전 시장 "
-                    "확률을 만들고, 승무패 우선순서나 시장별 할당 없이 미래 동결픽 70% "
-                    "목표에 가장 가까운 한 방향을 골랐습니다."
-                )
+            "로봇이 경기 전 원자료와 같은 버전의 누적 채점으로 자체 득점·전 시장 "
+            "확률을 만들고, 승무패 우선순서나 시장별 할당 없이 미래 동결픽 70% "
+            "목표에 가장 가까운 한 방향을 골랐습니다."
+        )
                 
-try:
-    h_odd = d_odd = a_odd = 0.0
-    for p in available:
-        if p.get("market_key") == "1x2":
-            s = str(p.get("selection_side") or "")
-            if s == "home": h_odd = float(p.get("odd") or 0)
-            elif s == "draw": d_odd = float(p.get("odd") or 0)
-            elif s == "away": a_odd = float(p.get("odd") or 0)
+        try:
+            h_odd = d_odd = a_odd = 0.0
+            for p in available:
+                if p.get("market_key") == "1x2":
+                    s = str(p.get("selection_side") or "")
+                    if s == "home": h_odd = float(p.get("odd") or 0)
+                    elif s == "draw": d_odd = float(p.get("odd") or 0)
+                    elif s == "away": a_odd = float(p.get("odd") or 0)
     
-    v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
-    v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
-    chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
-    chosen["v2_ai_pick"] = v2_result 
-except Exception:
-    pass
+            v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
+            v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
+            chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
+            chosen["v2_ai_pick"] = v2_result 
+        except Exception:
+            pass
 
-return (chosen, reason) if return_reason else chosen
-priced = []
+        return (chosen, reason) if return_reason else chosen
+    priced = []
     for pick in available:
         probability = max(
             0.0,
@@ -656,31 +656,31 @@ priced = []
 
     chosen["recommendation_status"] = "SELECTED"
     chosen["selection_reason"] = (
-            "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당과 "
-            "홈·원정, 맞대결, 순위, 최근 경기력, 결장·선발, 휴식·동기 지표를 "
-            "보수확률, 손익분기점, 기대수익, Kelly와 함께 독립적으로 비교했습니다."
-            if reason == "all_market_all_evidence_value" else
-            "검증 가능한 실배당 세트가 없어도 픽을 비우지 않고 정산 가능한 후보 중 "
-            "보수확률이 가장 높은 방향을 선택했습니다."
-        )
+        "승무패 우선 제한 없이 승무패·3방향 핸디캡·언더오버의 실제 배당과 "
+        "홈·원정, 맞대결, 순위, 최근 경기력, 결장·선발, 휴식·동기 지표를 "
+        "보수확률, 손익분기점, 기대수익, Kelly와 함께 독립적으로 비교했습니다."
+        if reason == "all_market_all_evidence_value" else
+        "검증 가능한 실배당 세트가 없어도 픽을 비우지 않고 정산 가능한 후보 중 "
+        "보수확률이 가장 높은 방향을 선택했습니다."
+    )
         
-        try:
-            h_odd = d_odd = a_odd = 0.0
-            for p in available:
-                if p.get("market_key") == "1x2":
-                    s = str(p.get("selection_side") or "")
-                    if s == "home": h_odd = float(p.get("odd") or 0)
-                    elif s == "draw": d_odd = float(p.get("odd") or 0)
-                    elif s == "away": a_odd = float(p.get("odd") or 0)
+    try:
+        h_odd = d_odd = a_odd = 0.0
+        for p in available:
+            if p.get("market_key") == "1x2":
+                s = str(p.get("selection_side") or "")
+                if s == "home": h_odd = float(p.get("odd") or 0)
+                elif s == "draw": d_odd = float(p.get("odd") or 0)
+                elif s == "away": a_odd = float(p.get("odd") or 0)
             
-            v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
-            v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
-            chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
-            chosen["v2_ai_pick"] = v2_result 
-        except Exception:
-            pass
+        v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
+        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
+        chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
+        chosen["v2_ai_pick"] = v2_result 
+    except Exception:
+        pass
 
-        return (chosen, reason) if return_reason else chosen
+    return (chosen, reason) if return_reason else chosen
 
 
 def wdl_centered_choice(picks, confidence, policy=None, return_reason=False):
