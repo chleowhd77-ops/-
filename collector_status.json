@@ -5,15 +5,14 @@
       "supervisor_pid": 419245,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-22T18:18:16+00:00",
+      "heartbeat_at": "2026-09-22T18:18:46+00:00",
       "pid": 419245,
       "last_started_at": "2026-09-22T05:57:19+00:00",
       "active_jobs": {
-        "world": 422464
+        "live": 422505
       },
       "pending_jobs": [
         "backup",
-        "live",
         "master",
         "score"
       ],
@@ -21,16 +20,20 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-09-22T17:42:41+00:00",
+      "last_success_at": "2026-09-22T18:19:01+00:00",
       "last_failure_duration_seconds": 180.1,
       "last_failure_at": "2026-09-19T17:52:27+00:00",
-      "last_success_duration_seconds": 9.21,
+      "last_success_duration_seconds": 18.93,
       "run_id": "live-1790101118173218996",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-22T18:18:42+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-22T18:19:01+00:00",
       "pid": 422505,
-      "last_started_at": "2026-09-22T18:18:42+00:00"
+      "last_started_at": "2026-09-22T18:18:42+00:00",
+      "child_pid": 422505,
+      "elapsed_seconds": 8.0,
+      "overlap_skips": 0,
+      "duration_seconds": 18.93
     },
     "score": {
       "last_failure_at": "2026-09-17T08:33:54+00:00",
@@ -130,7 +133,7 @@
       "duration_seconds": 684.87
     }
   },
-  "updated_at": "2026-09-22T18:18:42+00:00",
+  "updated_at": "2026-09-22T18:19:01+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -162,7 +165,7 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 61
+        "calls": 63
       },
       {
         "purpose": "world",
@@ -278,14 +281,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-22",
     "reset_timezone": "UTC",
-    "local_calls": 1430,
-    "provider_remaining": 6070,
+    "local_calls": 1432,
+    "provider_remaining": 6068,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 494,
     "analysis_calls": 590,
-    "live_calls": 61,
+    "live_calls": 63,
     "scoring_calls": 285,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
