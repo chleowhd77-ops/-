@@ -431,7 +431,7 @@ def legacy_v4_choice(picks, features, return_reason=False):
         str(pick.get("raw_pick") or ""),
     ))
     chosen = dict(chosen)
-chosen.update({
+    chosen.update({
             "recommendation_status": "SELECTED",
             "selection_axis": "legacy_v4_raw_probability",
             "legacy_v4_policy_version": LEGACY_V4_POLICY_VERSION,
