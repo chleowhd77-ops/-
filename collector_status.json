@@ -5,32 +5,34 @@
       "supervisor_pid": 419245,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-22T11:56:03+00:00",
+      "heartbeat_at": "2026-09-22T11:56:33+00:00",
       "pid": 419245,
       "last_started_at": "2026-09-22T05:57:19+00:00",
       "active_jobs": {
-        "world": 420253
+        "live": 420266
       },
       "pending_jobs": [
-        "live",
         "master",
-        "score",
-        "team"
+        "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-09-22T11:43:49+00:00",
+      "last_success_at": "2026-09-22T11:56:35+00:00",
       "last_failure_duration_seconds": 180.1,
       "last_failure_at": "2026-09-19T17:52:27+00:00",
-      "last_success_duration_seconds": 4.24,
+      "last_success_duration_seconds": 10.73,
       "run_id": "live-1790078175362655358",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-22T11:56:30+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-22T11:56:35+00:00",
       "pid": 420266,
-      "last_started_at": "2026-09-22T11:56:25+00:00"
+      "last_started_at": "2026-09-22T11:56:25+00:00",
+      "child_pid": 420266,
+      "elapsed_seconds": 18.1,
+      "overlap_skips": 0,
+      "duration_seconds": 10.73
     },
     "score": {
       "last_success_duration_seconds": 114.36,
@@ -124,7 +126,7 @@
       "duration_seconds": 10.15
     }
   },
-  "updated_at": "2026-09-22T11:56:30+00:00",
+  "updated_at": "2026-09-22T11:56:35+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -154,6 +156,11 @@
         "calls": 45
       },
       {
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "calls": 39
+      },
+      {
         "purpose": "world",
         "endpoint": "/coachs",
         "calls": 38
@@ -177,11 +184,6 @@
         "purpose": "world",
         "endpoint": "/standings",
         "calls": 38
-      },
-      {
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "calls": 37
       },
       {
         "purpose": "world",
@@ -266,14 +268,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-22",
     "reset_timezone": "UTC",
-    "local_calls": 1135,
-    "provider_remaining": 6365,
+    "local_calls": 1137,
+    "provider_remaining": 6363,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 388,
     "analysis_calls": 489,
-    "live_calls": 37,
+    "live_calls": 39,
     "scoring_calls": 221,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
