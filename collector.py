@@ -10903,6 +10903,27 @@ def _proto_market_preview_item(match, reason=""):
     return item
 
 
+def _proto_can_finish_model_only_analysis(match):
+    """Return True only for a no-price card with two already verified teams.
+
+    The master cycle may defer heavy enrichment after its soft time budget.  A
+    Betman row whose prices have not opened cannot use the market-preview
+    fallback, though.  When both team identities are already in the verified
+    cache, the normal model-only path is safe to complete without first
+    waiting for another identity retry cycle.  This helper deliberately does
+    not search an external API or manufacture an identity.
+    """
+    if not isinstance(match, dict):
+        return False
+    if _valid_three_way_odds([
+        match.get("odd_h"), match.get("odd_d"), match.get("odd_a"),
+    ]):
+        return False
+    home_id = int(known_team_id(match.get("home")) or 0)
+    away_id = int(known_team_id(match.get("away")) or 0)
+    return bool(home_id > 0 and away_id > 0 and home_id != away_id)
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -11029,7 +11050,12 @@ def build_dashboard_data():
             resumed_proto_count += 1
             continue
 
-        if time.monotonic() >= proto_soft_deadline:
+        # Empty-price rows cannot receive a Betman market preview.  If their
+        # team pair is already verified locally, allow the existing model-only
+        # analysis below to finish instead of publishing an empty card until a
+        # later cycle.  Unknown teams still follow the normal bounded queue.
+        model_only_recovery = _proto_can_finish_model_only_analysis(m)
+        if time.monotonic() >= proto_soft_deadline and not model_only_recovery:
             deferred_item = _resumable_proto_item(
                 m, previous_item, require_current_stage=False
             )
@@ -11169,7 +11195,13 @@ def build_dashboard_data():
             include_odds=0 < diff_hours <= 24,
         )
         api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
-        if api_fixture_id <= 0:
+        model_only_verified_pair = bool(
+            analysis_odds_source == "model_only"
+            and home_id > 0
+            and away_id > 0
+            and home_id != away_id
+        )
+        if api_fixture_id <= 0 and not model_only_verified_pair:
             queue_team_identity_retry(
                 home_team, away_team, final_match_time,
                 reason="proto_fixture_identity_required_before_public_pick",
@@ -11189,6 +11221,12 @@ def build_dashboard_data():
             dashboard_proto.append(pending)
             deferred_proto_count += 1
             continue
+        if model_only_verified_pair and api_fixture_id <= 0:
+            # There is no exact external fixture to attach yet, but the two
+            # teams are verified and their stored team data can support a real
+            # pre-kickoff probability pick.  Keep the missing fixture explicit
+            # so neither price value nor a later result link is invented.
+            m["fixture_identity_pending"] = True
         analyzed_proto_count += 1
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
@@ -11813,7 +11851,7 @@ def build_dashboard_data():
             story = (
                 "📊 <b>[팀 데이터 모델 선픽]</b> 베트맨과 해외배당이 모두 준비되지 "
                 "않아 최근 경기·득실·홈원정·선수 정보로 내부 후보를 계산했습니다. "
-                "실제 배당가치를 확인하기 전에는 공식 추천을 보류합니다."
+                "최종 추천은 표시하되, 실제 배당가치·역배 평가는 가격 수신 전까지 보류합니다."
                 "<br><br>" + story
             )
         

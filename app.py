@@ -3191,12 +3191,16 @@ def generate_pred_boxes(
             + _final_pick_validation_html(analysis_item,pick)
         )
     if not pick:
+        stage = str(
+            analysis_item.get("analysis_stage") or ""
+        ).strip().lower() if isinstance(analysis_item, dict) else ""
         refresh_pending = bool(
             isinstance(analysis_item, dict)
             and (
                 analysis_item.get("analysis_refresh_pending")
-                or str(analysis_item.get("analysis_stage") or "").lower()
-                in {"pending", "deferred", "identity-pending"}
+                or stage.startswith("pending")
+                or stage.startswith("deferred")
+                or stage.endswith("-pending")
             )
         )
         empty_text = (
