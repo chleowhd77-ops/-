@@ -1,0 +1,364 @@
+"""Autonomous, web-visible V3 learning picks.
+
+This is deliberately a separate challenger.  It reads the existing frozen
+pre-kickoff candidate history, retrains from completed results, then freezes a
+V3 learning pick for each newly seen upcoming match.  It never changes the
+official pick, autonomous robot, V2 Alphago pick, source SQLite database, or
+historical records.  Its only local write is its own JSON publication file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import official_meta_v3 as meta
+
+
+AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v1"
+OUTPUT_SCHEMA = "official-meta-v3.web-learning-picks.v1"
+MINIMUM_COMPLETED_MATCHES = meta.MIN_TRAIN_MATCHES
+
+
+class AutopilotNotReady(RuntimeError):
+    """A safe, reportable reason not to create new V3 learning picks."""
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return dict(default)
+    return value if isinstance(value, dict) else dict(default)
+
+
+def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _readonly_connection(database_path: str | Path) -> sqlite3.Connection:
+    path = Path(database_path)
+    if not path.exists():
+        raise AutopilotNotReady(f"database not found: {path}")
+    connection = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+@dataclass(frozen=True)
+class PendingSnapshot:
+    match_id: str
+    snapshot_id: int
+    created_at: str
+    stage: str
+    candidates: tuple[dict[str, Any], ...]
+
+
+def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
+    """Return the latest known pre-match snapshot for each pending prediction."""
+    connection = _readonly_connection(database_path)
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        required = {"predictions", "prediction_analysis_snapshots"}
+        missing = sorted(required - tables)
+        if missing:
+            raise AutopilotNotReady("required tables missing: " + ", ".join(missing))
+        rows = connection.execute(
+            """
+            SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json
+            FROM prediction_analysis_snapshots AS s
+            JOIN predictions AS p ON p.match_id = s.match_id
+            WHERE COALESCE(p.actual_result, 'PENDING') = 'PENDING'
+              AND s.stage LIKE 'T-%'
+            ORDER BY s.match_id ASC, s.id DESC
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    latest: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        match_id = str(row["match_id"] or "")
+        if match_id and match_id not in latest:
+            latest[match_id] = row
+
+    pending: list[PendingSnapshot] = []
+    for match_id, row in latest.items():
+        candidates = meta._safe_json(row["candidates_json"], [])
+        valid = tuple(candidate for candidate in candidates if isinstance(candidate, dict))
+        if valid:
+            pending.append(
+                PendingSnapshot(
+                    match_id=match_id,
+                    snapshot_id=int(row["id"]),
+                    created_at=str(row["created_at"] or ""),
+                    stage=str(row["stage"] or ""),
+                    candidates=valid,
+                )
+            )
+    return sorted(pending, key=lambda item: (item.created_at, item.match_id))
+
+
+def _candidate_example(snapshot: PendingSnapshot, candidate: dict[str, Any]) -> meta.CandidateExample | None:
+    market_key = str(candidate.get("market_key") or "").strip()
+    raw_pick = str(candidate.get("raw_pick") or "").strip()
+    if not market_key or not raw_pick:
+        return None
+    return meta.CandidateExample(
+        match_id=snapshot.match_id,
+        snapshot_id=snapshot.snapshot_id,
+        created_at=snapshot.created_at,
+        stage=snapshot.stage,
+        market_key=market_key,
+        raw_pick=raw_pick,
+        label=0,
+        baseline_selected=False,
+        baseline_fallback=False,
+        features=meta._feature_dict(candidate),
+    )
+
+
+def _model_from_completed_history(
+    database_path: str | Path,
+) -> tuple[meta.ChallengerModel, meta.FrozenFeatureEncoder, dict[str, Any]]:
+    completed, source = meta.load_frozen_examples(database_path)
+    match_count = len({row.match_id for row in completed})
+    if match_count < MINIMUM_COMPLETED_MATCHES:
+        raise AutopilotNotReady(
+            f"completed match history is below {MINIMUM_COMPLETED_MATCHES}: {match_count}"
+        )
+
+    exam = meta.run_chronological_exam(completed)
+    selected_config = exam.get("selected_config") if isinstance(exam, dict) else None
+    if not isinstance(selected_config, dict):
+        selected_config = {"iterations": 72, "learning_rate": 0.05, "min_leaf": 24}
+    encoder = meta.FrozenFeatureEncoder().fit(completed)
+    model = meta.ChallengerModel(**selected_config).fit(
+        encoder.transform(completed), [row.label for row in completed]
+    )
+    summary = {
+        "completed_matches": match_count,
+        "completed_candidates": len(completed),
+        "learner_backend": model.backend,
+        "training_config": selected_config,
+        "source_audit": source,
+        "historical_exam": {
+            key: exam.get(key)
+            for key in ("status", "qualification", "promotion", "target_accuracy", "segments", "final")
+        },
+    }
+    return model, encoder, summary
+
+
+def _grade_frozen_picks(
+    database_path: str | Path, picks: dict[str, Any]
+) -> tuple[int, int]:
+    """Attach grades only to already frozen V3 cards; source DB stays read-only."""
+    connection = _readonly_connection(database_path)
+    graded = 0
+    total = 0
+    try:
+        for match_id, pick in picks.items():
+            if not isinstance(pick, dict):
+                continue
+            total += 1
+            if pick.get("is_correct") in (0, 1):
+                graded += 1
+                continue
+            row = connection.execute(
+                """
+                SELECT is_correct, actual_score, graded_at
+                FROM prediction_candidate_results
+                WHERE match_id = ?
+                  AND analysis_snapshot_id = ?
+                  AND market_key = ?
+                  AND raw_pick = ?
+                  AND is_correct IN (0, 1)
+                  AND COALESCE(actual_score, '') NOT IN ('', '-:-', 'PENDING', 'UNKNOWN')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (
+                    str(match_id),
+                    int(pick.get("source_snapshot_id") or 0),
+                    str(pick.get("market_key") or ""),
+                    str(pick.get("raw_pick") or ""),
+                ),
+            ).fetchone()
+            if row is None:
+                continue
+            pick["is_correct"] = int(row["is_correct"])
+            pick["actual_score"] = str(row["actual_score"] or "")
+            pick["graded_at"] = str(row["graded_at"] or "")
+            pick["status"] = "FINISHED"
+            graded += 1
+    finally:
+        connection.close()
+    return graded, total
+
+
+def _visible_pick(
+    snapshot: PendingSnapshot,
+    model: meta.ChallengerModel,
+    encoder: meta.FrozenFeatureEncoder,
+    generated_at: str,
+) -> dict[str, Any] | None:
+    examples = [
+        example
+        for candidate in snapshot.candidates
+        for example in (_candidate_example(snapshot, candidate),)
+        if example is not None
+    ]
+    if not examples:
+        return None
+    probabilities = model.predict_proba(encoder.transform(examples))
+    selected, probability = max(
+        zip(examples, probabilities),
+        key=lambda pair: (float(pair[1]), pair[0].market_key, pair[0].raw_pick),
+    )
+    return {
+        "schema_version": OUTPUT_SCHEMA,
+        "status": "LEARNING_SHADOW",
+        "match_id": snapshot.match_id,
+        "source_snapshot_id": snapshot.snapshot_id,
+        "source_stage": snapshot.stage,
+        "source_created_at": snapshot.created_at,
+        "frozen_at": generated_at,
+        "market_key": selected.market_key,
+        "raw_pick": selected.raw_pick,
+        "probability": round(float(probability), 6),
+        "label": "V3 학습픽 · 검증 중",
+        "official_pick_changed": False,
+        "reason": "종료 결과가 누적될 때마다 재학습한 V3 도전자 결과입니다.",
+    }
+
+
+def build_autopilot_payload(
+    database_path: str | Path,
+    existing_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Retrain from completed history and freeze V3 picks for pending cards."""
+    generated_at = _now()
+    existing_payload = existing_payload if isinstance(existing_payload, dict) else {}
+    picks = {
+        str(match_id): dict(pick)
+        for match_id, pick in (existing_payload.get("picks") or {}).items()
+        if isinstance(pick, dict)
+    }
+    base = {
+        "schema_version": OUTPUT_SCHEMA,
+        "version": AUTOPILOT_VERSION,
+        "generated_at": generated_at,
+        "mode": "web_visible_learning_challenger",
+        "customer_official_pick_changed": False,
+        "promotion": "KEEP_CURRENT_OFFICIAL_PICK",
+        "picks": picks,
+    }
+    try:
+        model, encoder, training = _model_from_completed_history(database_path)
+        created = 0
+        for snapshot in _load_pending_snapshots(database_path):
+            # V3 itself may learn a new model later, but a pick already shown
+            # for this match remains immutable for honest future grading.
+            if snapshot.match_id in picks:
+                continue
+            pick = _visible_pick(snapshot, model, encoder, generated_at)
+            if pick is not None:
+                picks[snapshot.match_id] = pick
+                created += 1
+        graded, total = _grade_frozen_picks(database_path, picks)
+        base.update(
+            {
+                "status": "READY",
+                "training": training,
+                "newly_frozen_picks": created,
+                "frozen_pick_count": total,
+                "graded_pick_count": graded,
+                "live_learning_accuracy": (
+                    round(
+                        sum(int(pick.get("is_correct") or 0) for pick in picks.values() if pick.get("is_correct") in (0, 1))
+                        / graded,
+                        6,
+                    )
+                    if graded
+                    else None
+                ),
+            }
+        )
+    except (AutopilotNotReady, meta.DataReadinessError) as error:
+        graded, total = _grade_frozen_picks(database_path, picks)
+        base.update(
+            {
+                "status": "NOT_READY",
+                "reason": str(error),
+                "newly_frozen_picks": 0,
+                "frozen_pick_count": total,
+                "graded_pick_count": graded,
+            }
+        )
+    return base
+
+
+def refresh_autopilot(
+    database_path: str | Path, output_path: str | Path
+) -> dict[str, Any]:
+    output = Path(output_path)
+    payload = build_autopilot_payload(database_path, _read_json(output, {}))
+    _write_json_atomically(output, payload)
+    return payload
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Autonomous V3 learning picks for the web; never replaces the official pick"
+    )
+    parser.add_argument("--db", required=True, help="existing ai_predictions.db; opened read-only")
+    parser.add_argument("--output", required=True, help="V3 learning JSON written by this process")
+    args = parser.parse_args()
+    payload = refresh_autopilot(args.db, args.output)
+    print(
+        json.dumps(
+            {
+                "status": payload.get("status"),
+                "newly_frozen_picks": payload.get("newly_frozen_picks"),
+                "frozen_pick_count": payload.get("frozen_pick_count"),
+                "graded_pick_count": payload.get("graded_pick_count"),
+                "promotion": payload.get("promotion"),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

@@ -109,6 +109,18 @@ def load_dashboard_data():
     except: pass
     return {"proto": [], "toto14": [], "top3": []}
 
+
+def load_v3_learning_picks():
+    """Load the independently published V3 learning picks without changing cards."""
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/v3_learning_picks.json?t={int(time.time())}"
+    try:
+        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
+        payload = response.json() if response.status_code == 200 else {}
+        picks = payload.get("picks") if isinstance(payload, dict) else {}
+        return picks if isinstance(picks, dict) else {}
+    except Exception:
+        return {}
+
 def load_live_scores():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_scores.json?t={int(time.time())}"
     try:
@@ -1790,6 +1802,7 @@ visible_match_limit = access_profile["match_limit"]
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
+v3_learning_picks = load_v3_learning_picks()
 world_dashboard_data = load_world_dashboard_data()
 live_scores_data = load_live_scores()
 if isinstance(dashboard_data, dict):
@@ -1799,6 +1812,16 @@ if isinstance(dashboard_data, dict):
             item for item in dashboard_data.get(collection_name, [])
             if _is_displayable_match_item(item)
         ]
+    # V3 is a web-visible learning challenger.  It is deliberately attached
+    # as a new field so it cannot replace the frozen official or robot pick.
+    for collection_name in ("proto", "top3"):
+        for item in dashboard_data.get(collection_name, []):
+            if not isinstance(item, dict):
+                continue
+            match_id = str((item.get("match") or {}).get("id") or "")
+            v3_pick = v3_learning_picks.get(match_id)
+            if isinstance(v3_pick, dict):
+                item["v3_learning_pick"] = dict(v3_pick)
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
 if not _is_current_robot_public_snapshot(grading_snapshot):
     if _has_usable_grading_history(grading_snapshot):
@@ -3202,6 +3225,40 @@ def _alphago_pick_html(analysis_item, home_team="", away_team=""):
     )
 
 
+def _v3_learning_pick_html(analysis_item, home_team=""):
+    """Render the autonomous V3 learner separately from every existing pick."""
+    item = analysis_item if isinstance(analysis_item, dict) else {}
+    v3_pick = item.get("v3_learning_pick")
+    if not isinstance(v3_pick, dict):
+        return ""
+    raw_pick = str(v3_pick.get("raw_pick") or "").strip()
+    if not raw_pick:
+        return ""
+    probability = float(v3_pick.get("probability") or 0) * 100
+    status = str(v3_pick.get("status") or "LEARNING_SHADOW")
+    grade = v3_pick.get("is_correct")
+    grade_html = ""
+    if grade in (0, 1):
+        grade_label = "적중" if int(grade) else "미적중"
+        grade_color = "#10B981" if int(grade) else "#EF4444"
+        grade_html = (
+            f"<span style='display:inline-block;margin-top:7px;padding:3px 8px;"
+            f"border:1px solid {grade_color};border-radius:999px;color:{grade_color};"
+            f"font-size:11px;font-weight:900;'>V3 채점 {grade_label}</span>"
+        )
+    state_text = "자동 학습·검증 중" if status == "LEARNING_SHADOW" else "학습 상태 확인 중"
+    return (
+        "<div class='pred-box' style='background:rgba(244,114,182,.07);"
+        "border-color:#F472B6;'>"
+        "<div class='pred-label' style='color:#F9A8D4;'>🧬 V3 자율 학습픽</div>"
+        f"<span class='pred-value'>{escape(_human_pick_label(raw_pick, home_team))}</span>"
+        f"<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>{state_text}</span>"
+        "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
+        "종료 결과를 누적 학습하지만 현재 공식 추천픽은 바꾸지 않습니다.</span>"
+        f"{grade_html}<span class='pred-prob'>{probability:.1f}%</span></div>"
+    )
+
+
 def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
@@ -3223,6 +3280,7 @@ def generate_pred_boxes(
     if isinstance(analysis_item, dict):
         away_team = str((analysis_item.get("match") or {}).get("away") or "")
     alphago_html = _alphago_pick_html(analysis_item, home_team, away_team)
+    v3_learning_html = _v3_learning_pick_html(analysis_item, home_team)
     categories = {
         "high_probability": None,
         "honey": None,
@@ -3250,7 +3308,7 @@ def generate_pred_boxes(
         return (
             "<div class='pred-box'><div class='pred-label'>최종 추천픽</div>"
             "<span class='pred-value'>분석 원본 확인 중</span><small>경기 전 저장 후보 연결이 필요합니다.</small></div>"
-            + alphago_html + _final_pick_validation_html(analysis_item,pick)
+            + alphago_html + v3_learning_html + _final_pick_validation_html(analysis_item,pick)
         )
     if not pick:
         stage = str(
@@ -3274,7 +3332,7 @@ def generate_pred_boxes(
             "<div class='pred-box' style='border-style:dashed;opacity:.72;'>"
             "<div class='pred-label' style='color:#00F2FE;'>🎯 최종 추천픽</div>"
             f"<span class='pred-value' style='color:#94A3B8;'>{empty_text}</span>"
-            "</div>" + alphago_html
+            "</div>" + alphago_html + v3_learning_html
         )
 
     same_raw = str(pick.get("raw_pick") or "")
@@ -3364,7 +3422,7 @@ def generate_pred_boxes(
             f"{' · '.join(robot_meta)}</span>"
             f"<span class='pred-prob'>{robot_probability * 100:.1f}%</span></div>"
         )
-    return pick_html + robot_html + alphago_html + _final_pick_validation_html(
+    return pick_html + robot_html + alphago_html + v3_learning_html + _final_pick_validation_html(
         analysis_item, pick, value_badge=value_badge, vip_badge=vip_badge
     )
 
