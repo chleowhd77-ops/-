@@ -10542,7 +10542,11 @@ def _published_team_identity_ready(item, require_fixture=True):
 
 
 def _proto_item_has_three_engine_picks(item):
-    """A future card is complete only with picks and verified identity."""
+    """Keep a pre-kickoff pick visible while team profiles are refreshed.
+
+    Team IDs, logos and form are enrichment inputs. They must not turn a
+    valid saved public pick back into an empty card.
+    """
     if not isinstance(item, dict):
         return False
     official = (item.get("pick_categories") or {}).get("high_probability") or {}
@@ -10555,7 +10559,6 @@ def _proto_item_has_three_engine_picks(item):
     )
     return bool(
         picks_exist
-        and _published_team_identity_ready(item)
         and str(item.get("analysis_version") or "") == ANALYSIS_VERSION
         and str(robot.get("robot_pick_version") or "") == ROBOT_PICK_VERSION
     )
@@ -10748,6 +10751,158 @@ def _pending_proto_item(match):
     return item
 
 
+def _proto_market_preview_item(match, reason=""):
+    """Show a Betman-market preview instead of an empty future card.
+
+    This is a display-only, pre-kickoff fallback. It never calls an API and is
+    never frozen or graded as a final prediction; the normal analysis replaces
+    it before kickoff as soon as team and fixture enrichment is ready.
+    """
+    final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
+    home_team = str(match.get("home") or "홈팀")
+    away_team = str(match.get("away") or "원정팀")
+    candidates = []
+
+    def add_three_way(odds, labels, market_label):
+        try:
+            values = [float(value or 0) for value in odds]
+        except (TypeError, ValueError):
+            return
+        if not _valid_three_way_odds(values):
+            return
+        inverse = [1.0 / value for value in values]
+        total = sum(inverse)
+        if total <= 0:
+            return
+        for index, raw_pick in enumerate(labels):
+            fair_prob = inverse[index] / total
+            candidates.append({
+                "label": market_label,
+                "raw_pick": raw_pick,
+                "prob": round(fair_prob, 4),
+                "probability": round(fair_prob, 4),
+                "fair_prob": round(fair_prob, 4),
+                "market_prob": round(fair_prob, 4),
+                "odd": values[index],
+                "safe_score": round(fair_prob, 4),
+                "recommendation_score": round(fair_prob, 4),
+                "data_confidence": 0.35,
+                "selection_warning": "팀 자료 보강 중 · 베트맨 시장 기준 선픽",
+                "market_history_scope": "proto_market_preview",
+            })
+
+    add_three_way(
+        [match.get("odd_h"), match.get("odd_d"), match.get("odd_a")],
+        [f"{home_team} 승", "무승부", f"{away_team} 승"],
+        "일반 승무패 시장 선픽",
+    )
+    try:
+        handi_base = float(match.get("handi_base") or 0)
+    except (TypeError, ValueError):
+        handi_base = 0.0
+    add_three_way(
+        [match.get("handi_h"), match.get("handi_d"), match.get("handi_a")],
+        [
+            f"[{handi_base:+.1f}] {home_team} 핸디승",
+            f"[{handi_base:+.1f}] 핸디무",
+            f"[{handi_base:+.1f}] {home_team} 핸디패",
+        ],
+        "핸디캡 시장 선픽",
+    )
+    try:
+        under_odd = float(match.get("uo_under") or 0)
+        over_odd = float(match.get("uo_over") or 0)
+        uo_base = float(match.get("uo_base") or 2.5)
+    except (TypeError, ValueError):
+        under_odd = over_odd = 0.0
+        uo_base = 2.5
+    if under_odd > 1.0 and over_odd > 1.0:
+        total = (1.0 / under_odd) + (1.0 / over_odd)
+        if total > 0:
+            for raw_pick, odd in (
+                (f"언더 (U/O {uo_base:g})", under_odd),
+                (f"오버 (U/O {uo_base:g})", over_odd),
+            ):
+                fair_prob = (1.0 / odd) / total
+                candidates.append({
+                    "label": "언더오버 시장 선픽",
+                    "raw_pick": raw_pick,
+                    "prob": round(fair_prob, 4),
+                    "probability": round(fair_prob, 4),
+                    "fair_prob": round(fair_prob, 4),
+                    "market_prob": round(fair_prob, 4),
+                    "odd": odd,
+                    "safe_score": round(fair_prob, 4),
+                    "recommendation_score": round(fair_prob, 4),
+                    "data_confidence": 0.35,
+                    "selection_warning": "팀 자료 보강 중 · 베트맨 시장 기준 선픽",
+                    "market_history_scope": "proto_market_preview",
+                })
+
+    if not candidates:
+        return _pending_proto_item(match)
+
+    selected = max(
+        candidates,
+        key=lambda candidate: (
+            float(candidate.get("prob") or 0),
+            float(candidate.get("odd") or 0),
+            str(candidate.get("raw_pick") or ""),
+        ),
+    )
+    official_pick = dict(selected)
+    official_pick.update({
+        "category_key": "high_probability",
+        "official_final_pick": False,
+        "recommendation_status": "PREVIEW",
+        "pre_match_only": True,
+    })
+    robot_pick = dict(selected)
+    robot_pick.update({
+        "robot_pick_version": ROBOT_PICK_VERSION,
+        "robot_model_version": ROBOT_MODEL_VERSION,
+        "robot_fallback": True,
+        "official_final_pick": False,
+        "selection_reason": "팀·선발 자료 수집 전 시장 기준 임시 선택",
+        "selection_warning": "로봇 정밀분석 대기 · 시장 기준 임시 선택",
+    })
+    item = {
+        "match": dict(match),
+        "final_match_time": final_match_time,
+        "timestamp": parse_match_time(final_match_time).timestamp(),
+        "home_logo": DEFAULT_LOGO,
+        "away_logo": DEFAULT_LOGO,
+        "home_form": "",
+        "away_form": "",
+        "ev_sorted_picks": [official_pick],
+        "pick_categories": {
+            "high_probability": official_pick,
+            "honey": None,
+            "vip_underdog": None,
+            "robot_independent": robot_pick,
+        },
+        "robot_pick": robot_pick,
+        "analysis_stage": "market-preview",
+        "latest_analysis_stage": "market-preview",
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_refresh_pending": False,
+        "public_pick_blocked": False,
+        "public_pick_block_reason": "",
+        "prediction_frozen": False,
+        "odds_source": "betman",
+        "data_confidence": 0.35,
+        "data_warning": "팀 자료를 보강 중이며, 현재 베트맨 시장 정보로 먼저 표시합니다.",
+        "detailed_report": (
+            "[시장 기준 선픽] 팀 연결·마크·최근폼 보강이 끝나기 전에도 빈 픽을 "
+            "표시하지 않기 위해, 현재 베트맨 시장의 마진 제거 공정확률로 우선 선택했습니다. "
+            "정밀 팀 분석이 완료되면 경기 시작 전 최신 공식·로봇 분석으로 교체됩니다."
+            + (f" (대기 사유: {reason})" if reason else "")
+        ),
+    }
+    _hydrate_published_team_data(item, match)
+    return item
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -10879,13 +11034,15 @@ def build_dashboard_data():
                 m, previous_item, require_current_stage=False
             )
             if deferred_item is None:
-                deferred_item = _pending_proto_item(m)
+                deferred_item = _proto_market_preview_item(
+                    m, "정밀 분석 순번 대기"
+                )
                 queue_team_identity_retry(
                     home_team, away_team, final_match_time,
                     reason="analysis_deferred_identity_logo_or_form_pending",
                     league_name=m.get("league") or "",
                 )
-            deferred_item["analysis_refresh_pending"] = True
+            deferred_item["analysis_refresh_pending"] = False
             dashboard_proto.append(deferred_item)
             deferred_proto_count += 1
             continue
@@ -10909,14 +11066,16 @@ def build_dashboard_data():
                 reason="proto_identity_and_logo_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
-            pending = _pending_proto_item(m)
+            pending = _proto_market_preview_item(
+                m, "팀 연결·마크 자료 보강 대기"
+            )
             pending.update({
                 "home_team_id": home_id,
                 "away_team_id": away_id,
                 "api_fixture_id": int(identity_fixture or 0),
                 "home_logo": home_info.get("logo") or DEFAULT_LOGO,
                 "away_logo": away_info.get("logo") or DEFAULT_LOGO,
-                "data_warning": "양 팀 신원·마크 확인 대기 · 기본값으로 예측하지 않음",
+                "data_warning": "양 팀 신원·마크를 보강 중이며, 현재 베트맨 시장 기준 픽을 먼저 표시합니다.",
             })
             dashboard_proto.append(pending)
             deferred_proto_count += 1
@@ -11016,14 +11175,16 @@ def build_dashboard_data():
                 reason="proto_fixture_identity_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
-            pending = _pending_proto_item(m)
+            pending = _proto_market_preview_item(
+                m, "공식 경기 연결 자료 보강 대기"
+            )
             pending.update({
                 "home_team_id": home_id,
                 "away_team_id": away_id,
                 "api_fixture_id": 0,
                 "home_logo": home_info.get("logo") or DEFAULT_LOGO,
                 "away_logo": away_info.get("logo") or DEFAULT_LOGO,
-                "data_warning": "공식 경기 연결 확인 대기 · 기본값으로 예측하지 않음",
+                "data_warning": "공식 경기 연결을 보강 중이며, 현재 베트맨 시장 기준 픽을 먼저 표시합니다.",
             })
             dashboard_proto.append(pending)
             deferred_proto_count += 1

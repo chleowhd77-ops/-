@@ -2283,19 +2283,21 @@ def queue_team_identity_retry(
             UPDATE team_identity_retry_queue
             SET home_name=?,away_name=?,match_time=?,
                 league_name=CASE WHEN ?!='' THEN ? ELSE league_name END,
-                last_reason=?,
+                last_reason=CASE
+                    WHEN status='RESOLVED' OR last_reason='' THEN ?
+                    ELSE last_reason END,
                 attempts=CASE WHEN status='RESOLVED' THEN 0 ELSE attempts END,
                 status='PENDING',
                 resolved_at=NULL,
                 next_retry_at=CASE
                     WHEN status='RESOLVED' THEN ?
-                    WHEN next_retry_at IS NULL OR next_retry_at>? THEN ?
+                    WHEN next_retry_at IS NULL THEN ?
                     ELSE next_retry_at END,
                 updated_at=CURRENT_TIMESTAMP
             WHERE retry_key=?
             """,
             (home_name, away_name, str(match_time or ""), league_name, league_name,
-             str(reason or "unresolved")[:300], now_iso, now_iso, now_iso, retry_key),
+             str(reason or "unresolved")[:300], now_iso, now_iso, retry_key),
         )
         conn.commit()
         return True
