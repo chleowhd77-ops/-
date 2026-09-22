@@ -533,23 +533,23 @@ def autonomous_robot_choice(picks, confidence, return_reason=False):
                     "목표에 가장 가까운 한 방향을 골랐습니다."
                 )
                 
-                try:
-                    h_odd = d_odd = a_odd = 0.0
-                    for p in available:
-                        if p.get("market_key") == "1x2":
-                            s = str(p.get("selection_side") or "")
-                            if s == "home": h_odd = float(p.get("odd") or 0)
-                            elif s == "draw": d_odd = float(p.get("odd") or 0)
-                            elif s == "away": a_odd = float(p.get("odd") or 0)
-                    
-                    v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
-                    v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
-                    chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
-                    chosen["v2_ai_pick"] = v2_result 
-                except Exception:
-                    pass
+    try:
+        h_odd = d_odd = a_odd = 0.0
+        for p in available:
+            if p.get("market_key") == "1x2":
+                s = str(p.get("selection_side") or "")
+                if s == "home": h_odd = float(p.get("odd") or 0)
+                elif s == "draw": d_odd = float(p.get("odd") or 0)
+                elif s == "away": a_odd = float(p.get("odd") or 0)
         
-                return (chosen, reason) if return_reason else chosen
+        v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
+        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
+        chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
+        chosen["v2_ai_pick"] = v2_result 
+    except Exception:
+        pass
+
+    return (chosen, reason) if return_reason else chosen
     priced = []
     for pick in available:
         probability = max(
