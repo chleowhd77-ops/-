@@ -5332,6 +5332,17 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
     public_categories = dict(bundle["categories"])
     if public_robot:
         public_categories["robot_independent"] = dict(public_robot)
+    # A stored pre-kickoff answer is evidence, not a lock.  The old display
+    # code marked it frozen even while the match was still scheduled, which
+    # made a later recovery/revision look like a permanently blocked card.
+    # Only the caller that has confirmed kickoff may mark the public card
+    # frozen; the append-only DB evidence itself remains unchanged.
+    for category in public_categories.values():
+        if isinstance(category, dict):
+            category["public_pick_frozen"] = bool(locked)
+    if isinstance(public_robot, dict):
+        public_robot = dict(public_robot)
+        public_robot["public_pick_frozen"] = bool(locked)
     current_pick = str(
         ((current.get("pick_categories") or {}).get("high_probability") or {}).get("raw_pick")
         or ""
@@ -5364,9 +5375,9 @@ def _public_proto_item_from_first_snapshot(match, current=None, locked=False):
         "fair_market_probability": bundle["selected"].get("fair_prob"),
         "probability_error_margin": bundle["selected"].get("error_margin"),
         "probability_interval": bundle["selected"].get("probability_interval"),
-        "prediction_frozen": True,
-        "public_pick_frozen": True,
-        "public_pick_frozen_at": bundle["frozen_at"],
+        "prediction_frozen": bool(locked),
+        "public_pick_frozen": bool(locked),
+        "public_pick_frozen_at": bundle["frozen_at"] if locked else "",
         "public_pick_snapshot_id": bundle["snapshot_id"],
         "public_pick_change_suppressed": bool(
             current_pick and current_pick != bundle["selected"]["raw_pick"]
@@ -10499,10 +10510,151 @@ def _locked_proto_item(match, previous=None, locked=True):
                     analysis_version=row.get("analysis_version"),
                     odds_source=odds_source or item.get("odds_source") or "",
                     pick_categories=categories,ev_sorted_picks=[selected] if selected["raw_pick"] else [],
-                    detailed_report=report,story="",prediction_frozen=True)
+                    detailed_report=report,story="",prediction_frozen=bool(locked),
+                    public_pick_frozen=bool(locked),
+                    public_pick_frozen_at="" if not locked else str(row.get("created_at") or ""))
         return _public_proto_item_from_first_snapshot(match, item, locked=locked)
     finally:
         conn.close()
+
+
+def _restore_scheduled_proto_cards_from_saved_predictions(
+    dashboard_path="dashboard_data.json", betman_path="betman_data.json", now=None,
+):
+    """Publish already-saved pre-kickoff picks without rerunning analysis.
+
+    Prediction writes and dashboard publication are separate operations.  A
+    worker can therefore save a valid answer and fail later while building the
+    same dashboard, leaving an old ``analysis_refresh_pending`` card visible.
+    This recovery pass is deliberately local and read-only with respect to the
+    prediction database: it overlays a same-ID, same-team saved official pick
+    onto every still-scheduled Betman card and atomically rewrites only the
+    customer dashboard when at least one card changed.
+
+    It does not call any external provider, create a retrospective pick, alter
+    odds/probability history, or touch cards whose kickoff has passed.
+    """
+    payload = _read_json(dashboard_path, {})
+    betman_data = _read_json(betman_path, {})
+    if not isinstance(payload, dict) or not isinstance(betman_data, dict):
+        return 0
+    cards = payload.get("proto")
+    raw_matches = betman_data.get("proto_matches")
+    if not isinstance(cards, list) or not isinstance(raw_matches, list):
+        return 0
+
+    now = now or datetime.now(KST)
+    live_matches = []
+    for raw_match in raw_matches:
+        if (
+            not isinstance(raw_match, dict)
+            or _is_placeholder_match(raw_match)
+            or _is_betman_auxiliary_prediction_record(raw_match)
+        ):
+            continue
+        match = dict(raw_match)
+        match_id = str(match.get("id") or "")
+        home_team = str(match.get("home") or "")
+        away_team = str(match.get("away") or "")
+        kickoff = _parse_kst_match_time(
+            match.get("match_time") or match.get("time")
+        )
+        if not match_id or not home_team or not away_team or kickoff is None:
+            continue
+        if kickoff <= now:
+            continue
+        live_matches.append((match, kickoff))
+
+    card_indexes = {}
+    for index, card in enumerate(cards):
+        if not isinstance(card, dict):
+            continue
+        card_match = card.get("match") if isinstance(card.get("match"), dict) else {}
+        match_id = str(card_match.get("id") or "")
+        if match_id and match_id not in card_indexes:
+            card_indexes[match_id] = index
+
+    recovered = 0
+    appended = 0
+    for match, kickoff in live_matches:
+        match_id = str(match.get("id") or "")
+        index = card_indexes.get(match_id)
+        previous = cards[index] if index is not None and isinstance(cards[index], dict) else {}
+        previous_match = previous.get("match") if isinstance(previous.get("match"), dict) else {}
+
+        # Never attach a saved answer to a card merely because an ID string
+        # happens to match.  Match ID plus both exact team names are required.
+        if index is not None and (
+            str(previous_match.get("home") or "") != str(match.get("home") or "")
+            or str(previous_match.get("away") or "") != str(match.get("away") or "")
+        ):
+            continue
+
+        if _proto_item_has_usable_pick(previous, match):
+            continue
+
+        restored = _locked_proto_item(match, previous=previous, locked=False)
+        if not _proto_item_has_usable_pick(restored, match):
+            continue
+
+        restored.update({
+            "match": dict(match),
+            "final_match_time": match.get("match_time") or match.get("time") or "시간 미정",
+            "timestamp": kickoff.timestamp(),
+            "analysis_refresh_pending": False,
+            "public_pick_blocked": False,
+            "public_pick_block_reason": "",
+            "prediction_frozen": False,
+            "public_pick_frozen": False,
+            "public_pick_frozen_at": "",
+            "scheduled_pick_recovered": True,
+            "scheduled_pick_recovery_source": "saved_pre_kick_prediction",
+        })
+        _hydrate_published_team_data(restored, match)
+        if index is None:
+            cards.append(restored)
+            card_indexes[match_id] = len(cards) - 1
+            appended += 1
+        else:
+            cards[index] = restored
+        recovered += 1
+
+    if not recovered:
+        return 0
+    source_meta = payload.get("source_meta")
+    if not isinstance(source_meta, dict):
+        source_meta = {}
+        payload["source_meta"] = source_meta
+    source_meta["scheduled_pick_recovery_count"] = recovered
+    source_meta["scheduled_pick_recovery_appended_count"] = appended
+    source_meta["scheduled_pick_recovered_at"] = datetime.now(KST).isoformat()
+    _atomic_write_json(dashboard_path, payload)
+    print(
+        f"♻️ 시작 전 저장픽 공통 복구: {recovered}장"
+        + (f" (누락 카드 추가 {appended}장)" if appended else "")
+    )
+    return recovered
+
+
+def run_scheduled_pick_recovery_job():
+    """Run the local-only recovery as a one-shot deploy safety step."""
+    recovered = _restore_scheduled_proto_cards_from_saved_predictions()
+    if not recovered:
+        print("ℹ️ 시작 전 저장픽 공통 복구 대상이 없습니다.")
+        _update_collector_status(
+            "recovery", "running", last_stage="no_saved_pick_recovery_needed",
+        )
+        return True
+    if not upload_to_github("dashboard_data.json"):
+        _update_collector_status(
+            "recovery", "running", last_stage="dashboard_publish_failed",
+        )
+        return False
+    _update_collector_status(
+        "recovery", "running", last_stage="saved_pick_recovery_published",
+        scheduled_pick_recovery_count=recovered,
+    )
+    return True
 
 
 def _proto_item_has_usable_pick(item, match):
@@ -10717,11 +10869,11 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
             league_name=match.get("league") or "",
         )
     candidate = _public_proto_item_from_first_snapshot(match, candidate, locked=False)
-    # Two-pick cards created by an interrupted or older run must not remain
-    # permanently "complete". Before kickoff they return to the normal queue,
-    # which fills the missing answer without rewriting historical snapshots.
+    # The official saved pick must stay visible even if the independent robot
+    # revision has not finished.  Robot enrichment can continue in the normal
+    # queue, but it may never turn the customer card back into an empty one.
     if not _proto_item_has_three_engine_picks(candidate):
-        return None
+        candidate["robot_analysis_pending"] = True
     return candidate
 
 
@@ -11073,18 +11225,35 @@ def build_dashboard_data():
             deferred_proto_count += 1
             continue
 
-        home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, final_match_time, ttl_h=2,
-            league_name=m.get("league") or "",
-        )
+        if model_only_recovery:
+            # This pair was already verified in the local identity cache.  Do
+            # not send it back through the match/logo robot merely because a
+            # source has not supplied a current fixture or logo yet.  The
+            # normal analysis below can use the cached team IDs and will keep
+            # the missing fixture explicit instead of leaving the card blank.
+            home_info = dict(get_cached_team_display_profile(home_team) or {})
+            away_info = dict(get_cached_team_display_profile(away_team) or {})
+            home_info["id"] = int(home_info.get("id") or known_team_id(home_team) or 0)
+            away_info["id"] = int(away_info.get("id") or known_team_id(away_team) or 0)
+            identity_fixture = 0
+        else:
+            home_info, away_info, identity_fixture = resolve_match_team_pair(
+                home_team, away_team, final_match_time, ttl_h=2,
+                league_name=m.get("league") or "",
+            )
         home_id = int(home_info.get("id") or 0)
         away_id = int(away_info.get("id") or 0)
         identity_ready = bool(
             home_id > 0
             and away_id > 0
             and home_id != away_id
-            and home_info.get("logo") not in (None, "", DEFAULT_LOGO)
-            and away_info.get("logo") not in (None, "", DEFAULT_LOGO)
+            and (
+                model_only_recovery
+                or (
+                    home_info.get("logo") not in (None, "", DEFAULT_LOGO)
+                    and away_info.get("logo") not in (None, "", DEFAULT_LOGO)
+                )
+            )
         )
         if not identity_ready:
             queue_team_identity_retry(
@@ -15615,9 +15784,25 @@ def run_live_score_job():
 
 
 def run_master_job():
-    if not scrape_betman():
-        return False
-    if not build_dashboard_data():
+    scraped = bool(scrape_betman())
+    built = False
+    if scraped:
+        try:
+            built = bool(build_dashboard_data())
+        except Exception as error:
+            # A valid prediction may already have been committed before a
+            # later dashboard-only step failed.  Continue to the local
+            # recovery below so that saved pre-kickoff answers are never
+            # stranded behind a transient presentation failure.
+            print(
+                "⚠️ 전체 분석 후반 오류 - 저장된 시작 전 픽 공통 복구를 계속합니다: "
+                f"{type(error).__name__}: {error}"
+            )
+    else:
+        print("⚠️ 베트맨 새 수집 실패 - 마지막 정상본의 저장픽 복구만 확인합니다.")
+
+    recovered = _restore_scheduled_proto_cards_from_saved_predictions()
+    if not built and not recovered:
         return False
     # Customer JSON is the live product output.  A private DB backup warning
     # must not suppress a freshly completed analysis from the website.
@@ -15833,6 +16018,7 @@ def _initialize_db_safely(force_init=False):
 
 JOB_FUNCTIONS = {
     "master": run_master_job,
+    "recovery": run_scheduled_pick_recovery_job,
     "live": run_live_score_job,
     "score": run_score_job,
     "world": run_world_job,
@@ -15841,6 +16027,7 @@ JOB_FUNCTIONS = {
 }
 JOB_TIMEOUTS = {
     "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
+    "recovery": max(60, int(os.getenv("RECOVERY_JOB_TIMEOUT_SECONDS", "180"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
     "world": max(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "3600"))),
@@ -15912,12 +16099,13 @@ MIN_AVAILABLE_MEMORY_MB = max(
 # These jobs either scan, update, checkpoint, or snapshot ai_predictions.db.
 # On the 1 GiB production host only one may run at a time.  The team identity
 # job uses the small runtime DB and may occupy the second worker slot.
-MAIN_DB_JOBS = frozenset({"live", "score", "master", "world", "backup"})
+MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup"})
 JOB_PRIORITY = {
     "live": 0,
     "score": 1,
-    "team": 2,
-    "master": 3,
+    "recovery": 2,
+    "team": 3,
+    "master": 4,
     "world": 4,
     "backup": 5,
 }
@@ -16191,7 +16379,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "live", "score", "world", "team", "backup"),
+        choices=("scheduler", "master", "recovery", "live", "score", "world", "team", "backup"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )
