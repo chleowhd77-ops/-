@@ -441,24 +441,24 @@ def legacy_v4_choice(picks, features, return_reason=False):
                 "원시 적중확률 한 방향을 선택했습니다."
             ),
         })
-        reason = "legacy_v4_raw_probability"
+    reason = "legacy_v4_raw_probability"
+    
+    try:
+        h_odd = d_odd = a_odd = 0.0
+        for p in candidates:
+            if p.get("market_key") == "1x2":
+                s = str(p.get("selection_side") or "")
+                if s == "home": h_odd = float(p.get("odd") or 0)
+                elif s == "draw": d_odd = float(p.get("odd") or 0)
+                elif s == "away": a_odd = float(p.get("odd") or 0)
         
-        try:
-            h_odd = d_odd = a_odd = 0.0
-            for p in candidates:
-                if p.get("market_key") == "1x2":
-                    s = str(p.get("selection_side") or "")
-                    if s == "home": h_odd = float(p.get("odd") or 0)
-                    elif s == "draw": d_odd = float(p.get("odd") or 0)
-                    elif s == "away": a_odd = float(p.get("odd") or 0)
-            
-            v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
-            v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
-            
-            chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
-            chosen["v2_ai_pick"] = v2_result 
-        except Exception:
-            pass
+        v2_result = get_v2_ai_pick(h_odd, d_odd, a_odd)
+        v2_pick_text = "🔥홈승(정배)" if v2_result == "H" else "⚖️무승부(꿀배당)" if v2_result == "D" else "❄️원정승(역배)" if v2_result == "A" else "분석중"
+        
+        chosen["selection_reason"] += f" | 🤖 [V2 딥러닝 AI 추천 픽: {v2_pick_text}]"
+        chosen["v2_ai_pick"] = v2_result 
+    except Exception:
+        pass
 
         return (chosen, reason) if return_reason else chosen
 
