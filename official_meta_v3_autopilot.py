@@ -22,7 +22,7 @@ from typing import Any
 import official_meta_v3 as meta
 
 
-AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v1"
+AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v2-dashboard-id"
 OUTPUT_SCHEMA = "official-meta-v3.web-learning-picks.v1"
 MINIMUM_COMPLETED_MATCHES = meta.MIN_TRAIN_MATCHES
 
@@ -128,6 +128,81 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
                 )
             )
     return sorted(pending, key=lambda item: (item.created_at, item.match_id))
+
+
+def _future_epoch(value: Any) -> float | None:
+    """Return a future UTC epoch from the card's saved kickoff timestamp.
+
+    The dashboard collector stores this value before the match starts. A
+    missing or unparseable timestamp is deliberately rejected: V3 must never
+    create a retrospective pick merely to fill a web card.
+    """
+    try:
+        epoch = float(value)
+    except (TypeError, ValueError):
+        return None
+    if epoch > 10_000_000_000:  # tolerate a future millisecond timestamp
+        epoch /= 1000.0
+    return epoch if epoch > datetime.now(timezone.utc).timestamp() else None
+
+
+def _load_pending_dashboard_cards(dashboard_path: str | Path) -> list[PendingSnapshot]:
+    """Use saved pre-kickoff dashboard candidates under the displayed match ID.
+
+    Fresh protocol cards can be published before the SQLite candidate snapshot
+    is available. Previously this left a V3 pick keyed to an older database
+    ID, while the web card was keyed by its current ``match.id``. This reader
+    only consumes the already-saved, pre-kickoff card data and freezes its V3
+    pick under that exact displayed ID. It never writes dashboard data or the
+    source database.
+    """
+    payload = _read_json(Path(dashboard_path), {})
+    if not isinstance(payload, dict):
+        return []
+
+    pending: dict[str, PendingSnapshot] = {}
+    for collection_name in ("proto", "top3"):
+        cards = payload.get(collection_name) or []
+        if not isinstance(cards, list):
+            continue
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            match = card.get("match") or {}
+            if not isinstance(match, dict):
+                continue
+            match_id = str(match.get("id") or "").strip()
+            kickoff_epoch = _future_epoch(card.get("timestamp"))
+            if not match_id or kickoff_epoch is None or match_id in pending:
+                continue
+            source_candidates = card.get("display_candidates") or []
+            if not isinstance(source_candidates, list):
+                continue
+            candidates = tuple(
+                dict(candidate)
+                for candidate in source_candidates
+                if isinstance(candidate, dict)
+            )
+            if not candidates:
+                continue
+            snapshot_value = card.get("public_pick_snapshot_id")
+            try:
+                snapshot_id = int(snapshot_value) if snapshot_value is not None else 0
+            except (TypeError, ValueError):
+                snapshot_id = 0
+            pending[match_id] = PendingSnapshot(
+                match_id=match_id,
+                snapshot_id=snapshot_id,
+                created_at=str(
+                    card.get("display_candidates_saved_at")
+                    or card.get("timestamp")
+                    or ""
+                ),
+                stage="DASHBOARD_PREKICKOFF",
+                candidates=candidates,
+                source_kind="dashboard_card",
+            )
+    return sorted(pending.values(), key=lambda item: (item.created_at, item.match_id))
 
 
 def _probability(value: Any) -> float:
@@ -279,6 +354,48 @@ def _model_from_completed_history(
     return model, encoder, summary
 
 
+def _score_result_side(home_score: float, away_score: float) -> str:
+    if home_score > away_score:
+        return "home"
+    if home_score < away_score:
+        return "away"
+    return "draw"
+
+
+def _dashboard_pick_result(pick: dict[str, Any], actual_score: str) -> int | None:
+    """Grade a dashboard-sourced frozen pick without inventing a later pick.
+
+    This is limited to the original candidate's market and direction. Ties at
+    an exact line are kept ungraded rather than being mislabeled as a win/loss.
+    """
+    try:
+        home_score, away_score = (
+            int(part.strip()) for part in str(actual_score).split(":", 1)
+        )
+    except (TypeError, ValueError):
+        return None
+    market = str(pick.get("market_key") or "").strip().lower()
+    side = str(pick.get("selection_side") or "").strip().lower()
+    if market == "1x2":
+        return int(side == _score_result_side(home_score, away_score))
+    if market == "totals":
+        try:
+            line = float(pick.get("totals_base"))
+        except (TypeError, ValueError):
+            return None
+        total = home_score + away_score
+        if total == line:
+            return None
+        return int(side == ("over" if total > line else "under"))
+    if market == "handicap":
+        try:
+            line = float(pick.get("handicap_base"))
+        except (TypeError, ValueError):
+            return None
+        return int(side == _score_result_side(home_score + line, away_score))
+    return None
+
+
 def _grade_frozen_picks(
     database_path: str | Path, picks: dict[str, Any]
 ) -> tuple[int, int]:
@@ -313,6 +430,28 @@ def _grade_frozen_picks(
                     continue
                 result_side = "home" if home_score > away_score else "away" if away_score > home_score else "draw"
                 pick["is_correct"] = int(str(pick.get("selection_side") or "") == result_side)
+                pick["actual_score"] = score
+                pick["graded_at"] = _now()
+                pick["status"] = "FINISHED"
+                graded += 1
+                continue
+            if str(pick.get("source_kind") or "") == "dashboard_card":
+                row = connection.execute(
+                    """
+                    SELECT actual_result, actual_score
+                    FROM predictions
+                    WHERE match_id = ? AND COALESCE(is_toto14, 0) = 0
+                    ORDER BY rowid DESC LIMIT 1
+                    """,
+                    (str(match_id),),
+                ).fetchone()
+                score = str(row["actual_score"] or "") if row else ""
+                if not row or str(row["actual_result"] or "") != "FINISHED" or ":" not in score:
+                    continue
+                is_correct = _dashboard_pick_result(pick, score)
+                if is_correct is None:
+                    continue
+                pick["is_correct"] = is_correct
                 pick["actual_score"] = score
                 pick["graded_at"] = _now()
                 pick["status"] = "FINISHED"
@@ -389,6 +528,8 @@ def _visible_pick(
         "market_key": selected.market_key,
         "raw_pick": selected.raw_pick,
         "selection_side": str(selected_candidate.get("selection_side") or ""),
+        "totals_base": selected_candidate.get("totals_base"),
+        "handicap_base": selected_candidate.get("handicap_base"),
         "probability": round(float(probability), 6),
         "label": "V3 학습픽 · 검증 중",
         "official_pick_changed": False,
@@ -399,6 +540,7 @@ def _visible_pick(
 def build_autopilot_payload(
     database_path: str | Path,
     existing_payload: dict[str, Any] | None = None,
+    dashboard_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Retrain from completed history and freeze V3 picks for pending cards."""
     generated_at = _now()
@@ -420,7 +562,13 @@ def build_autopilot_payload(
     try:
         model, encoder, training = _model_from_completed_history(database_path)
         created = 0
-        pending_snapshots = _load_pending_snapshots(database_path)
+        dashboard = (
+            Path(dashboard_path)
+            if dashboard_path is not None
+            else Path(database_path).with_name("dashboard_data.json")
+        )
+        pending_snapshots = _load_pending_dashboard_cards(dashboard)
+        pending_snapshots.extend(_load_pending_snapshots(database_path))
         pending_snapshots.extend(_load_pending_toto14_freezes(database_path))
         for snapshot in pending_snapshots:
             # V3 itself may learn a new model later, but a pick already shown
@@ -465,10 +613,12 @@ def build_autopilot_payload(
 
 
 def refresh_autopilot(
-    database_path: str | Path, output_path: str | Path
+    database_path: str | Path,
+    output_path: str | Path,
+    dashboard_path: str | Path | None = None,
 ) -> dict[str, Any]:
     output = Path(output_path)
-    payload = build_autopilot_payload(database_path, _read_json(output, {}))
+    payload = build_autopilot_payload(database_path, _read_json(output, {}), dashboard_path)
     _write_json_atomically(output, payload)
     return payload
 
@@ -479,8 +629,12 @@ def _main() -> int:
     )
     parser.add_argument("--db", required=True, help="existing ai_predictions.db; opened read-only")
     parser.add_argument("--output", required=True, help="V3 learning JSON written by this process")
+    parser.add_argument(
+        "--dashboard",
+        help="saved dashboard_data.json; defaults beside --db and is read only",
+    )
     args = parser.parse_args()
-    payload = refresh_autopilot(args.db, args.output)
+    payload = refresh_autopilot(args.db, args.output, args.dashboard)
     print(
         json.dumps(
             {
