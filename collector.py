@@ -86,6 +86,15 @@ FIXTURE_IDENTITY_RETRY_HOURS = max(
     1, min(6, int(os.getenv("FIXTURE_IDENTITY_RETRY_HOURS", "1")))
 )
 PROTO_MIN_SCRAPE_ROWS = max(1, int(os.getenv("PROTO_MIN_SCRAPE_ROWS", "3")))
+# Betman often exposes more than one saleable round at once.  Keep a tiny,
+# bounded retry set so the collector can fall forward when its first round
+# metadata row points to a not-yet-populated future board.
+BETMAN_ROUND_CANDIDATE_LIMIT = max(
+    1, min(3, int(os.getenv("BETMAN_ROUND_CANDIDATE_LIMIT", "3")))
+)
+BETMAN_SALE_END_GRACE_SECONDS = max(
+    0, min(6 * 3600, int(os.getenv("BETMAN_SALE_END_GRACE_SECONDS", "900")))
+)
 # 승무패 14는 소액 참고 조합으로 운영한다. 서버 환경변수에 예전 64가
 # 남아 있어도 8조합(8,000원)을 넘지 않도록 상한을 강제한다.
 TOTO14_MAX_COMBINATIONS = max(1, min(8, int(os.getenv("TOTO14_MAX_COMBINATIONS", "8"))))
@@ -15088,6 +15097,73 @@ def _betman_request(session, method, url, attempts=3, **kwargs):
     raise last_error or RuntimeError(f"베트맨 {method.upper()} 요청 실패: {url}")
 
 
+def _betman_sale_end_epoch(value):
+    """Return a comparable epoch for Betman's mixed sale-end formats."""
+    text = re.sub(r"\D", "", str(value or ""))
+    if not text:
+        return 0.0
+    # Some Betman deployments return a calendar timestamp rather than epoch
+    # milliseconds.  Parse that before applying the epoch conversion below.
+    date_formats = {
+        8: "%Y%m%d",
+        10: "%Y%m%d%H",
+        12: "%Y%m%d%H%M",
+        14: "%Y%m%d%H%M%S",
+    }
+    date_format = date_formats.get(len(text))
+    if date_format and text.startswith(("19", "20")):
+        try:
+            return datetime.strptime(text, date_format).replace(tzinfo=KST).timestamp()
+        except ValueError:
+            return 0.0
+    try:
+        number = float(text)
+    except ValueError:
+        return 0.0
+    if number > 10_000_000_000:
+        number /= 1000.0
+    return number if number > 0 else 0.0
+
+
+def _betman_round_number(target):
+    try:
+        return int(str((target or {}).get("gm_ts") or "0"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _ordered_betman_round_targets(rows, gm_id, base_url=BETMAN_BASE_URL, now=None):
+    """Order current sale rounds before distant or expired rounds.
+
+    The old max(sale_end) policy could select a future round with no populated
+    fixtures while the currently saleable round sat earlier in the list.
+    """
+    targets = [
+        target
+        for target in (_betman_round_target(row, base_url) for row in (rows or []))
+        if target and target["gm_id"] == gm_id
+    ]
+    if not targets:
+        return []
+    now_epoch = (now or datetime.now(KST)).timestamp()
+    selectable = [
+        target for target in targets
+        if target.get("sale_end_epoch", 0.0) >= now_epoch - BETMAN_SALE_END_GRACE_SECONDS
+    ]
+    if selectable:
+        return sorted(
+            selectable,
+            key=lambda item: (item.get("sale_end_epoch", float("inf")), _betman_round_number(item)),
+        )
+    unknown = [target for target in targets if not target.get("sale_end_epoch")]
+    expired = [target for target in targets if target.get("sale_end_epoch")]
+    return sorted(unknown, key=_betman_round_number) + sorted(
+        expired,
+        key=lambda item: (item.get("sale_end_epoch", 0.0), _betman_round_number(item)),
+        reverse=True,
+    )
+
+
 def _betman_round_target(row, base_url=BETMAN_BASE_URL):
     """Validate a Betman round-list row and build its direct game-slip URL."""
     if not isinstance(row, dict):
@@ -15096,11 +15172,13 @@ def _betman_round_target(row, base_url=BETMAN_BASE_URL):
     gm_ts = str(row.get("gmTs", "")).strip()
     if not re.fullmatch(r"G\d{3}", gm_id) or not gm_ts.isdigit():
         return None
+    sale_end = row.get("saleEndDate")
     return {
         "gm_id": gm_id,
         "gm_ts": gm_ts,
         "display_round": str(row.get("gmOsidTs", "") or gm_ts),
-        "sale_end": int(row.get("saleEndDate") or 0),
+        "sale_end": str(sale_end or ""),
+        "sale_end_epoch": _betman_sale_end_epoch(sale_end),
         "url": urljoin(
             base_url.rstrip("/") + "/",
             f"main/mainPage/gamebuy/gameSlip.do?gmId={gm_id}&gmTs={gm_ts}",
@@ -15156,21 +15234,18 @@ def _fetch_betman_round_targets(session=None):
         if status and status.get("statusCode") not in (None, "S"):
             raise RuntimeError(f"베트맨 회차 조회 상태 오류: {status.get('statusCode')}")
 
-        def latest(rows, gm_id):
-            targets = [
-                target
-                for target in (
-                    _betman_round_target(row, resolved_base_url) for row in (rows or [])
-                )
-                if target and target["gm_id"] == gm_id
-            ]
-            if not targets:
-                return None
-            return max(targets, key=lambda item: (item["sale_end"], int(item["gm_ts"])))
+        proto_candidates = _ordered_betman_round_targets(
+            result.get("protoGames"), "G101", resolved_base_url
+        )
+        toto_candidates = _ordered_betman_round_targets(
+            result.get("totoGames"), "G011", resolved_base_url
+        )
 
         return {
-            "proto": latest(result.get("protoGames"), "G101"),
-            "toto14": latest(result.get("totoGames"), "G011"),
+            "proto": proto_candidates[0] if proto_candidates else None,
+            "toto14": toto_candidates[0] if toto_candidates else None,
+            "proto_candidates": proto_candidates[:BETMAN_ROUND_CANDIDATE_LIMIT],
+            "toto14_candidates": toto_candidates[:BETMAN_ROUND_CANDIDATE_LIMIT],
         }
     finally:
         if owned_session:
@@ -15505,6 +15580,65 @@ def _valid_scrape_records(records):
     return len(ids) == len(set(ids))
 
 
+def _has_upcoming_betman_record(records, now=None):
+    """Reject a valid-looking but already-expired sale board."""
+    now = now or datetime.now(KST)
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        kickoff = _parse_kst_match_time(record.get("match_time") or record.get("time"))
+        if kickoff is not None and kickoff >= now - timedelta(minutes=5):
+            return True
+    return False
+
+
+def _proto_collection_accepted(
+    records, stable, old_active_count, previous_round_id, current_round_id,
+    allow_limited=False,
+):
+    """Allow a smaller board only when it is an actually new sale round."""
+    if not records or not stable or not _valid_scrape_records(records):
+        return False
+    if allow_limited or len(records) >= PROTO_MIN_SCRAPE_ROWS:
+        return True
+    if old_active_count < PROTO_MIN_SCRAPE_ROWS:
+        return True
+    previous_round_id = str(previous_round_id or "")
+    current_round_id = str(current_round_id or "")
+    return bool(current_round_id and current_round_id != previous_round_id)
+
+
+def _persist_betman_collection_failure(old_data, proto_error, toto_error):
+    """Keep last known records intact but leave a visible, timestamped cause."""
+    payload = dict(old_data) if isinstance(old_data, dict) else {}
+    source_status = payload.get("source_status")
+    source_status = dict(source_status) if isinstance(source_status, dict) else {}
+    attempted_at = datetime.now(KST).isoformat(timespec="seconds")
+    for source_name, error_text, count_key in (
+        ("proto", proto_error, "proto_matches"),
+        ("toto14", toto_error, "toto_14_matches"),
+    ):
+        status = source_status.get(source_name)
+        status = dict(status) if isinstance(status, dict) else {}
+        status.update({
+            "fresh": False,
+            "last_attempt_at": attempted_at,
+            "last_failure_at": attempted_at,
+            "last_error": str(error_text or "새 회차를 확인하지 못함")[:1000],
+            "published_count": len(payload.get(count_key) or []),
+        })
+        source_status[source_name] = status
+    payload["source_status"] = source_status
+    payload["collection_diagnostic"] = {
+        "attempted_at": attempted_at,
+        "status": "NO_FRESH_ROUND_PUBLISHED",
+        "proto_error": str(proto_error or "")[:1000],
+        "toto14_error": str(toto_error or "")[:1000],
+        "retained_records_unchanged": True,
+    }
+    _atomic_write_json("betman_data.json", payload, indent=2)
+
+
 def scrape_betman():
     print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 베트맨 실제 경기/배당 수집 가동...")
     hub_url = BETMAN_HUB_URL
@@ -15524,6 +15658,8 @@ def scrape_betman():
     toto_stable = False
     matches = []
     matches_14 = []
+    proto_error = "프로토 현재 회차를 확인하지 못함"
+    toto_error = "승무패 현재 회차를 확인하지 못함"
 
     round_targets = {}
     betman_session = requests.Session()
@@ -15586,15 +15722,39 @@ def scrape_betman():
     # on the game-slip URL shape. Each source is accepted independently.
     if round_targets.get("proto"):
         try:
-            proto_payload = _fetch_betman_game_data(betman_session, round_targets["proto"])
-            matches = parse_betman_proto_json(proto_payload)
-            proto_stable = bool(matches and _valid_scrape_records(matches))
+            candidate_targets = list(round_targets.get("proto_candidates") or [])
+            if not candidate_targets:
+                candidate_targets = [round_targets["proto"]]
+            attempts = []
+            for target in candidate_targets[:BETMAN_ROUND_CANDIDATE_LIMIT]:
+                try:
+                    proto_payload = _fetch_betman_game_data(betman_session, target)
+                    candidate_matches = parse_betman_proto_json(proto_payload)
+                    if not _valid_scrape_records(candidate_matches):
+                        raise RuntimeError(
+                            f"정상 축구 경기 없음: {len(candidate_matches)}건"
+                        )
+                    if not _has_upcoming_betman_record(candidate_matches):
+                        raise RuntimeError("축구 경기가 모두 시작 또는 마감됨")
+                    matches = candidate_matches
+                    proto_stable = True
+                    round_targets["proto"] = target
+                    print(
+                        "✅ 공식 JSON 프로토 축구 경기 추출: "
+                        f"{len(matches)}경기 / {target.get('display_round', '-')}회차 "
+                        "(브라우저 미사용)"
+                    )
+                    break
+                except Exception as candidate_error:
+                    attempts.append(
+                        f"{target.get('display_round', '-')}: {candidate_error}"
+                    )
             if not proto_stable:
-                raise RuntimeError(f"공식 프로토 JSON에 정상 축구 경기 없음: {len(matches)}건")
-            print(f"✅ 공식 JSON 프로토 축구 경기 추출: {len(matches)}경기 (브라우저 미사용)")
+                raise RuntimeError(" / ".join(attempts) or "공식 프로토 JSON 수집 실패")
         except Exception as error:
             matches = []
             proto_stable = False
+            proto_error = str(error)
             print(f"⚠️ 공식 JSON 프로토 조회 실패, 브라우저 1회 대체: {error}")
 
     if round_targets.get("toto14"):
@@ -15613,6 +15773,7 @@ def scrape_betman():
         except Exception as error:
             matches_14 = []
             toto_stable = False
+            toto_error = str(error)
             print(f"⚠️ 공식 JSON 승무패 조회 실패, 브라우저 1회 대체: {error}")
     betman_session.close()
 
@@ -15731,6 +15892,7 @@ def scrape_betman():
             matches = matches[:proto_limit]
         print(f"✅ 프로토 실제 축구 경기 발견: {len(matches)}경기")
     except Exception as error:
+        proto_error = str(error)
         print(f"❌ 프로토 최종 수집 실패: {error}")
 
     try:
@@ -15740,21 +15902,31 @@ def scrape_betman():
             round_id = str((round_targets.get("toto14") or {}).get("gm_ts") or "current")
         print(f"✅ 축구 승무패 {round_id}회차 추출: {len(matches_14)}경기")
     except Exception as error:
+        toto_error = str(error)
         print(f"❌ 축구 승무패 최종 수집 실패: {error}")
 
     pending_ids = _load_pending_match_ids()
     old_active_proto = [
         item for item in old_proto if _record_is_still_active(item, pending_ids)
     ]
-    proto_accepted = bool(matches and proto_stable and _valid_scrape_records(matches))
-    if (
-        proto_accepted
-        and os.getenv("ALLOW_PROTO_LIMIT", "0") != "1"
-        and len(matches) < PROTO_MIN_SCRAPE_ROWS
-        and len(old_active_proto) >= PROTO_MIN_SCRAPE_ROWS
-    ):
-        proto_accepted = False
-        print(f"⚠️ 프로토 급감({len(matches)}건)을 부분 수집으로 판정해 정상본을 유지합니다.")
+    old_source_status = old_data.get("source_status", {})
+    old_proto_status = (
+        old_source_status.get("proto", {}) if isinstance(old_source_status, dict) else {}
+    )
+    old_proto_status = old_proto_status if isinstance(old_proto_status, dict) else {}
+    current_proto_round = str((round_targets.get("proto") or {}).get("gm_ts") or "")
+    proto_accepted = _proto_collection_accepted(
+        matches,
+        proto_stable,
+        len(old_active_proto),
+        old_proto_status.get("round_id"),
+        current_proto_round,
+        allow_limited=os.getenv("ALLOW_PROTO_LIMIT", "0") == "1",
+    )
+    if matches and proto_stable and not proto_accepted:
+        print(
+            f"⚠️ 동일 회차 프로토 급감({len(matches)}건)을 부분 수집으로 판정해 정상본을 유지합니다."
+        )
 
     # A football pools round is complete only with fourteen unique rows.
     toto_accepted = bool(
@@ -15786,6 +15958,7 @@ def scrape_betman():
     if not toto_accepted:
         print("⚠️ 이번 승무패 수집을 채택하지 않고 마지막 정상/진행 기록을 보존합니다.")
     if not proto_accepted and not toto_accepted:
+        _persist_betman_collection_failure(old_data, proto_error, toto_error)
         print("❌ 새 완전 데이터가 없어 대시보드 재분석을 중단합니다.")
         return False
 
@@ -15815,6 +15988,8 @@ def scrape_betman():
                     else old_proto_status.get("round_id")
                 ),
                 "last_success_at": now_iso if proto_accepted else old_proto_status.get("last_success_at"),
+                "last_attempt_at": now_iso,
+                "last_error": "" if proto_accepted else proto_error[:1000],
             },
             "toto14": {
                 "fresh": toto_accepted,
@@ -15827,6 +16002,8 @@ def scrape_betman():
                     else old_toto_status.get("round_id")
                 ),
                 "last_success_at": now_iso if toto_accepted else old_toto_status.get("last_success_at"),
+                "last_attempt_at": now_iso,
+                "last_error": "" if toto_accepted else toto_error[:1000],
             },
         },
     }
