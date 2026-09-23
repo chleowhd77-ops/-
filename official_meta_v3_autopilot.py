@@ -77,6 +77,7 @@ class PendingSnapshot:
     created_at: str
     stage: str
     candidates: tuple[dict[str, Any], ...]
+    source_kind: str = "analysis_snapshot"
 
 
 def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
@@ -127,6 +128,104 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
                 )
             )
     return sorted(pending, key=lambda item: (item.created_at, item.match_id))
+
+
+def _probability(value: Any) -> float:
+    """Accept the frozen Toto14 percentage or probability without inventing one."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if result > 1.0:
+        result /= 100.0
+    return max(0.0, min(1.0, result))
+
+
+def _toto14_candidate(
+    home_team: str, away_team: str, side: str, probability: float, confidence: float
+) -> dict[str, Any]:
+    raw_pick = (
+        f"{home_team} 승" if side == "home" else
+        f"{away_team} 승" if side == "away" else "무승부"
+    )
+    return {
+        "market_key": "1x2",
+        "selection_side": side,
+        "raw_pick": raw_pick,
+        # These values are saved in the Toto14 pre-kickoff freeze.  They are
+        # inputs only; no after-result field is added to the V3 feature set.
+        "model_probability": probability,
+        "raw_model_probability": probability,
+        "robust_probability": probability,
+        "fair_probability": probability,
+        "data_confidence": max(0.0, min(1.0, confidence)),
+        "settlement_supported": True,
+    }
+
+
+def _load_pending_toto14_freezes(database_path: str | Path) -> list[PendingSnapshot]:
+    """Read Toto14's own frozen W/D/L table as an independent V3 input.
+
+    Toto14 does not share the general candidate-snapshot table.  Its frozen
+    payload is still a pre-kickoff record, so it can safely become a V3
+    learning pick without changing the existing Toto14 marks or its database.
+    """
+    connection = _readonly_connection(database_path)
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        required = {"predictions", "toto14_prediction_freezes"}
+        if not required.issubset(tables):
+            return []
+        rows = connection.execute(
+            """
+            SELECT p.match_id, p.match_time, p.home_team, p.away_team,
+                   f.payload_json, f.frozen_at
+            FROM predictions AS p
+            JOIN toto14_prediction_freezes AS f ON f.match_id = p.match_id
+            WHERE COALESCE(p.actual_result, 'PENDING') = 'PENDING'
+              AND COALESCE(p.is_toto14, 0) = 1
+            ORDER BY f.frozen_at ASC, p.match_id ASC
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    pending: list[PendingSnapshot] = []
+    for row in rows:
+        match_id = str(row["match_id"] or "").strip()
+        payload = meta._safe_json(row["payload_json"], {})
+        if not match_id or not isinstance(payload, dict):
+            continue
+        home_team = str(payload.get("match", {}).get("home") or row["home_team"] or "홈팀")
+        away_team = str(payload.get("match", {}).get("away") or row["away_team"] or "원정팀")
+        probabilities = {
+            "home": _probability(payload.get("p_h")),
+            "draw": _probability(payload.get("p_d")),
+            "away": _probability(payload.get("p_a")),
+        }
+        if not any(probabilities.values()):
+            continue
+        confidence = _probability(payload.get("analysis_confidence"))
+        candidates = tuple(
+            _toto14_candidate(home_team, away_team, side, probability, confidence)
+            for side, probability in probabilities.items()
+        )
+        pending.append(
+            PendingSnapshot(
+                match_id=match_id,
+                snapshot_id=0,
+                created_at=str(row["frozen_at"] or row["match_time"] or ""),
+                stage="TOTO14_FROZEN",
+                candidates=candidates,
+                source_kind="toto14_freeze",
+            )
+        )
+    return pending
 
 
 def _candidate_example(snapshot: PendingSnapshot, candidate: dict[str, Any]) -> meta.CandidateExample | None:
@@ -195,6 +294,30 @@ def _grade_frozen_picks(
             if pick.get("is_correct") in (0, 1):
                 graded += 1
                 continue
+            if str(pick.get("source_kind") or "") == "toto14_freeze":
+                row = connection.execute(
+                    """
+                    SELECT actual_result, actual_score
+                    FROM predictions
+                    WHERE match_id = ? AND COALESCE(is_toto14, 0) = 1
+                    LIMIT 1
+                    """,
+                    (str(match_id),),
+                ).fetchone()
+                score = str(row["actual_score"] or "") if row else ""
+                if not row or str(row["actual_result"] or "") != "FINISHED" or ":" not in score:
+                    continue
+                try:
+                    home_score, away_score = (int(value.strip()) for value in score.split(":", 1))
+                except ValueError:
+                    continue
+                result_side = "home" if home_score > away_score else "away" if away_score > home_score else "draw"
+                pick["is_correct"] = int(str(pick.get("selection_side") or "") == result_side)
+                pick["actual_score"] = score
+                pick["graded_at"] = _now()
+                pick["status"] = "FINISHED"
+                graded += 1
+                continue
             row = connection.execute(
                 """
                 SELECT is_correct, actual_score, graded_at
@@ -245,16 +368,27 @@ def _visible_pick(
         zip(examples, probabilities),
         key=lambda pair: (float(pair[1]), pair[0].market_key, pair[0].raw_pick),
     )
+    selected_candidate = next(
+        (
+            candidate
+            for candidate in snapshot.candidates
+            if str(candidate.get("market_key") or "") == selected.market_key
+            and str(candidate.get("raw_pick") or "") == selected.raw_pick
+        ),
+        {},
+    )
     return {
         "schema_version": OUTPUT_SCHEMA,
         "status": "LEARNING_SHADOW",
         "match_id": snapshot.match_id,
         "source_snapshot_id": snapshot.snapshot_id,
         "source_stage": snapshot.stage,
+        "source_kind": snapshot.source_kind,
         "source_created_at": snapshot.created_at,
         "frozen_at": generated_at,
         "market_key": selected.market_key,
         "raw_pick": selected.raw_pick,
+        "selection_side": str(selected_candidate.get("selection_side") or ""),
         "probability": round(float(probability), 6),
         "label": "V3 학습픽 · 검증 중",
         "official_pick_changed": False,
@@ -286,7 +420,9 @@ def build_autopilot_payload(
     try:
         model, encoder, training = _model_from_completed_history(database_path)
         created = 0
-        for snapshot in _load_pending_snapshots(database_path):
+        pending_snapshots = _load_pending_snapshots(database_path)
+        pending_snapshots.extend(_load_pending_toto14_freezes(database_path))
+        for snapshot in pending_snapshots:
             # V3 itself may learn a new model later, but a pick already shown
             # for this match remains immutable for honest future grading.
             if snapshot.match_id in picks:

@@ -1814,12 +1814,23 @@ if isinstance(dashboard_data, dict):
         ]
     # V3 is a web-visible learning challenger.  It is deliberately attached
     # as a new field so it cannot replace the frozen official or robot pick.
-    for collection_name in ("proto", "top3"):
+    for collection_name in ("proto", "top3", "toto14"):
         for item in dashboard_data.get(collection_name, []):
             if not isinstance(item, dict):
                 continue
             match_id = str((item.get("match") or {}).get("id") or "")
-            v3_pick = v3_learning_picks.get(match_id)
+            candidate_ids = (
+                (f"TOTO14_{match_id}", match_id)
+                if collection_name == "toto14" else (match_id,)
+            )
+            v3_pick = next(
+                (
+                    v3_learning_picks.get(candidate_id)
+                    for candidate_id in candidate_ids
+                    if isinstance(v3_learning_picks.get(candidate_id), dict)
+                ),
+                None,
+            )
             if isinstance(v3_pick, dict):
                 item["v3_learning_pick"] = dict(v3_pick)
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
@@ -3840,6 +3851,7 @@ with main_tab2:
                 if not score_text or score_text == "-": score_text = "0:0"
                 if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"
 
+            v3_learning_html = _v3_learning_pick_html(item, str(m.get("home") or ""))
             html_code = (
                 f"<div class='match-card' style='padding: 24px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{item.get('best_pick_display', '')}</b></span></div>"
@@ -3848,7 +3860,7 @@ with main_tab2:
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}</div></div></div>"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {item.get('p_h')}% | 무 {item.get('p_d')}% | 패 {item.get('p_a')}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {item.get('p_h')}%;'></div><div class='prob-bar-draw' style='width: {item.get('p_d')}%;'></div><div class='prob-bar-lose' style='width: {item.get('p_a')}%;'></div></div>"
-                f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}</div>"
+                f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}{v3_learning_html}</div>"
                 f"</div>"
             )
             st.markdown(html_code, unsafe_allow_html=True)
