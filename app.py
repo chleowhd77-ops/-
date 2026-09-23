@@ -121,6 +121,21 @@ def load_v3_learning_picks():
     except Exception:
         return {}
 
+
+def load_manager_investment_picks():
+    """Load the administrator-only investment ledger published independently.
+
+    This file is intentionally separate from dashboard_data.json: its picks
+    must be frozen and graded without changing customer-facing recommendations.
+    """
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/manager_investment_picks.json?t={int(time.time())}"
+    try:
+        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
+        payload = response.json() if response.status_code == 200 else {}
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
 def load_live_scores():
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_scores.json?t={int(time.time())}"
     try:
@@ -1803,6 +1818,7 @@ visible_match_limit = access_profile["match_limit"]
 # -----------------------------------------------------------------------------
 dashboard_data = load_dashboard_data()
 v3_learning_picks = load_v3_learning_picks()
+manager_investment_data = load_manager_investment_picks()
 world_dashboard_data = load_world_dashboard_data()
 live_scores_data = load_live_scores()
 if isinstance(dashboard_data, dict):
@@ -3488,14 +3504,100 @@ def _render_admin_shortlist(title, color, payload):
         )
 
 
+def _render_manager_investment_portfolio(payload):
+    """Render only the separately frozen administrator investment ledger."""
+    payload = payload if isinstance(payload, dict) else {}
+    picks = [
+        value for value in (payload.get("picks") or {}).values()
+        if isinstance(value, dict)
+    ]
+    active_picks = [
+        pick for pick in picks if str(pick.get("status") or "PENDING") != "FINISHED"
+    ]
+    performance = payload.get("performance") if isinstance(payload.get("performance"), dict) else {}
+    overall = performance.get("overall") if isinstance(performance.get("overall"), dict) else {}
+    status = str(payload.get("status") or "NOT_READY")
+    frozen_count = int(payload.get("frozen_pick_count") or len(picks))
+    graded_count = int(overall.get("graded_count") or 0)
+    hit_rate = overall.get("hit_rate")
+    unit_roi = overall.get("unit_roi")
+    new_count = int(payload.get("newly_frozen_picks") or 0)
+
+    st.markdown(
+        "<div class='match-card' style='padding:18px;margin-bottom:14px;border-color:#F59E0B;'>"
+        "<div style='color:#FCD34D;font-size:19px;font-weight:900;'>🎯 관리자 전용 투자픽</div>"
+        "<div style='color:#CBD5E1;font-size:12px;margin-top:6px;'>"
+        "고객 공식픽·로봇·알파고·V3와 분리된 별도 후보선정/동결/채점 장부입니다. "
+        "시작 전 보정 확률과 실제 배당의 보수 기대값을 모두 통과한 경우만 표시합니다.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if status != "READY":
+        st.info(
+            "관리자 투자픽 준비 중입니다. "
+            + escape(str(payload.get("reason") or "저장된 시작 전 후보 또는 채점 이력을 확인 중입니다."))
+        )
+        return
+
+    hit_text = f"{float(hit_rate) * 100:.1f}%" if hit_rate is not None else "채점 대기"
+    roi_text = f"{float(unit_roi) * 100:+.1f}%" if unit_roi is not None else "채점 대기"
+    st.markdown(
+        "<div style='display:flex;flex-wrap:wrap;gap:9px;margin:-2px 0 16px;'>"
+        f"<span class='badge-primary'>현재 투자 후보 {len(active_picks)}경기</span>"
+        f"<span class='badge-primary'>고정 장부 {frozen_count}건</span>"
+        f"<span class='badge-primary'>별도 채점 {graded_count}건 · 적중 {hit_text}</span>"
+        f"<span class='badge-primary'>단위 기준 ROI {roi_text}</span>"
+        f"<span class='badge-primary'>이번 갱신 신규 {new_count}건</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "금액·자동베팅 지시는 하지 않습니다. 단위 ROI는 고정된 픽의 비교용 가상 손익이며, "
+        "실제 결과나 수익을 보장하지 않습니다."
+    )
+
+    if not active_picks:
+        st.caption("현재는 보수 기대값·자료 신뢰도 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
+        return
+
+    def _sort_key(item):
+        return (-float(item.get("manager_score") or 0), str(item.get("kickoff_at") or ""))
+
+    for index, pick in enumerate(sorted(active_picks, key=_sort_key), 1):
+        tier = str(pick.get("tier") or "관리자 투자 후보")
+        color = "#F59E0B" if tier == "고배당 가치" else "#34D399"
+        odd = float(pick.get("odd") or 0)
+        probability = float(pick.get("probability") or 0)
+        calibrated = float(pick.get("calibrated_probability") or 0)
+        conservative = float(pick.get("conservative_probability") or 0)
+        edge = float(pick.get("market_edge") or 0)
+        expected_value = float(pick.get("conservative_ev") or 0)
+        st.markdown(
+            "<div class='engine-result-card' style='margin:10px 0;border-color:" + color + ";'>"
+            "<div class='engine-result-head'>"
+            f"<b style='color:{color};'>#{index} {escape(tier)}</b>"
+            f"<span>{escape(str(pick.get('kickoff_at') or ''))}</span></div>"
+            f"<div style='color:#F8FAFC;font-weight:900;'>{escape(str(pick.get('home') or ''))} vs {escape(str(pick.get('away') or ''))}</div>"
+            f"<div style='color:{color};font-weight:900;margin-top:5px;'>{escape(_human_pick_label(pick.get('raw_pick'), pick.get('home')))} · 실제 배당 {odd:.2f}배</div>"
+            "<small style='color:#94A3B8;'>"
+            f"모델 {probability * 100:.1f}% · 보정 {calibrated * 100:.1f}% · 보수 {conservative * 100:.1f}% · "
+            f"시장 대비 {edge * 100:+.1f}%p · 보수 기대수익 {expected_value * 100:+.1f}% · "
+            f"고정 {escape(str(pick.get('frozen_at') or ''))}</small></div>",
+            unsafe_allow_html=True,
+        )
+
+
 if main_tab_admin is not None:
     with main_tab_admin:
         st.markdown(
             "<div class='section-intro'><div><h2>관리자픽</h2>"
-            "<p>프로토 LIVE 시작 전 경기만 대상으로 두 분석가가 서로 독립적으로 고른 "
-            "5~10경기 후보입니다.</p></div></div>",
+            "<p>관리자 본인 판단용 투자 후보와 기존 분석가 비교판입니다.</p></div></div>",
             unsafe_allow_html=True,
         )
+        _render_manager_investment_portfolio(manager_investment_data)
+        st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+        st.caption("아래는 기존 공식/로봇 원본을 비교하기 위한 참고 후보판이며, 위 투자 장부와 별개입니다.")
         admin_pick_source = [
             item for item in dashboard_data.get("proto", [])
             if _recommendation_is_upcoming(item)
