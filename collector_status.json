@@ -5,12 +5,11 @@
       "supervisor_pid": 428276,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-23T08:14:18+00:00",
+      "heartbeat_at": "2026-09-23T08:15:48+00:00",
       "pid": 428276,
       "last_started_at": "2026-09-23T01:06:47+00:00",
       "active_jobs": {
-        "backup": 429154,
-        "team": 429165
+        "backup": 429154
       },
       "pending_jobs": [
         "live",
@@ -109,17 +108,24 @@
       "duration_seconds": 2.64
     },
     "backup": {
-      "last_success_at": "2026-09-22T18:34:38+00:00",
-      "last_success_duration_seconds": 1.23,
+      "last_success_at": "2026-09-23T08:16:15+00:00",
+      "last_success_duration_seconds": 396.03,
       "run_id": "backup-1790150973687635226",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-23T08:14:18+00:00",
-      "pid": 428276,
+      "last_stage": "backup_deferred",
+      "state": "success",
+      "heartbeat_at": "2026-09-23T08:16:15+00:00",
+      "pid": 429154,
       "last_started_at": "2026-09-23T08:09:39+00:00",
       "child_pid": 429154,
-      "elapsed_seconds": 284.5,
-      "overlap_skips": 0
+      "elapsed_seconds": 374.8,
+      "overlap_skips": 0,
+      "db_backup_ok": false,
+      "requested_sources": [
+        "master",
+        "score",
+        "world"
+      ],
+      "duration_seconds": 396.03
     },
     "recovery": {
       "run_id": "recovery-1790116580757230983",
@@ -133,7 +139,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-23T08:14:30+00:00",
+  "updated_at": "2026-09-23T08:16:15+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
