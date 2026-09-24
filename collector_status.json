@@ -5,7 +5,7 @@
       "supervisor_pid": 428276,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-24T12:51:59+00:00",
+      "heartbeat_at": "2026-09-24T12:57:30+00:00",
       "pid": 428276,
       "last_started_at": "2026-09-23T01:06:47+00:00",
       "active_jobs": {
@@ -60,18 +60,20 @@
     },
     "master": {
       "last_failure_duration_seconds": 2700.3,
-      "last_success_at": "2026-09-24T11:41:19+00:00",
+      "last_success_at": "2026-09-24T12:57:37+00:00",
       "last_failure_at": "2026-09-24T05:20:33+00:00",
-      "last_success_duration_seconds": 1442.23,
+      "last_success_duration_seconds": 2582.87,
       "run_id": "master-1790252071621035821",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-24T12:51:59+00:00",
-      "pid": 428276,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-24T12:57:37+00:00",
+      "pid": 433369,
       "last_started_at": "2026-09-24T12:14:34+00:00",
       "child_pid": 433369,
-      "elapsed_seconds": 2248.2,
-      "overlap_skips": 8
+      "elapsed_seconds": 2578.8,
+      "overlap_skips": 9,
+      "db_backup_requested": true,
+      "duration_seconds": 2582.87
     },
     "world": {
       "last_failure_duration_seconds": 434.5,
@@ -137,7 +139,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-24T12:52:15+00:00",
+  "updated_at": "2026-09-24T12:57:37+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -241,15 +243,15 @@
       },
       {
         "metric": "cache_hit",
-        "purpose": "scoring",
-        "endpoint": "/fixtures/lineups",
+        "purpose": "analysis",
+        "endpoint": "/injuries",
         "count": 18
       },
       {
         "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/injuries",
-        "count": 17
+        "purpose": "scoring",
+        "endpoint": "/fixtures/lineups",
+        "count": 18
       },
       {
         "metric": "cache_hit",
@@ -279,13 +281,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-24",
     "reset_timezone": "UTC",
-    "local_calls": 1179,
-    "provider_remaining": 6321,
+    "local_calls": 1181,
+    "provider_remaining": 6319,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 368,
-    "analysis_calls": 532,
+    "analysis_calls": 534,
     "live_calls": 53,
     "scoring_calls": 226,
     "world_daily_limit": 4000,
