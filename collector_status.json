@@ -20,16 +20,17 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_duration_seconds": 6.61,
+      "last_success_duration_seconds": 4.57,
       "last_failure_at": "2026-09-19T17:52:27+00:00",
-      "last_success_at": "2026-09-25T00:07:09+00:00",
+      "last_success_at": "2026-09-25T00:53:14+00:00",
       "last_failure_duration_seconds": 180.1,
       "run_id": "live-1790297585931053976",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-25T00:53:09+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-25T00:53:14+00:00",
       "pid": 441281,
-      "last_started_at": "2026-09-25T00:53:09+00:00"
+      "last_started_at": "2026-09-25T00:53:09+00:00",
+      "duration_seconds": 4.57
     },
     "score": {
       "last_failure_at": "2026-09-24T15:25:42+00:00",
@@ -134,7 +135,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-25T00:53:09+00:00",
+  "updated_at": "2026-09-25T00:53:14+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -159,6 +160,11 @@
         "calls": 4
       },
       {
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "calls": 4
+      },
+      {
         "purpose": "world",
         "endpoint": "/fixtures",
         "calls": 4
@@ -176,11 +182,6 @@
       {
         "purpose": "analysis",
         "endpoint": "/standings",
-        "calls": 2
-      },
-      {
-        "purpose": "live",
-        "endpoint": "/fixtures",
         "calls": 2
       },
       {
@@ -210,14 +211,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-09-25",
     "reset_timezone": "UTC",
-    "local_calls": 51,
-    "provider_remaining": 7449,
+    "local_calls": 53,
+    "provider_remaining": 7447,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 17,
     "analysis_calls": 24,
-    "live_calls": 2,
+    "live_calls": 4,
     "scoring_calls": 8,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
