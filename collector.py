@@ -136,6 +136,17 @@ MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG = os.getenv(
     "MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG", "1"
 ) != "0"
 MASTER_INLINE_TEAM_RETRY = os.getenv("MASTER_INLINE_TEAM_RETRY", "0") == "1"
+# Score owns current results first; historical learning repair remains bounded
+# so old backlog can never monopolize the single production DB slot.
+SCORE_POSTMORTEM_BACKFILL_BATCH = max(1, min(100, int(
+    os.getenv("SCORE_POSTMORTEM_BACKFILL_BATCH", "20")
+)))
+SCORE_CANDIDATE_BACKFILL_BATCH = max(1, min(80, int(
+    os.getenv("SCORE_CANDIDATE_BACKFILL_BATCH", "12")
+)))
+SCORE_LINEUP_RECHECK_BATCH = max(1, min(6, int(
+    os.getenv("SCORE_LINEUP_RECHECK_BATCH", "2")
+)))
 
 # A decimal quote must exceed 1. No arbitrary minimum price sacrifices a
 # higher-probability candidate; actual conservative return remains required.
@@ -4773,7 +4784,16 @@ def save_three_engine_picks(
 
 
 def _grade_three_engine_picks(conn):
-    """Grade each frozen engine answer from an already stored final score."""
+    """Grade frozen engine answers from one bounded finished-score scan.
+
+    The former implementation queried ``predictions`` once for every ungraded
+    engine row.  On the multi-GB production DB that N+1 pattern kept the score
+    worker alive after the result cycle had already finished, blocking the
+    single main-DB slot and starving ``master``.  Read the finished score index
+    once, then grade all pending engine rows in memory.  No prediction, pick,
+    probability or historical row is rewritten; only previously-null grade
+    fields are filled exactly as before.
+    """
     _ensure_three_engine_tables(conn)
     rows = conn.execute(
         """
@@ -4782,41 +4802,72 @@ def _grade_three_engine_picks(conn):
         ORDER BY id
         """
     ).fetchall()
-    graded = 0
-    now = _utc_iso()
-    for row_id, match_id, fixture_id, home_team, away_team, raw_pick in rows:
-        result = conn.execute(
-            """
-            SELECT actual_score FROM predictions
-            WHERE actual_result='FINISHED'
-              AND home_team=? AND away_team=?
-              AND (match_id=? OR (? > 0 AND api_fixture_id=?))
-            ORDER BY CASE WHEN match_id=? THEN 0 ELSE 1 END, rowid
-            LIMIT 1
-            """,
-            (
-                str(home_team), str(away_team), str(match_id), int(fixture_id or 0),
-                int(fixture_id or 0), str(match_id),
-            ),
-        ).fetchone()
-        score = re.match(r"^\s*(\d+)\s*:\s*(\d+)\s*$", str(result[0] if result else ""))
+    if not rows:
+        return 0
+
+    # One pass over finished prediction results replaces one SELECT per engine
+    # row.  setdefault preserves the earliest rowid, matching the previous
+    # ORDER BY ... rowid LIMIT 1 fallback semantics.
+    finished_rows = conn.execute(
+        """
+        SELECT match_id,api_fixture_id,home_team,away_team,actual_score
+        FROM predictions
+        WHERE actual_result='FINISHED' AND actual_score IS NOT NULL
+        ORDER BY rowid
+        """
+    ).fetchall()
+    by_match = {}
+    by_fixture = {}
+    score_pattern = re.compile(r"^\s*(\d+)\s*:\s*(\d+)\s*$")
+    for result_match_id, result_fixture_id, result_home, result_away, actual_score in finished_rows:
+        score = score_pattern.match(str(actual_score or ""))
         if not score:
             continue
-        goals_h, goals_a = int(score.group(1)), int(score.group(2))
+        value = (int(score.group(1)), int(score.group(2)))
+        home_key = str(result_home)
+        away_key = str(result_away)
+        by_match.setdefault((str(result_match_id), home_key, away_key), value)
+        try:
+            fixture_key = int(result_fixture_id or 0)
+        except (TypeError, ValueError):
+            fixture_key = 0
+        if fixture_key > 0:
+            by_fixture.setdefault((fixture_key, home_key, away_key), value)
+
+    now = _utc_iso()
+    updates = []
+    for row_id, match_id, fixture_id, home_team, away_team, raw_pick in rows:
+        home_key = str(home_team)
+        away_key = str(away_team)
+        result = by_match.get((str(match_id), home_key, away_key))
+        if result is None:
+            try:
+                fixture_key = int(fixture_id or 0)
+            except (TypeError, ValueError):
+                fixture_key = 0
+            if fixture_key > 0:
+                result = by_fixture.get((fixture_key, home_key, away_key))
+        if result is None:
+            continue
+        goals_h, goals_a = result
         hit = int(evaluate_single_pick(
             raw_pick, home_team, away_team, goals_h, goals_a,
         ))
-        cursor = conn.execute(
-            """
-            UPDATE three_engine_pick_snapshots
-            SET actual_home_goals=?,actual_away_goals=?,is_correct=?,graded_at=?
-            WHERE id=? AND is_correct IS NULL
-            """,
-            (goals_h, goals_a, hit, now, int(row_id)),
-        )
-        graded += int(cursor.rowcount or 0)
-    if graded:
-        conn.commit()
+        updates.append((goals_h, goals_a, hit, now, int(row_id)))
+
+    if not updates:
+        return 0
+    before = conn.total_changes
+    conn.executemany(
+        """
+        UPDATE three_engine_pick_snapshots
+        SET actual_home_goals=?,actual_away_goals=?,is_correct=?,graded_at=?
+        WHERE id=? AND is_correct IS NULL
+        """,
+        updates,
+    )
+    graded = max(0, int(conn.total_changes - before))
+    conn.commit()
     return graded
 
 
@@ -6995,18 +7046,16 @@ def _grade_autonomous_robot_sample(conn, match_id, fixture_id, goals_h, goals_a)
         for row in rows
     )
     if int(fixture_id or 0) > 0 and needs_lineup_answer:
-        # This is a post-match answer label only. It is never copied into the
-        # pre-kickoff result model features for the same fixture. A lineup API
-        # failure must never prevent the score and pick from being graded.
+        # Core result grading must not wait on one lineup endpoint per finished
+        # match. Reuse any already-cached official XI immediately; unresolved
+        # answers are fetched later by the bounded reconciliation batch below.
         try:
-            official_lineup = fetch_lineups_api(
-                int(fixture_id), 24 * 365 * 5, purpose="scoring"
-            )
-        except Exception as error:
-            print(
-                f"⚠️ 로봇 공식 선발 정답 조회 실패({fixture_id}) · "
-                f"결과 채점은 계속: {type(error).__name__}"
-            )
+            with api_cache_only_context(True):
+                official_lineup = fetch_lineups_api(
+                    int(fixture_id), 24 * 365 * 5, purpose="scoring"
+                )
+        except Exception:
+            official_lineup = {"confirmed": False, "details": {}}
     graded = 0
     for sample_id, home_team, away_team, robot_json, candidates_json, lineup_json in rows:
         try:
@@ -7487,27 +7536,48 @@ def _build_grading_snapshot():
             conn.close()
 
 
-def _refresh_dashboard_grading_snapshot():
-    """Attach the latest grading rows without rebuilding any prediction.
+def _latest_local_grading_snapshot(embedded=None):
+    """Return the already-published score feed without touching SQLite.
 
-    The score worker runs more often than the heavy analysis worker.  Publishing
-    only the refreshed grading block makes a completed match appear in the
-    grading note on the same cycle while leaving the pre-kickoff probabilities,
-    picks, reports, and version labels untouched.
+    The Streamlit app prefers ``grading_results.json`` over the dashboard
+    embedded copy.  Analysis workers therefore reuse that independent feed
+    instead of rebuilding grading from the production DB.
+    """
+    embedded = embedded if isinstance(embedded, dict) else {}
+    snapshot = _read_json("grading_results.json", {})
+    if (
+        isinstance(snapshot, dict)
+        and snapshot.get("schema_version") == "grading-results.v1"
+        and not snapshot.get("error")
+        and isinstance(snapshot.get("finished"), list)
+        and isinstance(snapshot.get("pending"), list)
+    ):
+        return snapshot
+    return embedded
+
+
+def _refresh_dashboard_grading_snapshot(snapshot=None):
+    """Attach an already-built grading feed without a second DB scan.
+
+    ``run_score_job`` has just built and published the authoritative grading
+    snapshot.  Reusing that object avoids the former duplicate
+    ``_build_grading_snapshot()`` pass that could keep the score worker alive
+    for minutes after ``grading_results.json`` was already online.
     """
     dashboard = _read_json("dashboard_data.json", {})
     if not isinstance(dashboard, dict) or not dashboard:
         print("⚠️ 채점 화면 갱신 보류: 기존 대시보드 데이터가 없습니다.")
         return False
-    snapshot = _build_grading_snapshot()
-    if snapshot.get("error"):
+    if not isinstance(snapshot, dict):
+        snapshot = _latest_local_grading_snapshot(dashboard.get("grading") or {})
+    if not isinstance(snapshot, dict) or snapshot.get("error"):
         return False
     dashboard["grading"] = snapshot
     source_meta = dashboard.get("source_meta")
     if not isinstance(source_meta, dict):
         source_meta = {}
         dashboard["source_meta"] = source_meta
-    source_meta["grading_generated_at"] = _utc_iso()
+    source_meta["grading_generated_at"] = str(snapshot.get("generated_at") or _utc_iso())
     _atomic_write_json("dashboard_data.json", dashboard)
     return True
 
@@ -13388,7 +13458,12 @@ def build_dashboard_data():
 
     final_output = {
         "proto": dashboard_proto, "toto14": dashboard_toto14,
-        "grading": _build_grading_snapshot(),
+        # Grading is owned by the independent score worker.  Reuse its latest
+        # published feed here; master must never rescan/grade the large DB while
+        # customer picks are waiting to be published.
+        "grading": _latest_local_grading_snapshot(
+            previous_dashboard.get("grading") if isinstance(previous_dashboard, dict) else {}
+        ),
         "toto14_meta": toto14_meta,
         "top3": top_3_picks,
         "honey_two_pick": honey_two_pick,
@@ -13755,8 +13830,12 @@ def _backfill_candidate_learning(conn, limit=40):
     return count
 
 
-def _backfill_finished_postmortems(conn):
-    """Give older graded rows deterministic learning labels without API calls."""
+def _backfill_finished_postmortems(conn, limit=20):
+    """Give older graded rows deterministic learning labels in bounded batches.
+
+    Historical repair is useful training material, but it is not allowed to
+    delay today's score publication or the next pick-serving master turn.
+    """
     _ensure_postmortem_column(conn)
     rows = conn.execute(
         """
@@ -13765,7 +13844,9 @@ def _backfill_finished_postmortems(conn):
         FROM predictions
         WHERE actual_result = 'FINISHED'
           AND COALESCE(NULLIF(postmortem_json, ''), '{}') = '{}'
-        """
+        ORDER BY rowid DESC LIMIT ?
+        """,
+        (max(1, int(limit or 1)),),
     ).fetchall()
     updates = []
     for row in rows:
@@ -14290,11 +14371,17 @@ def auto_score_matches():
                 "(예측·확률·버전은 보존)"
             )
         conn.commit()  # Repairs must survive even when no due batches run.
-        backfilled_count = _backfill_finished_postmortems(conn)
-        _backfill_candidate_learning(conn)
+        backfilled_count = _backfill_finished_postmortems(
+            conn, limit=SCORE_POSTMORTEM_BACKFILL_BATCH
+        )
+        candidate_backfilled_count = _backfill_candidate_learning(
+            conn, limit=SCORE_CANDIDATE_BACKFILL_BATCH
+        )
         conn.commit()  # Release writes before network/cache operations.
         if backfilled_count:
             print(f"✅ 기존 오답노트 학습 태그 보강: {backfilled_count}건")
+        if candidate_backfilled_count:
+            print(f"✅ 과거 전체후보 학습 보강: {candidate_backfilled_count}건")
         cursor = conn.cursor()
         cursor.execute("""
             SELECT match_id, home_team, away_team, prob_pick, ev_pick,
@@ -14490,7 +14577,9 @@ def auto_score_matches():
                                     "API 예산/연결 확인 필요" if isinstance(batch_error,ApiQuotaUnavailable) else "채점 처리 오류 · 재시도 대기",3600)
                 print(f"⚠️ 채점 묶음 처리 실패(다음 주기 재시도): {batch_error}")
 
-        lineup_answers_attached = _reconcile_robot_lineup_answers(conn)
+        lineup_answers_attached = _reconcile_robot_lineup_answers(
+            conn, batch_size=SCORE_LINEUP_RECHECK_BATCH
+        )
         if lineup_answers_attached:
             print(
                 f"✅ 자율 로봇 공식 선발 11명 정답 연결: {lineup_answers_attached}경기"
@@ -16678,29 +16767,52 @@ def run_team_identity_job():
 
 
 def run_score_job():
+    score_started = time.monotonic()
     success = auto_score_matches()
     if not success:
         return False
-    # Publish a small, score-owned feed first. Heavy cache/DB uploads and the
-    # analysis worker cannot overwrite or block these already committed results.
+    scoring_seconds = time.monotonic() - score_started
+
+    # Build the public grading feed once.  The old path rebuilt the same large
+    # snapshot a second time merely to embed it into dashboard_data.json, which
+    # kept this MAIN_DB worker alive and prevented master from receiving the DB
+    # turn even after the visible grading feed was already published.
+    snapshot_started = time.monotonic()
     snapshot = _build_grading_snapshot()
     if snapshot.get("error"):
         _update_collector_status("score", "running", last_stage="snapshot_failed")
         return False
+    snapshot_seconds = time.monotonic() - snapshot_started
     snapshot["schema_version"] = "grading-results.v1"
     _atomic_write_json("grading_results.json", snapshot)
     if not upload_to_github("grading_results.json"):
         _update_collector_status("score", "running", last_stage="grading_publish_failed")
         return False
-    _update_collector_status("score", "running", last_stage="grading_published",
-                             grading_published_at=snapshot.get("generated_at"))
-    # Keep legacy consumers current locally; the website prefers the separate
-    # feed. The large DB snapshot runs later in its own worker.
-    _refresh_dashboard_grading_snapshot()
+    _update_collector_status(
+        "score", "running", last_stage="grading_published",
+        grading_published_at=snapshot.get("generated_at"),
+        scoring_seconds=round(scoring_seconds, 2),
+        grading_snapshot_seconds=round(snapshot_seconds, 2),
+    )
+
+    # Legacy dashboard embedding is local-only and reuses the exact same object;
+    # no second SQLite scan/grade pass is allowed on the score worker.  The web
+    # already prefers grading_results.json, so failure here never invalidates the
+    # successfully published score feed.
+    embedded = _refresh_dashboard_grading_snapshot(snapshot)
+    if not embedded:
+        print("⚠️ 대시보드 채점 임베드 갱신은 보류 · 독립 grading_results.json은 정상 유지")
     backup_requested = _request_db_backup("score")
+    total_seconds = time.monotonic() - score_started
     _update_collector_status(
         "score", "running", db_backup_requested=backup_requested,
         last_stage="complete",
+        score_total_seconds=round(total_seconds, 2),
+    )
+    print(
+        "⚡ score 즉시 반환 준비: "
+        f"채점 {scoring_seconds:.1f}초 / 성적표 {snapshot_seconds:.1f}초 / "
+        f"전체 {total_seconds:.1f}초 · 중복 성적표 재생성 없음"
     )
     return True
 
@@ -16775,27 +16887,21 @@ def run_world_job():
             )
             return False
     if analysis_changed:
-        # WORLD predictions are committed before this point. Publish the common
-        # scorecard now as well as on the five-minute scorer cycle so new WORLD
-        # official/robot picks appear in the grading note immediately.
-        grading_snapshot = _build_grading_snapshot()
-        if grading_snapshot.get("error"):
-            _update_collector_status(
-                "world", "running", last_stage="world_grading_snapshot_failed"
-            )
-            return False
-        _atomic_write_json("grading_results.json", grading_snapshot)
-        if not upload_to_github("grading_results.json"):
-            _update_collector_status(
-                "world", "running", last_stage="world_grading_publish_failed"
-            )
-            return False
+        # WORLD owns world_dashboard publication only.  The five-minute score
+        # worker is the single owner of grading_results.json, so WORLD must not
+        # rescan/grade the large production DB after a long analysis pass.  This
+        # shortens main-DB occupancy and lets queued customer-pick master work
+        # start promptly.  New WORLD rows are picked up by the next score cycle.
         backup_requested = _request_db_backup("world")
         _update_collector_status(
             "world",
             "running",
             db_backup_requested=backup_requested,
+            grading_deferred_to_score=True,
             last_stage="complete",
+        )
+        print(
+            "⚡ WORLD 분석 게시 완료 · 공통 채점 성적표는 전담 score worker가 다음 주기에 갱신"
         )
     else:
         _update_collector_status("world", "running", last_stage="complete")
@@ -17101,6 +17207,11 @@ def _reap_job_processes():
                     run_id=info.get("run_id"),
                     duration_seconds=round(elapsed, 1),
                     last_error=f"worker exited with code {return_code}",
+                )
+            else:
+                print(
+                    f"✅ 분리 작업 종료: {job_name} (PID {process.pid}, "
+                    f"{elapsed:.1f}초) · 다음 대기작업에 DB 차례 반환"
                 )
             _JOB_PROCESSES.pop(job_name, None)
     _drain_pending_jobs()
