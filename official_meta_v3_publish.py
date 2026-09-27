@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -37,16 +38,35 @@ def publish(file_path: str | Path, remote_path: str = "v3_learning_picks.json") 
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github+json",
     }
+    local_bytes = source.read_bytes()
     existing = requests.get(url, headers=headers, timeout=20)
     payload: dict[str, Any] = {
         "message": "chore: refresh autonomous V3 learning picks",
-        "content": base64.b64encode(source.read_bytes()).decode("ascii"),
+        "content": base64.b64encode(local_bytes).decode("ascii"),
         "branch": "main",
     }
     if existing.status_code == 200:
-        sha = str((existing.json() or {}).get("sha") or "")
+        remote = existing.json() or {}
+        sha = str(remote.get("sha") or "")
         if sha:
             payload["sha"] = sha
+        # The V3 timer now checks new PROTO/WORLD cards frequently. Avoid a
+        # GitHub commit when the only difference is the volatile generated_at
+        # timestamp; new picks, grades or training metrics still publish.
+        try:
+            remote_bytes = base64.b64decode(str(remote.get("content") or ""))
+            local_json = json.loads(local_bytes.decode("utf-8"))
+            remote_json = json.loads(remote_bytes.decode("utf-8"))
+            if isinstance(local_json, dict) and isinstance(remote_json, dict):
+                local_compare = dict(local_json)
+                remote_compare = dict(remote_json)
+                local_compare.pop("generated_at", None)
+                remote_compare.pop("generated_at", None)
+                if local_compare == remote_compare:
+                    print("V3_WEB_LEARNING_UNCHANGED")
+                    return
+        except Exception:
+            pass
     elif existing.status_code != 404:
         raise RuntimeError(f"GitHub V3 file lookup failed: HTTP {existing.status_code}")
     response = requests.put(url, headers=headers, json=payload, timeout=30)

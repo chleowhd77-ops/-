@@ -22,7 +22,7 @@ from typing import Any
 import official_meta_v3 as meta
 
 
-AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v2-dashboard-id"
+AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v3-proto-world-id"
 OUTPUT_SCHEMA = "official-meta-v3.web-learning-picks.v1"
 MINIMUM_COMPLETED_MATCHES = meta.MIN_TRAIN_MATCHES
 
@@ -202,6 +202,51 @@ def _load_pending_dashboard_cards(dashboard_path: str | Path) -> list[PendingSna
                 candidates=candidates,
                 source_kind="dashboard_card",
             )
+    return sorted(pending.values(), key=lambda item: (item.created_at, item.match_id))
+
+
+def _load_pending_world_cards(world_dashboard_path: str | Path | None) -> list[PendingSnapshot]:
+    """Freeze V3 under the exact WORLD card ID after full-context analysis exists."""
+    if world_dashboard_path is None:
+        return []
+    payload = _read_json(Path(world_dashboard_path), {})
+    if not isinstance(payload, dict):
+        return []
+    pending: dict[str, PendingSnapshot] = {}
+    for card in payload.get("matches") or []:
+        if not isinstance(card, dict):
+            continue
+        match = card.get("match") or {}
+        analysis = card.get("analysis") or {}
+        if not isinstance(match, dict) or not isinstance(analysis, dict):
+            continue
+        stage = str(analysis.get("analysis_stage") or card.get("analysis_stage") or "")
+        if not stage or stage == "market-preview":
+            continue
+        match_id = str(match.get("id") or "").strip()
+        kickoff_epoch = _future_epoch(card.get("timestamp"))
+        if not match_id or kickoff_epoch is None or match_id in pending:
+            continue
+        candidates = tuple(
+            dict(candidate)
+            for candidate in (analysis.get("candidates") or [])
+            if isinstance(candidate, dict)
+        )
+        if not candidates:
+            continue
+        snapshot_value = analysis.get("public_pick_snapshot_id") or card.get("public_pick_snapshot_id")
+        try:
+            snapshot_id = int(snapshot_value) if snapshot_value is not None else 0
+        except (TypeError, ValueError):
+            snapshot_id = 0
+        pending[match_id] = PendingSnapshot(
+            match_id=match_id,
+            snapshot_id=snapshot_id,
+            created_at=str(analysis.get("analyzed_at") or card.get("analyzed_at") or card.get("timestamp") or ""),
+            stage=stage,
+            candidates=candidates,
+            source_kind="world_dashboard_card",
+        )
     return sorted(pending.values(), key=lambda item: (item.created_at, item.match_id))
 
 
@@ -541,6 +586,7 @@ def build_autopilot_payload(
     database_path: str | Path,
     existing_payload: dict[str, Any] | None = None,
     dashboard_path: str | Path | None = None,
+    world_dashboard_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Retrain from completed history and freeze V3 picks for pending cards."""
     generated_at = _now()
@@ -568,6 +614,7 @@ def build_autopilot_payload(
             else Path(database_path).with_name("dashboard_data.json")
         )
         pending_snapshots = _load_pending_dashboard_cards(dashboard)
+        pending_snapshots.extend(_load_pending_world_cards(world_dashboard_path))
         pending_snapshots.extend(_load_pending_snapshots(database_path))
         pending_snapshots.extend(_load_pending_toto14_freezes(database_path))
         for snapshot in pending_snapshots:
@@ -616,9 +663,12 @@ def refresh_autopilot(
     database_path: str | Path,
     output_path: str | Path,
     dashboard_path: str | Path | None = None,
+    world_dashboard_path: str | Path | None = None,
 ) -> dict[str, Any]:
     output = Path(output_path)
-    payload = build_autopilot_payload(database_path, _read_json(output, {}), dashboard_path)
+    payload = build_autopilot_payload(
+        database_path, _read_json(output, {}), dashboard_path, world_dashboard_path
+    )
     _write_json_atomically(output, payload)
     return payload
 
@@ -633,8 +683,14 @@ def _main() -> int:
         "--dashboard",
         help="saved dashboard_data.json; defaults beside --db and is read only",
     )
+    parser.add_argument(
+        "--world-dashboard",
+        help="saved world_dashboard.json; read only, used only after full-context analysis",
+    )
     args = parser.parse_args()
-    payload = refresh_autopilot(args.db, args.output, args.dashboard)
+    payload = refresh_autopilot(
+        args.db, args.output, args.dashboard, args.world_dashboard
+    )
     print(
         json.dumps(
             {

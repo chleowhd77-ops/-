@@ -104,22 +104,23 @@ TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
 # heavy enrichment call to finish. This limits one cycle, never a match's total
 # learning lifetime.
 MASTER_ANALYSIS_SOFT_SECONDS = max(
-    120, min(900, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "240")))
+    180, min(720, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "300")))
 )
-# Keep each master pass short enough that LIVE/score can regain the single
-# production DB slot quickly. The next five-minute scheduler tick resumes the
-# nearest remaining kickoff from the published pending cards.
-MASTER_ANALYSIS_NEW_MATCHES_PER_PASS = max(
-    1, min(12, int(os.getenv("MASTER_ANALYSIS_NEW_MATCHES_PER_PASS", "12")))
+# R7.12.31: 12 was an emergency recovery batch, not a product limit.  Allow
+# up to 50 nearest-kickoff matches in one pass, but the time/memory brakes
+# below can yield earlier and the next scheduler turn resumes the remainder.
+MASTER_ANALYSIS_NEW_MATCHES_PER_PASS = 50
+ANALYSIS_PASS_MIN_AVAILABLE_MEMORY_MB = max(
+    96, min(512, int(os.getenv("ANALYSIS_PASS_MIN_AVAILABLE_MEMORY_MB", "200")))
 )
 TEAM_IDENTITY_RETRY_BATCH = max(
-    2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "24")))
+    2, min(50, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "30")))
 )
 # Fetch reusable team/fixture evidence before the heavy pick engines run.
 # The team worker warms the shared SQLite cache; official/robot/V2/V3 then
 # consume the same evidence without repeating overseas API work.
 DATA_PREFETCH_MATCH_LIMIT = max(
-    6, min(36, int(os.getenv("DATA_PREFETCH_MATCH_LIMIT", "24")))
+    50, min(80, int(os.getenv("DATA_PREFETCH_MATCH_LIMIT", "50")))
 )
 DATA_PREFETCH_HORIZON_HOURS = max(
     6, min(48, int(os.getenv("DATA_PREFETCH_HORIZON_HOURS", "30")))
@@ -194,10 +195,14 @@ WORLD_SCHEDULE_REFRESH_HOURS = max(
     2, min(12, int(os.getenv("WORLD_SCHEDULE_REFRESH_HOURS", "6")))
 )
 WORLD_ANALYSIS_INTERVAL_MINUTES = max(
-    10, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "15")))
+    5, min(60, int(os.getenv("WORLD_ANALYSIS_INTERVAL_MINUTES", "5")))
 )
 WORLD_ANALYSIS_SOFT_SECONDS = max(
-    180, min(900, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "420")))
+    180, min(720, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "300")))
+)
+WORLD_ANALYSIS_NEW_MATCHES_PER_PASS = 50
+WORLD_ANALYSIS_CHECKPOINT_EVERY = max(
+    5, min(20, int(os.getenv("WORLD_ANALYSIS_CHECKPOINT_EVERY", "10")))
 )
 WORLD_MARKET_WATCH_HORIZON_HOURS = max(
     3, min(48, int(os.getenv("WORLD_MARKET_WATCH_HORIZON_HOURS", "24")))
@@ -215,9 +220,10 @@ WORLD_PUBLIC_DASHBOARD_MAX_BYTES = max(
         int(os.getenv("WORLD_PUBLIC_DASHBOARD_MAX_BYTES", str(12 * 1024 * 1024))),
     ),
 )
-# PROTO의 현행 분석 버전은 그대로 둔다. WORLD가 기존 정밀 입력 세트를
-# 빠짐없이 사용하도록 맞춘 변경만 별도 모델 표식으로 남긴다.
-WORLD_ANALYSIS_VERSION = f"{ANALYSIS_VERSION}-world-full-context-v5"
+# PROTO와 WORLD는 출처만 다르고 분석 정책/버전은 동일하게 유지한다.
+# 같은 fixture는 PROTO 결과를 그대로 재사용하고, 비중복 WORLD도 같은
+# full-context 입력과 동일 ANALYSIS_VERSION으로 계산한다.
+WORLD_ANALYSIS_VERSION = ANALYSIS_VERSION
 WORLD_MARKET_PREVIEW_VERSION = f"{ANALYSIS_VERSION}-world-market-preview-v1"
 WORLD_TEAM_NAME_KO_OVERRIDES = {
     "Bucheon FC 1995": "부천 FC 1995",
@@ -9753,12 +9759,12 @@ def _analyze_world_match(item, now, market_performance):
         raise ValueError(f"not analyzable in stage {analysis_stage}")
 
     heavy_ttl = 24
-    # Initial coverage for the complete two-day board uses the same model but
-    # defers the most call-heavy context (per-fixture stats, next match,
-    # historical XI endpoints) to the T-3/T-1 refresh. Recent results,
-    # standings, injuries, squad-based predicted XI and all three odds markets
-    # are still real pre-kickoff inputs; nothing is fabricated.
-    near_kickoff_context = diff_hours <= 3.0
+    # R7.12.31 parity contract: WORLD and PROTO use the same full-context
+    # evidence from the first publishable analysis.  Data source may differ
+    # (Betman vs overseas bookmaker board), but recent detailed stats, next
+    # schedule and lineup-learning inputs are not deferred merely because a
+    # WORLD fixture is more than three hours away.
+    near_kickoff_context = True
     injury_ttl = 0.5 if diff_hours <= 3 else 12
     odds = _world_market_snapshot_for_analysis(
         item, fixture_id, diff_hours, now=now
@@ -9805,8 +9811,8 @@ def _analyze_world_match(item, now, market_performance):
     # 선발 예측의 첫 단계: 공식 명단을 지어내지 않고, 실제 스쿼드/출전
     # 기록에서 확인된 핵심 후보만 동결 저장한다. 공식 선발이 발표되면 같은
     # 스냅샷에서 일치/누락을 비교해 다음 분석의 학습 자료로 사용한다.
-    h_core = get_expected_core_players(home_id, league_id, season) if diff_hours <= 24.0 else []
-    a_core = get_expected_core_players(away_id, league_id, season) if diff_hours <= 24.0 else []
+    h_core = get_expected_core_players(home_id, league_id, season)
+    a_core = get_expected_core_players(away_id, league_id, season)
     h_predicted_xi, h_lineup_prediction = predict_starting_xi(
         home_id, league_id, season,
         h_inj.get("all_names") or h_inj.get("ace_names") or [],
@@ -10249,7 +10255,7 @@ def _analyze_world_match(item, now, market_performance):
         },
         "h2h": h2h, "evidence_coverage": coverage,
         "odds_movement": odds_movement,
-        "context_pass": "near-kickoff-full" if near_kickoff_context else "board-wide-initial",
+        "context_pass": "proto-parity-full-context",
     }
     return {
         "analysis_version": WORLD_ANALYSIS_VERSION,
@@ -10307,6 +10313,7 @@ def analyze_world_schedule():
     errors_now = 0
     quota_paused = False
     soft_paused = False
+    world_brake_reason = ""
     due_visited = 0
     analysis_deadline = time.monotonic() + WORLD_ANALYSIS_SOFT_SECONDS
     stage_priority = {
@@ -10443,10 +10450,20 @@ def analyze_world_schedule():
     world_calls_before = int(get_api_usage_status().get("world_calls") or 0)
     with api_purpose_context("world"):
         for _, _, stage, item in due_items:
-            if time.monotonic() >= analysis_deadline:
+            processed_this_pass = analyzed_now + errors_now
+            brake_reason = _analysis_pass_brake_reason(
+                processed_this_pass, WORLD_ANALYSIS_NEW_MATCHES_PER_PASS,
+                analysis_deadline,
+            )
+            if brake_reason:
                 soft_paused = True
+                world_brake_reason = brake_reason
                 changed = True
-                print("⏸️ 세계경기 저장 지점 게시 후 다음 주기에 분석을 계속합니다.")
+                print(
+                    "⏸️ WORLD 자동 브레이크: "
+                    f"{brake_reason} · 완료 {analyzed_now}경기 / "
+                    f"최대 {WORLD_ANALYSIS_NEW_MATCHES_PER_PASS}경기 · 다음 WORLD 차례에서 자동 재개"
+                )
                 break
             due_visited += 1
             match = item.get("match") or {}
@@ -10472,7 +10489,7 @@ def analyze_world_schedule():
                 )
                 if league_name not in market_performance_cache:
                     market_performance_cache[league_name] = load_market_performance(
-                        league_name
+                        league_name, serving_only=MASTER_CACHE_ONLY_SERVING
                     )
                 analysis = _analyze_world_match(
                     item, now, market_performance_cache[league_name]
@@ -10515,10 +10532,24 @@ def analyze_world_schedule():
                 # A complete board can take many minutes. Keep bounded local
                 # checkpoints so a worker timeout/restart resumes from the last
                 # finished pre-kickoff analysis instead of repeating the board.
-                if analyzed_now % 5 == 0:
+                if analyzed_now % WORLD_ANALYSIS_CHECKPOINT_EVERY == 0:
                     _refresh_world_source_meta(payload)
                     payload["last_analysis_checkpoint_at"] = datetime.now(KST).isoformat()
+                    payload.setdefault("source_meta", {})["analysis_resume_pending_count"] = max(
+                        0, len(due_items) - due_visited
+                    )
                     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
+                    checkpoint_file = _write_world_publication_file()
+                    if checkpoint_file is not None:
+                        if upload_to_github(
+                            checkpoint_file, remote_path=WORLD_DASHBOARD_FILE.name
+                        ):
+                            print(
+                                "⚡ WORLD 우선 게시 체크포인트: "
+                                f"정밀분석 {analyzed_now}경기 / 남은 {max(0, len(due_items)-due_visited)}경기"
+                            )
+                        else:
+                            print("⚠️ WORLD 중간 게시 실패 · 로컬 저장본은 보존하고 최종 게시에서 재시도")
                 print(
                     f"🧪 세계경기 그림자 분석: {match.get('home')} vs {match.get('away')} · "
                     f"{analysis['selected'].get('display')} "
@@ -10569,6 +10600,8 @@ def analyze_world_schedule():
         "analysis_per_league_limit": WORLD_MAX_DEEP_ANALYSES_PER_LEAGUE,
         "quota_paused": quota_paused,
         "analysis_soft_paused": soft_paused,
+        "analysis_brake_reason": str(world_brake_reason or ""),
+        "analysis_max_matches_per_pass": WORLD_ANALYSIS_NEW_MATCHES_PER_PASS,
         "analysis_resume_pending_count": max(0, len(due_items) - due_visited),
         "analysis_soft_budget_seconds": WORLD_ANALYSIS_SOFT_SECONDS,
         "api_usage": get_api_usage_status(),
@@ -11461,6 +11494,7 @@ def _publish_proto_checkpoint(
     raw_proto_matches, rejected_placeholder_count, rejected_auxiliary_count,
     rejected_proto_count, resumed_proto_count, analyzed_proto_count,
     deferred_proto_count, proto_market_watch_count, proto_cycle_started,
+    proto_brake_reason="",
 ):
     """Publish the PROTO board before any TOTO14-heavy follow-up can block it.
 
@@ -11504,6 +11538,7 @@ def _publish_proto_checkpoint(
         "deferred_proto_count": deferred_proto_count,
         "proto_market_watch_count": proto_market_watch_count,
         "analysis_resume_pending": bool(deferred_proto_count),
+        "analysis_brake_reason": str(proto_brake_reason or ""),
         "master_analysis_elapsed_seconds": round(time.monotonic() - proto_cycle_started, 2),
         "proto_parity_ok": len(proto_matches) == len(dashboard_proto),
         "proto_checkpoint": True,
@@ -11535,6 +11570,22 @@ def _publish_proto_checkpoint(
         f"업로드 {'성공' if published else '보류'}"
     )
     return published
+
+
+def _analysis_pass_brake_reason(processed_count, max_matches, deadline):
+    """Return a safe yield reason without turning a batch size into a daily cap."""
+    if int(processed_count or 0) >= int(max_matches or 1):
+        return "batch_limit"
+    if int(processed_count or 0) > 0 and time.monotonic() >= float(deadline):
+        return "soft_time_budget"
+    if int(processed_count or 0) > 0:
+        available_mb = _available_memory_mb()
+        if (
+            available_mb is not None
+            and available_mb < ANALYSIS_PASS_MIN_AVAILABLE_MEMORY_MB
+        ):
+            return f"low_memory_{int(available_mb)}MB"
+    return ""
 
 
 def build_dashboard_data():
@@ -11611,6 +11662,7 @@ def build_dashboard_data():
     analyzed_proto_count = 0
     deferred_proto_count = 0
     proto_market_watch_count = 0
+    proto_brake_reason = ""
     proto_robot_artifact = _load_autonomous_robot_artifact(
         "PROTO", serving_only=MASTER_CACHE_ONLY_SERVING
     )
@@ -11666,20 +11718,30 @@ def build_dashboard_data():
             resumed_proto_count += 1
             continue
 
-        # Do not let one large Betman board monopolize the production DB for
-        # tens of minutes. Team/API evidence is already warmed by the team
-        # worker, so analyze only a small nearest-kickoff batch and publish the
-        # rest as honest pending cards for the next pass.
-        if analyzed_proto_count >= MASTER_ANALYSIS_NEW_MATCHES_PER_PASS:
+        # 50 is a maximum pass size, never a daily/customer limit.  Yield early
+        # only when the current pass reaches its time or memory safety brake;
+        # pending cards remain first-class work for the very next master turn.
+        brake_reason = _analysis_pass_brake_reason(
+            analyzed_proto_count, MASTER_ANALYSIS_NEW_MATCHES_PER_PASS,
+            proto_soft_deadline,
+        )
+        if brake_reason:
+            if not proto_brake_reason:
+                proto_brake_reason = brake_reason
+                print(
+                    "⏸️ PROTO 자동 브레이크: "
+                    f"{brake_reason} · 완료 {analyzed_proto_count}경기 / "
+                    f"최대 {MASTER_ANALYSIS_NEW_MATCHES_PER_PASS}경기 · 다음 주기 즉시 이어서 분석"
+                )
             deferred_item = _resumable_proto_item(
                 m, previous_item, require_current_stage=False
             )
             if deferred_item is None:
                 deferred_item = _pending_proto_item(m)
-                deferred_item["public_pick_block_reason"] = "analysis_batch_waiting_for_next_master_pass"
+                deferred_item["public_pick_block_reason"] = f"analysis_pass_brake:{brake_reason}"
                 deferred_item["detailed_report"] = (
-                    "해외 API 자료는 공용 캐시에 선수집 중이며, 가까운 킥오프부터 "
-                    "소량씩 정밀 분석해 LIVE·채점 작업을 막지 않습니다."
+                    "해외 API 자료를 공용 캐시에 선수집하고 있으며, 서버 과부하를 막기 위해 "
+                    "현재 분석 묶음을 잠시 양보했습니다. 다음 master 차례에서 자동으로 이어서 분석합니다."
                 )
             deferred_item["analysis_refresh_pending"] = True
             deferred_item["public_pick_blocked"] = True
@@ -11692,27 +11754,6 @@ def build_dashboard_data():
         # analysis below to finish instead of publishing an empty card until a
         # later cycle.  Unknown teams still follow the normal bounded queue.
         model_only_recovery = _proto_can_finish_model_only_analysis(m)
-        if time.monotonic() >= proto_soft_deadline and not model_only_recovery:
-            deferred_item = _resumable_proto_item(
-                m, previous_item, require_current_stage=False
-            )
-            if deferred_item is None:
-                deferred_item = _pending_proto_item(m)
-                deferred_item["public_pick_block_reason"] = "analysis_queue_waiting_for_prefetched_data"
-                deferred_item["detailed_report"] = (
-                    "해외 API 팀·최근 경기 자료를 공용 캐시에 먼저 수집한 뒤 정밀 분석합니다. "
-                    "배당만으로 임시 최종픽을 만들지 않습니다."
-                )
-                queue_team_identity_retry(
-                    home_team, away_team, final_match_time,
-                    reason="analysis_deferred_identity_logo_or_form_pending",
-                    league_name=m.get("league") or "",
-                )
-            deferred_item["analysis_refresh_pending"] = True
-            deferred_item["public_pick_blocked"] = True
-            dashboard_proto.append(deferred_item)
-            deferred_proto_count += 1
-            continue
 
         if model_only_recovery:
             # This pair was already verified in the local identity cache.  Do
@@ -12709,6 +12750,7 @@ def build_dashboard_data():
             raw_proto_matches, rejected_placeholder_count, rejected_auxiliary_count,
             rejected_proto_count, resumed_proto_count, analyzed_proto_count,
             deferred_proto_count, proto_market_watch_count, proto_cycle_started,
+            proto_brake_reason=proto_brake_reason,
         )
         if (
             MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG
@@ -12717,7 +12759,8 @@ def build_dashboard_data():
         ):
             print(
                 "↪️ PROTO 대기 경기가 남아 이번 master는 여기서 양보합니다. "
-                "승무패14 기존 공개본은 보존하고 다음 빠른 주기에서 PROTO를 이어갑니다."
+                f"현재 최대 {MASTER_ANALYSIS_NEW_MATCHES_PER_PASS}경기 묶음/자동 브레이크이며 "
+                "남은 시작 전 경기는 다음 master 차례에서 계속 분석합니다. 승무패14 기존 공개본은 보존합니다."
             )
             return True
 
@@ -16704,8 +16747,15 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                 hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
                 if fixture_id and hours_to_kickoff <= 24:
                     injury_ttl = 3 if hours_to_kickoff <= 3 else 8
-                    fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id)
-                    fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
+                    if entry.get("source") == "WORLD":
+                        fetch_world_injuries_snapshot(
+                            fixture_id, home_id, away_id, league_id, season, injury_ttl
+                        )
+                        if not _has_valid_world_market((entry.get("item") or {}).get("market_snapshot")):
+                            fetch_world_market_snapshot(fixture_id, hours_to_kickoff)
+                    else:
+                        fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id)
+                        fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
                     if hours_to_kickoff <= 2:
                         fetch_lineups_api(fixture_id, 0.25, purpose=purpose)
         except (ApiQuotaUnavailable, ApiRateLimited) as error:
@@ -16939,7 +16989,7 @@ JOB_TIMEOUTS = {
     "recovery": max(60, int(os.getenv("RECOVERY_JOB_TIMEOUT_SECONDS", "180"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
-    "world": max(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "3600"))),
+    "world": max(600, min(1800, int(os.getenv("WORLD_JOB_TIMEOUT_SECONDS", "1200")))),
     "team": max(180, int(os.getenv("TEAM_JOB_TIMEOUT_SECONDS", "600"))),
     "backup": max(1800, int(os.getenv("BACKUP_JOB_TIMEOUT_SECONDS", "7200"))),
 }
@@ -17028,7 +17078,7 @@ MASTER_PRIORITY_AGE_SECONDS = max(
     60, min(600, int(os.getenv("MASTER_PRIORITY_AGE_SECONDS", "180")))
 )
 WORLD_PRIORITY_AGE_SECONDS = max(
-    300, min(1800, int(os.getenv("WORLD_PRIORITY_AGE_SECONDS", "900")))
+    120, min(900, int(os.getenv("WORLD_PRIORITY_AGE_SECONDS", "180")))
 )
 
 
@@ -17101,11 +17151,11 @@ def _pending_sort_key(job_name, now):
     # request. WORLD gets a slower fairness boost; the generic starvation guard
     # remains the final fallback for every job.
     if job_name == "master" and waited >= MASTER_PRIORITY_AGE_SECONDS:
-        return (0, 0, requested_at)
+        return (0, requested_at, 0)
     if job_name == "world" and waited >= WORLD_PRIORITY_AGE_SECONDS:
-        return (0, 1, requested_at)
+        return (0, requested_at, 0)
     if waited >= PENDING_JOB_AGE_SECONDS:
-        return (0, 2, requested_at)
+        return (0, requested_at, 1)
     return (1, JOB_PRIORITY.get(job_name, 99), requested_at)
 
 

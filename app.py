@@ -1849,6 +1849,17 @@ if isinstance(dashboard_data, dict):
             )
             if isinstance(v3_pick, dict):
                 item["v3_learning_pick"] = dict(v3_pick)
+if isinstance(world_dashboard_data, dict):
+    for item in world_dashboard_data.get("matches", []) or []:
+        if not isinstance(item, dict):
+            continue
+        match_id = str((item.get("match") or {}).get("id") or "")
+        v3_pick = v3_learning_picks.get(match_id)
+        if not isinstance(v3_pick, dict):
+            continue
+        item["v3_learning_pick"] = dict(v3_pick)
+        if isinstance(item.get("analysis"), dict):
+            item["analysis"]["v3_learning_pick"] = dict(v3_pick)
 grading_snapshot = load_grading_snapshot(dashboard_data.get("grading", {}))
 if not _is_current_robot_public_snapshot(grading_snapshot):
     if _has_usable_grading_history(grading_snapshot):
@@ -2246,6 +2257,10 @@ def _world_live_item(world_item, proto_by_fixture):
     item = dict(world_item,match=match,pick_categories=categories,
                 ev_sorted_picks=[selected] if selected.get("raw_pick") else [],
                 robot_pick=robot_pick,
+                v3_learning_pick=(
+                    analysis.get("v3_learning_pick")
+                    or world_item.get("v3_learning_pick")
+                ),
                 display_candidates=[dict(candidate, raw_pick=localize(candidate.get("raw_pick")))
                                     for candidate in (analysis.get("candidates") or []) if isinstance(candidate, dict)],
                 display_candidates_saved_at=(
