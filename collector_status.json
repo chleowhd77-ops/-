@@ -5,11 +5,12 @@
       "supervisor_pid": 455145,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-27T23:39:45+00:00",
+      "heartbeat_at": "2026-09-27T23:40:16+00:00",
       "pid": 455145,
       "last_started_at": "2026-09-27T21:26:51+00:00",
       "active_jobs": {
-        "score": 455712
+        "score": 455712,
+        "team": 455726
       },
       "pending_jobs": [
         "live",
@@ -38,18 +39,21 @@
       "last_success_duration_seconds": 295.83,
       "last_failure_duration_seconds": 600.7,
       "run_id": "score-1790551949193171238",
-      "last_stage": "executing",
+      "last_stage": "grading_published",
       "state": "running",
-      "heartbeat_at": "2026-09-27T23:39:45+00:00",
-      "pid": 455145,
+      "heartbeat_at": "2026-09-27T23:40:22+00:00",
+      "pid": 455712,
       "last_started_at": "2026-09-27T23:32:30+00:00",
       "child_pid": 455712,
-      "elapsed_seconds": 436.5,
+      "elapsed_seconds": 466.9,
       "overlap_skips": 2,
       "due_count": 10,
       "graded_count": 0,
       "result_error_count": 0,
-      "results_state": "checked"
+      "results_state": "checked",
+      "grading_published_at": "2026-09-27T23:40:16+00:00",
+      "scoring_seconds": 152.92,
+      "grading_snapshot_seconds": 312.76
     },
     "master": {
       "last_success_duration_seconds": 203.23,
@@ -88,15 +92,30 @@
       "last_error": "hard timeout after 1200 seconds"
     },
     "team": {
-      "last_success_at": "2026-09-27T23:38:00+00:00",
-      "last_success_duration_seconds": 104.79,
+      "last_success_at": "2026-09-27T23:40:20+00:00",
+      "last_success_duration_seconds": 12.15,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
       "run_id": "team-1790552395757027735",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T23:40:08+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-27T23:40:20+00:00",
       "pid": 455726,
-      "last_started_at": "2026-09-27T23:40:08+00:00"
+      "last_started_at": "2026-09-27T23:40:08+00:00",
+      "child_pid": 455726,
+      "elapsed_seconds": 20.2,
+      "overlap_skips": 0,
+      "team_retry_processed": 0,
+      "team_retry_resolved": 194,
+      "team_retry_pending": 3,
+      "team_retry_due": 0,
+      "team_retry_seeded": 1,
+      "team_profile_card_updates": 0,
+      "data_prefetch_matches": 31,
+      "data_prefetch_teams": 62,
+      "data_prefetch_identity_missing": 0,
+      "data_prefetch_quota_paused": false,
+      "data_prefetch_errors": [],
+      "duration_seconds": 12.15
     },
     "backup": {
       "last_success_duration_seconds": 452.95,
@@ -130,7 +149,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T23:40:08+00:00",
+  "updated_at": "2026-09-27T23:40:22+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -200,7 +219,7 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/fixtures",
-        "count": 3098
+        "count": 3147
       },
       {
         "metric": "cache_hit",
@@ -212,7 +231,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 623
+        "count": 637
       },
       {
         "metric": "cache_hit",
@@ -230,7 +249,7 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/standings",
-        "count": 374
+        "count": 376
       },
       {
         "metric": "cache_hit",
@@ -260,7 +279,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 203
+        "count": 213
       },
       {
         "metric": "cache_only_miss",
@@ -296,7 +315,7 @@
         "metric": "singleflight_block",
         "purpose": "world",
         "endpoint": "/players/topscorers",
-        "count": 103
+        "count": 104
       },
       {
         "metric": "cache_hit",
@@ -308,11 +327,11 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 53
+        "count": 55
       },
       {
         "metric": "cache_hit",
-        "purpose": "world",
+        "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
         "count": 32
       }
