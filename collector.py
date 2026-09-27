@@ -110,7 +110,7 @@ MASTER_ANALYSIS_SOFT_SECONDS = max(
 # production DB slot quickly. The next five-minute scheduler tick resumes the
 # nearest remaining kickoff from the published pending cards.
 MASTER_ANALYSIS_NEW_MATCHES_PER_PASS = max(
-    1, min(12, int(os.getenv("MASTER_ANALYSIS_NEW_MATCHES_PER_PASS", "6")))
+    1, min(12, int(os.getenv("MASTER_ANALYSIS_NEW_MATCHES_PER_PASS", "12")))
 )
 TEAM_IDENTITY_RETRY_BATCH = max(
     2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "24")))
@@ -127,6 +127,16 @@ DATA_PREFETCH_HORIZON_HOURS = max(
 DATA_PREFETCH_TEAM_TTL_HOURS = max(
     4, min(24, int(os.getenv("DATA_PREFETCH_TEAM_TTL_HOURS", "12")))
 )
+MASTER_CACHE_ONLY_SERVING = os.getenv("MASTER_CACHE_ONLY_SERVING", "1") != "0"
+MASTER_MARKET_POLICY_CACHE_HOURS = max(
+    6, min(168, int(os.getenv("MASTER_MARKET_POLICY_CACHE_HOURS", "72")))
+)
+MASTER_PROTO_CHECKPOINT_UPLOAD = os.getenv("MASTER_PROTO_CHECKPOINT_UPLOAD", "1") != "0"
+MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG = os.getenv(
+    "MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG", "1"
+) != "0"
+MASTER_INLINE_TEAM_RETRY = os.getenv("MASTER_INLINE_TEAM_RETRY", "0") == "1"
+
 # A decimal quote must exceed 1. No arbitrary minimum price sacrifices a
 # higher-probability candidate; actual conservative return remains required.
 FINAL_PICK_MIN_ODDS = 1.0
@@ -1896,7 +1906,10 @@ def get_expected_core_players(team_id, league_id, season):
     return core_players[:8]
 
 
-def _load_robot_lineup_experience(team_id):
+_ROBOT_LINEUP_EXPERIENCE_CACHE = {}
+
+
+def _load_robot_lineup_experience(team_id, serving_only=False):
     """Load every post-match official XI answer for this team.
 
     There is no minimum-match activation gate. One official answer changes the
@@ -1904,6 +1917,17 @@ def _load_robot_lineup_experience(team_id):
     """
     if not int(team_id or 0):
         return {"players": {}, "formations": {}, "samples": 0}
+    team_id = int(team_id)
+    cached_process = _ROBOT_LINEUP_EXPERIENCE_CACHE.get(team_id)
+    if isinstance(cached_process, dict):
+        return cached_process
+    cache_key = f"robot_lineup_experience_v1_{team_id}"
+    cached_persistent = get_db_cache(cache_key, 48)
+    if isinstance(cached_persistent, dict):
+        _ROBOT_LINEUP_EXPERIENCE_CACHE[team_id] = cached_persistent
+        return cached_persistent
+    if serving_only:
+        return {"players": {}, "formations": {}, "samples": 0, "serving_cache_miss": True}
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=10)
@@ -1996,11 +2020,14 @@ def _load_robot_lineup_experience(team_id):
         cell["learned_start_probability"] = round(
             (starts + 0.5) / (games + 1.0), 8
         )
-    return {
+    result = {
         "players": players,
         "formations": dict(formations),
         "samples": samples,
     }
+    _ROBOT_LINEUP_EXPERIENCE_CACHE[team_id] = result
+    set_db_cache(cache_key, result)
+    return result
 
 
 def _formation_quotas(formation):
@@ -2021,7 +2048,7 @@ def _formation_quotas(formation):
 
 def predict_starting_xi(
     team_id, league_id=None, season=None, unavailable_names=None,
-    historical_lineups=True,
+    historical_lineups=True, cached_learning_only=False,
 ):
     """Predict an XI from recent official lineups and the current squad.
 
@@ -2087,7 +2114,7 @@ def predict_starting_xi(
         set_db_cache(usage_key, {**usage, "_sample_lineups": sample_lineups})
 
     core = get_expected_core_players(team_id, league_id, season)
-    robot_experience = _load_robot_lineup_experience(team_id)
+    robot_experience = _load_robot_lineup_experience(team_id, serving_only=cached_learning_only)
     learned_players = robot_experience.get("players") or {}
     core_normalized = {_normalize_player_name(name) for name in core}
     usage_by_normalized = {
@@ -2274,8 +2301,76 @@ def infer_pick_market(pick_or_text):
     return "1x2"
 
 
-def load_market_performance(league_name=None):
-    """Read honest market records, then cautiously blend a matching league."""
+def _market_performance_cache_key(league_name=None):
+    normalized = re.sub(r"[^0-9a-z가-힣]+", "_", str(league_name or "global").casefold()).strip("_")
+    return f"market_performance_serving_v2_{normalized or 'global'}"
+
+
+_SERVING_MARKET_PERFORMANCE_FALLBACK = None
+
+
+def _lightweight_market_performance(league_name=None):
+    """Fast serving fallback using only recent already-graded official rows.
+
+    Heavy candidate replay/policy fitting is intentionally excluded from the
+    customer pick path. The full learner may later replace this cache, while
+    serving remains bounded and honest when no learned cache exists yet.
+    """
+    global _SERVING_MARKET_PERFORMANCE_FALLBACK
+    if isinstance(_SERVING_MARKET_PERFORMANCE_FALLBACK, dict):
+        return _SERVING_MARKET_PERFORMANCE_FALLBACK
+    summary = {
+        key: {"samples": 0, "hits": 0, "hit_rate": 0.5, "selection_share": 0.0,
+              "scope": "recent-serving-fallback", "price_policy": {},
+              "official_selection_policy": {}}
+        for key in MARKET_LABELS
+    }
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{_local_path('ai_predictions.db')}?mode=ro", uri=True, timeout=2
+        )
+        conn.execute("PRAGMA busy_timeout=2000")
+        rows = conn.execute(
+            """
+            SELECT prob_pick,is_correct_prob
+            FROM predictions
+            WHERE actual_result='FINISHED' AND COALESCE(is_toto14,0)=0
+              AND prob_pick IS NOT NULL AND prob_pick<>''
+            ORDER BY rowid DESC LIMIT 300
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        if conn is not None:
+            conn.close()
+    counts = {key: 0 for key in MARKET_LABELS}
+    for pick_text, hit in rows:
+        market = infer_pick_market(pick_text)
+        if market not in summary:
+            continue
+        counts[market] += 1
+        summary[market]["samples"] += 1
+        summary[market]["hits"] += 1 if int(hit or 0) == 1 else 0
+    total = sum(counts.values())
+    for market, values in summary.items():
+        values["hit_rate"] = round((values["hits"] + 4.0) / (values["samples"] + 8.0), 4)
+        values["selection_share"] = round(counts[market] / total, 4) if total else 0.0
+    summary["_movement_policy"] = validate_movement_policy([])
+    summary["_serving_fallback"] = True
+    _SERVING_MARKET_PERFORMANCE_FALLBACK = summary
+    return summary
+
+
+def load_market_performance(league_name=None, serving_only=False):
+    """Read honest market records, with a persistent fast cache for serving."""
+    cache_key = _market_performance_cache_key(league_name)
+    cached_summary = get_db_cache(cache_key, MASTER_MARKET_POLICY_CACHE_HOURS)
+    if isinstance(cached_summary, dict):
+        return cached_summary
+    if serving_only:
+        return _lightweight_market_performance(league_name)
     summary = {
         key: {"samples": 0, "hits": 0, "hit_rate": 0.5, "selection_share": 0.0}
         for key in MARKET_LABELS
@@ -2430,6 +2525,7 @@ def load_market_performance(league_name=None):
             high_market_counts[market] / total_high, 4
         ) if total_high else 0.0
     summary["_movement_policy"] = movement_policy
+    set_db_cache(cache_key, summary)
     return summary
 
 
@@ -6304,14 +6400,80 @@ def _select_autonomous_robot_artifact(
     return selected_artifact
 
 
-def _load_autonomous_robot_artifact(source="PROTO"):
+def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
     track = _robot_learning_track(source)
+
+    if serving_only:
+        cached = _AUTONOMOUS_ROBOT_CACHE.get(track) or {}
+        cached_artifact = cached.get("artifact") if isinstance(cached, dict) else None
+        if isinstance(cached_artifact, dict) and cached_artifact:
+            return cached_artifact
+        latest_row = None
+        serving_conn = None
+        try:
+            serving_conn = sqlite3.connect(
+                f"file:{_local_path('ai_predictions.db')}?mode=ro",
+                uri=True, timeout=2,
+            )
+            serving_conn.execute("PRAGMA busy_timeout = 2000")
+            has_table = serving_conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='robot_model_promotions'"
+            ).fetchone()
+            if has_table:
+                latest_row = serving_conn.execute(
+                    """
+                    SELECT sample_signature,artifact_json FROM robot_model_promotions
+                    WHERE robot_pick_version=? AND model_version=?
+                      AND sample_signature LIKE ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (ROBOT_PICK_VERSION, ROBOT_MODEL_VERSION, track + ":%"),
+                ).fetchone()
+        except sqlite3.Error:
+            latest_row = None
+        finally:
+            if serving_conn is not None:
+                serving_conn.close()
+        if latest_row:
+            try:
+                latest_artifact = json.loads(latest_row[1] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                latest_artifact = {}
+            if isinstance(latest_artifact, dict) and latest_artifact:
+                latest_artifact = dict(latest_artifact)
+                latest_artifact["serving_only"] = True
+                latest_artifact["learning_revision_marker"] = str(latest_row[0] or "")
+                _AUTONOMOUS_ROBOT_CACHE[track] = {
+                    "signature": str(latest_row[0] or ""),
+                    "artifact": latest_artifact,
+                }
+                return latest_artifact
+        baseline = {
+            "active": True,
+            "parameters": {
+                "model_family": "context_baseline",
+                "rho": -.15,
+                "learning_strength": 0.0,
+            },
+            "selected_model_family": "context_baseline",
+            "deployed_model_family": "context_baseline",
+            "deployment_eligible": False,
+            "serving_only": True,
+            "reason": "학습 산출물 준비 전 빠른 경기전 서비스용 기초모형",
+            "learning_revision_marker": "serving-baseline",
+        }
+        _AUTONOMOUS_ROBOT_CACHE[track] = {
+            "signature": "serving-baseline", "artifact": baseline,
+        }
+        return baseline
+
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
         _ensure_prediction_analysis_tables(conn)
+
         track_where, track_params = _robot_track_sql(source)
         signature_row = conn.execute(
             f"""
@@ -6356,9 +6518,14 @@ def _load_autonomous_robot_artifact(source="PROTO"):
             except (TypeError, ValueError, json.JSONDecodeError):
                 persisted_artifact = {}
             if isinstance(persisted_artifact, dict) and persisted_artifact:
-                selected_artifact = _select_autonomous_robot_artifact(
-                    conn, persisted_artifact, source, track, signature
-                )
+                if serving_only:
+                    selected_artifact = dict(persisted_artifact)
+                    selected_artifact["serving_only"] = True
+                    selected_artifact["learning_revision_marker"] = signature
+                else:
+                    selected_artifact = _select_autonomous_robot_artifact(
+                        conn, persisted_artifact, source, track, signature
+                    )
                 _ROBOT_LEARNING_MARKER_CACHE[track] = {
                     "checked_at": time.monotonic(), "value": signature,
                 }
@@ -6997,13 +7164,17 @@ def _reconcile_robot_lineup_answers(conn, batch_size=6):
 
 
 def select_autonomous_robot_pick(
-    picks, confidence, robot_features=None, source="PROTO"
+    picks, confidence, robot_features=None, source="PROTO",
+    robot_artifact=None, serving_only=False,
 ):
     """Return one robot-owned forecast without changing the official pick."""
     available = valid_analysis_candidates(picks)
     if not available:
         return None
-    robot_artifact = _load_autonomous_robot_artifact(source)
+    if not isinstance(robot_artifact, dict):
+        robot_artifact = _load_autonomous_robot_artifact(
+            source, serving_only=serving_only
+        )
     has_robot_probabilities = any(
         pick.get("robot_probability") is not None for pick in available
     )
@@ -11215,6 +11386,87 @@ def _proto_can_finish_model_only_analysis(match):
     return bool(home_id > 0 and away_id > 0 and home_id != away_id)
 
 
+def _publish_proto_checkpoint(
+    dashboard_proto, previous_dashboard, proto_matches, toto_14_matches,
+    raw_proto_matches, rejected_placeholder_count, rejected_auxiliary_count,
+    rejected_proto_count, resumed_proto_count, analyzed_proto_count,
+    deferred_proto_count, proto_market_watch_count, proto_cycle_started,
+):
+    """Publish the PROTO board before any TOTO14-heavy follow-up can block it.
+
+    The previous current-round TOTO14 cards and grading snapshot are preserved
+    verbatim.  This is a presentation checkpoint only: prediction rows, frozen
+    picks, grades and model versions are never rewritten here.
+    """
+    previous_dashboard = previous_dashboard if isinstance(previous_dashboard, dict) else {}
+    current_toto_ids = {str(match.get("id") or "") for match in (toto_14_matches or [])}
+    previous_toto14 = [
+        item for item in (previous_dashboard.get("toto14") or [])
+        if isinstance(item, dict)
+        and str((item.get("match") or {}).get("id") or "") in current_toto_ids
+    ]
+    now_ts = datetime.now(KST).timestamp()
+    upcoming_proto = [
+        item for item in dashboard_proto
+        if float(item.get("timestamp") or 0) > now_ts and item.get("ev_sorted_picks")
+    ]
+    top_3_picks = sorted(
+        upcoming_proto,
+        key=lambda item: (item.get("reliability_score", 0), item.get("analysis_confidence", 0)),
+        reverse=True,
+    )[:3]
+    source_meta = dict(previous_dashboard.get("source_meta") or {})
+    source_meta.update({
+        "analysis_version": ANALYSIS_VERSION,
+        "system_version": SYSTEM_VERSION,
+        "underdog_gate_version": UNDERDOG_GATE_VERSION,
+        "raw_betman_proto_count": len(raw_proto_matches),
+        "rejected_placeholder_count": rejected_placeholder_count,
+        "rejected_auxiliary_prediction_count": rejected_auxiliary_count,
+        "rejected_proto_count": rejected_proto_count,
+        "betman_proto_count": len(proto_matches),
+        "display_proto_count": len(dashboard_proto),
+        "betman_toto14_count": len(toto_14_matches),
+        "display_toto14_count": len(previous_toto14),
+        "resumed_proto_count": resumed_proto_count,
+        "analyzed_proto_count": analyzed_proto_count,
+        "master_analysis_new_matches_per_pass": MASTER_ANALYSIS_NEW_MATCHES_PER_PASS,
+        "deferred_proto_count": deferred_proto_count,
+        "proto_market_watch_count": proto_market_watch_count,
+        "analysis_resume_pending": bool(deferred_proto_count),
+        "master_analysis_elapsed_seconds": round(time.monotonic() - proto_cycle_started, 2),
+        "proto_parity_ok": len(proto_matches) == len(dashboard_proto),
+        "proto_checkpoint": True,
+        "api_usage": get_api_usage_status(),
+        "generated_at": datetime.now(KST).isoformat(),
+    })
+    payload = {
+        "proto": dashboard_proto,
+        "toto14": previous_toto14,
+        "grading": previous_dashboard.get("grading") or {},
+        "toto14_meta": previous_dashboard.get("toto14_meta") or {},
+        "top3": top_3_picks,
+        "honey_two_pick": build_honey_two_pick(upcoming_proto),
+        "source_meta": source_meta,
+    }
+    _atomic_write_json("dashboard_data.json", payload)
+    published = False
+    if MASTER_PROTO_CHECKPOINT_UPLOAD:
+        published = bool(upload_to_github("dashboard_data.json"))
+    _update_collector_status(
+        "master", "running",
+        last_stage=("proto_checkpoint_published" if published else "proto_checkpoint_local"),
+        proto_checkpoint_analyzed=int(analyzed_proto_count),
+        proto_checkpoint_deferred=int(deferred_proto_count),
+    )
+    print(
+        "⚡ PROTO 우선 게시 체크포인트: "
+        f"신규 정밀분석 {analyzed_proto_count}건 / 대기 {deferred_proto_count}건 / "
+        f"업로드 {'성공' if published else '보류'}"
+    )
+    return published
+
+
 def build_dashboard_data():
     print(f"\n[🧠 {time.strftime('%Y-%m-%d %H:%M:%S')}] 대시보드 {ANALYSIS_VERSION} 신뢰도 보정 엔진 가동 중...")
     betman_data = _read_json("betman_data.json", {})
@@ -11282,13 +11534,16 @@ def build_dashboard_data():
 
     # 실제 채점된 시장 기록은 리그별로 한 번씩 읽어 전 세계·프로토가 함께 학습한다.
     market_performance_cache = {}
-    toto14_probability_policy = load_toto14_probability_policy()
+    toto14_probability_policy = None
     proto_cycle_started = time.monotonic()
     proto_soft_deadline = proto_cycle_started + MASTER_ANALYSIS_SOFT_SECONDS
     resumed_proto_count = 0
     analyzed_proto_count = 0
     deferred_proto_count = 0
     proto_market_watch_count = 0
+    proto_robot_artifact = _load_autonomous_robot_artifact(
+        "PROTO", serving_only=MASTER_CACHE_ONLY_SERVING
+    )
 
     # Analyze the nearest kickoff first, then restore Betman's original display
     # order before publishing. This keeps a large future board from delaying a
@@ -11524,7 +11779,10 @@ def build_dashboard_data():
          
         os_data = preloaded_os_data or fetch_overseas_odds_and_fixture_api(
             home_info.get("id"), away_info.get("id"), odds_ttl, final_match_time,
-            include_odds=0 < diff_hours <= 24,
+            include_odds=(
+                0 < diff_hours <= 24
+                and not _valid_three_way_odds([odd_h, odd_d, odd_a])
+            ),
         )
         api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
         model_only_verified_pair = bool(
@@ -11558,6 +11816,11 @@ def build_dashboard_data():
             # pre-kickoff probability pick.  Keep the missing fixture explicit
             # so neither price value nor a later result link is invented.
             m["fixture_identity_pending"] = True
+        match_analysis_started = time.monotonic()
+        print(
+            f"⚙️ PROTO 정밀분석 시작: {home_team} vs {away_team} "
+            f"({analyzed_proto_count + 1}/{MASTER_ANALYSIS_NEW_MATCHES_PER_PASS})"
+        )
         analyzed_proto_count += 1
         referee = os_data.get("referee") if os_data else None
         city = os_data.get("city") if os_data else None
@@ -11652,10 +11915,14 @@ def build_dashboard_data():
         h_predicted_xi, h_lineup_prediction = predict_starting_xi(
             home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"),
             h_inj_data.get("all_names") or h_inj_data.get("ace_names") or [],
+            historical_lineups=not MASTER_CACHE_ONLY_SERVING,
+            cached_learning_only=MASTER_CACHE_ONLY_SERVING,
         )
         a_predicted_xi, a_lineup_prediction = predict_starting_xi(
             away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"),
             a_inj_data.get("all_names") or a_inj_data.get("ace_names") or [],
+            historical_lineups=not MASTER_CACHE_ONLY_SERVING,
+            cached_learning_only=MASTER_CACHE_ONLY_SERVING,
         )
         if diff_hours <= 1.5:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
@@ -11693,7 +11960,9 @@ def build_dashboard_data():
          
         league_n = m.get('league', '')
         if league_n not in market_performance_cache:
-            market_performance_cache[league_n] = load_market_performance(league_n)
+            market_performance_cache[league_n] = load_market_performance(
+                league_n, serving_only=MASTER_CACHE_ONLY_SERVING
+            )
         market_performance = market_performance_cache[league_n]
         h_stats = fetch_recent_team_stats_api(home_info.get("id"), heavy_ttl)
         a_stats = fetch_recent_team_stats_api(away_info.get("id"), heavy_ttl)
@@ -12043,11 +12312,12 @@ def build_dashboard_data():
         legacy_v4_candidates = []
         legacy_v4_pick = {}
         robot_candidates = build_autonomous_robot_candidates(
-            valid_all_picks, robot_features, _load_autonomous_robot_artifact("PROTO")
+            valid_all_picks, robot_features, proto_robot_artifact
         )
         robot_pick = select_autonomous_robot_pick(
             robot_candidates, analysis_confidence, robot_features,
-            source="PROTO",
+            source="PROTO", robot_artifact=proto_robot_artifact,
+            serving_only=MASTER_CACHE_ONLY_SERVING,
         )
         alphago_pick = _alphago_pick_payload(robot_pick)
         highest_prob_pick = pick_categories["high_probability"]
@@ -12337,6 +12607,10 @@ def build_dashboard_data():
             "h_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if h_rest_days <= 3 else "", "a_rest_html": f"<div class='fatigue-badge'>💦 체력 방전</div>" if a_rest_days <= 3 else "",
             "h_rank_html": f"<div class='rank-badge'>🏆 순위: {h_rank}위</div>" if h_rank != 99 else "", "a_rank_html": f"<div class='rank-badge'>🏆 순위: {a_rank}위</div>" if a_rank != 99 else ""
         })
+        print(
+            f"✅ PROTO 정밀분석 완료: {home_team} vs {away_team} "
+            f"({time.monotonic() - match_analysis_started:.1f}초)"
+        )
 
     # Scheduled cards use the newest official/robot answer; started cards use
     # the last pre-kickoff answer. Replacements stay in append-only audit tables.
@@ -12359,6 +12633,24 @@ def build_dashboard_data():
         )
     )
 
+    if analyzed_proto_count > 0 or deferred_proto_count > 0:
+        _publish_proto_checkpoint(
+            dashboard_proto, previous_dashboard, proto_matches, toto_14_matches,
+            raw_proto_matches, rejected_placeholder_count, rejected_auxiliary_count,
+            rejected_proto_count, resumed_proto_count, analyzed_proto_count,
+            deferred_proto_count, proto_market_watch_count, proto_cycle_started,
+        )
+        if (
+            MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG
+            and analyzed_proto_count > 0
+            and deferred_proto_count > 0
+        ):
+            print(
+                "↪️ PROTO 대기 경기가 남아 이번 master는 여기서 양보합니다. "
+                "승무패14 기존 공개본은 보존하고 다음 빠른 주기에서 PROTO를 이어갑니다."
+            )
+            return True
+
     double_pick_count = 0
     single_pick_count = 0
     unavailable_pick_count = 0
@@ -12367,6 +12659,14 @@ def build_dashboard_data():
     total_combinations = 1
     cost_cap_exceeded_by_frozen = False
       
+    # PROTO customer picks have already been checkpointed when new work exists.
+    # TOTO14 historical policy loading is deliberately deferred so it cannot
+    # keep the main customer pick board blank.
+    if toto_14_matches:
+        toto14_probability_policy = load_toto14_probability_policy()
+    else:
+        toto14_probability_policy = validate_toto14_probability_policy([])
+
     for idx, m in enumerate(toto_14_matches, 1):
         home_team, away_team = m["home"], m["away"]
         match_id = f"TOTO14_{m['id']}"
@@ -12701,7 +13001,7 @@ def build_dashboard_data():
         league_n_14 = (os_data or {}).get("league_name") or m.get('league', '')
         if league_n_14 not in market_performance_cache:
             market_performance_cache[league_n_14] = load_market_performance(
-                league_n_14
+                league_n_14, serving_only=MASTER_CACHE_ONLY_SERVING
             )
         toto_market_performance = market_performance_cache[league_n_14]
         h_stats = fetch_recent_team_stats_api(home_info.get("id"), heavy_ttl)
@@ -12952,13 +13252,16 @@ def build_dashboard_data():
         )
         legacy_v4_candidates = []
         legacy_v4_pick = {}
+        toto14_robot_artifact = _load_autonomous_robot_artifact(
+            "TOTO14", serving_only=MASTER_CACHE_ONLY_SERVING
+        )
         robot_candidates = build_autonomous_robot_candidates(
-            robot_wdl_candidates, robot_features,
-            _load_autonomous_robot_artifact("TOTO14"),
+            robot_wdl_candidates, robot_features, toto14_robot_artifact,
         )
         robot_pick = select_autonomous_robot_pick(
             robot_candidates, analysis_confidence, robot_features,
-            source="TOTO14",
+            source="TOTO14", robot_artifact=toto14_robot_artifact,
+            serving_only=MASTER_CACHE_ONLY_SERVING,
         )
         robot_wdl_probabilities = {
             str(candidate.get("selection_side")): float(candidate.get("robot_probability") or 0)
@@ -16121,7 +16424,8 @@ def run_master_job():
     built = False
     if scraped:
         try:
-            built = bool(build_dashboard_data())
+            with api_cache_only_context(MASTER_CACHE_ONLY_SERVING):
+                built = bool(build_dashboard_data())
         except Exception as error:
             # A valid prediction may already have been committed before a
             # later dashboard-only step failed.  Continue to the local
@@ -16144,30 +16448,30 @@ def run_master_job():
             "master", "running", last_stage="dashboard_publish_failed"
         )
         return False
-    # Cards are already safely published. Missing team ID/logo/form enrichment
-    # is deliberately last so it can never keep the site blank. Rows remain in
-    # the local runtime DB until genuinely complete; the configured batch is
-    # only a per-cycle API safety cap, never a total retry limit.
-    try:
-        seeded_cards = _queue_incomplete_dashboard_team_profiles()
-        retry_summary = process_team_identity_retry_queue(
-            limit=TEAM_IDENTITY_RETRY_BATCH
-        )
-        repaired_cards = _refresh_dashboard_team_profiles()
-        if repaired_cards and not upload_to_github("dashboard_data.json"):
-            print(
-                "⚠️ 팀 자료 화면 갱신 업로드 실패(다음 전담 주기에서 계속)"
+    # The dedicated team worker owns identity/logo/form retries. Keeping this
+    # work out of master returns the production DB slot immediately after the
+    # customer board is published. It can be re-enabled explicitly for repair.
+    if MASTER_INLINE_TEAM_RETRY:
+        try:
+            seeded_cards = _queue_incomplete_dashboard_team_profiles()
+            retry_summary = process_team_identity_retry_queue(
+                limit=TEAM_IDENTITY_RETRY_BATCH
             )
-        if retry_summary.get("processed") or retry_summary.get("pending"):
-            print(
-                "🔎 팀 자료 재탐색: "
-                f"이번 {retry_summary.get('processed', 0)}건 / "
-                f"완료 {retry_summary.get('resolved', 0)}건 / "
-                f"계속 대기 {retry_summary.get('pending', 0)}건 / "
-                f"화면 재등록 {seeded_cards}건 / 화면 갱신 {repaired_cards}장"
-            )
-    except Exception as error:
-        print(f"⚠️ 팀 자료 재탐색 작업 오류(다음 주기 계속): {error}")
+            repaired_cards = _refresh_dashboard_team_profiles()
+            if repaired_cards and not upload_to_github("dashboard_data.json"):
+                print("⚠️ 팀 자료 화면 갱신 업로드 실패(다음 전담 주기에서 계속)")
+            if retry_summary.get("processed") or retry_summary.get("pending"):
+                print(
+                    "🔎 팀 자료 재탐색: "
+                    f"이번 {retry_summary.get('processed', 0)}건 / "
+                    f"완료 {retry_summary.get('resolved', 0)}건 / "
+                    f"계속 대기 {retry_summary.get('pending', 0)}건 / "
+                    f"화면 재등록 {seeded_cards}건 / 화면 갱신 {repaired_cards}장"
+                )
+        except Exception as error:
+            print(f"⚠️ 팀 자료 재탐색 작업 오류(다음 주기 계속): {error}")
+    else:
+        print("⚡ 팀 재탐색은 전담 team worker로 분리 · master 즉시 반환")
     backup_requested = _request_db_backup("master")
     _update_collector_status(
         "master",
@@ -16198,6 +16502,14 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             continue
         candidates.append((kickoff, "analysis", {"match": match, "source": "PROTO"}))
 
+    for match in betman.get("toto_14_matches", []) or []:
+        if not isinstance(match, dict) or _is_placeholder_match(match):
+            continue
+        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("time"))
+        if not kickoff or not (now < kickoff <= horizon):
+            continue
+        candidates.append((kickoff, "analysis", {"match": match, "source": "TOTO14"}))
+
     world = _read_json(WORLD_DASHBOARD_FILE, {}) or {}
     for item in world.get("matches", []) or []:
         if not isinstance(item, dict):
@@ -16227,9 +16539,9 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         match = entry.get("match") or {}
         home_name = str(match.get("home") or "").strip()
         away_name = str(match.get("away") or "").strip()
+        # The same official fixture can appear in PROTO, TOTO14 and WORLD.
+        # Prefetch its provider evidence once, then let every analyst reuse it.
         key = (
-            entry.get("source"),
-            int(match.get("fixture_id") or entry.get("item", {}).get("api_fixture_id") or 0),
             home_name.casefold(), away_name.casefold(), kickoff.isoformat(),
         )
         if key in seen:
@@ -16245,7 +16557,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             away_id = int(match.get("away_team_id") or 0)
 
             with api_purpose_context(purpose):
-                if entry.get("source") == "PROTO":
+                if entry.get("source") in {"PROTO", "TOTO14"}:
                     home_info, away_info, identity_fixture = resolve_match_team_pair(
                         home_name, away_name,
                         match.get("match_time") or match.get("time") or "",
@@ -16254,11 +16566,14 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                     home_id = int((home_info or {}).get("id") or 0)
                     away_id = int((away_info or {}).get("id") or 0)
                     fixture_id = int(identity_fixture or 0)
-                    if home_id and away_id and (not fixture_id or not league_id or not season):
+                    if home_id and away_id:
+                        need_overseas_odds = not _valid_three_way_odds([
+                            match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
+                        ])
                         fixture_info = fetch_overseas_odds_and_fixture_api(
                             home_id, away_id, 2,
                             match.get("match_time") or match.get("time") or "",
-                            include_odds=False,
+                            include_odds=need_overseas_odds,
                         ) or {}
                         fixture_id = int(fixture_info.get("fixture_id") or fixture_id or 0)
                         league_id = int(fixture_info.get("league_id") or league_id or 0)
@@ -16274,20 +16589,27 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         )
                     continue
 
-                # One recent-fixture request per team warms form, long-term stats,
-                # recent metrics and rest-day calculations through the shared cache.
+                # Warm every reusable input used by the customer pick path.
+                # The master worker will be cache-only, so these provider calls
+                # happen here once and are shared by official/robot/V2/V3.
                 for team_id in (home_id, away_id):
                     fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_last_match_date_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_squad_cached(team_id)
                     fetch_new_manager_status(team_id, 24)
                     teams_warmed += 1
 
                 if league_id and season:
-                    # fetch_team_standing_api now shares one league table request.
+                    # One shared standings table plus league key-player cache feeds
+                    # rank/motivation, injury impact and predicted-XI context.
                     fetch_team_standing_api(home_id, 12, league_id, season)
                     fetch_team_standing_api(away_id, 12, league_id, season)
+                    fetch_league_key_players(league_id, season)
                 fetch_fixture_details_api(home_id, away_id, 24)
 
                 hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
@@ -16295,6 +16617,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                     injury_ttl = 3 if hours_to_kickoff <= 3 else 8
                     fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id)
                     fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
+                    if hours_to_kickoff <= 2:
+                        fetch_lineups_api(fixture_id, 0.25, purpose=purpose)
         except (ApiQuotaUnavailable, ApiRateLimited) as error:
             quota_paused = 1
             errors.append(f"quota:{error}")

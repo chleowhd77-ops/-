@@ -52,7 +52,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v7-value-accuracy-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.28-batched-master-fair-queue"
+SYSTEM_VERSION = "R7.12.29-fast-pick-recovery"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -71,6 +71,7 @@ _API_PROVIDER_DAY = None
 _API_QUOTA_NOTICE_SHOWN = False
 _API_LAST_REQUEST_AT = 0.0
 _API_PURPOSE_OVERRIDE = None
+_API_CACHE_ONLY = False
 
 SQLITE_BUSY_TIMEOUT_MS = max(
     5000, min(60000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000")))
@@ -608,6 +609,49 @@ def _show_api_quota_notice(message):
 
 
 @contextmanager
+def api_cache_only_context(enabled=True):
+    """Allow analysis workers to consume prefetched cache without new API calls.
+
+    The team/prefetch worker owns external data collection. Pick-serving workers
+    use this context so one slow or missing provider endpoint cannot hold every
+    customer pick behind a long master cycle. Cached provider responses remain
+    fully available; a cache miss returns a bounded synthetic miss response.
+    """
+    global _API_CACHE_ONLY
+    previous = _API_CACHE_ONLY
+    _API_CACHE_ONLY = bool(enabled)
+    try:
+        yield
+    finally:
+        _API_CACHE_ONLY = previous
+
+
+def _cache_only_miss_response(path):
+    response = requests.Response()
+    response.status_code = 503
+    response._content = json.dumps({
+        "response": [],
+        "errors": {"cache_only": f"prefetch cache miss: {path}"},
+    }).encode("utf-8")
+    response.encoding = "utf-8"
+    response.headers["X-DJ-Cache"] = "miss-cache-only"
+    return response
+
+
+def _release_request_cache_lease(key):
+    conn = None
+    try:
+        conn = _runtime_connect()
+        conn.execute("UPDATE request_cache SET lease=0 WHERE key=?", (key,))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@contextmanager
 def api_purpose_context(purpose):
     """Count nested helper requests under one isolated job purpose.
 
@@ -646,6 +690,10 @@ def api_get(path, params=None, timeout=7, purpose=None):
     if cached is not None:
         _record_runtime_metric(day, "cache_hit", purpose, path)
         return cached
+    if _API_CACHE_ONLY:
+        _release_request_cache_lease(key)
+        _record_runtime_metric(day, "cache_only_miss", purpose, path)
+        return _cache_only_miss_response(path)
     saved = False
     try:
         for attempt in range(API_RATE_LIMIT_RETRIES+1):
@@ -3192,6 +3240,8 @@ def fetch_weather_details_api(city_name, ttl_h):
     cached_data = get_db_cache(cache_key, ttl_h)
     if isinstance(cached_data, dict):
         return cached_data
+    if _API_CACHE_ONLY:
+        return default
     try:
         res = requests.get(f"https://wttr.in/{clean_city}?format=j1", timeout=4)
         data = res.json()
@@ -4553,6 +4603,13 @@ def apply_cached_opponent_model(exp_h, exp_a, audit, home_id, away_id, league_id
     # being mistaken for the learned-rho model introduced in R7.7.
     key = f"opponent_fit_v2_{int(league_id)}_{int(cutoff//21600)}"
     artifact = _FIT_MEMORY.get(key) or get_db_cache(key, 6)
+    if not artifact and _API_CACHE_ONLY:
+        audit["opponent_model"] = {
+            **inactive,
+            "reason": "서빙 경로에서 학습 산출물 미준비 · 기초모형 즉시 사용",
+            "serving_only": True,
+        }
+        return exp_h, exp_a, audit
     if not artifact:
         fixtures = []
         conn = None
