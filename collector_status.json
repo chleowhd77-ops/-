@@ -19,16 +19,17 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-09-27T08:12:21+00:00",
+      "last_success_at": "2026-09-27T08:14:47+00:00",
       "last_failure_duration_seconds": 180.2,
-      "last_success_duration_seconds": 7.42,
+      "last_success_duration_seconds": 4.8,
       "last_failure_at": "2026-09-26T15:09:13+00:00",
       "run_id": "live-1790496879300473378",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T08:14:42+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-27T08:14:47+00:00",
       "pid": 449349,
-      "last_started_at": "2026-09-27T08:14:42+00:00"
+      "last_started_at": "2026-09-27T08:14:42+00:00",
+      "duration_seconds": 4.8
     },
     "score": {
       "last_failure_at": "2026-09-24T15:25:42+00:00",
@@ -133,7 +134,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T08:14:42+00:00",
+  "updated_at": "2026-09-27T08:14:47+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -231,6 +232,12 @@
       },
       {
         "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 3
+      },
+      {
+        "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/fixtures/statistics",
         "count": 2
@@ -239,12 +246,6 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/teams",
-        "count": 1
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "live",
-        "endpoint": "/fixtures",
         "count": 1
       }
     ],
