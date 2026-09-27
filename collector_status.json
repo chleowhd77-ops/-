@@ -5,12 +5,11 @@
       "supervisor_pid": 453501,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-27T17:27:55+00:00",
+      "heartbeat_at": "2026-09-27T17:28:26+00:00",
       "pid": 453501,
       "last_started_at": "2026-09-27T16:52:28+00:00",
       "active_jobs": {
-        "master": 453621,
-        "team": 453625
+        "master": 453621
       },
       "pending_jobs": [
         "live",
@@ -64,17 +63,21 @@
     "master": {
       "last_failure_duration_seconds": 916.8,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
-      "last_success_at": "2026-09-27T17:22:02+00:00",
-      "last_success_duration_seconds": 102.64,
+      "last_success_at": "2026-09-27T17:28:54+00:00",
+      "last_success_duration_seconds": 140.28,
       "run_id": "master-1790529991236177100",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T17:27:55+00:00",
-      "pid": 453501,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-27T17:28:54+00:00",
+      "pid": 453621,
       "last_started_at": "2026-09-27T17:26:33+00:00",
       "child_pid": 453621,
-      "elapsed_seconds": 84.3,
-      "overlap_skips": 1
+      "elapsed_seconds": 114.8,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 8,
+      "proto_checkpoint_deferred": 5,
+      "db_backup_requested": true,
+      "duration_seconds": 140.28
     },
     "world": {
       "last_success_duration_seconds": 896.83,
@@ -152,7 +155,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T17:28:22+00:00",
+  "updated_at": "2026-09-27T17:28:54+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -246,7 +249,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 189
+        "count": 209
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/injuries",
+        "count": 122
       },
       {
         "metric": "cache_hit",
@@ -257,8 +266,14 @@
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
-        "endpoint": "/injuries",
-        "count": 108
+        "endpoint": "/coachs",
+        "count": 88
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/standings",
+        "count": 86
       },
       {
         "metric": "cache_hit",
@@ -267,22 +282,10 @@
         "count": 82
       },
       {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/standings",
-        "count": 82
-      },
-      {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/coachs",
-        "count": 80
-      },
-      {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 62
+        "count": 72
       },
       {
         "metric": "cache_hit",
@@ -294,7 +297,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 41
+        "count": 47
       },
       {
         "metric": "cache_hit",
