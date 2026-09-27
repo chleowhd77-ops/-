@@ -5,14 +5,14 @@
       "supervisor_pid": 453501,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-27T20:21:14+00:00",
+      "heartbeat_at": "2026-09-27T20:22:44+00:00",
       "pid": 453501,
       "last_started_at": "2026-09-27T16:52:28+00:00",
       "active_jobs": {
-        "score": 453988
+        "master": 453996
       },
       "pending_jobs": [
-        "master"
+        "world"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -59,16 +59,23 @@
       "duration_seconds": 154.85
     },
     "master": {
-      "last_success_at": "2026-09-27T20:16:31+00:00",
+      "last_success_at": "2026-09-27T20:23:09+00:00",
       "last_failure_duration_seconds": 916.8,
-      "last_success_duration_seconds": 79.79,
+      "last_success_duration_seconds": 106.1,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
       "run_id": "master-1790540480587022709",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T20:21:23+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-27T20:23:09+00:00",
       "pid": 453996,
-      "last_started_at": "2026-09-27T20:21:23+00:00"
+      "last_started_at": "2026-09-27T20:21:23+00:00",
+      "child_pid": 453996,
+      "elapsed_seconds": 108.3,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 7,
+      "proto_checkpoint_deferred": 2,
+      "db_backup_requested": true,
+      "duration_seconds": 106.1
     },
     "world": {
       "last_failure_duration_seconds": 434.5,
@@ -90,29 +97,15 @@
     },
     "team": {
       "last_success_at": "2026-09-27T20:18:28+00:00",
-      "last_success_duration_seconds": 17.26,
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "run_id": "team-1790540288104192949",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-27T20:18:28+00:00",
-      "pid": 453983,
-      "last_started_at": "2026-09-27T20:18:11+00:00",
-      "child_pid": 453983,
-      "elapsed_seconds": 6.0,
-      "overlap_skips": 0,
-      "team_retry_processed": 2,
-      "team_retry_resolved": 170,
-      "team_retry_pending": 3,
-      "team_retry_due": 0,
-      "team_retry_seeded": 1,
-      "team_profile_card_updates": 32,
-      "data_prefetch_matches": 24,
-      "data_prefetch_teams": 48,
-      "data_prefetch_identity_missing": 0,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 17.26
+      "last_success_duration_seconds": 17.26,
+      "run_id": "team-1790540588902713654",
+      "child_pid": 453999,
+      "last_stage": "starting",
+      "state": "running",
+      "heartbeat_at": "2026-09-27T20:23:08+00:00",
+      "pid": 453501,
+      "last_started_at": "2026-09-27T20:23:08+00:00"
     },
     "backup": {
       "last_success_duration_seconds": 452.95,
@@ -146,7 +139,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T20:21:23+00:00",
+  "updated_at": "2026-09-27T20:23:09+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -225,6 +218,12 @@
         "count": 574
       },
       {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 374
+      },
+      {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topassists",
@@ -237,12 +236,6 @@
         "count": 373
       },
       {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 367
-      },
-      {
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/standings",
@@ -252,7 +245,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 260
+        "count": 270
       },
       {
         "metric": "cache_only_miss",
