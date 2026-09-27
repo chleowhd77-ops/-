@@ -5,16 +5,16 @@
       "supervisor_pid": 451453,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-27T15:16:33+00:00",
+      "heartbeat_at": "2026-09-27T15:26:14+00:00",
       "pid": 451453,
       "last_started_at": "2026-09-27T12:58:40+00:00",
       "active_jobs": {
-        "master": 452289,
-        "team": 452294
+        "master": 452289
       },
       "pending_jobs": [
         "live",
         "score",
+        "team",
         "world"
       ],
       "max_concurrent_workers": 2,
@@ -59,19 +59,21 @@
       "duration_seconds": 356.42
     },
     "master": {
-      "last_failure_at": "2026-09-27T15:03:34+00:00",
-      "last_failure_duration_seconds": 900.7,
+      "last_failure_at": "2026-09-27T15:26:16+00:00",
+      "last_failure_duration_seconds": 916.8,
       "last_success_at": "2026-09-27T12:38:46+00:00",
       "last_success_duration_seconds": 1822.8,
       "run_id": "master-1790521859311765350",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T15:16:32+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-27T15:26:16+00:00",
       "pid": 451453,
       "last_started_at": "2026-09-27T15:11:03+00:00",
       "child_pid": 452289,
-      "elapsed_seconds": 333.1,
-      "overlap_skips": 1
+      "elapsed_seconds": 887.1,
+      "overlap_skips": 3,
+      "duration_seconds": 916.8,
+      "last_error": "hard timeout after 916 seconds"
     },
     "world": {
       "last_success_at": "2026-09-27T14:48:31+00:00",
@@ -148,7 +150,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T15:16:35+00:00",
+  "updated_at": "2026-09-27T15:26:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -253,14 +255,14 @@
       {
         "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/standings",
+        "endpoint": "/fixtures/statistics",
         "count": 15
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/fixtures/statistics",
-        "count": 13
+        "endpoint": "/standings",
+        "count": 15
       },
       {
         "metric": "cache_hit",
