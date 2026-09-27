@@ -5,14 +5,13 @@
       "supervisor_pid": 444692,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-27T10:35:53+00:00",
+      "heartbeat_at": "2026-09-27T10:36:53+00:00",
       "pid": 444692,
       "last_started_at": "2026-09-25T21:51:31+00:00",
       "active_jobs": {
-        "score": 449758
+        "live": 449762
       },
       "pending_jobs": [
-        "live",
         "master",
         "world"
       ],
@@ -21,15 +20,19 @@
     },
     "live": {
       "last_failure_duration_seconds": 180.2,
-      "last_success_duration_seconds": 52.9,
+      "last_success_duration_seconds": 51.86,
       "last_failure_at": "2026-09-26T15:09:13+00:00",
-      "last_success_at": "2026-09-27T10:34:01+00:00",
+      "last_success_at": "2026-09-27T10:37:14+00:00",
       "run_id": "live-1790505379911220000",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-27T10:36:22+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-27T10:37:14+00:00",
       "pid": 449762,
-      "last_started_at": "2026-09-27T10:36:22+00:00"
+      "last_started_at": "2026-09-27T10:36:22+00:00",
+      "child_pid": 449762,
+      "elapsed_seconds": 34.0,
+      "overlap_skips": 0,
+      "duration_seconds": 51.86
     },
     "score": {
       "last_success_duration_seconds": 130.71,
@@ -137,7 +140,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-27T10:36:22+00:00",
+  "updated_at": "2026-09-27T10:37:14+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -223,15 +226,15 @@
       },
       {
         "metric": "cache_hit",
-        "purpose": "scoring",
-        "endpoint": "/fixtures/lineups",
-        "count": 9
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 10
       },
       {
         "metric": "cache_hit",
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "count": 8
+        "purpose": "scoring",
+        "endpoint": "/fixtures/lineups",
+        "count": 9
       },
       {
         "metric": "cache_hit",
