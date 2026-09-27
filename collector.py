@@ -107,7 +107,19 @@ MASTER_ANALYSIS_SOFT_SECONDS = max(
     120, min(900, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "240")))
 )
 TEAM_IDENTITY_RETRY_BATCH = max(
-    2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "12")))
+    2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "24")))
+)
+# Fetch reusable team/fixture evidence before the heavy pick engines run.
+# The team worker warms the shared SQLite cache; official/robot/V2/V3 then
+# consume the same evidence without repeating overseas API work.
+DATA_PREFETCH_MATCH_LIMIT = max(
+    6, min(36, int(os.getenv("DATA_PREFETCH_MATCH_LIMIT", "24")))
+)
+DATA_PREFETCH_HORIZON_HOURS = max(
+    6, min(48, int(os.getenv("DATA_PREFETCH_HORIZON_HOURS", "30")))
+)
+DATA_PREFETCH_TEAM_TTL_HOURS = max(
+    4, min(24, int(os.getenv("DATA_PREFETCH_TEAM_TTL_HOURS", "12")))
 )
 # A decimal quote must exceed 1. No arbitrary minimum price sacrifices a
 # higher-probability candidate; actual conservative return remains required.
@@ -7636,37 +7648,74 @@ def _world_market_preview_analysis(item, now=None):
 
 
 def _ensure_world_market_previews(payload, now=None):
-    """Attach a preview only to valid empty cards; never overwrite an analysis."""
+    """R7.12.27: never turn odds-only market data into a customer pick.
+
+    Older saved files can still contain `market-preview` analyses.  Strip only
+    those provisional picks while preserving the market snapshot on the match,
+    then let the normal deep-analysis queue produce the first publishable pick.
+    """
     current = (now or datetime.now(KST)).astimezone(KST)
     changed = []
     for item in (payload or {}).get("matches", []) if isinstance(payload, dict) else []:
-        analysis = item.get("analysis") if isinstance(item, dict) else None
-        selected = (analysis or {}).get("selected") if isinstance(analysis, dict) else None
-        if isinstance(selected, dict) and str(selected.get("raw_pick") or "").strip():
+        if not isinstance(item, dict):
+            continue
+        analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+        stage = str(
+            analysis.get("analysis_stage") or item.get("analysis_stage") or ""
+        ).strip().casefold()
+        if stage != "market-preview":
             continue
         match = item.get("match") or {}
         kickoff = _parse_kst_match_time(
             match.get("match_time") or item.get("final_match_time")
         )
-        # Every still-upcoming item in the current saved schedule is eligible
-        # immediately.  Started fixtures are never backfilled retrospectively.
-        if not kickoff or current >= kickoff:
-            continue
-        preview = _world_market_preview_analysis(item, now=current)
-        if not preview:
-            continue
-        item["analysis"] = preview
-        item["analysis_version"] = preview["analysis_version"]
+        # Preserve the already collected bookmaker snapshot, but remove the
+        # provisional official/robot/AI conclusion.  No retrospective pick.
+        if isinstance(analysis.get("odds_snapshot"), dict) and not item.get("market_snapshot"):
+            item["market_snapshot"] = dict(analysis.get("odds_snapshot") or {})
+        item.pop("analysis", None)
+        item["analysis_version"] = ""
         item["system_version"] = SYSTEM_VERSION
-        item["analysis_stage"] = preview["analysis_stage"]
-        item["analyzed_at"] = preview["analyzed_at"]
-        item["data_quality_score"] = preview["data_quality_score"]
-        item["data_quality_grade"] = preview["data_quality_grade"]
-        item["missing_data"] = preview["missing_data"]
+        item["analysis_stage"] = ""
+        item["analyzed_at"] = None
+        item["frozen_at"] = None
+        item["data_quality_score"] = 0
+        item["data_quality_grade"] = "자료 수집 중"
+        item["missing_data"] = ["정밀 팀 분석 대기"]
         item["lineup_confirmed"] = False
-        item["analysis_status"] = "MARKET_PREVIEW_READY"
-        item["pick_status"] = "MARKET_PREVIEW_PICK"
+        if kickoff and current < kickoff:
+            item["analysis_status"] = "PENDING_SHADOW_ANALYSIS"
+            item["pick_status"] = "ANALYSIS_PENDING"
+        else:
+            item["analysis_status"] = "MISSED_PREKICKOFF"
+            item["pick_status"] = "NOT_ANALYZED"
         changed.append(item)
+
+    # R7.12.26 이전의 시장 선픽 누적 때문에 WORLD 파일이 설정 상한보다
+    # 커졌던 경우, 실제 정밀분석/동결본은 모두 보존하고 미분석 예정경기만
+    # 킥오프가 가까운 순서로 현재 일정 상한까지 정리한다.
+    matches = (payload or {}).get("matches", []) if isinstance(payload, dict) else []
+    if isinstance(matches, list) and len(matches) > WORLD_MAX_SCHEDULE_MATCHES:
+        protected = []
+        pending = []
+        for item in matches:
+            analysis = item.get("analysis") if isinstance(item, dict) and isinstance(item.get("analysis"), dict) else {}
+            stage = str(analysis.get("analysis_stage") or (item or {}).get("analysis_stage") or "").strip().casefold()
+            if analysis and stage != "market-preview":
+                protected.append(item)
+                continue
+            match = (item or {}).get("match") or {}
+            kickoff = _parse_kst_match_time(match.get("match_time") or match.get("kickoff_at"))
+            if kickoff and kickoff > current:
+                pending.append((kickoff, item))
+        pending.sort(key=lambda row: row[0])
+        pending_limit = max(0, WORLD_MAX_SCHEDULE_MATCHES - len(protected))
+        keep_ids = {id(item) for item in protected}
+        keep_ids.update(id(item) for _, item in pending[:pending_limit])
+        removed = [item for item in matches if id(item) not in keep_ids]
+        if removed:
+            payload["matches"] = [item for item in matches if id(item) in keep_ids]
+            changed.extend(removed)
     return changed
 
 
@@ -7817,7 +7866,7 @@ def collect_world_schedule():
         "🌍 세계경기 1단계 수집 완료: "
         f"수집 목록 {source_meta.get('raw_fixture_count', 0)} / "
         f"배당 확인 {source_meta.get('eligible_shadow_count', 0)} / "
-        f"시장 선픽 {len(preview_items)} / 제외 {source_meta.get('rejected_count', 0)}"
+        f"분석 대기 정리 {len(preview_items)} / 제외 {source_meta.get('rejected_count', 0)}"
         f" / 프로토 중복 제외 {proto_overlaps}"
     )
     return True
@@ -7850,6 +7899,13 @@ def _carry_world_shadow_analyses(payload, previous_payload):
             item["analysis_status"] = "PENDING_SHADOW_ANALYSIS"
             item["schedule_changed_after_analysis"] = True
             continue
+        previous_analysis = previous.get("analysis") if isinstance(previous.get("analysis"), dict) else {}
+        previous_stage = str(
+            previous_analysis.get("analysis_stage") or previous.get("analysis_stage") or ""
+        ).strip().casefold()
+        # Odds-only previews are not analysis and must not survive a schedule refresh.
+        if previous_stage == "market-preview":
+            continue
         for field in WORLD_ANALYSIS_FIELDS:
             if field in previous:
                 item[field] = previous[field]
@@ -7860,7 +7916,9 @@ def _carry_world_shadow_analyses(payload, previous_payload):
     now = datetime.now(KST)
     for fixture_id, item in previous_by_fixture.items():
         kickoff = _parse_kst_match_time(item.get("final_match_time") or (item.get("match") or {}).get("match_time"))
-        if fixture_id in present or not item.get("analysis") or not kickoff:
+        analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+        analysis_stage = str(analysis.get("analysis_stage") or item.get("analysis_stage") or "").strip().casefold()
+        if fixture_id in present or not analysis or analysis_stage == "market-preview" or not kickoff:
             continue
         states = [row for row in live.values() if isinstance(row,dict) and int(row.get("fixture_id") or 0)==fixture_id]
         if any(row.get("final") or str(row.get("status")) in TERMINAL_STATUSES|CANCELED_STATUSES for row in states):
@@ -10734,7 +10792,14 @@ def _proto_item_has_usable_pick(item, match):
         or str(item_match.get("away") or "") != str(match.get("away") or "")
     ):
         return False
+    stage = str(
+        item.get("analysis_stage") or item.get("latest_analysis_stage") or ""
+    ).strip().casefold()
     selected = (item.get("pick_categories") or {}).get("high_probability") or {}
+    if stage == "market-preview":
+        return False
+    if str(selected.get("recommendation_status") or "").upper() == "PREVIEW":
+        return False
     return bool(str(selected.get("raw_pick") or "").strip())
 
 
@@ -11280,15 +11345,19 @@ def build_dashboard_data():
                 m, previous_item, require_current_stage=False
             )
             if deferred_item is None:
-                deferred_item = _proto_market_preview_item(
-                    m, "정밀 분석 순번 대기"
+                deferred_item = _pending_proto_item(m)
+                deferred_item["public_pick_block_reason"] = "analysis_queue_waiting_for_prefetched_data"
+                deferred_item["detailed_report"] = (
+                    "해외 API 팀·최근 경기 자료를 공용 캐시에 먼저 수집한 뒤 정밀 분석합니다. "
+                    "배당만으로 임시 최종픽을 만들지 않습니다."
                 )
                 queue_team_identity_retry(
                     home_team, away_team, final_match_time,
                     reason="analysis_deferred_identity_logo_or_form_pending",
                     league_name=m.get("league") or "",
                 )
-            deferred_item["analysis_refresh_pending"] = False
+            deferred_item["analysis_refresh_pending"] = True
+            deferred_item["public_pick_blocked"] = True
             dashboard_proto.append(deferred_item)
             deferred_proto_count += 1
             continue
@@ -11329,16 +11398,15 @@ def build_dashboard_data():
                 reason="proto_identity_and_logo_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
-            pending = _proto_market_preview_item(
-                m, "팀 연결·마크 자료 보강 대기"
-            )
+            pending = _pending_proto_item(m)
+            pending["public_pick_block_reason"] = "team_identity_logo_form_prefetch_pending"
             pending.update({
                 "home_team_id": home_id,
                 "away_team_id": away_id,
                 "api_fixture_id": int(identity_fixture or 0),
                 "home_logo": home_info.get("logo") or DEFAULT_LOGO,
                 "away_logo": away_info.get("logo") or DEFAULT_LOGO,
-                "data_warning": "양 팀 신원·마크를 보강 중이며, 현재 베트맨 시장 기준 픽을 먼저 표시합니다.",
+                "data_warning": "양 팀 신원·마크·최근 경기 자료를 먼저 확보한 뒤 분석픽을 생성합니다.",
             })
             dashboard_proto.append(pending)
             deferred_proto_count += 1
@@ -11444,16 +11512,15 @@ def build_dashboard_data():
                 reason="proto_fixture_identity_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
-            pending = _proto_market_preview_item(
-                m, "공식 경기 연결 자료 보강 대기"
-            )
+            pending = _pending_proto_item(m)
+            pending["public_pick_block_reason"] = "fixture_identity_prefetch_pending"
             pending.update({
                 "home_team_id": home_id,
                 "away_team_id": away_id,
                 "api_fixture_id": 0,
                 "home_logo": home_info.get("logo") or DEFAULT_LOGO,
                 "away_logo": away_info.get("logo") or DEFAULT_LOGO,
-                "data_warning": "공식 경기 연결을 보강 중이며, 현재 베트맨 시장 기준 픽을 먼저 표시합니다.",
+                "data_warning": "공식 경기 연결을 먼저 확인한 뒤 분석픽을 생성합니다.",
             })
             dashboard_proto.append(pending)
             deferred_proto_count += 1
@@ -16083,8 +16150,142 @@ def run_master_job():
     return True
 
 
+def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
+    """Warm reusable overseas data before any pick engine needs it.
+
+    This job deliberately does not create a prediction.  It resolves fixture/team
+    identity and caches recent fixtures, standings, H2H, manager and injury rows.
+    Official, robot, V2 and V3 can then read the same evidence quickly.
+    """
+    now = datetime.now(KST)
+    horizon = now + timedelta(hours=DATA_PREFETCH_HORIZON_HOURS)
+    candidates = []
+
+    betman = _read_json("betman_data.json", {}) or {}
+    for match in betman.get("proto_matches", []) or []:
+        if not isinstance(match, dict) or _is_placeholder_match(match):
+            continue
+        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("time"))
+        if not kickoff or not (now < kickoff <= horizon):
+            continue
+        candidates.append((kickoff, "analysis", {"match": match, "source": "PROTO"}))
+
+    world = _read_json(WORLD_DASHBOARD_FILE, {}) or {}
+    for item in world.get("matches", []) or []:
+        if not isinstance(item, dict):
+            continue
+        match = item.get("match") or {}
+        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("kickoff_at"))
+        if not kickoff or not (now < kickoff <= horizon):
+            continue
+        candidates.append((kickoff, "world", {"item": item, "match": match, "source": "WORLD"}))
+
+    candidates.sort(key=lambda row: row[0])
+    seen = set()
+    processed = teams_warmed = identities_missing = quota_paused = 0
+    errors = []
+
+    for kickoff, purpose, entry in candidates:
+        if processed >= max(1, int(limit or 1)):
+            break
+        usage = get_api_usage_status()
+        provider_remaining = usage.get("provider_remaining")
+        if usage.get("quota_exhausted") or (
+            provider_remaining is not None and int(provider_remaining) <= max(API_LIVE_RESERVE, API_WORLD_MIN_REMAINING)
+        ):
+            quota_paused = 1
+            break
+
+        match = entry.get("match") or {}
+        home_name = str(match.get("home") or "").strip()
+        away_name = str(match.get("away") or "").strip()
+        key = (
+            entry.get("source"),
+            int(match.get("fixture_id") or entry.get("item", {}).get("api_fixture_id") or 0),
+            home_name.casefold(), away_name.casefold(), kickoff.isoformat(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        processed += 1
+
+        try:
+            fixture_id = int(match.get("fixture_id") or entry.get("item", {}).get("api_fixture_id") or 0)
+            league_id = int(match.get("league_id") or 0)
+            season = int(match.get("season") or 0)
+            home_id = int(match.get("home_team_id") or 0)
+            away_id = int(match.get("away_team_id") or 0)
+
+            with api_purpose_context(purpose):
+                if entry.get("source") == "PROTO":
+                    home_info, away_info, identity_fixture = resolve_match_team_pair(
+                        home_name, away_name,
+                        match.get("match_time") or match.get("time") or "",
+                        ttl_h=2, league_name=match.get("league") or "",
+                    )
+                    home_id = int((home_info or {}).get("id") or 0)
+                    away_id = int((away_info or {}).get("id") or 0)
+                    fixture_id = int(identity_fixture or 0)
+                    if home_id and away_id and (not fixture_id or not league_id or not season):
+                        fixture_info = fetch_overseas_odds_and_fixture_api(
+                            home_id, away_id, 2,
+                            match.get("match_time") or match.get("time") or "",
+                            include_odds=False,
+                        ) or {}
+                        fixture_id = int(fixture_info.get("fixture_id") or fixture_id or 0)
+                        league_id = int(fixture_info.get("league_id") or league_id or 0)
+                        season = int(fixture_info.get("season") or season or 0)
+                if home_id <= 0 or away_id <= 0 or home_id == away_id:
+                    identities_missing += 1
+                    if home_name and away_name:
+                        queue_team_identity_retry(
+                            home_name, away_name,
+                            match.get("match_time") or match.get("time") or "",
+                            reason="data_prefetch_identity_required",
+                            league_name=match.get("league") or match.get("league_name_ko") or "",
+                        )
+                    continue
+
+                # One recent-fixture request per team warms form, long-term stats,
+                # recent metrics and rest-day calculations through the shared cache.
+                for team_id in (home_id, away_id):
+                    fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    fetch_new_manager_status(team_id, 24)
+                    teams_warmed += 1
+
+                if league_id and season:
+                    # fetch_team_standing_api now shares one league table request.
+                    fetch_team_standing_api(home_id, 12, league_id, season)
+                    fetch_team_standing_api(away_id, 12, league_id, season)
+                fetch_fixture_details_api(home_id, away_id, 24)
+
+                hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
+                if fixture_id and hours_to_kickoff <= 24:
+                    injury_ttl = 3 if hours_to_kickoff <= 3 else 8
+                    fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id)
+                    fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
+        except (ApiQuotaUnavailable, ApiRateLimited) as error:
+            quota_paused = 1
+            errors.append(f"quota:{error}")
+            break
+        except Exception as error:
+            errors.append(f"{entry.get('source')}:{type(error).__name__}:{error}")
+
+    return {
+        "processed": processed,
+        "teams_warmed": teams_warmed,
+        "identities_missing": identities_missing,
+        "quota_paused": quota_paused,
+        "errors": errors[:5],
+    }
+
+
 def run_team_identity_job():
-    """Repair team IDs/logos/forms independently from the heavy master pass."""
+    """Prefetch shared evidence, then repair unresolved team profiles."""
+    prefetch = _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT)
     seeded_cards = _queue_incomplete_dashboard_team_profiles()
     summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
     repaired_cards = _refresh_dashboard_team_profiles()
@@ -16100,7 +16301,19 @@ def run_team_identity_job():
         team_retry_due=int(summary.get("due") or 0),
         team_retry_seeded=int(seeded_cards),
         team_profile_card_updates=int(repaired_cards),
+        data_prefetch_matches=int(prefetch.get("processed") or 0),
+        data_prefetch_teams=int(prefetch.get("teams_warmed") or 0),
+        data_prefetch_identity_missing=int(prefetch.get("identities_missing") or 0),
+        data_prefetch_quota_paused=bool(prefetch.get("quota_paused")),
+        data_prefetch_errors=list(prefetch.get("errors") or []),
     )
+    if prefetch.get("processed"):
+        print(
+            "⚡ 분석자료 선수집 완료: "
+            f"경기 {prefetch.get('processed', 0)}건 / "
+            f"팀 캐시 {prefetch.get('teams_warmed', 0)}건 / "
+            f"신원 대기 {prefetch.get('identities_missing', 0)}건"
+        )
     if summary.get("processed") or summary.get("pending") or repaired_cards:
         print(
             "🔎 팀 전담 재탐색 완료: "

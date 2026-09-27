@@ -52,7 +52,7 @@ ROBOT_PICK_VERSION = "robot-self-learning-online-v7-value-accuracy-goal"
 PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
-SYSTEM_VERSION = "R7.12.17-verified-comparison-investment-picks"
+SYSTEM_VERSION = "R7.12.27-data-first-prefetch-analysis"
 
 # API-Football의 하루 한도를 분석 작업이 전부 소모하지 않게 보호한다.
 # 기본값은 7,500회 요금제에서 라이브/채점용 1,500회를 남기는 구성이다.
@@ -1947,6 +1947,7 @@ _COUNTRY_FLAG_ROWS = (
     ("gm", "Gambia", "감비아"),
     ("ge", "Georgia", "조지아"),
     ("de", "Germany", "독일"),
+    ("gi", "Gibraltar", "지브롤터"),
     ("gh", "Ghana", "가나"),
     ("gr", "Greece", "그리스"),
     ("gd", "Grenada", "그레나다"),
@@ -2409,7 +2410,7 @@ def process_team_identity_retry_queue(limit=4):
         except Exception as error:
             reason = f"{type(error).__name__}:{error}"
 
-        delay_minutes = min(360, 10 * (2 ** min(max(0, attempts - 1), 6)))
+        delay_minutes = min(120, 5 * (2 ** min(max(0, attempts - 1), 4)))
         next_retry = (now + timedelta(minutes=delay_minutes)).isoformat(timespec="seconds")
         conn = _runtime_connect()
         try:
@@ -3566,6 +3567,125 @@ def fetch_team_long_term_stats_api(team_id, ttl_h):
         return default_res
     except: return default_res
 
+def _parse_standings_team_map(data, target_league_id=None, target_season=None):
+    """Convert one standings response into a cacheable team-id -> row map."""
+    team_map = {}
+    for league_data in data or []:
+        league = league_data.get("league", {}) or {}
+        league_id = league.get("id")
+        season = league.get("season")
+        if target_league_id and int(league_id or 0) != int(target_league_id):
+            continue
+        if target_season and int(season or 0) != int(target_season):
+            continue
+        standings_list = league.get("standings", []) or []
+        for group in standings_list:
+            group = [row for row in (group or []) if isinstance(row, dict)]
+            rank_rows = {}
+            relegation_ranks = []
+            for table_row in group:
+                try:
+                    table_rank = int(table_row.get("rank") or 0)
+                    table_points = int(table_row.get("points") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if table_rank <= 0:
+                    continue
+                rank_rows[table_rank] = table_points
+                description = str(table_row.get("description") or "").casefold()
+                if any(keyword in description for keyword in (
+                    "relegat", "descenso", "rebaixamento", "abstieg",
+                    "retrocessione", "降格", "강등",
+                )):
+                    relegation_ranks.append(table_rank)
+            total_teams = len(rank_rows)
+            if relegation_ranks:
+                relegation_start_rank = min(relegation_ranks)
+                zone_source = "official_description"
+            elif total_teams >= 18:
+                relegation_start_rank = total_teams - 2
+                zone_source = "league_size_fallback"
+            elif total_teams >= 8:
+                relegation_start_rank = total_teams - 1
+                zone_source = "league_size_fallback"
+            else:
+                relegation_start_rank = None
+                zone_source = "none"
+            safety_rank = (
+                relegation_start_rank - 1
+                if relegation_start_rank and relegation_start_rank > 1
+                else None
+            )
+            safety_points = rank_rows.get(safety_rank)
+            relegation_cut_points = rank_rows.get(relegation_start_rank)
+            for row in group:
+                try:
+                    team_id = int((row.get("team", {}) or {}).get("id") or 0)
+                    rank = int(row.get("rank") or 99)
+                    points = int(row.get("points") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if team_id <= 0:
+                    continue
+                played = int((row.get("all", {}) or {}).get("played") or 0)
+                team_goals = int((((row.get("all", {}) or {}).get("goals") or {}).get("for")) or 0)
+                points_to_safety = (
+                    max(0, int(safety_points) - points)
+                    if safety_points is not None and relegation_start_rank and rank >= relegation_start_rank
+                    else None
+                )
+                points_above_zone = (
+                    max(0, points - int(relegation_cut_points))
+                    if relegation_cut_points is not None and relegation_start_rank and rank < relegation_start_rank
+                    else None
+                )
+                team_map[str(team_id)] = {
+                    "rank": rank, "points": points, "played": played,
+                    "league_id": league_id, "season": season,
+                    "total_teams": total_teams, "team_goals": team_goals,
+                    "description": str(row.get("description") or ""),
+                    "relegation_start_rank": relegation_start_rank,
+                    "safety_rank": safety_rank,
+                    "safety_points": safety_points,
+                    "relegation_cut_points": relegation_cut_points,
+                    "points_to_safety": points_to_safety,
+                    "points_above_zone": points_above_zone,
+                    "relegation_zone_source": zone_source,
+                }
+    return team_map
+
+
+def fetch_league_standings_table_api(league_id, season, ttl_h=24):
+    """Fetch one league table once and let every team share that cached response."""
+    try:
+        league_id = int(league_id or 0)
+        season = int(season or 0)
+    except (TypeError, ValueError):
+        return {}
+    if league_id <= 0 or season <= 0:
+        return {}
+    cache_key = f"standings_table_v1_{league_id}_{season}"
+    cached = get_db_cache(cache_key, ttl_h)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        res = api_get(
+            "/standings", params={"league": league_id, "season": season}, timeout=5
+        )
+        payload = res.json() if res.status_code == 200 else {}
+        if payload.get("errors"):
+            return {}
+        table = _parse_standings_team_map(
+            payload.get("response", []), league_id, season
+        )
+        if table:
+            set_db_cache(cache_key, table)
+        return table
+    except Exception as error:
+        print(f"⚠️ 리그 순위표 일괄 조회 오류({league_id}/{season}): {error}")
+        return {}
+
+
 def fetch_team_standing_api(team_id, ttl_h, target_league_id=None, target_season=None):
     default_res = {
         "rank": 99, "points": 0, "played": 0, "league_id": None,
@@ -3575,102 +3695,44 @@ def fetch_team_standing_api(team_id, ttl_h, target_league_id=None, target_season
         "relegation_cut_points": None, "points_to_safety": None,
         "points_above_zone": None, "relegation_zone_source": "none",
     }
-    if not team_id: return default_res
-    cache_key = (f"standing_v6_{team_id}_{target_league_id}_{target_season}"
+    if not team_id:
+        return default_res
+    cache_key = (f"standing_v7_{team_id}_{target_league_id}_{target_season}"
                  if target_league_id else f"standing_v5_survival_{team_id}")
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data: return cached_data
+    if cached_data:
+        return cached_data
     try:
         year = int(target_season or datetime.now().year)
-        params = {"team": team_id, "season": year}
         if target_league_id:
-            params["league"] = int(target_league_id)
-        res = api_get("/standings", params=params, timeout=5)
-        data = res.json().get("response", [])
-        if not data and not target_season:
-            params["season"] = year-1
-            res = api_get("/standings", params=params, timeout=5)
-            data = res.json().get("response", [])
-        if data:
-            for league_data in data:
-                league_id = league_data.get("league", {}).get("id")
-                season = league_data.get("league", {}).get("season")
-                if target_league_id and int(league_id or 0) != int(target_league_id):
-                    continue
-                if target_season and int(season or 0) != int(target_season):
-                    continue
-                standings_list = league_data.get("league", {}).get("standings", [])
-                for group in standings_list:
-                    group = [row for row in (group or []) if isinstance(row, dict)]
-                    rank_rows = {}
-                    relegation_ranks = []
-                    for table_row in group:
-                        try:
-                            table_rank = int(table_row.get("rank") or 0)
-                            table_points = int(table_row.get("points") or 0)
-                        except (TypeError, ValueError):
-                            continue
-                        if table_rank <= 0:
-                            continue
-                        rank_rows[table_rank] = table_points
-                        description = str(table_row.get("description") or "").casefold()
-                        if any(keyword in description for keyword in (
-                            "relegat", "descenso", "rebaixamento", "abstieg",
-                            "retrocessione", "降格", "강등",
-                        )):
-                            relegation_ranks.append(table_rank)
-                    for s in group:
-                        if int((s.get("team", {}) or {}).get("id") or 0) == int(team_id):
-                            played = s.get("all", {}).get("played", 0)
-                            team_goals = s.get("all", {}).get("goals", {}).get("for", 0)
-                            rank = int(s.get("rank") or 99)
-                            points = int(s.get("points") or 0)
-                            total_teams = len(rank_rows)
-                            if relegation_ranks:
-                                relegation_start_rank = min(relegation_ranks)
-                                zone_source = "official_description"
-                            elif total_teams >= 18:
-                                relegation_start_rank = total_teams - 2
-                                zone_source = "league_size_fallback"
-                            elif total_teams >= 8:
-                                relegation_start_rank = total_teams - 1
-                                zone_source = "league_size_fallback"
-                            else:
-                                relegation_start_rank = None
-                                zone_source = "none"
-                            safety_rank = (
-                                relegation_start_rank - 1
-                                if relegation_start_rank and relegation_start_rank > 1
-                                else None
-                            )
-                            safety_points = rank_rows.get(safety_rank)
-                            relegation_cut_points = rank_rows.get(relegation_start_rank)
-                            points_to_safety = (
-                                max(0, int(safety_points) - points)
-                                if safety_points is not None and rank >= relegation_start_rank
-                                else None
-                            )
-                            points_above_zone = (
-                                max(0, points - int(relegation_cut_points))
-                                if relegation_cut_points is not None and rank < relegation_start_rank
-                                else None
-                            )
-                            res_val = {
-                                "rank": rank, "points": points, "played": played,
-                                "league_id": league_id, "season": season,
-                                "total_teams": total_teams, "team_goals": team_goals,
-                                "description": str(s.get("description") or ""),
-                                "relegation_start_rank": relegation_start_rank,
-                                "safety_rank": safety_rank,
-                                "safety_points": safety_points,
-                                "relegation_cut_points": relegation_cut_points,
-                                "points_to_safety": points_to_safety,
-                                "points_above_zone": points_above_zone,
-                                "relegation_zone_source": zone_source,
-                            }
-                            set_db_cache(cache_key, res_val)
-                            return res_val
-    except: pass
+            table = fetch_league_standings_table_api(target_league_id, year, ttl_h)
+            found = table.get(str(int(team_id))) if isinstance(table, dict) else None
+            if isinstance(found, dict):
+                set_db_cache(cache_key, found)
+                return found
+            if not target_season:
+                table = fetch_league_standings_table_api(target_league_id, year - 1, ttl_h)
+                found = table.get(str(int(team_id))) if isinstance(table, dict) else None
+                if isinstance(found, dict):
+                    set_db_cache(cache_key, found)
+                    return found
+            return default_res
+
+        # Legacy path used when a fixture has not supplied its competition yet.
+        for candidate_year in (year, year - 1):
+            res = api_get(
+                "/standings", params={"team": int(team_id), "season": candidate_year}, timeout=5
+            )
+            payload = res.json() if res.status_code == 200 else {}
+            table = _parse_standings_team_map(payload.get("response", []))
+            found = table.get(str(int(team_id))) if isinstance(table, dict) else None
+            if isinstance(found, dict):
+                set_db_cache(cache_key, found)
+                return found
+            if target_season:
+                break
+    except Exception:
+        pass
     set_db_cache(cache_key, default_res)
     return default_res
 
@@ -3711,6 +3773,33 @@ def fetch_league_key_players(league_id, season):
         return key_players
     except: return {}
 
+def fetch_fixture_injuries_api(fixture_id, ttl_h=6):
+    """Fetch a fixture injury feed once; both teams reuse the same cached rows."""
+    try:
+        fixture_id = int(fixture_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if fixture_id <= 0:
+        return None
+    cache_key = f"fixture_injuries_v1_{fixture_id}"
+    cached = get_db_cache(cache_key, ttl_h)
+    if isinstance(cached, list):
+        return cached
+    stale = get_db_cache(cache_key, max(72, ttl_h))
+    try:
+        res = api_get("/injuries", params={"fixture": fixture_id}, timeout=8)
+        payload = res.json() if res.status_code == 200 else {}
+        if res.status_code != 200 or payload.get("errors"):
+            return stale if isinstance(stale, list) else None
+        rows = payload.get("response", []) or []
+        if isinstance(rows, list):
+            set_db_cache(cache_key, rows)
+            return rows
+    except Exception as error:
+        print(f"⚠️ 경기 부상자 일괄 조회 오류({fixture_id}): {error}")
+    return stale if isinstance(stale, list) else None
+
+
 def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
     default_res = {
         "count": 0, "ace_missing": False, "ace_names": [],
@@ -3734,19 +3823,23 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
 
     try:
         if fixture_id:
-            params = {"fixture": int(fixture_id)}
             source = "target_fixture"
+            inj_data = fetch_fixture_injuries_api(int(fixture_id), ttl_h)
+            if inj_data is None:
+                return stale_or_default()
         elif league_id and season:
-            params = {"team": int(team_id), "league": int(league_id), "season": int(season)}
             source = "team_season"
+            inj_res = api_get(
+                "/injuries",
+                params={"team": int(team_id), "league": int(league_id), "season": int(season)},
+                timeout=8,
+            )
+            payload = inj_res.json() if inj_res.status_code == 200 else {}
+            if inj_res.status_code != 200 or payload.get("errors"):
+                return stale_or_default()
+            inj_data = payload.get("response", [])
         else:
             return default_res
-
-        inj_res = api_get("/injuries", params=params, timeout=8)
-        payload = inj_res.json() if inj_res.status_code == 200 else {}
-        if inj_res.status_code != 200 or payload.get("errors"):
-            return stale_or_default()
-        inj_data = payload.get("response", [])
         injured_names = sorted({
             x.get("player", {}).get("name", "").strip()
             for x in inj_data

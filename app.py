@@ -2291,11 +2291,22 @@ def _world_live_item(world_item, proto_by_fixture):
 
 
 def _with_analysis_pick(item):
-    """Fill legacy empty cards from pre-kickoff evidence, not current results.
-
-    This is a display-only copy. The historical prediction, decision and grade
-    remain unchanged, including an old decision not to issue an official pick.
-    """
+    """Fill legacy empty cards only after real pre-kickoff analysis exists."""
+    if not isinstance(item, dict):
+        return item
+    stage = str(item.get("analysis_stage") or item.get("latest_analysis_stage") or "").strip().casefold()
+    status = str(item.get("analysis_status") or "").strip().casefold()
+    pick_status = str(item.get("pick_status") or "").strip().casefold()
+    if (
+        stage == "market-preview"
+        or stage.startswith("pending")
+        or stage.startswith("deferred")
+        or status.startswith("pending")
+        or pick_status in {"analysis_pending", "not_analyzed"}
+        or bool(item.get("analysis_refresh_pending"))
+        or bool(item.get("public_pick_blocked"))
+    ):
+        return item
     categories = item.get("pick_categories") or {}
     selected = categories.get("high_probability") or {}
     if selected.get("raw_pick") or any(p.get("raw_pick") for p in item.get("ev_sorted_picks", []) if isinstance(p, dict)):
@@ -3302,6 +3313,29 @@ def generate_pred_boxes(
         if display_item.get("display_only_pick"):
             pick_categories = display_item.get("pick_categories")
             picks = display_item.get("ev_sorted_picks")
+        stage = str(
+            display_item.get("analysis_stage") or display_item.get("latest_analysis_stage") or ""
+        ).strip().casefold()
+        status = str(display_item.get("analysis_status") or "").strip().casefold()
+        pick_status = str(display_item.get("pick_status") or "").strip().casefold()
+        analysis_pending = bool(
+            stage == "market-preview"
+            or stage.startswith("pending")
+            or stage.startswith("deferred")
+            or status.startswith("pending")
+            or pick_status in {"analysis_pending", "not_analyzed"}
+            or display_item.get("analysis_refresh_pending")
+            or display_item.get("public_pick_blocked")
+        )
+        if analysis_pending:
+            return (
+                "<div class='pred-box' style='border-style:dashed;border-color:#38BDF8;'>"
+                "<div class='pred-label' style='color:#38BDF8;'>🔍 분석자료 수집 중</div>"
+                "<span class='pred-value' style='color:#CBD5E1;'>해외 API 팀·최근 경기 자료 확인 중</span>"
+                "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:7px;'>"
+                "팀 신원·마크·최근 경기 자료를 먼저 확보한 뒤 공식픽과 로봇픽을 생성합니다. "
+                "배당만으로 임시 최종픽을 표시하지 않습니다.</span></div>"
+            )
     picks = picks or []
     away_team = ""
     if isinstance(analysis_item, dict):
@@ -3709,13 +3743,16 @@ with main_tab6:
         ).strip().casefold()
         status = str(item.get("analysis_status") or "").strip().upper()
         pick_status = str(item.get("pick_status") or "").strip().upper()
-        expired_preview = (
-            stage == "market-preview" and not _recommendation_is_upcoming(item)
-        ) or status == "MISSED_PREKICKOFF" or pick_status == "PROVISIONAL_PREVIEW_EXPIRED"
-        return bool(
-            not expired_preview
-            and (analysis.get("selected") or {}).get("raw_pick")
+        selected = analysis.get("selected") or {}
+        blocked = bool(
+            stage in {"", "market-preview"}
+            or stage.startswith("pending")
+            or stage.startswith("deferred")
+            or status in {"MISSED_PREKICKOFF", "PENDING_SHADOW_ANALYSIS"}
+            or pick_status in {"PROVISIONAL_PREVIEW_EXPIRED", "ANALYSIS_PENDING", "NOT_ANALYZED"}
+            or selected.get("official_final_pick") is False
         )
+        return bool(not blocked and selected.get("raw_pick"))
 
     world_pick_ready = {
         id(item): world_pick_is_actionable(item)
@@ -3757,6 +3794,7 @@ with main_tab6:
     world_matches = [
         item for item in eligible_world_matches
         if item not in missed_prekickoff_world
+        and (is_world_admin or world_pick_ready.get(id(item), False))
     ]
     if is_world_admin:
         rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
@@ -3769,7 +3807,7 @@ with main_tab6:
             "관리자 세계경기 관제 · "
             f"수집 목록 {int(world_source_meta.get('raw_fixture_count') or 0)}경기 · "
             f"배당확인 대상 {len(eligible_world_matches)}경기 · "
-            f"시장선픽 {world_market_previews}경기 · "
+            f"분석대기(구 선픽 정리대상) {world_market_previews}경기 · "
             f"정밀분석 {world_detailed_analyzed}경기 · "
             f"프로토 중복 제외 {int(world_source_meta.get('proto_overlap_excluded_count') or 0)}경기 · "
             f"최종동결 {world_actual_frozen}경기 · "
@@ -3784,8 +3822,8 @@ with main_tab6:
             st.warning(
                 f"경기 전 동결픽이 없었던 {len(missed_prekickoff_world)}경기는 "
                 "시작 후 결과를 보고 픽을 만드는 일을 막기 위해 추천 카드에서 제외했습니다. "
-                "현재 목록에서도 아직 시작하지 않은 경기부터 정밀분석 전 시장 선픽과 "
-                "로봇 독립픽을 즉시 함께 저장합니다."
+                "현재 목록에서는 아직 시작하지 않은 경기의 팀·최근 경기 자료를 먼저 모은 뒤 "
+                "정밀분석이 완료된 픽만 공개합니다."
             )
     if not world_matches:
         shadow_count = int(world_source_meta.get("eligible_shadow_count") or 0)
