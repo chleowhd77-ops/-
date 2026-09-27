@@ -106,6 +106,12 @@ TOTO14_UNIT_PRICE = max(100, int(os.getenv("TOTO14_UNIT_PRICE", "1000")))
 MASTER_ANALYSIS_SOFT_SECONDS = max(
     120, min(900, int(os.getenv("MASTER_ANALYSIS_SOFT_SECONDS", "240")))
 )
+# Keep each master pass short enough that LIVE/score can regain the single
+# production DB slot quickly. The next five-minute scheduler tick resumes the
+# nearest remaining kickoff from the published pending cards.
+MASTER_ANALYSIS_NEW_MATCHES_PER_PASS = max(
+    1, min(12, int(os.getenv("MASTER_ANALYSIS_NEW_MATCHES_PER_PASS", "6")))
+)
 TEAM_IDENTITY_RETRY_BATCH = max(
     2, min(30, int(os.getenv("TEAM_IDENTITY_RETRY_BATCH", "24")))
 )
@@ -11335,6 +11341,27 @@ def build_dashboard_data():
             resumed_proto_count += 1
             continue
 
+        # Do not let one large Betman board monopolize the production DB for
+        # tens of minutes. Team/API evidence is already warmed by the team
+        # worker, so analyze only a small nearest-kickoff batch and publish the
+        # rest as honest pending cards for the next pass.
+        if analyzed_proto_count >= MASTER_ANALYSIS_NEW_MATCHES_PER_PASS:
+            deferred_item = _resumable_proto_item(
+                m, previous_item, require_current_stage=False
+            )
+            if deferred_item is None:
+                deferred_item = _pending_proto_item(m)
+                deferred_item["public_pick_block_reason"] = "analysis_batch_waiting_for_next_master_pass"
+                deferred_item["detailed_report"] = (
+                    "해외 API 자료는 공용 캐시에 선수집 중이며, 가까운 킥오프부터 "
+                    "소량씩 정밀 분석해 LIVE·채점 작업을 막지 않습니다."
+                )
+            deferred_item["analysis_refresh_pending"] = True
+            deferred_item["public_pick_blocked"] = True
+            dashboard_proto.append(deferred_item)
+            deferred_proto_count += 1
+            continue
+
         # Empty-price rows cannot receive a Betman market preview.  If their
         # team pair is already verified locally, allow the existing model-only
         # analysis below to finish instead of publishing an empty card until a
@@ -13076,6 +13103,7 @@ def build_dashboard_data():
             "display_toto14_count": len(dashboard_toto14),
             "resumed_proto_count": resumed_proto_count,
             "analyzed_proto_count": analyzed_proto_count,
+            "master_analysis_new_matches_per_pass": MASTER_ANALYSIS_NEW_MATCHES_PER_PASS,
             "deferred_proto_count": deferred_proto_count,
             "proto_market_watch_count": proto_market_watch_count,
             "analysis_resume_pending": bool(deferred_proto_count),
@@ -16477,7 +16505,7 @@ JOB_FUNCTIONS = {
     "backup": run_db_backup_job,
 }
 JOB_TIMEOUTS = {
-    "master": max(900, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "2700"))),
+    "master": max(600, min(1200, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "900")))),
     "recovery": max(60, int(os.getenv("RECOVERY_JOB_TIMEOUT_SECONDS", "180"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
     "score": max(120, int(os.getenv("SCORE_JOB_TIMEOUT_SECONDS", "600"))),
@@ -16563,6 +16591,15 @@ JOB_PRIORITY = {
 PENDING_JOB_AGE_SECONDS = max(
     600, min(3600, int(os.getenv("PENDING_JOB_AGE_SECONDS", "1800")))
 )
+# master must not sit behind newly recurring LIVE/score requests forever. Once
+# it has waited three minutes it receives the next free main-DB turn. The short
+# per-pass batch above then gives the DB slot back quickly.
+MASTER_PRIORITY_AGE_SECONDS = max(
+    60, min(600, int(os.getenv("MASTER_PRIORITY_AGE_SECONDS", "180")))
+)
+WORLD_PRIORITY_AGE_SECONDS = max(
+    300, min(1800, int(os.getenv("WORLD_PRIORITY_AGE_SECONDS", "900")))
+)
 
 
 def _available_memory_mb():
@@ -16629,10 +16666,16 @@ def _start_isolated_job(job_name):
 def _pending_sort_key(job_name, now):
     requested_at = float(_PENDING_JOBS[job_name])
     waited = max(0.0, now - requested_at)
-    # Once a task has waited thirty minutes (configurable), oldest wins so
-    # WORLD/master/backup cannot be starved by recurring five-minute jobs.
+    # The analysis pass is short/batched, so give it the next DB turn after a
+    # brief wait instead of making it lose to every new five-minute LIVE/score
+    # request. WORLD gets a slower fairness boost; the generic starvation guard
+    # remains the final fallback for every job.
+    if job_name == "master" and waited >= MASTER_PRIORITY_AGE_SECONDS:
+        return (0, 0, requested_at)
+    if job_name == "world" and waited >= WORLD_PRIORITY_AGE_SECONDS:
+        return (0, 1, requested_at)
     if waited >= PENDING_JOB_AGE_SECONDS:
-        return (0, requested_at)
+        return (0, 2, requested_at)
     return (1, JOB_PRIORITY.get(job_name, 99), requested_at)
 
 
