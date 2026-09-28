@@ -1,37 +1,39 @@
 {
   "jobs": {
     "scheduler": {
-      "run_id": "scheduler-1790592428943222898",
-      "supervisor_pid": 461191,
+      "run_id": "scheduler-1790592871362297646",
+      "supervisor_pid": 461296,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T10:53:10+00:00",
-      "pid": 461191,
-      "last_started_at": "2026-09-28T10:47:08+00:00",
+      "heartbeat_at": "2026-09-28T10:54:31+00:00",
+      "pid": 461296,
+      "last_started_at": "2026-09-28T10:54:31+00:00",
       "active_jobs": {
-        "world": 461230,
-        "team": 461239
+        "live": 461302,
+        "team": 461303
       },
       "pending_jobs": [
-        "live",
         "master",
-        "score"
+        "score",
+        "world"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
       "last_failure_duration_seconds": 180.2,
-      "last_success_at": "2026-09-28T10:47:18+00:00",
       "last_failure_at": "2026-09-26T15:09:13+00:00",
+      "last_success_at": "2026-09-28T10:47:18+00:00",
       "last_success_duration_seconds": 6.21,
-      "run_id": "live-1790592428959836483",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-28T10:47:18+00:00",
-      "pid": 461195,
-      "last_started_at": "2026-09-28T10:47:12+00:00",
-      "duration_seconds": 6.21
+      "run_id": "live-1790592871382435602",
+      "child_pid": 461302,
+      "last_stage": "starting",
+      "state": "running",
+      "heartbeat_at": "2026-09-28T10:54:31+00:00",
+      "pid": 461296,
+      "last_started_at": "2026-09-28T10:54:31+00:00",
+      "elapsed_seconds": 0.0,
+      "overlap_skips": 0
     },
     "score": {
       "last_failure_duration_seconds": 600.7,
@@ -85,39 +87,23 @@
       "run_id": "world-1790592597676385388",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T10:53:10+00:00",
+      "heartbeat_at": "2026-09-28T10:54:11+00:00",
       "pid": 461191,
       "last_started_at": "2026-09-28T10:50:00+00:00",
       "child_pid": 461230,
-      "elapsed_seconds": 193.0,
+      "elapsed_seconds": 253.6,
       "overlap_skips": 1
     },
     "team": {
-      "last_success_duration_seconds": 24.71,
       "last_success_at": "2026-09-28T10:53:35+00:00",
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "run_id": "team-1790592782330668075",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-28T10:53:35+00:00",
-      "pid": 461239,
-      "last_started_at": "2026-09-28T10:53:11+00:00",
-      "team_retry_processed": 30,
-      "team_retry_resolved": 212,
-      "team_retry_pending": 5,
-      "team_retry_due": 2,
-      "team_retry_seeded": 1,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 0,
-      "data_prefetch_teams": 0,
-      "data_prefetch_identity_missing": 0,
-      "data_prefetch_early_core_matches": 0,
-      "data_prefetch_deep_matches": 0,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": true,
-      "data_prefetch_errors": [],
-      "duration_seconds": 24.71
+      "last_success_duration_seconds": 24.71,
+      "run_id": "team-1790592871396295757",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-09-28T10:54:34+00:00",
+      "pid": 461303,
+      "last_started_at": "2026-09-28T10:54:34+00:00"
     },
     "backup": {
       "last_success_duration_seconds": 1759.2,
@@ -152,7 +138,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-28T10:53:35+00:00",
+  "updated_at": "2026-09-28T10:54:34+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
