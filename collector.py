@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.33-proto-pick-preservation"
+COLLECTOR_PATCH_VERSION = "R7.12.34-early-shared-prefetch"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -123,8 +123,16 @@ TEAM_IDENTITY_RETRY_BATCH = max(
 DATA_PREFETCH_MATCH_LIMIT = max(
     50, min(80, int(os.getenv("DATA_PREFETCH_MATCH_LIMIT", "50")))
 )
+# The close-to-kickoff pass refreshes volatile evidence (market, injuries and
+# lineup).  A separate earlier pass below starts building the shared, stable
+# team dossier before then, so a 30-hour boundary cannot leave a future card
+# with no material at all.
 DATA_PREFETCH_HORIZON_HOURS = max(
     6, min(48, int(os.getenv("DATA_PREFETCH_HORIZON_HOURS", "30")))
+)
+DATA_PREFETCH_EARLY_HORIZON_HOURS = max(
+    DATA_PREFETCH_HORIZON_HOURS,
+    min(96, int(os.getenv("DATA_PREFETCH_EARLY_HORIZON_HOURS", "72")))
 )
 DATA_PREFETCH_TEAM_TTL_HOURS = max(
     4, min(24, int(os.getenv("DATA_PREFETCH_TEAM_TTL_HOURS", "12")))
@@ -16717,12 +16725,14 @@ def run_master_job():
 def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
     """Warm reusable overseas data before any pick engine needs it.
 
-    This job deliberately does not create a prediction.  It resolves fixture/team
-    identity and caches recent fixtures, standings, H2H, manager and injury rows.
-    Official, robot, V2 and V3 can then read the same evidence quickly.
+    This job deliberately does not create a prediction.  From T-72 it resolves
+    the shared, slow-changing team dossier (identity/logo, form source and H2H).
+    From T-30 it additionally refreshes volatile/detailed evidence (market,
+    standings, squad, injuries and lineup).  Official, robot, V2 and V3 then
+    read the same evidence without four independent overseas-data jobs.
     """
     now = datetime.now(KST)
-    horizon = now + timedelta(hours=DATA_PREFETCH_HORIZON_HOURS)
+    horizon = now + timedelta(hours=DATA_PREFETCH_EARLY_HORIZON_HOURS)
     candidates = []
 
     betman = _read_json("betman_data.json", {}) or {}
@@ -16755,6 +16765,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
     candidates.sort(key=lambda row: row[0])
     seen = set()
     processed = teams_warmed = identities_missing = quota_paused = 0
+    early_core_matches = deep_matches = 0
     errors = []
 
     for kickoff, purpose, entry in candidates:
@@ -16771,6 +16782,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         match = entry.get("match") or {}
         home_name = str(match.get("home") or "").strip()
         away_name = str(match.get("away") or "").strip()
+        hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
+        deep_refresh_due = hours_to_kickoff <= DATA_PREFETCH_HORIZON_HOURS
         # The same official fixture can appear in PROTO, TOTO14 and WORLD.
         # Prefetch its provider evidence once, then let every analyst reuse it.
         key = (
@@ -16780,6 +16793,10 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             continue
         seen.add(key)
         processed += 1
+        if deep_refresh_due:
+            deep_matches += 1
+        else:
+            early_core_matches += 1
 
         try:
             fixture_id = int(match.get("fixture_id") or entry.get("item", {}).get("api_fixture_id") or 0)
@@ -16797,19 +16814,39 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                     )
                     home_id = int((home_info or {}).get("id") or 0)
                     away_id = int((away_info or {}).get("id") or 0)
-                    fixture_id = int(identity_fixture or 0)
+                    fixture_id = int(
+                        ((identity_fixture or {}).get("fixture") or {}).get("id")
+                        if isinstance(identity_fixture, dict) else (identity_fixture or 0)
+                    )
+                    if isinstance(identity_fixture, dict):
+                        fixture_id = int(
+                            (identity_fixture.get("fixture") or {}).get("id")
+                            or fixture_id or 0
+                        )
+                        league_id = int(
+                            (identity_fixture.get("league") or {}).get("id")
+                            or league_id or 0
+                        )
+                        season = int(
+                            (identity_fixture.get("league") or {}).get("season")
+                            or season or 0
+                        )
                     if home_id and away_id:
-                        need_overseas_odds = not _valid_three_way_odds([
-                            match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
-                        ])
-                        fixture_info = fetch_overseas_odds_and_fixture_api(
-                            home_id, away_id, 2,
-                            match.get("match_time") or match.get("time") or "",
-                            include_odds=need_overseas_odds,
-                        ) or {}
-                        fixture_id = int(fixture_info.get("fixture_id") or fixture_id or 0)
-                        league_id = int(fixture_info.get("league_id") or league_id or 0)
-                        season = int(fixture_info.get("season") or season or 0)
+                        # Date-fixture identity data already gives the early
+                        # pass the correct pair/logo/competition.  Do not spend
+                        # a volatile odds request until the normal T-30 refresh.
+                        if deep_refresh_due:
+                            need_overseas_odds = not _valid_three_way_odds([
+                                match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
+                            ])
+                            fixture_info = fetch_overseas_odds_and_fixture_api(
+                                home_id, away_id, 2,
+                                match.get("match_time") or match.get("time") or "",
+                                include_odds=need_overseas_odds,
+                            ) or {}
+                            fixture_id = int(fixture_info.get("fixture_id") or fixture_id or 0)
+                            league_id = int(fixture_info.get("league_id") or league_id or 0)
+                            season = int(fixture_info.get("season") or season or 0)
                 if home_id <= 0 or away_id <= 0 or home_id == away_id:
                     identities_missing += 1
                     if home_name and away_name:
@@ -16821,22 +16858,26 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         )
                     continue
 
-                # Warm every reusable input used by the customer pick path.
-                # The master worker will be cache-only, so these provider calls
-                # happen here once and are shared by official/robot/V2/V3.
+                # From T-72, warm the common team record once.  These helpers
+                # share the recent-fixtures cache, so this is normally one
+                # provider request per distinct team plus one H2H request.
                 for team_id in (home_id, away_id):
                     fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
                     fetch_team_last_match_date_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_squad_cached(team_id)
-                    fetch_new_manager_status(team_id, 24)
+                    if deep_refresh_due:
+                        fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                        fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                        fetch_team_squad_cached(team_id)
+                        fetch_new_manager_status(team_id, 24)
                     teams_warmed += 1
 
-                if league_id and season:
+                # Standings/key-player information changes often enough to
+                # wait for the normal T-30 refresh.  Core history is already
+                # available to all analyst engines from the early pass.
+                if deep_refresh_due and league_id and season:
                     # One shared standings table plus league key-player cache feeds
                     # rank/motivation, injury impact and predicted-XI context.
                     fetch_team_standing_api(home_id, 12, league_id, season)
@@ -16844,8 +16885,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                     fetch_league_key_players(league_id, season)
                 fetch_fixture_details_api(home_id, away_id, 24)
 
-                hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
-                if fixture_id and hours_to_kickoff <= 24:
+                if deep_refresh_due and fixture_id and hours_to_kickoff <= 24:
                     injury_ttl = 3 if hours_to_kickoff <= 3 else 8
                     if entry.get("source") == "WORLD":
                         fetch_world_injuries_snapshot(
@@ -16869,6 +16909,10 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         "processed": processed,
         "teams_warmed": teams_warmed,
         "identities_missing": identities_missing,
+        "early_core_matches": early_core_matches,
+        "deep_matches": deep_matches,
+        "early_horizon_hours": DATA_PREFETCH_EARLY_HORIZON_HOURS,
+        "deep_horizon_hours": DATA_PREFETCH_HORIZON_HOURS,
         "quota_paused": quota_paused,
         "errors": errors[:5],
     }
@@ -16895,6 +16939,10 @@ def run_team_identity_job():
         data_prefetch_matches=int(prefetch.get("processed") or 0),
         data_prefetch_teams=int(prefetch.get("teams_warmed") or 0),
         data_prefetch_identity_missing=int(prefetch.get("identities_missing") or 0),
+        data_prefetch_early_core_matches=int(prefetch.get("early_core_matches") or 0),
+        data_prefetch_deep_matches=int(prefetch.get("deep_matches") or 0),
+        data_prefetch_early_horizon_hours=int(prefetch.get("early_horizon_hours") or 0),
+        data_prefetch_deep_horizon_hours=int(prefetch.get("deep_horizon_hours") or 0),
         data_prefetch_quota_paused=bool(prefetch.get("quota_paused")),
         data_prefetch_errors=list(prefetch.get("errors") or []),
     )
