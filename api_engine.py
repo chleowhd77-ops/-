@@ -64,6 +64,9 @@ API_ANALYSIS_SOFT_LIMIT = max(50, API_DAILY_TOTAL_LIMIT - API_LIVE_RESERVE)
 # 1,500회 LIVE/채점 보호량 검사는 이 값보다 우선해 계속 적용된다.
 API_WORLD_DAILY_LIMIT = max(10, int(os.getenv("API_WORLD_DAILY_LIMIT", "4000")))
 API_WORLD_MIN_REMAINING = max(100, int(os.getenv("API_WORLD_MIN_REMAINING", "1000")))
+API_PROVIDER_STATUS_TTL_SECONDS = max(
+    60, min(1800, int(os.getenv("API_PROVIDER_STATUS_TTL_SECONDS", "300")))
+)
 API_MIN_REQUEST_INTERVAL = max(0.0, float(os.getenv("API_MIN_REQUEST_INTERVAL", "0.22")))
 API_RATE_LIMIT_RETRIES = max(0, int(os.getenv("API_RATE_LIMIT_RETRIES", "2")))
 _API_PROVIDER_REMAINING = None
@@ -436,7 +439,19 @@ def _reserve_api_request(day, purpose, path):
         if calls >= API_DAILY_TOTAL_LIMIT-reserve or (remaining is not None and remaining <= reserve):
             raise ApiQuotaUnavailable("Daily reserve protected")
         if purpose == "world" and used >= API_WORLD_DAILY_LIMIT:
-            raise ApiQuotaUnavailable("World-football API safety budget reached")
+            # The purpose counter is a local preflight ledger.  It can become
+            # stale after a failed worker/restart, so a fresh provider status
+            # check with enough headroom is allowed to reconcile this one
+            # internal brake.  The total cap and LIVE reserve above stay in
+            # force for every actual request.
+            provider_has_confirmed_headroom = (
+                remaining is not None and int(remaining) > reserve
+            )
+            if not provider_has_confirmed_headroom:
+                raise ApiQuotaUnavailable("World-football API safety budget reached")
+            _record_runtime_metric(
+                day, "world_local_cap_reconciled", purpose, path
+            )
         conn.execute("""
             INSERT INTO api_usage_daily VALUES (?,1,NULL,CURRENT_TIMESTAMP)
             ON CONFLICT(usage_day) DO UPDATE SET calls=calls+1,
@@ -463,6 +478,8 @@ def _reserve_api_request(day, purpose, path):
 
 def _request_cache_ttl(path, params, payload=None):
     response_rows = payload.get("response") if isinstance(payload, dict) else None
+    if path == "/status":
+        return API_PROVIDER_STATUS_TTL_SECONDS
     # 팀/경기표의 정상 HTTP 빈 응답은 공급사 색인 지연일 수 있다. 하루 동안
     # 실패로 굳히지 않고 5분 뒤 영구 재시도 대기열이 다시 확인하게 한다.
     if path in {"/teams", "/fixtures"} and isinstance(response_rows, list) and not response_rows:
@@ -728,6 +745,54 @@ def api_get(path, params=None, timeout=7, purpose=None):
     finally:
         if not saved:
             _finish_request_cache(key)
+
+
+def refresh_provider_usage_status():
+    """Read the provider's own daily usage before lifting a stale local brake.
+
+    This makes one normal, cached API request under the protected LIVE purpose.
+    It never resets local counters and returns ``None`` on an unverified or
+    malformed response, leaving the existing conservative protection intact.
+    """
+    global _API_PROVIDER_DAY, _API_PROVIDER_REMAINING
+    try:
+        response = api_get("/status", timeout=10, purpose="live")
+        payload = response.json() if response.status_code == 200 else {}
+        status = payload.get("response") if isinstance(payload, dict) else None
+        if isinstance(status, list):
+            status = status[0] if status else {}
+        status = status if isinstance(status, dict) else {}
+        requests_info = status.get("requests") or {}
+        if not isinstance(requests_info, dict):
+            return None
+        current = requests_info.get("current")
+        limit = requests_info.get("limit_day")
+        remaining = requests_info.get("remaining")
+        try:
+            if remaining is None:
+                remaining = int(limit) - int(current)
+            remaining = max(0, int(remaining))
+            current = int(current) if current is not None else None
+            limit = int(limit) if limit is not None else None
+        except (TypeError, ValueError):
+            return None
+        day = _api_provider_day_key()
+        conn = _runtime_connect()
+        try:
+            conn.execute(
+                "INSERT INTO api_usage_daily (usage_day,calls,provider_remaining,updated_at) "
+                "VALUES (?,0,?,CURRENT_TIMESTAMP) "
+                "ON CONFLICT(usage_day) DO UPDATE SET "
+                "provider_remaining=excluded.provider_remaining,updated_at=CURRENT_TIMESTAMP",
+                (day, remaining),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _API_PROVIDER_DAY, _API_PROVIDER_REMAINING = day, remaining
+        return {"current": current, "limit_day": limit, "remaining": remaining}
+    except Exception:
+        return None
 
 
 def get_api_usage_status():

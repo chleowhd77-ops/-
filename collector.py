@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.35-world-schedule-freshness"
+COLLECTOR_PATCH_VERSION = "R7.12.36-world-provider-ledger-reconcile"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -17065,6 +17065,20 @@ def _world_schedule_refresh_due(now=None):
 
 def run_world_job():
     """Run independently so WORLD failures never block PROTO/LIVE/scoring."""
+    # A local WORLD purpose record must not hide every fixture when the
+    # provider itself still reports daily headroom.  The status call is cached
+    # and only made after the internal WORLD brake is reached.
+    world_usage = get_api_usage_status()
+    if int(world_usage.get("world_calls") or 0) >= int(API_WORLD_DAILY_LIMIT):
+        provider_status = refresh_provider_usage_status()
+        if provider_status is not None:
+            print(
+                "🔎 WORLD 내부 사용량 재확인: "
+                f"공급사 오늘 {provider_status.get('current', '?')}회 / "
+                f"잔여 {provider_status.get('remaining', '?')}회"
+            )
+        else:
+            print("⚠️ WORLD 내부 사용량 재확인 실패 · 기존 안전 차단을 유지합니다.")
     schedule_refreshed = False
     if _world_schedule_refresh_due():
         schedule_refreshed = bool(collect_world_schedule())

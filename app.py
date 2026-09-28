@@ -3852,6 +3852,20 @@ with main_tab6:
         and (is_world_admin or world_pick_ready.get(id(item), False))
     ]
     if is_world_admin:
+        world_api_usage = world_source_meta.get("api_usage") or {}
+        world_ledger_calls = int(world_api_usage.get("world_calls") or 0)
+        provider_remaining = world_api_usage.get("provider_remaining")
+        provider_daily_limit = int(world_api_usage.get("daily_limit") or 0)
+        world_api_text = f"WORLD 내부장부 {world_ledger_calls}회"
+        try:
+            provider_remaining = int(provider_remaining)
+            if provider_daily_limit > 0:
+                provider_used = max(0, provider_daily_limit - provider_remaining)
+                world_api_text += (
+                    f" · 공급사 실제 {provider_used}회 / 잔여 {provider_remaining}회"
+                )
+        except (TypeError, ValueError):
+            pass
         rejected_summary = world_dashboard_data.get("rejected_summary", []) or []
         rejected_text = " · ".join(
             f"{entry.get('reason', entry.get('reason_code', '제외'))} {int(entry.get('count') or 0)}"
@@ -3868,7 +3882,7 @@ with main_tab6:
             f"최종동결 {world_actual_frozen}경기 · "
             f"오류 {world_actual_errors}경기 · "
             f"공개 {world_actual_public}경기 · "
-            f"WORLD API {int((world_source_meta.get('api_usage') or {}).get('world_calls') or 0)}회"
+            f"{world_api_text}"
         )
         if rejected_text:
             with st.expander("세계경기 제외 사유 확인"):
