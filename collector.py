@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.32-proto-repeat-analysis-guard"
+COLLECTOR_PATCH_VERSION = "R7.12.33-proto-pick-preservation"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -10998,6 +10998,20 @@ def _restore_scheduled_proto_cards_from_saved_predictions(
             continue
 
         if _proto_item_has_usable_pick(previous, match):
+            # A valid pre-kickoff answer may be waiting for a newer team/logo
+            # snapshot, but that refresh must never hide the already saved
+            # official pick from the customer card.  The next master pass can
+            # still enrich it; this recovery only removes the false pending
+            # display state.
+            if bool(previous.get("analysis_refresh_pending")) or bool(
+                previous.get("public_pick_blocked")
+            ):
+                visible = _preserve_visible_proto_pick_for_retry(
+                    match, previous, "scheduled_pick_recovery"
+                )
+                if visible is not None:
+                    cards[index] = visible
+                    recovered += 1
             continue
 
         restored = _locked_proto_item(match, previous=previous, locked=False)
@@ -11082,6 +11096,39 @@ def _proto_item_has_usable_pick(item, match):
     if str(selected.get("recommendation_status") or "").upper() == "PREVIEW":
         return False
     return bool(str(selected.get("raw_pick") or "").strip())
+
+
+def _preserve_visible_proto_pick_for_retry(match, previous=None, reason=""):
+    """Keep an existing pre-kickoff pick visible while enrichment retries.
+
+    Team identity, logos and fresh provider data are enrichment work.  A
+    temporary API/cache/queue delay must not replace a same-match saved pick
+    with a PENDING card or alter its selected candidate.  This helper changes
+    only dashboard display state; it never writes prediction history or
+    recalculates an official/robot pick.
+    """
+    if not _proto_item_has_usable_pick(previous, match):
+        return None
+    preserved = dict(previous)
+    final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
+    preserved.update({
+        "match": dict(match),
+        "final_match_time": final_match_time,
+        "timestamp": parse_match_time(final_match_time).timestamp(),
+        "analysis_refresh_pending": False,
+        "public_pick_blocked": False,
+        "public_pick_block_reason": "",
+        "analysis_refresh_deferred": True,
+        "analysis_refresh_deferred_reason": str(reason or "enrichment_retry"),
+        "data_warning": (
+            "기존 경기 전 분석픽을 유지합니다. 팀 마크·최근 경기 등 추가 자료는 "
+            "공용 캐시에서 다음 수집 주기에 보강합니다."
+        ),
+    })
+    _hydrate_published_team_data(preserved, match)
+    if not _proto_item_has_three_engine_picks(preserved):
+        preserved["robot_analysis_pending"] = True
+    return preserved
 
 
 def _published_team_identity_ready(item, require_fixture=True):
@@ -11751,6 +11798,16 @@ def build_dashboard_data():
                     f"{brake_reason} · 완료 {analyzed_proto_count}경기 / "
                     f"최대 {MASTER_ANALYSIS_NEW_MATCHES_PER_PASS}경기 · 다음 주기 즉시 이어서 분석"
                 )
+            # A pass/time/memory brake is not a reason to hide an already
+            # published pre-kickoff answer.  Preserve it exactly and retry
+            # enrichment on the next master pass.
+            deferred_item = _preserve_visible_proto_pick_for_retry(
+                m, previous_item, f"analysis_pass_brake:{brake_reason}"
+            )
+            if deferred_item is not None:
+                dashboard_proto.append(deferred_item)
+                deferred_proto_count += 1
+                continue
             deferred_item = _resumable_proto_item(
                 m, previous_item, require_current_stage=False
             )
@@ -11809,6 +11866,17 @@ def build_dashboard_data():
                 reason="proto_identity_and_logo_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
+            preserved = _preserve_visible_proto_pick_for_retry(
+                m, previous_item, "team_identity_logo_prefetch_pending"
+            )
+            if preserved is not None:
+                dashboard_proto.append(preserved)
+                deferred_proto_count += 1
+                print(
+                    f"♻️ 팀 자료 보강 대기 - 기존 분석픽 유지: "
+                    f"{home_team} vs {away_team}"
+                )
+                continue
             pending = _pending_proto_item(m)
             pending["public_pick_block_reason"] = "team_identity_logo_form_prefetch_pending"
             pending.update({
@@ -11926,6 +11994,17 @@ def build_dashboard_data():
                 reason="proto_fixture_identity_required_before_public_pick",
                 league_name=m.get("league") or "",
             )
+            preserved = _preserve_visible_proto_pick_for_retry(
+                m, previous_item, "fixture_identity_prefetch_pending"
+            )
+            if preserved is not None:
+                dashboard_proto.append(preserved)
+                deferred_proto_count += 1
+                print(
+                    f"♻️ 경기 연결 보강 대기 - 기존 분석픽 유지: "
+                    f"{home_team} vs {away_team}"
+                )
+                continue
             pending = _pending_proto_item(m)
             pending["public_pick_block_reason"] = "fixture_identity_prefetch_pending"
             pending.update({
