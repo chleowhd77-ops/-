@@ -87,10 +87,9 @@ st.set_page_config(
 GITHUB_REPO = "chleowhd77-ops/-"
 DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 # 현재 상용화 범위는 프로토 LIVE와 승무패14다. WORLD는 데이터·코드는
-# 보존하되 고객 메뉴와 원격 피드 요청을 끈다.
-WORLD_FEATURE_ENABLED = str(os.getenv("WORLD_FEATURE_ENABLED", "0")).strip().lower() in {
-    "1", "true", "yes", "on"
-}
+# 보존하되 고객 메뉴와 원격 피드 요청을 끈다.  배포 환경에 예전 설정값
+# WORLD_FEATURE_ENABLED=1 이 남아 있어도 고객 메뉴가 되살아나면 안 된다.
+WORLD_FEATURE_ENABLED = False
 # 결과 피드가 회차 전환 순간에 비어도 종료된 일반 축구 경기가
 # 다음 날 LIVE 추천 화면에 남지 않게 한다. 실제 LIVE 상태는 우선 보존된다.
 # The live worker refreshes every five minutes. Two attempts are enough before
@@ -3378,6 +3377,50 @@ def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
     return str(item.get("best_pick_display") or "분석 대기")
 
 
+ANALYST_MENU = ["① Codex 공식픽", "② 자율 로봇픽", "③ V2 알파고", "④ V3 학습픽"]
+
+
+def _analyst_button_menu(state_key, default="① Codex 공식픽"):
+    """Small, fixed analyst buttons instead of long select boxes."""
+    selected = st.session_state.get(state_key, default)
+    if selected not in ANALYST_MENU:
+        selected = default
+    columns = st.columns(len(ANALYST_MENU), gap="small")
+    for column, label in zip(columns, ANALYST_MENU):
+        if column.button(
+            label,
+            key=f"{state_key}-{label}",
+            use_container_width=True,
+            type="primary" if label == selected else "secondary",
+        ):
+            selected = label
+            st.session_state[state_key] = label
+    st.session_state[state_key] = selected
+    return selected
+
+
+def _toto_analyst_marks(item, analyst_key, home_team="", away_team=""):
+    """Read only stored marks; never create an answer for a missing analyst."""
+    item = item if isinstance(item, dict) else {}
+    stored = item.get("analyst_toto14_marks") or {}
+    key = {
+        "① Codex 공식픽": "official", "② 자율 로봇픽": "robot",
+        "③ V2 알파고": "v2", "④ V3 학습픽": "v3",
+    }.get(analyst_key, "official")
+    marks = list((stored.get(key) or {}).get("marks") or [])
+    if not marks:
+        shown = _toto_analyst_pick_display(item, analyst_key, home_team, away_team)
+        if shown == "분석 대기":
+            return []
+        if shown == "무승부":
+            marks = ["무"]
+        elif away_team and away_team in shown and "승" in shown:
+            marks = ["패"]
+        elif "승" in shown:
+            marks = ["승"]
+    return [mark for mark in marks if mark in {"승", "무", "패"}]
+
+
 def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
@@ -3807,14 +3850,11 @@ if main_tab_admin is not None:
         ]
         official_daily = build_official_daily_shortlist(admin_pick_source, 5, 10)
         robot_daily = build_robot_daily_shortlist(admin_pick_source, 5, 10)
-        admin_analyst_view = st.selectbox(
-            "관리자 비교 분석가",
-            ["① Codex 공식", "② 자율 로봇", "③ V2 알파고", "④ V3 학습"],
-            key="admin-analyst-view",
-        )
-        if admin_analyst_view == "① Codex 공식":
+        st.caption("분석가별 버튼을 누르면 해당 분석가의 현재 공용자료 기반 답안만 표시합니다.")
+        admin_analyst_view = _analyst_button_menu("admin-analyst-view")
+        if admin_analyst_view == "① Codex 공식픽":
             _render_admin_shortlist("① Codex 공식 관리자픽", "#00F2FE", official_daily)
-        elif admin_analyst_view == "② 자율 로봇":
+        elif admin_analyst_view == "② 자율 로봇픽":
             _render_admin_shortlist("② 자율 로봇 관리자픽", "#C4B5FD", robot_daily)
         elif admin_analyst_view == "③ V2 알파고":
             _render_admin_learning_reference(admin_pick_source, "③ V2 알파고")
@@ -3824,6 +3864,30 @@ if main_tab_admin is not None:
             "관리자 투자 장부는 고배당이라도 보수확률·실배당·시간순 검증을 함께 통과한 후보만 동결합니다. "
             "V2·V3는 별도 답안을 남기고 채점하지만, 검증표본 전에는 투자후보를 억지로 만들지 않습니다."
         )
+        review_rows = list(
+            (dashboard_data.get("source_meta") or {}).get("team_identity_review") or []
+        )
+        with st.expander(f"팀 매칭 확인 대기 {len(review_rows)}건 · 확인 전 픽 발행 차단", expanded=False):
+            st.caption(
+                "자동으로 비슷한 팀을 연결하지 않습니다. 관리자 확인으로 별칭을 저장한 뒤에도 "
+                "경기 날짜·홈/원정 순서가 실제 API 경기표와 다시 일치해야만 분석이 재개됩니다."
+            )
+            if review_rows:
+                st.dataframe(pd.DataFrame([
+                    {
+                        "경기": f"{row.get('home_name', '')} vs {row.get('away_name', '')}",
+                        "시각": row.get("match_time", ""), "리그": row.get("league_name", ""),
+                        "보류 사유": row.get("reason", ""), "재시도": row.get("attempts", 0),
+                    }
+                    for row in review_rows
+                ]), use_container_width=True, hide_index=True)
+                st.code(
+                    "python3 team_alias_admin.py --name '베트맨 표기' --team-id API팀ID --api-name 'API 공식 팀명'",
+                    language="bash",
+                )
+                st.caption("위 명령은 확인한 한 팀만 저장합니다. 팀 ID를 모르면 저장하지 말고 대기 목록으로 둡니다.")
+            else:
+                st.caption("현재 확인이 필요한 팀 쌍이 없습니다.")
         _render_back_to_top()
 
 # -----------------------------------------------------------------------------
@@ -4062,54 +4126,8 @@ with main_tab2:
     toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
-        if active_role == ROLE_ADMIN:
-            robot_panel_key = "admin_toto14_robot_pick_open"
-            if st.button(
-                "🤖 공식·로봇 비교 닫기" if st.session_state.get(robot_panel_key) else "🤖 공식·로봇 비교 보기",
-                key="admin-toto14-robot-pick-button",
-                use_container_width=True,
-            ):
-                st.session_state[robot_panel_key] = not st.session_state.get(robot_panel_key, False)
-            if st.session_state.get(robot_panel_key):
-                robot_ready = sum(
-                    1 for item in toto14_list if str(item.get("robot_mark") or "") in {"승", "무", "패"}
-                )
-                st.markdown(
-                    f"<div style='background:#071827;border:1px solid #00F2FE;border-radius:12px;padding:18px;margin:12px 0 18px;'>"
-                    f"<div style='color:#00F2FE;font-weight:900;font-size:18px;'>관리자 전용 승무패14 두 분석가 단독표</div>"
-                    f"<div style='color:#94A3B8;margin-top:6px;'>① 새 공식 분석 · ② 자율학습 로봇 · 로봇 준비 {robot_ready}/{len(toto14_list)}경기 · 시작 전 새 버전 갱신, 킥오프 뒤 잠금</div>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                for robot_index, robot_item in enumerate(toto14_list, 1):
-                    robot_match = robot_item.get("match") or {}
-                    official_compare = robot_item.get("official_comparison_pick") or {}
-                    robot_compare = robot_item.get("robot_pick") or {}
-
-                    def compare_cell(label, source, color):
-                        source = source if isinstance(source, dict) else {}
-                        raw = str(source.get("raw_pick") or "분석 대기")
-                        probability = float(
-                            source.get("prob", source.get("probability", 0)) or 0
-                        )
-                        return (
-                            f"<span style='min-width:0;color:{color};font-weight:900;'>"
-                            f"<small style='display:block;color:#64748B;margin-bottom:3px;'>{label}</small>"
-                            f"{escape(_human_pick_label(raw, robot_match.get('home', '')))}"
-                            f" <small style='color:#CBD5E1;'>{probability * 100:.1f}%</small></span>"
-                        )
-
-                    st.markdown(
-                        f"<div style='display:grid;grid-template-columns:70px minmax(180px,1fr) repeat(2,minmax(150px,1fr));gap:12px;align-items:center;"
-                        f"background:#0B1220;border:1px solid #1E293B;border-radius:9px;padding:11px 14px;margin-bottom:8px;'>"
-                        f"<b style='color:#94A3B8;'>제 {robot_index} 경기</b>"
-                        f"<span style='color:#F8FAFC;font-weight:800;'>{escape(str(robot_match.get('home') or ''))} vs {escape(str(robot_match.get('away') or ''))}</span>"
-                        f"{compare_cell('① 새 공식', official_compare, '#00F2FE')}"
-                        f"{compare_cell('② 자율 로봇', robot_compare, '#C4B5FD')}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-                st.caption("이 두 단독픽은 관리자에게만 보이며 실제 공식 복수마킹 조합과 섞이지 않습니다.")
+        st.caption("분석가 버튼을 선택하면 그 분석가의 14경기 마킹만 표시합니다. 시작 뒤에는 당시 동결 답안으로 채점됩니다.")
+        toto14_analyst_view = _analyst_button_menu("toto14-analyst-view")
 
         # The cards are the source of truth.  A partially published/stale meta
         # object must never turn 10 singles + 3 doubles into 0 won.
@@ -4156,31 +4174,6 @@ with main_tab2:
         if cap_exceeded_by_frozen:
             st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
 
-        compact_ticket_rows = []
-        for compact_index, compact_item in enumerate(toto14_list, 1):
-            compact_match = compact_item.get("match") or {}
-            compact_home = escape(str(compact_match.get("home") or "홈팀 미확인"))
-            compact_away = escape(str(compact_match.get("away") or "원정팀 미확인"))
-            compact_time = escape(str(compact_match.get("match_time") or "시간 미정"))
-            compact_pick = escape(str(compact_item.get("best_pick_display") or "분석 대기"))
-            compact_pick_color = "#00F2FE" if compact_item.get("picks") else "#F59E0B"
-            compact_ticket_rows.append(
-                "<div style='display:grid;grid-template-columns:46px minmax(160px,1fr) minmax(150px,1fr);gap:10px;align-items:center;"
-                "padding:9px 10px;border-bottom:1px solid #1E293B;font-size:13px;'>"
-                f"<b style='color:#94A3B8;'>#{compact_index}</b>"
-                f"<span style='color:#E2E8F0;font-weight:800;'>{compact_home} <small style='color:#64748B;'>vs</small> {compact_away}</span>"
-                f"<span style='color:{compact_pick_color};font-weight:900;text-align:right;'>{compact_pick}</span>"
-                f"<small style='grid-column:2 / 4;color:#64748B;'>{compact_time}</small></div>"
-            )
-        st.markdown(
-            "<div style='border:1px solid #1E293B;border-radius:12px;overflow:hidden;margin:0 0 18px;'>"
-            "<div style='padding:10px 12px;background:#0F172A;color:#F8FAFC;font-weight:900;'>"
-            "이번 회차 압축 마킹표 <small style='color:#94A3B8;font-weight:700;'>· 상세 분석은 경기별로 열기</small></div>"
-            + "".join(compact_ticket_rows)
-            + "</div>",
-            unsafe_allow_html=True,
-        )
-
         toto_displayed = 0
         toto_paywall_shown = False
 
@@ -4216,33 +4209,33 @@ with main_tab2:
                 if not score_text or score_text == "-": score_text = "0:0"
                 if score_text: live_score_html = f"<div style='color:#00F2FE; font-weight:900; font-size:18px;'>{score_text}</div><div style='color:#EF4444; font-size:10px; font-weight:900;'>LIVE</div>"
 
-            v3_learning_html = _v3_learning_pick_html(item, str(m.get("home") or ""))
+            analyst_marks = _toto_analyst_marks(
+                item, toto14_analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
+            )
+            analyst_pick = _toto_analyst_pick_display(
+                item, toto14_analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
+            )
+            analyst_marks_html = _render_toto14_picks_html(analyst_marks) if analyst_marks else (
+                "<div style='color:#F59E0B;font-weight:900;'>분석 대기</div>"
+            )
             html_code = (
                 f"<div class='match-card' style='padding: 16px;'>"
-                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{item.get('best_pick_display', '')}</b></span></div>"
+                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>{escape(toto14_analyst_view)} 마킹: <b style='color:#00F2FE;'>{escape(analyst_pick)}</b></span></div>"
                 f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}</div></div></div>"
                 f"{_match_importance_html(item)}"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {item.get('p_h')}% | 무 {item.get('p_d')}% | 패 {item.get('p_a')}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {item.get('p_h')}%;'></div><div class='prob-bar-draw' style='width: {item.get('p_d')}%;'></div><div class='prob-bar-lose' style='width: {item.get('p_a')}%;'></div></div>"
-                f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}{v3_learning_html}</div>"
+                f"<div style='display: flex; gap: 10px;'>{analyst_marks_html}</div>"
                 f"</div>"
             )
             with st.expander(
                 f"제 {idx} 경기 상세 분석 · {m.get('home', '')} vs {m.get('away', '')}",
                 expanded=False,
             ):
-                analyst_view = st.selectbox(
-                    "표시 분석가",
-                    ["통합 마킹", "① Codex 공식픽", "② 자율 로봇픽", "③ V2 알파고", "④ V3 학습픽"],
-                    key=f"toto14-analyst-{m.get('id', idx)}",
-                )
-                analyst_pick = _toto_analyst_pick_display(
-                    item, analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
-                )
                 st.caption(
-                    f"{analyst_view}: {analyst_pick} · 이 메뉴는 표시만 바꾸며, 동결된 실제 승무패 마킹은 변경하지 않습니다."
+                    f"{toto14_analyst_view}: {analyst_pick} · 분석가별 답안은 서로 바꾸지 않으며, 경기 시작 뒤에는 당시 답안으로 채점합니다."
                 )
                 st.markdown(html_code, unsafe_allow_html=True)
     elif toto14_round_closed:
@@ -4346,8 +4339,8 @@ def _render_three_engine_scorecard(snapshot):
     tracks = comparison.get("tracks") or {}
     if not isinstance(tracks, dict):
         tracks = {}
-    labels = {"official": "① Codex 공식픽", "robot": "② 자율 로봇픽"}
-    colors = {"official": "#00F2FE", "robot": "#C4B5FD"}
+    labels = {"official": "① Codex 공식픽", "robot": "② 자율 로봇픽", "v2": "③ V2 알파고", "v3": "④ V3 학습픽"}
+    colors = {"official": "#00F2FE", "robot": "#C4B5FD", "v2": "#FCD34D", "v3": "#F9A8D4"}
     track_labels = {
         "proto_world": "프로토 LIVE",
         "toto14": "승무패14",
@@ -4365,6 +4358,27 @@ def _render_three_engine_scorecard(snapshot):
             "새 채점판을 교체하는 중입니다. 마지막으로 확인된 성적을 유지해 표시하며 "
             "새 채점 자료가 도착하면 자동으로 바뀝니다."
         )
+
+    # Old rows remain visible as an archive with their real result.  They are
+    # intentionally outside the new R7.13 rate, never rewritten to 'pending'.
+    legacy_rows = [
+        row for row in (prediction_results_data if isinstance(prediction_results_data, list) else [])
+        if isinstance(row, dict)
+        and str(row.get("actual_result") or "") == "FINISHED"
+        and str(row.get("analysis_version") or "") != ANALYSIS_VERSION
+    ]
+    if legacy_rows:
+        with st.expander(f"이전 시즌 보관 · 실제 결과 {len(legacy_rows)}건 · 현재 시즌 통계 제외", expanded=False):
+            for row in legacy_rows[:200]:
+                correct = row.get("is_correct_prob")
+                state = "적중" if correct == 1 else "실패" if correct == 0 else "결과 확인"
+                color = "#10B981" if correct == 1 else "#EF4444" if correct == 0 else "#94A3B8"
+                st.markdown(
+                    f"{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))} · "
+                    f"결과 {escape(str(row.get('actual_score') or ''))} · "
+                    f"<b style='color:{color};'>{state}</b> · 이전 시즌 보관",
+                    unsafe_allow_html=True,
+                )
 
     def engine_result_line(engine_key, engines):
         engine = (engines or {}).get(engine_key) or {}
@@ -4403,18 +4417,56 @@ def _render_three_engine_scorecard(snapshot):
                 f"<b>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
                 f"<b>{score}</b></div>"
                 "<div class='engine-result-grid'>"
-                f"{engine_result_line('official', engines)}"
-                f"{engine_result_line('robot', engines)}"
+                f"{engine_result_line(selected_engine, engines) if selected_engine in engines else '<div style=\'color:#94A3B8;\'>이 분석가의 동결 기록 없음</div>'}"
                 "</div></div>",
                 unsafe_allow_html=True,
             )
 
-    grade_track_view = st.selectbox(
-        "채점 출처",
-        ["프로토 LIVE", "승무패14"],
-        key="grade-track-view",
-    )
-    requested_track = "proto_world" if grade_track_view == "프로토 LIVE" else "toto14"
+    analyst_view = _analyst_button_menu("grade-analyst-view")
+    source_labels = ["관리자픽 채점", "TOP3 채점", "프로토 LIVE 채점", "승무패14 채점"]
+    selected_source = st.session_state.get("grade-source-view", source_labels[2])
+    source_columns = st.columns(4, gap="small")
+    for column, label in zip(source_columns, source_labels):
+        if column.button(label, key=f"grade-source-{label}", use_container_width=True,
+                         type="primary" if label == selected_source else "secondary"):
+            selected_source = label
+            st.session_state["grade-source-view"] = label
+    selected_engine = {
+        "① Codex 공식픽": "official", "② 자율 로봇픽": "robot",
+        "③ V2 알파고": "v2", "④ V3 학습픽": "v3",
+    }[analyst_view]
+    if selected_source == "관리자픽 채점":
+        manager_rows = [row for row in (manager_investment_data.get("picks") or {}).values() if isinstance(row, dict)]
+        finished_manager = [row for row in manager_rows if row.get("is_correct") in (0, 1)]
+        if selected_engine != "official":
+            st.info(f"{analyst_view}의 관리자 투자 장부는 아직 독립 채점을 시작하지 않았습니다. 결과를 추정해 표시하지 않습니다.")
+            return
+        st.caption("관리자픽은 별도 투자 장부의 동결픽만 채점하며, 이전 자료 시즌은 현재 시즌 통계에서 제외합니다.")
+        if not finished_manager:
+            st.info("관리자 투자 장부에서 채점 완료된 동결픽이 없습니다.")
+            return
+        for row in sorted(finished_manager, key=lambda value: str(value.get("kickoff_at") or ""), reverse=True):
+            hit = int(row.get("is_correct") or 0)
+            st.markdown(f"**{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))}** · "
+                        f"{escape(_human_pick_label(row.get('raw_pick'), row.get('home')))} · "
+                        f"<b style='color:{'#10B981' if hit else '#EF4444'};'>{'적중' if hit else '실패'}</b> · "
+                        f"결과 {escape(str(row.get('actual_score') or ''))}", unsafe_allow_html=True)
+        return
+    if selected_source == "TOP3 채점":
+        st.info(f"{analyst_view}의 TOP3 독립 동결 채점은 새 시즌부터 기록됩니다. 프로토 성적을 TOP3 성적으로 바꿔 표시하지 않습니다.")
+        return
+    if selected_engine == "v3":
+        v3_rows = [
+            value for value in v3_learning_picks.values()
+            if isinstance(value, dict) and value.get("is_correct") in (0, 1)
+        ]
+        if v3_rows:
+            hits = sum(int(value.get("is_correct") or 0) for value in v3_rows)
+            st.caption(f"V3 독립 학습 보관 기록 {len(v3_rows)}건 · 적중 {hits}건. 이 값은 새 공식 시즌 통계와 분리됩니다.")
+        else:
+            st.info("V3는 현재 독립 학습 답안을 저장 중입니다. 출처별 동결 채점 기록이 아직 없어 결과를 추정해 표시하지 않습니다.")
+        return
+    requested_track = "proto_world" if selected_source == "프로토 LIVE 채점" else "toto14"
     for track_key in (requested_track,):
         payload = tracks.get(track_key) or {}
         summary = payload.get("summary") or {}
@@ -4424,7 +4476,7 @@ def _render_three_engine_scorecard(snapshot):
         review = payload.get("formula_review") or {}
         previous_robot = payload.get("previous_robot_summary") or {}
         cards = []
-        for engine_key in ("official", "robot"):
+        for engine_key in (selected_engine,):
             value = summary.get(engine_key) or {}
             graded = int(value.get("graded") or 0)
             correct = int(value.get("correct") or 0)
@@ -4462,10 +4514,10 @@ def _render_three_engine_scorecard(snapshot):
             "현행버전 누적 70% 미만: 시간순 미래검증을 통과한 개선식만 적용"
         )
         st.markdown(
-            f"<h4 style='color:#F8FAFC;font-weight:900;margin:28px 0 10px;'>{track_labels[track_key]}</h4>"
+            f"<h4 style='color:#F8FAFC;font-weight:900;margin:28px 0 10px;'>{track_labels[track_key]} · {escape(analyst_view)}</h4>"
             "<div class='engine-score-grid'>" + "".join(cards) + "</div>"
             "<div style='margin:10px 0 14px;padding:10px 12px;border:1px solid #1E293B;border-radius:9px;color:#94A3B8;font-size:12px;'>"
-            f"{formula_status}<br>자율 로봇도 새 동결픽 누적 70%를 목표로 계속 학습하며, 과거 성적은 바꾸지 않습니다.</div>",
+            f"{formula_status}<br>이전 시즌 기록은 보관만 하며, 새 시즌 통계와 섞지 않습니다.</div>",
             unsafe_allow_html=True,
         )
         if int(previous_robot.get("graded") or 0) > 0:
@@ -4525,8 +4577,7 @@ def _render_three_engine_scorecard(snapshot):
                         f"**{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}**  "
                         f"{escape(str(row.get('kickoff_at') or ''))} "
                         f"<b style='color:{status_color};'>[{escape(status_label)}]</b>{due_text}<br>"
-                        f"Codex: {escape(str((engines.get('official') or {}).get('raw_pick') or '대기'))} · "
-                        f"로봇: {escape(str((engines.get('robot') or {}).get('raw_pick') or '대기'))}",
+                        f"{escape(analyst_view)}: {escape(str((engines.get(selected_engine) or {}).get('raw_pick') or '대기'))}",
                         unsafe_allow_html=True,
                     )
 
