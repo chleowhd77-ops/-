@@ -3164,13 +3164,20 @@ def resolve_match_team_pair(
     league_name = str(league_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
 
-    # 이미 검증된 쌍은 날짜 전체 경기표를 매 주기 다시 훑지 않는다.
+    # A stored team ID alone is never enough for a scheduled pick.  Cached
+    # aliases can be stale or ambiguous; when kickoff is known the two names,
+    # their home/away order and the date-board fixture must agree together.
     known_home = known_team_id(home_name)
     known_away = known_team_id(away_name)
-    if known_home and known_away and (not different_teams or known_home != known_away):
+    no_scheduled_time = match_time_str in (None, "", "시간 미정", "마감/진행중")
+    if (
+        no_scheduled_time
+        and known_home and known_away
+        and (not different_teams or known_home != known_away)
+    ):
         return fetch_team_info_api(home_name), fetch_team_info_api(away_name), None
 
-    if match_time_str not in (None, "", "시간 미정", "마감/진행중"):
+    if not no_scheduled_time:
         match_dt = parse_match_time(match_time_str)
         date_str = match_dt.strftime("%Y-%m-%d")
         fixtures = _fetch_date_fixtures_api(date_str, ttl_h)
@@ -3206,8 +3213,34 @@ def resolve_match_team_pair(
             selected = None
             if candidates:
                 best = candidates[0]
-                if min(best[1], best[2]) >= 0.72 and best[1] + best[2] >= 1.52:
+                different_runner_up = (
+                    len(candidates) > 1
+                    and (
+                        int(candidates[1][5].get("id") or 0),
+                        int(candidates[1][6].get("id") or 0),
+                    ) != (
+                        int(best[5].get("id") or 0),
+                        int(best[6].get("id") or 0),
+                    )
+                )
+                ambiguous = bool(
+                    different_runner_up and best[0] - candidates[1][0] < 0.10
+                )
+                if (
+                    min(best[1], best[2]) >= 0.72
+                    and best[1] + best[2] >= 1.52
+                    and not ambiguous
+                ):
                     selected = best
+                elif ambiguous:
+                    print(
+                        f"[팀검증 격리] 후보 팀쌍이 비슷해 분석 차단: "
+                        f"{home_name} vs {away_name} ({date_str})"
+                    )
+                    queue_team_identity_retry(
+                        home_name, away_name, match_time_str,
+                        reason="ambiguous_fixture_pair", league_name=league_name,
+                    )
 
             # Korean phonetic matching is intentionally allowed only when the
             # kickoff is tight, both names still have useful evidence and a
@@ -3344,6 +3377,21 @@ def resolve_match_team_pair(
                         f"[{adjacent_date}, 이름 점수 {home_score:.2f}/{away_score:.2f}]"
                     )
                     return verified_home, verified_away, fixture_data
+
+    # A known kickoff without one verified date-board pair is a quarantine,
+    # not permission to guess each team independently.  This is the final
+    # guard that prevents a same-name club or stale alias from reaching any
+    # analyst with a wrong opponent.
+    if not no_scheduled_time:
+        queue_team_identity_retry(
+            home_name, away_name, match_time_str,
+            reason="fixture_pair_not_verified", league_name=league_name,
+        )
+        return (
+            {"id": 0, "name": home_name, "logo": None, "identity_error": "fixture_pair_not_verified"},
+            {"id": 0, "name": away_name, "logo": None, "identity_error": "fixture_pair_not_verified"},
+            None,
+        )
 
     # 날짜 정보가 없거나 공급사 경기표가 잠시 실패하면 기존 개별 검색을
     # 사용하되, 서로 다른 팀이 같은 ID가 되는 순간 결과를 폐기한다.

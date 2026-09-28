@@ -11224,6 +11224,12 @@ def _preserve_visible_proto_pick_for_retry(match, previous=None, reason=""):
     """
     if not _proto_item_has_usable_pick(previous, match):
         return None
+    # R7.13 deliberately starts a clean evidence season.  A scheduled card
+    # made by an older formula or before the shared dossier existed must not
+    # remain customer-visible while the new material is still being collected.
+    # Started cards are handled by _locked_proto_item and are never changed.
+    if str((previous or {}).get("analysis_version") or "") != ANALYSIS_VERSION:
+        return None
     preserved = dict(previous)
     final_match_time = match.get("match_time") or match.get("time") or "시간 미정"
     preserved.update({

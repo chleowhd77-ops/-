@@ -2048,31 +2048,36 @@ def _render_back_to_top():
     return None
 
 
-main_tab_labels = [
-    "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14",
-    "채점 노트", "인증 게시판",
-]
+if WORLD_FEATURE_ENABLED:
+    main_tab_labels = [
+        "오늘의 TOP3", "프로토 LIVE", "전체경기 LIVE", "승무패 14",
+        "채점 노트", "인증 게시판",
+    ]
+else:
+    # WORLD is paused commercially.  Remove the tab itself instead of merely
+    # hiding it with CSS, so neither members nor administrators can open it.
+    main_tab_labels = [
+        "오늘의 TOP3", "프로토 LIVE", "승무패 14", "채점 노트", "인증 게시판",
+    ]
 if active_role == ROLE_ADMIN:
     main_tab_labels.insert(0, "관리자픽")
 main_tabs = st.tabs(main_tab_labels)
-if not WORLD_FEATURE_ENABLED:
-    # 관리자 계정에는 관리자픽 탭이 앞에 하나 더 있으므로 WORLD 위치가 다르다.
-    world_tab_position = 4 if active_role == ROLE_ADMIN else 3
-    st.markdown(
-        "<style>"
-        f"button[role='tab']:nth-of-type({world_tab_position})"
-        "{display:none !important;}"
-        "</style>",
-        unsafe_allow_html=True,
-    )
 if active_role == ROLE_ADMIN:
-    (
-        main_tab_admin, main_tab3, main_tab1, main_tab6,
-        main_tab2, main_tab4, main_tab5,
-    ) = main_tabs
+    if WORLD_FEATURE_ENABLED:
+        (
+            main_tab_admin, main_tab3, main_tab1, main_tab6,
+            main_tab2, main_tab4, main_tab5,
+        ) = main_tabs
+    else:
+        main_tab_admin, main_tab3, main_tab1, main_tab2, main_tab4, main_tab5 = main_tabs
+        main_tab6 = st.empty()
 else:
     main_tab_admin = None
-    main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = main_tabs
+    if WORLD_FEATURE_ENABLED:
+        main_tab3, main_tab1, main_tab6, main_tab2, main_tab4, main_tab5 = main_tabs
+    else:
+        main_tab3, main_tab1, main_tab2, main_tab4, main_tab5 = main_tabs
+        main_tab6 = st.empty()
 
 if st.session_state.get('role') == ROLE_ADMIN:
     source_meta = dashboard_data.get("source_meta", {})
@@ -3678,8 +3683,14 @@ def _render_manager_investment_portfolio(payload):
     # because its external result has not been linked yet.  Keep its immutable
     # record for settlement review, but keep it out of today's candidate list.
     unresolved_past_picks = []
+    archived_preseason_picks = []
     active_picks = []
     for pick in picks:
+        if str(pick.get("analysis_version") or "") != ANALYSIS_VERSION:
+            # Keep the ledger record untouched, but R7.13 must not recommend
+            # an investment candidate built before the shared evidence gate.
+            archived_preseason_picks.append(pick)
+            continue
         if str(pick.get("status") or "PENDING") == "FINISHED":
             continue
         kickoff = manager_kickoff(pick)
@@ -3723,6 +3734,7 @@ def _render_manager_investment_portfolio(payload):
         f"<span class='badge-primary'>별도 채점 {graded_count}건 · 적중 {hit_text}</span>"
         f"<span class='badge-primary'>단위 기준 ROI {roi_text}</span>"
         f"<span class='badge-primary'>결과 연결 확인 {len(unresolved_past_picks)}건</span>"
+        f"<span class='badge-primary'>이전 자료시즌 보관 {len(archived_preseason_picks)}건</span>"
         f"<span class='badge-primary'>이번 갱신 신규 {new_count}건</span>"
         "</div>",
         unsafe_allow_html=True,
@@ -3733,7 +3745,7 @@ def _render_manager_investment_portfolio(payload):
     )
 
     if not active_picks:
-        st.caption("현재는 보수 기대값·자료 신뢰도·시간순 검증 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
+        st.caption("현재는 R7.13 공용자료·보수 기대값·자료 신뢰도·시간순 검증 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
 
     def _sort_key(item):
         return (-float(item.get("manager_score") or 0), str(item.get("kickoff_at") or ""))
