@@ -343,6 +343,12 @@ def _runtime_connect():
         CREATE TABLE IF NOT EXISTS api_runtime_metric_daily (
             usage_day TEXT,metric TEXT,purpose TEXT,endpoint TEXT,count INTEGER DEFAULT 0,
             PRIMARY KEY(usage_day,metric,purpose,endpoint));
+        CREATE TABLE IF NOT EXISTS api_provider_status_daily (
+            usage_day TEXT PRIMARY KEY,
+            current_calls INTEGER,
+            limit_day INTEGER,
+            remaining INTEGER NOT NULL,
+            verified_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS request_cache (
             key TEXT PRIMARY KEY, body TEXT, expires REAL DEFAULT 0, lease REAL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS general_cache (
@@ -436,8 +442,35 @@ def _reserve_api_request(day, purpose, path):
         reserve = 50 if purpose in {"live","scoring"} else API_LIVE_RESERVE
         if purpose == "world":
             reserve = max(reserve,API_WORLD_MIN_REMAINING)
-        if calls >= API_DAILY_TOTAL_LIMIT-reserve or (remaining is not None and remaining <= reserve):
-            raise ApiQuotaUnavailable("Daily reserve protected")
+        # Local preflight reservations include retries and interrupted workers.
+        # They are a conservative fallback, but a fresh provider status is
+        # authoritative when this local total reaches its soft wall.
+        verified = conn.execute(
+            "SELECT remaining,verified_at FROM api_provider_status_daily WHERE usage_day=?",
+            (day,),
+        ).fetchone()
+        verified_remaining = None
+        if verified and float(verified[1] or 0) >= time.time() - API_PROVIDER_STATUS_TTL_SECONDS:
+            verified_remaining = int(verified[0] or 0)
+        local_daily_brake = calls >= API_DAILY_TOTAL_LIMIT-reserve
+        stored_remaining_brake = remaining is not None and int(remaining) <= reserve
+        if local_daily_brake or stored_remaining_brake:
+            if verified_remaining is None or verified_remaining <= reserve:
+                raise ApiQuotaUnavailable("Daily reserve protected")
+            conn.execute("""
+                INSERT INTO api_runtime_metric_daily VALUES (?,?,?,?,1)
+                ON CONFLICT(usage_day,metric,purpose,endpoint)
+                DO UPDATE SET count=count+1
+            """, (day, "daily_local_cap_reconciled", purpose, path))
+        # Keep the short-lived verified provider snapshot conservative between
+        # status refreshes too. A timeout therefore spends a local slot but can
+        # never make the protected LIVE reserve appear larger than it is.
+        if verified_remaining is not None:
+            conn.execute(
+                "UPDATE api_provider_status_daily SET remaining=MAX(0,remaining-1) "
+                "WHERE usage_day=?",
+                (day,),
+            )
         if purpose == "world" and used >= API_WORLD_DAILY_LIMIT:
             # The purpose counter is a local preflight ledger.  It can become
             # stale after a failed worker/restart, so a fresh provider status
@@ -714,7 +747,18 @@ def api_get(path, params=None, timeout=7, purpose=None):
     saved = False
     try:
         for attempt in range(API_RATE_LIMIT_RETRIES+1):
-            _reserve_api_request(day,purpose,path)
+            try:
+                _reserve_api_request(day,purpose,path)
+            except ApiQuotaUnavailable as error:
+                # A local total can be inflated by interrupted/retried workers.
+                # Verify once against the provider before keeping this safety
+                # brake; failure still leaves the request blocked.
+                if str(error) != "Daily reserve protected":
+                    raise
+                verified = refresh_provider_usage_status()
+                if verified is None:
+                    raise
+                _reserve_api_request(day,purpose,path)
             _pace_api_request()
             response = requests.get(f"https://{API_HOST}{path}",headers=headers,params=params,timeout=timeout)
             error_text = _response_error_text(response)
@@ -750,13 +794,37 @@ def api_get(path, params=None, timeout=7, purpose=None):
 def refresh_provider_usage_status():
     """Read the provider's own daily usage before lifting a stale local brake.
 
-    This makes one normal, cached API request under the protected LIVE purpose.
-    It never resets local counters and returns ``None`` on an unverified or
-    malformed response, leaving the existing conservative protection intact.
+    This deliberately bypasses the local request preflight because this method
+    is called precisely when that preflight has become suspect. It requests
+    only the provider status endpoint, caches the verified answer briefly in
+    the runtime ledger, and never resets local counters or changes picks.
     """
     global _API_PROVIDER_DAY, _API_PROVIDER_REMAINING
+    day = _api_provider_day_key()
     try:
-        response = api_get("/status", timeout=10, purpose="live")
+        conn = _runtime_connect()
+        try:
+            row = conn.execute(
+                "SELECT current_calls,limit_day,remaining,verified_at "
+                "FROM api_provider_status_daily WHERE usage_day=?",
+                (day,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and float(row[3] or 0) >= time.time() - API_PROVIDER_STATUS_TTL_SECONDS:
+            current, limit, remaining = row[:3]
+            _API_PROVIDER_DAY, _API_PROVIDER_REMAINING = day, int(remaining)
+            return {
+                "current": int(current) if current is not None else None,
+                "limit_day": int(limit) if limit is not None else None,
+                "remaining": int(remaining),
+            }
+        if not API_KEY:
+            return None
+        _pace_api_request()
+        response = requests.get(
+            f"https://{API_HOST}/status", headers=headers, timeout=10
+        )
         payload = response.json() if response.status_code == 200 else {}
         status = payload.get("response") if isinstance(payload, dict) else None
         if isinstance(status, list):
@@ -776,9 +844,18 @@ def refresh_provider_usage_status():
             limit = int(limit) if limit is not None else None
         except (TypeError, ValueError):
             return None
-        day = _api_provider_day_key()
         conn = _runtime_connect()
         try:
+            conn.execute("""
+                INSERT INTO api_provider_status_daily
+                    (usage_day,current_calls,limit_day,remaining,verified_at)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(usage_day) DO UPDATE SET
+                    current_calls=excluded.current_calls,
+                    limit_day=excluded.limit_day,
+                    remaining=excluded.remaining,
+                    verified_at=excluded.verified_at
+            """, (day, current, limit, remaining, time.time()))
             conn.execute(
                 "INSERT INTO api_usage_daily (usage_day,calls,provider_remaining,updated_at) "
                 "VALUES (?,0,?,CURRENT_TIMESTAMP) "
@@ -790,6 +867,7 @@ def refresh_provider_usage_status():
         finally:
             conn.close()
         _API_PROVIDER_DAY, _API_PROVIDER_REMAINING = day, remaining
+        _record_runtime_metric(day, "provider_status_direct_verified", "system", "/status")
         return {"current": current, "limit_day": limit, "remaining": remaining}
     except Exception:
         return None
