@@ -102,28 +102,42 @@ NO_CACHE_HEADERS = {
     'Expires': '0'
 }
 
+# Buttons cause a Streamlit rerun.  Keep the customer-facing published files
+# briefly in memory so a menu click does not make five GitHub requests and
+# rebuild the page from network latency.  The collector remains the source of
+# truth; a fresh publication is visible at most 20 seconds later.
+UI_DATA_CACHE_SECONDS = 20
+UI_LIVE_SCORE_CACHE_SECONDS = 10
+
 # -----------------------------------------------------------------------------
 # 1. 초경량 데이터 로더
 # -----------------------------------------------------------------------------
-def load_dashboard_data():
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dashboard_data.json?t={int(time.time())}"
+@st.cache_data(ttl=UI_DATA_CACHE_SECONDS, show_spinner=False)
+def _load_published_json(filename):
+    """Fetch one published JSON file once per short UI cache window."""
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{filename}"
     try:
         res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if res.status_code == 200: return res.json()
-    except: pass
+        if res.status_code == 200:
+            payload = res.json()
+            return payload if isinstance(payload, (dict, list)) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def load_dashboard_data():
+    payload = _load_published_json("dashboard_data.json")
+    if isinstance(payload, dict):
+        return payload
     return {"proto": [], "toto14": [], "top3": []}
 
 
 def load_v3_learning_picks():
     """Load the independently published V3 learning picks without changing cards."""
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/v3_learning_picks.json?t={int(time.time())}"
-    try:
-        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        payload = response.json() if response.status_code == 200 else {}
-        picks = payload.get("picks") if isinstance(payload, dict) else {}
-        return picks if isinstance(picks, dict) else {}
-    except Exception:
-        return {}
+    payload = _load_published_json("v3_learning_picks.json")
+    picks = payload.get("picks") if isinstance(payload, dict) else {}
+    return picks if isinstance(picks, dict) else {}
 
 
 def load_manager_investment_picks():
@@ -132,20 +146,19 @@ def load_manager_investment_picks():
     This file is intentionally separate from dashboard_data.json: its picks
     must be frozen and graded without changing customer-facing recommendations.
     """
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/manager_investment_picks.json?t={int(time.time())}"
-    try:
-        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        payload = response.json() if response.status_code == 200 else {}
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
+    payload = _load_published_json("manager_investment_picks.json")
+    return payload if isinstance(payload, dict) else {}
+
+@st.cache_data(ttl=UI_LIVE_SCORE_CACHE_SECONDS, show_spinner=False)
+def _load_live_scores_cached():
+    payload = _load_published_json("live_scores.json")
+    return payload if isinstance(payload, dict) else {}
+
 
 def load_live_scores():
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/live_scores.json?t={int(time.time())}"
-    try:
-        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if res.status_code == 200: return res.json()
-    except: pass
+    payload = _load_live_scores_cached()
+    if isinstance(payload, dict):
+        return payload
     return {}
 
 
@@ -153,40 +166,30 @@ def load_world_dashboard_data():
     """Load the isolated WORLD feed without affecting the main dashboard."""
     if not WORLD_FEATURE_ENABLED:
         return {}
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/world_dashboard.json?t={int(time.time())}"
-    try:
-        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if res.status_code == 200:
-            payload = res.json()
-            if isinstance(payload, dict):
-                return payload
-    except Exception:
-        pass
+    payload = _load_published_json("world_dashboard.json")
+    if isinstance(payload, dict):
+        return payload
     return {"matches": [], "source_meta": {}, "rejected_summary": []}
 
 def load_grading_snapshot(embedded):
     """A score-owned feed is independent of slow analysis/DB publication."""
     embedded = embedded if isinstance(embedded, dict) else {}
-    try:
-        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/grading_results.json?t={int(time.time())}"
-        response = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if (isinstance(data, dict) and data.get("schema_version") == "grading-results.v1"
-                    and not data.get("error") and isinstance(data.get("finished"), list)
-                    and isinstance(data.get("pending"), list)
-                    and str(data.get("generated_at") or "") >= str(embedded.get("generated_at") or "")):
-                return data
-    except Exception:
-        pass
+    data = _load_published_json("grading_results.json")
+    if (isinstance(data, dict) and data.get("schema_version") == "grading-results.v1"
+            and not data.get("error") and isinstance(data.get("finished"), list)
+            and isinstance(data.get("pending"), list)
+            and str(data.get("generated_at") or "") >= str(embedded.get("generated_at") or "")):
+        return data
     return embedded
 
 
 def _is_current_robot_public_snapshot(snapshot):
-    """Accept only the explicitly reset public score era in R7.9+."""
+    """Accept an auditable frozen-pick score feed, including preserved history."""
     return bool(
         isinstance(snapshot, dict)
-        and snapshot.get("public_history_mode") == "current-robot-version-only"
+        and snapshot.get("public_history_mode") in {
+            "current-robot-version-only", "all-frozen-prekickoff-records",
+        }
         and str(snapshot.get("public_score_version") or "")
             == PUBLIC_SCORE_VERSION
     )
@@ -3293,6 +3296,19 @@ def _extract_alphago_pick(analysis_item):
     return {}
 
 
+def _alphago_status_reason(analysis_item):
+    """Show the stored V2 wait reason without turning it into a pick."""
+    item = analysis_item if isinstance(analysis_item, dict) else {}
+    nested = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+    for source in (item, nested):
+        candidate = source.get("alphago_pick")
+        if isinstance(candidate, dict):
+            reason = str(candidate.get("reason") or "").strip()
+            if reason:
+                return reason
+    return "현재 카드에 전달된 V2 승무패 결과가 없습니다."
+
+
 def _alphago_pick_html(analysis_item, home_team="", away_team=""):
     """Render the V2 AI answer as a distinct, non-scored display card."""
     alphago = _extract_alphago_pick(analysis_item)
@@ -3303,13 +3319,14 @@ def _alphago_pick_html(analysis_item, home_team="", away_team=""):
         "A": f"{away_team or '원정팀'} 승",
     }.get(code)
     if not pick_text:
+        reason = escape(_alphago_status_reason(analysis_item))
         return (
             "<div class='pred-box' style='background:rgba(251,191,36,.05);"
             "border-color:#FBBF24;border-style:dashed;'>"
             "<div class='pred-label' style='color:#FCD34D;'>🧠 알파고픽 (V2 AI)</div>"
             "<span class='pred-value' style='color:#CBD5E1;'>분석 결과 대기</span>"
             "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
-            "현재 카드에 전달된 V2 승무패 결과가 없습니다.</span></div>"
+            f"{reason}</span></div>"
         )
     return (
         "<div class='pred-box' style='background:rgba(251,191,36,.07);"
@@ -3370,7 +3387,10 @@ def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
         alphago = _extract_alphago_pick(item)
         return {
             "H": f"{home_team or '홈팀'} 승", "D": "무승부", "A": f"{away_team or '원정팀'} 승",
-        }.get(str(alphago.get("code") or ""), "분석 대기")
+        }.get(
+            str(alphago.get("code") or ""),
+            f"분석 대기 · {_alphago_status_reason(item)}",
+        )
     if analyst_key == "④ V3 학습픽":
         pick = item.get("v3_learning_pick") or {}
         return _human_pick_label(pick.get("raw_pick"), home_team) or "분석 대기"
@@ -3419,6 +3439,22 @@ def _toto_analyst_marks(item, analyst_key, home_team="", away_team=""):
         elif "승" in shown:
             marks = ["승"]
     return [mark for mark in marks if mark in {"승", "무", "패"}]
+
+
+def _render_toto14_picks_html(picks):
+    """Render stored Toto14 marks.  This is display-only and never edits a ticket."""
+    picks = {str(pick) for pick in (picks or []) if str(pick) in {"승", "무", "패"}}
+    styles = {
+        "승": "background:#00F2FE;color:#0B0F19;font-weight:900;border:1px solid #00F2FE;",
+        "무": "background:#10B981;color:#0B0F19;font-weight:900;border:1px solid #10B981;",
+        "패": "background:#EF4444;color:#0B0F19;font-weight:900;border:1px solid #EF4444;",
+    }
+    return "".join(
+        "<div style='width:38px;height:38px;display:flex;align-items:center;"
+        "justify-content:center;box-sizing:border-box;text-align:center;border-radius:7px;"
+        f"font-size:13px;{styles[pick] if pick in picks else 'background:transparent;color:#64748B;border:1px solid #1E293B;'}'>{pick}</div>"
+        for pick in ("승", "무", "패")
+    )
 
 
 def generate_pred_boxes(
@@ -4126,7 +4162,7 @@ with main_tab2:
     toto14_list = [] if toto14_round_closed else stored_toto14_list
     
     if toto14_list:
-        st.caption("분석가 버튼을 선택하면 그 분석가의 14경기 마킹만 표시합니다. 시작 뒤에는 당시 동결 답안으로 채점됩니다.")
+        st.caption("분석가 버튼을 선택하면 그 분석가의 14경기 전체 분석과 마킹을 한 화면에 표시합니다. 시작 뒤에는 당시 동결 답안으로 채점됩니다.")
         toto14_analyst_view = _analyst_button_menu("toto14-analyst-view")
 
         # The cards are the source of truth.  A partially published/stale meta
@@ -4230,14 +4266,10 @@ with main_tab2:
                 f"<div style='display: flex; gap: 10px;'>{analyst_marks_html}</div>"
                 f"</div>"
             )
-            with st.expander(
-                f"제 {idx} 경기 상세 분석 · {m.get('home', '')} vs {m.get('away', '')}",
-                expanded=False,
-            ):
-                st.caption(
-                    f"{toto14_analyst_view}: {analyst_pick} · 분석가별 답안은 서로 바꾸지 않으며, 경기 시작 뒤에는 당시 답안으로 채점합니다."
-                )
-                st.markdown(html_code, unsafe_allow_html=True)
+            st.caption(
+                f"제 {idx} 경기 · {toto14_analyst_view}: {analyst_pick} · 분석가별 답안은 서로 바꾸지 않으며, 경기 시작 뒤에는 당시 답안으로 채점합니다."
+            )
+            st.markdown(html_code, unsafe_allow_html=True)
     elif toto14_round_closed:
         st.info("이전 승무패14 회차는 첫 경기 시작과 함께 마감되어 추천 화면에서 숨겼습니다. 예측과 결과는 채점 노트에 그대로 보존됩니다. 새 회차가 수집되면 자동으로 표시됩니다.")
     else:
@@ -4344,13 +4376,16 @@ def _render_three_engine_scorecard(snapshot):
     track_labels = {
         "proto_world": "프로토 LIVE",
         "toto14": "승무패14",
+        "top3": "TOP3",
     }
     hidden_count = int(comparison.get("legacy_rows_hidden") or 0)
     st.markdown(
         "<div class='section-intro'><div><h2>채점 노트</h2>"
         "<p>프로토 LIVE와 승무패14를 분리해 동결된 분석가 픽만 채점·복기합니다.</p>"
         "</div></div>"
-        f"<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>R7.13 새 공개 채점 시즌 · 현재 0건부터 시작 · 이전 기록 {hidden_count}행은 삭제하지 않고 감사용으로 보존</p>",
+        "<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>"
+        "전체 동결픽 누적 채점 · 분석가·메뉴별 실제 경기 결과만 합산 · "
+        f"통계 제외 기록 {hidden_count}행</p>",
         unsafe_allow_html=True,
     )
     if snapshot.get("_public_score_stale"):
@@ -4359,8 +4394,8 @@ def _render_three_engine_scorecard(snapshot):
             "새 채점 자료가 도착하면 자동으로 바뀝니다."
         )
 
-    # Old rows remain visible as an archive with their real result.  They are
-    # intentionally outside the new R7.13 rate, never rewritten to 'pending'.
+    # Rows without an analyst snapshot stay visible for audit, but they are not
+    # silently assigned to an analyst or used to manufacture an accuracy rate.
     legacy_rows = [
         row for row in (prediction_results_data if isinstance(prediction_results_data, list) else [])
         if isinstance(row, dict)
@@ -4368,7 +4403,7 @@ def _render_three_engine_scorecard(snapshot):
         and str(row.get("analysis_version") or "") != ANALYSIS_VERSION
     ]
     if legacy_rows:
-        with st.expander(f"이전 시즌 보관 · 실제 결과 {len(legacy_rows)}건 · 현재 시즌 통계 제외", expanded=False):
+        with st.expander(f"분석가 동결 답안 미연결 보관 · 실제 결과 {len(legacy_rows)}건 · 통계 제외", expanded=False):
             for row in legacy_rows[:200]:
                 correct = row.get("is_correct_prob")
                 state = "적중" if correct == 1 else "실패" if correct == 0 else "결과 확인"
@@ -4376,7 +4411,7 @@ def _render_three_engine_scorecard(snapshot):
                 st.markdown(
                     f"{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))} · "
                     f"결과 {escape(str(row.get('actual_score') or ''))} · "
-                    f"<b style='color:{color};'>{state}</b> · 이전 시즌 보관",
+                    f"<b style='color:{color};'>{state}</b> · 분석가 답안 미연결",
                     unsafe_allow_html=True,
                 )
 
@@ -4446,19 +4481,25 @@ def _render_three_engine_scorecard(snapshot):
         if selected_engine != "official":
             st.info(f"{analyst_view}의 관리자 투자 장부는 아직 독립 채점을 시작하지 않았습니다. 결과를 추정해 표시하지 않습니다.")
             return
-        st.caption("관리자픽은 별도 투자 장부의 동결픽만 채점하며, 이전 자료 시즌은 현재 시즌 통계에서 제외합니다.")
+        st.caption("관리자픽은 별도 투자 장부의 실제 동결픽만 누적 채점하며, TOP3·프로토·승무패 성적과 섞지 않습니다.")
         if not finished_manager:
             st.info("관리자 투자 장부에서 채점 완료된 동결픽이 없습니다.")
             return
+        manager_hits = sum(int(row.get("is_correct") or 0) for row in finished_manager)
+        manager_rate = manager_hits / len(finished_manager)
+        st.markdown(
+            "<div class='engine-result-card' style='margin:12px 0 16px;'>"
+            "<div style='color:#00F2FE;font-weight:900;'>관리자 투자픽 · 누적 동결 채점</div>"
+            f"<div style='color:#F8FAFC;font-size:24px;font-weight:900;margin-top:6px;'>{manager_rate * 100:.1f}%</div>"
+            f"<small>{manager_hits}/{len(finished_manager)} 적중 · 투자 후보 성적은 TOP3·프로토와 섞지 않습니다.</small></div>",
+            unsafe_allow_html=True,
+        )
         for row in sorted(finished_manager, key=lambda value: str(value.get("kickoff_at") or ""), reverse=True):
             hit = int(row.get("is_correct") or 0)
             st.markdown(f"**{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))}** · "
                         f"{escape(_human_pick_label(row.get('raw_pick'), row.get('home')))} · "
                         f"<b style='color:{'#10B981' if hit else '#EF4444'};'>{'적중' if hit else '실패'}</b> · "
                         f"결과 {escape(str(row.get('actual_score') or ''))}", unsafe_allow_html=True)
-        return
-    if selected_source == "TOP3 채점":
-        st.info(f"{analyst_view}의 TOP3 독립 동결 채점은 새 시즌부터 기록됩니다. 프로토 성적을 TOP3 성적으로 바꿔 표시하지 않습니다.")
         return
     if selected_engine == "v3":
         v3_rows = [
@@ -4471,7 +4512,11 @@ def _render_three_engine_scorecard(snapshot):
         else:
             st.info("V3는 현재 독립 학습 답안을 저장 중입니다. 출처별 동결 채점 기록이 아직 없어 결과를 추정해 표시하지 않습니다.")
         return
-    requested_track = "proto_world" if selected_source == "프로토 LIVE 채점" else "toto14"
+    requested_track = {
+        "TOP3 채점": "top3",
+        "프로토 LIVE 채점": "proto_world",
+        "승무패14 채점": "toto14",
+    }.get(selected_source, "proto_world")
     for track_key in (requested_track,):
         payload = tracks.get(track_key) or {}
         summary = payload.get("summary") or {}
