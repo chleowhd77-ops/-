@@ -82,7 +82,10 @@ sudo systemctl start "$COLLECTOR_SERVICE"
 sleep 6
 sudo systemctl is-active --quiet "$COLLECTOR_SERVICE"
 sudo systemctl start "$MANAGER_SERVICE"
-sudo systemctl is-active --quiet "$MANAGER_SERVICE"
+if sudo systemctl is-failed --quiet "$MANAGER_SERVICE"; then
+  echo '관리자 장부 갱신 서비스가 실패해 적용을 취소합니다.' >&2
+  exit 1
+fi
 
 echo '[5/5] 적용값·DB 보존·서비스 상태를 확인합니다.'
 [[ "$(sha256sum "$ROOT_DIR/collector.py" | awk '{print $1}')" == "$TARGET_COLLECTOR_SHA" ]]
