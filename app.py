@@ -86,6 +86,11 @@ st.set_page_config(
 
 GITHUB_REPO = "chleowhd77-ops/-"
 DEFAULT_TEAM_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
+# 현재 상용화 범위는 프로토 LIVE와 승무패14다. WORLD는 데이터·코드는
+# 보존하되 고객 메뉴와 원격 피드 요청을 끈다.
+WORLD_FEATURE_ENABLED = str(os.getenv("WORLD_FEATURE_ENABLED", "0")).strip().lower() in {
+    "1", "true", "yes", "on"
+}
 # 결과 피드가 회차 전환 순간에 비어도 종료된 일반 축구 경기가
 # 다음 날 LIVE 추천 화면에 남지 않게 한다. 실제 LIVE 상태는 우선 보존된다.
 # The live worker refreshes every five minutes. Two attempts are enough before
@@ -147,6 +152,8 @@ def load_live_scores():
 
 def load_world_dashboard_data():
     """Load the isolated WORLD feed without affecting the main dashboard."""
+    if not WORLD_FEATURE_ENABLED:
+        return {}
     url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/world_dashboard.json?t={int(time.time())}"
     try:
         res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
@@ -2048,6 +2055,16 @@ main_tab_labels = [
 if active_role == ROLE_ADMIN:
     main_tab_labels.insert(0, "관리자픽")
 main_tabs = st.tabs(main_tab_labels)
+if not WORLD_FEATURE_ENABLED:
+    # 관리자 계정에는 관리자픽 탭이 앞에 하나 더 있으므로 WORLD 위치가 다르다.
+    world_tab_position = 4 if active_role == ROLE_ADMIN else 3
+    st.markdown(
+        "<style>"
+        f"button[role='tab']:nth-of-type({world_tab_position})"
+        "{display:none !important;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
 if active_role == ROLE_ADMIN:
     (
         main_tab_admin, main_tab3, main_tab1, main_tab6,

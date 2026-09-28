@@ -60,7 +60,12 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.39-world-fast-publication"
+COLLECTOR_PATCH_VERSION = "R7.12.40-world-paused-proto-toto14-focus"
+# 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
+# WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 다시 켤 때만 1로 둔다.
+WORLD_FEATURE_ENABLED = str(os.getenv("WORLD_FEATURE_ENABLED", "0")).strip().lower() in {
+    "1", "true", "yes", "on"
+}
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -17181,6 +17186,13 @@ def _world_schedule_refresh_due(now=None):
 
 def run_world_job():
     """Run independently so WORLD failures never block PROTO/LIVE/scoring."""
+    if not WORLD_FEATURE_ENABLED:
+        _update_collector_status(
+            "world", "success", last_stage="disabled_for_proto_toto14_focus",
+            world_feature_enabled=False,
+        )
+        print("⏸️ WORLD 전체경기 수집·분석은 정지됨 · 프로토 LIVE/승무패14에 자원 집중")
+        return True
     # A local WORLD purpose record must not hide every fixture when the
     # provider itself still reports daily headroom.  The status call is cached
     # and only made after the internal WORLD brake is reached.
@@ -17584,16 +17596,18 @@ def run_scheduler():
     _launch_isolated_job("live")
     _launch_isolated_job("score")
     _launch_isolated_job("master")
-    _launch_isolated_job("world")
+    if WORLD_FEATURE_ENABLED:
+        _launch_isolated_job("world")
     _launch_isolated_job("team")
     schedule.every(5).minutes.do(_launch_isolated_job, "live")
     schedule.every(5).minutes.do(_launch_isolated_job, "score")
     # A large board can need several resumable passes. The overlap guard keeps
     # one worker at a time while a five-minute tick starts the next pass soon.
     schedule.every(5).minutes.do(_launch_isolated_job, "master")
-    schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
-        _launch_isolated_job, "world"
-    )
+    if WORLD_FEATURE_ENABLED:
+        schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
+            _launch_isolated_job, "world"
+        )
     schedule.every(5).minutes.do(_launch_isolated_job, "team")
     schedule.every(DB_BACKUP_INTERVAL_MINUTES).minutes.do(
         _launch_isolated_job, "backup"
@@ -17601,7 +17615,7 @@ def run_scheduler():
 
     print(
         "\n🚀 [감시 스케줄러] master/live/score/world/team/backup 분리 · 중복 방지 · "
-        f"WORLD {WORLD_ANALYSIS_INTERVAL_MINUTES}분 분석/{WORLD_SCHEDULE_REFRESH_HOURS}시간 일정 · "
+        f"WORLD {'활성' if WORLD_FEATURE_ENABLED else '정지'} · "
         f"DB 백업 {DB_BACKUP_INTERVAL_MINUTES}분"
     )
     last_heartbeat = 0.0
