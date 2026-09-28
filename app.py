@@ -4411,13 +4411,18 @@ def _render_three_engine_scorecard(snapshot):
             score = escape(str(
                 next(iter(engines.values()), {}).get("actual_score") or ""
             ))
+            engine_html = (
+                engine_result_line(selected_engine, engines)
+                if selected_engine in engines
+                else "<div style='color:#94A3B8;'>이 분석가의 동결 기록 없음</div>"
+            )
             st.markdown(
                 "<div class='engine-result-card' style='margin-bottom:8px;'>"
                 "<div class='engine-result-head'>"
                 f"<b>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
                 f"<b>{score}</b></div>"
                 "<div class='engine-result-grid'>"
-                f"{engine_result_line(selected_engine, engines) if selected_engine in engines else '<div style=\'color:#94A3B8;\'>이 분석가의 동결 기록 없음</div>'}"
+                f"{engine_html}"
                 "</div></div>",
                 unsafe_allow_html=True,
             )
