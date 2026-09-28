@@ -5,15 +5,13 @@
       "supervisor_pid": 463988,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T16:27:33+00:00",
+      "heartbeat_at": "2026-09-28T16:28:33+00:00",
       "pid": 463988,
       "last_started_at": "2026-09-28T15:10:55+00:00",
       "active_jobs": {
-        "score": 464784
+        "master": 464787
       },
-      "pending_jobs": [
-        "master"
-      ],
+      "pending_jobs": [],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -57,15 +55,22 @@
     },
     "master": {
       "last_failure_duration_seconds": 916.8,
-      "last_success_at": "2026-09-28T16:24:02+00:00",
+      "last_success_at": "2026-09-28T16:28:58+00:00",
       "last_failure_at": "2026-09-27T15:26:16+00:00",
-      "last_success_duration_seconds": 57.47,
+      "last_success_duration_seconds": 57.64,
       "run_id": "master-1790612877486727101",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-28T16:28:00+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-28T16:28:58+00:00",
       "pid": 464787,
-      "last_started_at": "2026-09-28T16:28:00+00:00"
+      "last_started_at": "2026-09-28T16:28:00+00:00",
+      "child_pid": 464787,
+      "elapsed_seconds": 36.1,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 37,
+      "proto_checkpoint_deferred": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 57.64
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -144,7 +149,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-28T16:28:00+00:00",
+  "updated_at": "2026-09-28T16:28:58+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -214,13 +219,25 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 3164
+        "count": 3178
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 2705
+        "count": 2735
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/standings",
+        "count": 2320
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/injuries",
+        "count": 2314
       },
       {
         "metric": "cache_hit",
@@ -229,46 +246,34 @@
         "count": 2300
       },
       {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/standings",
-        "count": 2294
-      },
-      {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/injuries",
-        "count": 2280
-      },
-      {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 1794
+        "count": 1806
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 1517
+        "count": 1525
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 844
+        "count": 851
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "count": 766
+        "count": 782
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 766
+        "count": 782
       },
       {
         "metric": "cache_hit",
@@ -292,13 +297,13 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 453
+        "count": 458
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 390
+        "count": 394
       },
       {
         "metric": "cache_hit",
