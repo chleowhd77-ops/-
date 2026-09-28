@@ -22,8 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-
-MANAGER_ENGINE_VERSION = "manager-investment-independent-v1"
+MANAGER_ENGINE_VERSION = "manager-investment-independent-v2-validated-value"
 OUTPUT_SCHEMA = "dj-sports.manager-investment-ledger.v1"
 KST = timezone(timedelta(hours=9))
 
@@ -34,6 +33,8 @@ MIN_DATA_CONFIDENCE = 0.35
 MIN_CONSERVATIVE_EV = 0.015
 MIN_MARKET_EDGE = 0.01
 HIGH_ODDS_BOUNDARY = 2.20
+MAX_VALUE_ODDS = 8.0
+MIN_HIGH_ODDS_HISTORY_ROWS = 24
 MAX_CORE_PICKS = 3
 MAX_VALUE_PICKS = 3
 HISTORY_PRIOR = 24.0
@@ -93,6 +94,47 @@ def _json(value: Any, default: Any) -> Any:
     except (TypeError, ValueError):
         return default
     return parsed if isinstance(parsed, type(default)) else default
+
+
+def _evaluate_single_pick(
+    pick_str: Any, home_team: Any, away_team: Any, goals_home: int, goals_away: int
+) -> int:
+    """Use the same settlement semantics as the main scorer without API imports."""
+    pick_text = str(pick_str or "").upper()
+    home_text = str(home_team or "").upper()
+    away_text = str(away_team or "").upper()
+    for pick in (part.strip() for part in pick_text.split(",")):
+        if "핸디" in pick or "적용 후" in pick:
+            match = re.search(r"\[\s*([+-]?\d+(?:\.\d+)?)\s*\]", pick)
+            if match is None:
+                match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(?:적용\s*후|HANDICAP)", pick)
+            if match is not None:
+                adjusted_home = float(goals_home) + float(match.group(1))
+                actual = "승" if adjusted_home > goals_away else ("패" if adjusted_home < goals_away else "무")
+                expected = re.search(r"(?:핸디|적용\s*후)\s*(승|무|패)", pick)
+                if expected and expected.group(1) == actual:
+                    return 1
+            continue
+        if "무승부" in pick or pick == "무" or "DRAW" in pick:
+            if goals_home == goals_away:
+                return 1
+        if "승" in pick or "WIN" in pick:
+            if away_text and away_text in pick:
+                if goals_home < goals_away:
+                    return 1
+            elif goals_home > goals_away and (not home_text or home_text in pick or pick == "승"):
+                return 1
+        if pick == "패" and goals_home < goals_away:
+            return 1
+        if "언더" in pick or "오버" in pick:
+            line = re.search(r"(\d+(?:\.\d+)?)", pick)
+            if line:
+                threshold = float(line.group(1))
+                if "언더" in pick and goals_home + goals_away < threshold:
+                    return 1
+                if "오버" in pick and goals_home + goals_away > threshold:
+                    return 1
+    return 0
 
 
 def _readonly_connection(database_path: str | Path) -> sqlite3.Connection:
@@ -193,6 +235,18 @@ def _bucket(probability: float) -> int:
     return max(0, min(9, int(probability * 10)))
 
 
+def _odds_bucket(odd: float) -> str:
+    if odd < 1.8:
+        return "under-1.8"
+    if odd < 2.2:
+        return "1.8-2.19"
+    if odd < 3.0:
+        return "2.2-2.99"
+    if odd < 5.0:
+        return "3-4.99"
+    return "5-7.99"
+
+
 def _load_history(database_path: str | Path) -> dict[str, Any]:
     """Read only completed, frozen pre-kickoff candidates for calibration."""
     connection = _readonly_connection(database_path)
@@ -221,6 +275,7 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
 
     overall: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     buckets: dict[tuple[str, int], list[int]] = defaultdict(lambda: [0, 0])
+    odds_buckets: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for row in rows:
         candidates = _json(row["candidates_json"], [])
         candidate = _candidate_from_snapshot(candidates, row)
@@ -235,6 +290,10 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
         overall[market][1] += outcome
         buckets[(market, _bucket(probability))][0] += 1
         buckets[(market, _bucket(probability))][1] += outcome
+        odd = _number(candidate.get("odd", row["odd"]))
+        if odd > 1.0:
+            odds_buckets[_odds_bucket(odd)][0] += 1
+            odds_buckets[_odds_bucket(odd)][1] += outcome
 
     history_rows = sum(value[0] for value in overall.values())
     if history_rows < MIN_HISTORY_ROWS:
@@ -244,6 +303,7 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
     return {
         "overall": {key: HistoricalStat(value[0], value[1]) for key, value in overall.items()},
         "buckets": {key: HistoricalStat(value[0], value[1]) for key, value in buckets.items()},
+        "odds_buckets": {key: HistoricalStat(value[0], value[1]) for key, value in odds_buckets.items()},
         "history_rows": history_rows,
     }
 
@@ -367,6 +427,7 @@ def _manager_candidate(
         or not raw_pick
         or not 0.0 < probability < 1.0
         or odd <= 1.0
+        or odd > MAX_VALUE_ODDS
         or data_confidence < MIN_DATA_CONFIDENCE
         or candidate.get("settlement_supported") is False
     ):
@@ -375,9 +436,21 @@ def _manager_candidate(
     calibrated, statistical_lower, calibration_samples = _calibrate_probability(
         probability, market, history
     )
+    odds_history: HistoricalStat = history.get("odds_buckets", {}).get(
+        _odds_bucket(odd), HistoricalStat()
+    )
+    if odd >= 5.0 and odds_history.count < MIN_HIGH_ODDS_HISTORY_ROWS:
+        # A longshot cannot be promoted from its price alone.  Keep gathering
+        # frozen samples first; this is a deliberate no-pick, not a fallback.
+        return None
     uncertainty = _interval_width(candidate)
     confidence_factor = 0.85 + 0.15 * data_confidence
     conservative = min(probability, calibrated, statistical_lower) * confidence_factor
+    if odd >= 5.0:
+        conservative = min(
+            conservative,
+            _wilson_lower(odds_history.hits, odds_history.count),
+        )
     conservative = max(0.0, conservative - uncertainty * 0.20)
     fair_probability = _probability(candidate.get("fair_probability"))
     market_reference = fair_probability if 0.0 < fair_probability < 1.0 else 1.0 / odd
@@ -415,6 +488,7 @@ def _manager_candidate(
         "conservative_probability": round(conservative, 6),
         "data_confidence": round(data_confidence, 6),
         "calibration_samples": calibration_samples,
+        "odds_bucket_samples": odds_history.count,
         "odd": round(odd, 6),
         "market_reference_probability": round(market_reference, 6),
         "market_edge": round(market_edge, 6),
@@ -473,10 +547,11 @@ def _select_portfolio(
 
 def _grade_frozen_picks(
     database_path: str | Path, picks: dict[str, Any]
-) -> tuple[int, int]:
+) -> tuple[int, int, list[dict[str, str]]]:
     """Grade only frozen manager rows.  The source database stays read-only."""
     connection = _readonly_connection(database_path)
     graded = total = 0
+    unresolved: list[dict[str, str]] = []
     try:
         for match_id, pick in picks.items():
             if not isinstance(pick, dict):
@@ -504,25 +579,69 @@ def _grade_frozen_picks(
                     str(pick.get("raw_pick") or ""),
                 ),
             ).fetchone()
+            grade_source = "candidate_result_exact"
             if row is None:
+                # Some early immutable manager rows have a completed canonical
+                # match result but no candidate-result mirror.  The match ID
+                # was frozen with the pick, so use only that exact finished
+                # result and the shared settlement evaluator.  This fills a
+                # previously blank grade; it never recalculates the pick,
+                # probability, odds, or selection.
+                row = connection.execute(
+                    """
+                    SELECT actual_score, created_at AS result_at
+                    FROM predictions
+                    WHERE match_id = ?
+                      AND actual_result = 'FINISHED'
+                      AND COALESCE(actual_score, '') NOT IN ('', '-:-', 'PENDING', 'UNKNOWN')
+                    ORDER BY rowid DESC LIMIT 1
+                    """,
+                    (str(match_id),),
+                ).fetchone()
+                grade_source = "canonical_finished_result_fallback"
+            if row is None:
+                unresolved.append({
+                    "match_id": str(match_id),
+                    "reason": "결과 API 또는 후보 결과 연결 대기",
+                })
                 continue
-            correct = int(row["is_correct"])
+            if "is_correct" in row.keys():
+                correct = int(row["is_correct"])
+            else:
+                score = re.fullmatch(r"\s*(\d+)\s*:\s*(\d+)\s*", str(row["actual_score"] or ""))
+                if score is None:
+                    unresolved.append({
+                        "match_id": str(match_id),
+                        "reason": "최종 점수 형식 확인 필요",
+                    })
+                    continue
+                correct = int(_evaluate_single_pick(
+                    str(pick.get("raw_pick") or ""),
+                    str(pick.get("home") or ""),
+                    str(pick.get("away") or ""),
+                    int(score.group(1)), int(score.group(2)),
+                ))
             odd = _number(pick.get("odd"))
             pick.update(
                 {
                     "status": "FINISHED",
                     "is_correct": correct,
                     "actual_score": str(row["actual_score"] or ""),
-                    "graded_at": str(row["graded_at"] or _now()),
+                    "graded_at": str(
+                        row["graded_at"]
+                        if "graded_at" in row.keys() and row["graded_at"]
+                        else (row["result_at"] if "result_at" in row.keys() and row["result_at"] else _now())
+                    ),
                     # This is a comparison-only one-unit record.  It does not
                     # represent a user's cash stake or execute any bet.
                     "unit_profit": round((odd - 1.0) if correct else -1.0, 6),
+                    "grade_source": grade_source,
                 }
             )
             graded += 1
     finally:
         connection.close()
-    return graded, total
+    return graded, total, unresolved
 
 
 def _performance(picks: dict[str, Any]) -> dict[str, Any]:
@@ -578,6 +697,8 @@ def build_manager_payload(
             "min_conservative_ev": MIN_CONSERVATIVE_EV,
             "min_market_edge": MIN_MARKET_EDGE,
             "min_data_confidence": MIN_DATA_CONFIDENCE,
+            "max_value_odds": MAX_VALUE_ODDS,
+            "min_high_odds_history_rows": MIN_HIGH_ODDS_HISTORY_ROWS,
             "cash_staking_or_auto_betting": False,
         },
     }
@@ -591,7 +712,7 @@ def build_manager_payload(
             if match_id not in picks:
                 picks[match_id] = pick
                 created += 1
-        graded, total = _grade_frozen_picks(database_path, picks)
+        graded, total, unresolved = _grade_frozen_picks(database_path, picks)
         performance = _performance(picks)
         base.update(
             {
@@ -601,10 +722,11 @@ def build_manager_payload(
                 "frozen_pick_count": total,
                 "graded_pick_count": graded,
                 "performance": performance,
+                "settlement_pending": unresolved,
             }
         )
     except (ManagerNotReady, sqlite3.Error, OSError, ValueError) as error:
-        graded, total = _grade_frozen_picks(database_path, picks)
+        graded, total, unresolved = _grade_frozen_picks(database_path, picks)
         base.update(
             {
                 "status": "NOT_READY",
@@ -612,6 +734,7 @@ def build_manager_payload(
                 "newly_frozen_picks": 0,
                 "frozen_pick_count": total,
                 "graded_pick_count": graded,
+                "settlement_pending": unresolved,
                 "performance": _performance(picks),
             }
         )

@@ -181,7 +181,9 @@ WORLD_LEAGUES = {
     253: {"name": "미국 MLS", "tier": 1},
     71: {"name": "브라질 세리에 A", "tier": 1},
 }
-WORLD_SCHEDULE_DAYS = max(1, min(3, int(os.getenv("WORLD_SCHEDULE_DAYS", "2"))))
+# Schedule discovery is cheap and must start early enough for the shared team
+# cache to warm before a WORLD fixture reaches the detailed-analysis window.
+WORLD_SCHEDULE_DAYS = max(1, min(3, int(os.getenv("WORLD_SCHEDULE_DAYS", "3"))))
 WORLD_MAX_SCHEDULE_MATCHES = max(
     20, min(300, int(os.getenv("WORLD_MAX_SCHEDULE_MATCHES", "160")))
 )
@@ -8082,7 +8084,7 @@ def build_world_schedule_payload(
 
 
 def collect_world_schedule():
-    """Fetch fixtures plus batched odds and preserve the last good file on failure."""
+    """Refresh the future fixture list even when the heavy odds pass is paused."""
     now = datetime.now(KST)
     previous_payload = _read_json(WORLD_DASHBOARD_FILE, {})
     fixtures_by_date = {}
@@ -8090,7 +8092,10 @@ def collect_world_schedule():
     market_failed_dates = []
     for day_offset in range(WORLD_SCHEDULE_DAYS):
         date_key = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        fixtures = _fetch_date_fixtures_api(date_key, ttl_h=2, purpose="world")
+        # The broad fixture list takes a handful of calls and must not be
+        # blocked by the separate WORLD deep-analysis budget.  It still obeys
+        # the global daily reserve through the normal analysis purpose.
+        fixtures = _fetch_date_fixtures_api(date_key, ttl_h=2, purpose="analysis")
         if fixtures is None:
             print(f"❌ 세계경기 일정 수집 실패({date_key}) - 마지막 정상본을 유지합니다.")
             return False
@@ -8102,17 +8107,14 @@ def collect_world_schedule():
             continue
         market_snapshots_by_fixture.update(date_markets)
 
-    if not market_snapshots_by_fixture:
-        print(
-            "❌ 세계경기 유효 배당 0건 - 기존 정상 일정/분석을 보존하고 "
-            "다음 WORLD 주기에 다시 수집합니다."
-        )
-        return False
-
     payload = build_world_schedule_payload(
         fixtures_by_date,
         now=now,
-        market_snapshots_by_fixture=market_snapshots_by_fixture,
+        # Do not let an odds/API quota pause freeze yesterday's schedule.
+        # A fresh no-market schedule is explicitly marked as pending; it never
+        # produces a customer pick until the normal full-time market check and
+        # pre-kickoff analysis both succeed.
+        market_snapshots_by_fixture=(market_snapshots_by_fixture or None),
     )
     _carry_world_shadow_analyses(payload, previous_payload)
     proto_overlaps = _exclude_proto_overlaps(payload)
@@ -8121,6 +8123,9 @@ def collect_world_schedule():
         _refresh_world_source_meta(payload)
     payload.setdefault("source_meta", {})["market_collection_degraded_dates"] = (
         market_failed_dates
+    )
+    payload.setdefault("source_meta", {})["market_collection_pending"] = bool(
+        not market_snapshots_by_fixture
     )
     _atomic_write_json(WORLD_DASHBOARD_FILE, payload, indent=2)
     source_meta = payload.get("source_meta", {})

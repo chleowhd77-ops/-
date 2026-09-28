@@ -3560,9 +3560,31 @@ def _render_manager_investment_portfolio(payload):
         value for value in (payload.get("picks") or {}).values()
         if isinstance(value, dict)
     ]
-    active_picks = [
-        pick for pick in picks if str(pick.get("status") or "PENDING") != "FINISHED"
-    ]
+    now_kst = datetime.now(timezone(timedelta(hours=9)))
+
+    def manager_kickoff(pick):
+        raw = str(pick.get("kickoff_at") or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=9)))
+            return parsed.astimezone(timezone(timedelta(hours=9)))
+        except (TypeError, ValueError):
+            return _ui_match_datetime(raw)
+
+    # A frozen row does not become a current investment recommendation merely
+    # because its external result has not been linked yet.  Keep its immutable
+    # record for settlement review, but keep it out of today's candidate list.
+    unresolved_past_picks = []
+    active_picks = []
+    for pick in picks:
+        if str(pick.get("status") or "PENDING") == "FINISHED":
+            continue
+        kickoff = manager_kickoff(pick)
+        if kickoff is not None and kickoff > now_kst:
+            active_picks.append(pick)
+        else:
+            unresolved_past_picks.append(pick)
     performance = payload.get("performance") if isinstance(payload.get("performance"), dict) else {}
     overall = performance.get("overall") if isinstance(performance.get("overall"), dict) else {}
     status = str(payload.get("status") or "NOT_READY")
@@ -3577,7 +3599,8 @@ def _render_manager_investment_portfolio(payload):
         "<div style='color:#FCD34D;font-size:19px;font-weight:900;'>🎯 관리자 전용 투자픽</div>"
         "<div style='color:#CBD5E1;font-size:12px;margin-top:6px;'>"
         "고객 공식픽·로봇·알파고·V3와 분리된 별도 후보선정/동결/채점 장부입니다. "
-        "시작 전 보정 확률과 실제 배당의 보수 기대값을 모두 통과한 경우만 표시합니다.</div>"
+        "시작 전 보정 확률·실제 배당·시간순 검증을 모두 통과한 경우만 표시합니다. "
+        "고배당은 가격대 검증 표본이 부족하면 후보를 만들지 않습니다.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -3597,6 +3620,7 @@ def _render_manager_investment_portfolio(payload):
         f"<span class='badge-primary'>고정 장부 {frozen_count}건</span>"
         f"<span class='badge-primary'>별도 채점 {graded_count}건 · 적중 {hit_text}</span>"
         f"<span class='badge-primary'>단위 기준 ROI {roi_text}</span>"
+        f"<span class='badge-primary'>결과 연결 확인 {len(unresolved_past_picks)}건</span>"
         f"<span class='badge-primary'>이번 갱신 신규 {new_count}건</span>"
         "</div>",
         unsafe_allow_html=True,
@@ -3607,8 +3631,7 @@ def _render_manager_investment_portfolio(payload):
     )
 
     if not active_picks:
-        st.caption("현재는 보수 기대값·자료 신뢰도 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
-        return
+        st.caption("현재는 보수 기대값·자료 신뢰도·시간순 검증 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
 
     def _sort_key(item):
         return (-float(item.get("manager_score") or 0), str(item.get("kickoff_at") or ""))
@@ -3635,6 +3658,23 @@ def _render_manager_investment_portfolio(payload):
             f"고정 {escape(str(pick.get('frozen_at') or ''))}</small></div>",
             unsafe_allow_html=True,
         )
+
+    if unresolved_past_picks:
+        with st.expander(
+            f"결과 연결 확인 {len(unresolved_past_picks)}건 · 지난 경기이므로 현재 투자 후보에서 제외"
+        ):
+            st.caption(
+                "동결 시각·픽·확률은 그대로 보존합니다. 결과 API 또는 후보 결과 연결이 아직 없어 "
+                "자동 채점되지 않은 행만 모아 둔 관리자 점검 목록입니다."
+            )
+            for pick in sorted(unresolved_past_picks, key=lambda row: str(row.get("kickoff_at") or ""), reverse=True):
+                st.markdown(
+                    f"- {escape(str(pick.get('home') or ''))} vs {escape(str(pick.get('away') or ''))} · "
+                    f"{escape(_human_pick_label(pick.get('raw_pick'), pick.get('home')))} · "
+                    f"킥오프 {escape(str(pick.get('kickoff_at') or '시간 확인 필요'))} · "
+                    "결과 연결 대기",
+                    unsafe_allow_html=True,
+                )
 
 
 if main_tab_admin is not None:
@@ -3833,6 +3873,16 @@ with main_tab6:
         if rejected_text:
             with st.expander("세계경기 제외 사유 확인"):
                 st.write(rejected_text)
+        if world_source_meta.get("market_collection_pending"):
+            st.warning(
+                "WORLD 일정은 최신으로 갱신됐지만 해외 정규시간 배당 수집이 일시 대기 중입니다. "
+                "배당·팀 자료가 확인되기 전에는 픽을 만들지 않으며, 이전 일정으로 화면을 비워 두지 않습니다."
+            )
+        elif world_source_meta.get("quota_paused"):
+            st.warning(
+                "WORLD 정밀분석은 API 보호 한도 때문에 다음 순서에서 재개합니다. "
+                "이미 시작한 경기의 사후 픽은 만들지 않습니다."
+            )
         if missed_prekickoff_world:
             st.warning(
                 f"경기 전 동결픽이 없었던 {len(missed_prekickoff_world)}경기는 "
@@ -3971,6 +4021,31 @@ with main_tab2:
         if cap_exceeded_by_frozen:
             st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
 
+        compact_ticket_rows = []
+        for compact_index, compact_item in enumerate(toto14_list, 1):
+            compact_match = compact_item.get("match") or {}
+            compact_home = escape(str(compact_match.get("home") or "홈팀 미확인"))
+            compact_away = escape(str(compact_match.get("away") or "원정팀 미확인"))
+            compact_time = escape(str(compact_match.get("match_time") or "시간 미정"))
+            compact_pick = escape(str(compact_item.get("best_pick_display") or "분석 대기"))
+            compact_pick_color = "#00F2FE" if compact_item.get("picks") else "#F59E0B"
+            compact_ticket_rows.append(
+                "<div style='display:grid;grid-template-columns:46px minmax(160px,1fr) minmax(150px,1fr);gap:10px;align-items:center;"
+                "padding:9px 10px;border-bottom:1px solid #1E293B;font-size:13px;'>"
+                f"<b style='color:#94A3B8;'>#{compact_index}</b>"
+                f"<span style='color:#E2E8F0;font-weight:800;'>{compact_home} <small style='color:#64748B;'>vs</small> {compact_away}</span>"
+                f"<span style='color:{compact_pick_color};font-weight:900;text-align:right;'>{compact_pick}</span>"
+                f"<small style='grid-column:2 / 4;color:#64748B;'>{compact_time}</small></div>"
+            )
+        st.markdown(
+            "<div style='border:1px solid #1E293B;border-radius:12px;overflow:hidden;margin:0 0 18px;'>"
+            "<div style='padding:10px 12px;background:#0F172A;color:#F8FAFC;font-weight:900;'>"
+            "이번 회차 압축 마킹표 <small style='color:#94A3B8;font-weight:700;'>· 상세 분석은 경기별로 열기</small></div>"
+            + "".join(compact_ticket_rows)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
         toto_displayed = 0
         toto_paywall_shown = False
 
@@ -4008,7 +4083,7 @@ with main_tab2:
 
             v3_learning_html = _v3_learning_pick_html(item, str(m.get("home") or ""))
             html_code = (
-                f"<div class='match-card' style='padding: 24px;'>"
+                f"<div class='match-card' style='padding: 16px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>AI 추천 마킹: <b style='color:#00F2FE;'>{item.get('best_pick_display', '')}</b></span></div>"
                 f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
@@ -4018,7 +4093,11 @@ with main_tab2:
                 f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}{v3_learning_html}</div>"
                 f"</div>"
             )
-            st.markdown(html_code, unsafe_allow_html=True)
+            with st.expander(
+                f"제 {idx} 경기 상세 분석 · {m.get('home', '')} vs {m.get('away', '')}",
+                expanded=False,
+            ):
+                st.markdown(html_code, unsafe_allow_html=True)
     elif toto14_round_closed:
         st.info("이전 승무패14 회차는 첫 경기 시작과 함께 마감되어 추천 화면에서 숨겼습니다. 예측과 결과는 채점 노트에 그대로 보존됩니다. 새 회차가 수집되면 자동으로 표시됩니다.")
     else:
@@ -4154,6 +4233,35 @@ def _render_three_engine_scorecard(snapshot):
             f"<b style='color:{result_color};'>{result_label}</b></div>"
         )
 
+    def grading_day_label(row):
+        raw = str((row or {}).get("kickoff_at") or "")
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone(timedelta(hours=9))).strftime("%Y.%m.%d")
+        except (TypeError, ValueError):
+            parsed = _ui_match_datetime(raw)
+            return parsed.strftime("%Y.%m.%d") if parsed else "날짜 확인 필요"
+
+    def render_finished_rows(rows):
+        for row in rows:
+            engines = row.get("engines") or {}
+            score = escape(str(
+                next(iter(engines.values()), {}).get("actual_score") or ""
+            ))
+            st.markdown(
+                "<div class='engine-result-card' style='margin-bottom:8px;'>"
+                "<div class='engine-result-head'>"
+                f"<b>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
+                f"<b>{score}</b></div>"
+                "<div class='engine-result-grid'>"
+                f"{engine_result_line('official', engines)}"
+                f"{engine_result_line('robot', engines)}"
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+
     for track_key in ("proto_world", "toto14"):
         payload = tracks.get(track_key) or {}
         summary = payload.get("summary") or {}
@@ -4217,25 +4325,18 @@ def _render_three_engine_scorecard(snapshot):
             )
         if finished:
             st.markdown(
-                "<p style='color:#CBD5E1;font-size:13px;font-weight:900;margin:12px 0 8px;'>종료 경기 채점·복기</p>",
+                "<p style='color:#CBD5E1;font-size:13px;font-weight:900;margin:12px 0 8px;'>종료 경기 채점·복기 · 날짜별로 접어서 확인</p>",
                 unsafe_allow_html=True,
             )
-        for row in finished:
-            engines = row.get("engines") or {}
-            score = escape(str(
-                next(iter(engines.values()), {}).get("actual_score") or ""
-            ))
-            st.markdown(
-                "<div class='engine-result-card' style='margin-bottom:8px;'>"
-                "<div class='engine-result-head'>"
-                f"<b>{escape(str(row.get('home_team') or ''))} vs {escape(str(row.get('away_team') or ''))}</b>"
-                f"<b>{score}</b></div>"
-                "<div class='engine-result-grid'>"
-                f"{engine_result_line('official', engines)}"
-                f"{engine_result_line('robot', engines)}"
-                "</div></div>",
-                unsafe_allow_html=True,
-            )
+            finished_by_day = {}
+            for row in finished:
+                finished_by_day.setdefault(grading_day_label(row), []).append(row)
+            for day_index, (day_label, rows) in enumerate(finished_by_day.items()):
+                with st.expander(
+                    f"{day_label} 종료·채점 {len(rows)}경기",
+                    expanded=(day_index == 0),
+                ):
+                    render_finished_rows(rows)
         if pending:
             scheduled_count = int(pending_summary.get("scheduled") or 0)
             grace_count = int(pending_summary.get("grace") or 0)
@@ -4250,6 +4351,10 @@ def _render_three_engine_scorecard(snapshot):
             with st.expander(
                 f"{track_labels[track_key]} 채점 대기 {len(pending)}경기 · {pending_breakdown}"
             ):
+                st.caption(
+                    "시작 전=아직 경기 전 · 105분 유예=경기 종료·결과 반영 대기 · "
+                    "채점 지연=결과 API 또는 경기 ID 연결 확인 필요 · 시각 확인=킥오프 시각 원본 점검 필요"
+                )
                 for row in pending:
                     engines = row.get("engines") or {}
                     status_key = str(row.get("pending_status") or "unknown")
