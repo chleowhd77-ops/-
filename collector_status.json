@@ -5,7 +5,7 @@
       "supervisor_pid": 455145,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T07:30:36+00:00",
+      "heartbeat_at": "2026-09-28T07:31:06+00:00",
       "pid": 455145,
       "last_started_at": "2026-09-27T21:26:51+00:00",
       "active_jobs": {
@@ -57,16 +57,23 @@
       "duration_seconds": 101.8
     },
     "master": {
-      "last_success_at": "2026-09-28T07:08:31+00:00",
+      "last_success_at": "2026-09-28T07:31:33+00:00",
       "last_failure_at": "2026-09-27T15:26:16+00:00",
-      "last_success_duration_seconds": 31.09,
+      "last_success_duration_seconds": 56.96,
       "last_failure_duration_seconds": 916.8,
       "run_id": "master-1790580634353406576",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-28T07:30:36+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-28T07:31:33+00:00",
       "pid": 458427,
-      "last_started_at": "2026-09-28T07:30:36+00:00"
+      "last_started_at": "2026-09-28T07:30:36+00:00",
+      "child_pid": 458427,
+      "elapsed_seconds": 32.0,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 43,
+      "db_backup_requested": true,
+      "duration_seconds": 56.96
     },
     "world": {
       "last_failure_at": "2026-09-28T07:30:31+00:00",
@@ -140,7 +147,7 @@
       "last_success_duration_seconds": 1.58
     }
   },
-  "updated_at": "2026-09-28T07:30:36+00:00",
+  "updated_at": "2026-09-28T07:31:33+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -228,7 +235,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 328
+        "count": 330
       },
       {
         "metric": "cache_hit",
@@ -306,6 +313,12 @@
         "metric": "cache_hit",
         "purpose": "world",
         "endpoint": "/players/topscorers",
+        "count": 1
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/lineups",
         "count": 1
       },
       {
