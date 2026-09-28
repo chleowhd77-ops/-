@@ -1,34 +1,35 @@
 {
   "jobs": {
     "scheduler": {
-      "run_id": "scheduler-1790603491780724141",
-      "supervisor_pid": 463195,
+      "run_id": "scheduler-1790605729528775192",
+      "supervisor_pid": 463424,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T14:28:06+00:00",
-      "pid": 463195,
-      "last_started_at": "2026-09-28T13:51:31+00:00",
+      "heartbeat_at": "2026-09-28T14:28:49+00:00",
+      "pid": 463424,
+      "last_started_at": "2026-09-28T14:28:49+00:00",
       "active_jobs": {
-        "score": 463380
+        "live": 463432,
+        "team": 463433
       },
       "pending_jobs": [
-        "master"
+        "master",
+        "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_duration_seconds": 5.51,
       "last_failure_at": "2026-09-26T15:09:13+00:00",
-      "last_failure_duration_seconds": 180.2,
       "last_success_at": "2026-09-28T14:26:45+00:00",
-      "run_id": "live-1790605596236761055",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-28T14:26:45+00:00",
-      "pid": 463374,
-      "last_started_at": "2026-09-28T14:26:39+00:00",
-      "duration_seconds": 5.51
+      "last_failure_duration_seconds": 180.2,
+      "last_success_duration_seconds": 5.51,
+      "run_id": "live-1790605729544291952",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-09-28T14:28:53+00:00",
+      "pid": 463432,
+      "last_started_at": "2026-09-28T14:28:53+00:00"
     },
     "score": {
       "last_failure_duration_seconds": 600.7,
@@ -61,11 +62,14 @@
       "last_failure_duration_seconds": 916.8,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
       "run_id": "master-1790605708404617283",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T14:28:31+00:00",
-      "pid": 463397,
-      "last_started_at": "2026-09-28T14:28:31+00:00"
+      "heartbeat_at": "2026-09-28T14:28:36+00:00",
+      "pid": 463195,
+      "last_started_at": "2026-09-28T14:28:31+00:00",
+      "child_pid": 463397,
+      "elapsed_seconds": 8.0,
+      "overlap_skips": 0
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -83,33 +87,18 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_success_at": "2026-09-28T14:26:54+00:00",
-      "last_failure_at": "2026-09-15T09:58:09+00:00",
       "last_success_duration_seconds": 14.56,
-      "run_id": "team-1790605596262444926",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-28T14:26:54+00:00",
-      "pid": 463375,
-      "last_started_at": "2026-09-28T14:26:40+00:00",
-      "team_retry_processed": 0,
-      "team_retry_resolved": 214,
-      "team_retry_pending": 3,
-      "team_retry_due": 0,
-      "team_retry_seeded": 1,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 48,
-      "data_prefetch_teams": 94,
-      "data_prefetch_identity_missing": 1,
-      "data_prefetch_early_core_matches": 4,
-      "data_prefetch_deep_matches": 44,
-      "data_prefetch_core_newly_warmed": 0,
-      "data_prefetch_core_already_ready": 47,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 14.56
+      "last_failure_at": "2026-09-15T09:58:09+00:00",
+      "last_success_at": "2026-09-28T14:26:54+00:00",
+      "run_id": "team-1790605729553095356",
+      "child_pid": 463433,
+      "last_stage": "starting",
+      "state": "running",
+      "heartbeat_at": "2026-09-28T14:28:49+00:00",
+      "pid": 463424,
+      "last_started_at": "2026-09-28T14:28:49+00:00",
+      "elapsed_seconds": 0.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 1759.2,
@@ -144,7 +133,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-28T14:28:31+00:00",
+  "updated_at": "2026-09-28T14:28:53+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
