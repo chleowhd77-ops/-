@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.36-world-provider-ledger-reconcile"
+COLLECTOR_PATCH_VERSION = "R7.12.37-prefetch-coverage-queue"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -136,6 +136,17 @@ DATA_PREFETCH_EARLY_HORIZON_HOURS = max(
 )
 DATA_PREFETCH_TEAM_TTL_HOURS = max(
     4, min(24, int(os.getenv("DATA_PREFETCH_TEAM_TTL_HOURS", "12")))
+)
+# A completed core dossier is only a queue marker; the underlying provider
+# caches retain their own endpoint-specific TTLs.  Keeping this marker through
+# the 72-hour preparation window prevents the same first 50 fixtures from
+# monopolising every five-minute prefetch pass.
+DATA_PREFETCH_COMPLETION_TTL_HOURS = max(
+    DATA_PREFETCH_EARLY_HORIZON_HOURS,
+    min(120, int(os.getenv("DATA_PREFETCH_COMPLETION_TTL_HOURS", "84")))
+)
+DATA_PREFETCH_CRITICAL_HOURS = max(
+    1, min(6, int(os.getenv("DATA_PREFETCH_CRITICAL_HOURS", "2")))
 )
 MASTER_CACHE_ONLY_SERVING = os.getenv("MASTER_CACHE_ONLY_SERVING", "1") != "0"
 MASTER_MARKET_POLICY_CACHE_HOURS = max(
@@ -16727,6 +16738,52 @@ def run_master_job():
     return True
 
 
+def _prefetch_core_marker_key(source, match):
+    """Return a stable, non-public queue marker for one upcoming fixture.
+
+    This marker never represents a pick or an analysis result.  It records
+    only that the shared slow-changing team dossier was successfully warmed,
+    so the next pass can spend its bounded work on the remaining fixtures.
+    """
+    match = match if isinstance(match, dict) else {}
+    try:
+        fixture_id = int(match.get("fixture_id") or match.get("api_fixture_id") or 0)
+    except (TypeError, ValueError):
+        fixture_id = 0
+    if fixture_id > 0:
+        return f"prefetch_core_ready_v1_{str(source or 'unknown').lower()}_{fixture_id}"
+    identity = "|".join([
+        str(source or "unknown").strip().casefold(),
+        str(match.get("home") or "").strip().casefold(),
+        str(match.get("away") or "").strip().casefold(),
+        str(match.get("match_time") or match.get("kickoff_at") or "").strip(),
+    ])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"prefetch_core_ready_v1_identity_{digest}"
+
+
+def _prefetch_core_is_ready(source, match):
+    marker = get_db_cache(
+        _prefetch_core_marker_key(source, match),
+        DATA_PREFETCH_COMPLETION_TTL_HOURS,
+    )
+    return isinstance(marker, dict) and bool(marker.get("core_ready"))
+
+
+def _mark_prefetch_core_ready(source, match, *, home_id, away_id, kickoff):
+    return set_db_cache(
+        _prefetch_core_marker_key(source, match),
+        {
+            "core_ready": True,
+            "source": str(source or ""),
+            "home_team_id": int(home_id or 0),
+            "away_team_id": int(away_id or 0),
+            "kickoff_at": kickoff.isoformat() if isinstance(kickoff, datetime) else "",
+            "warmed_at": datetime.now(KST).isoformat(),
+        },
+    )
+
+
 def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
     """Warm reusable overseas data before any pick engine needs it.
 
@@ -16767,9 +16824,29 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             continue
         candidates.append((kickoff, "world", {"item": item, "match": match, "source": "WORLD"}))
 
-    candidates.sort(key=lambda row: row[0])
+    def prefetch_priority(row):
+        kickoff, _, entry = row
+        match = entry.get("match") or {}
+        hours_to_kickoff = max(0.0, (kickoff - now).total_seconds() / 3600.0)
+        core_ready = _prefetch_core_is_ready(entry.get("source"), match)
+        # The closest fixtures must keep receiving volatile lineup/market
+        # refreshes.  After that, choose never-warmed fixtures before revisiting
+        # an already prepared dossier, which gives every scheduled fixture a
+        # turn instead of repeatedly stopping at the first 50 by kickoff time.
+        if hours_to_kickoff <= DATA_PREFETCH_CRITICAL_HOURS:
+            tier = 0
+        elif not core_ready:
+            tier = 1
+        elif hours_to_kickoff <= DATA_PREFETCH_HORIZON_HOURS:
+            tier = 2
+        else:
+            tier = 3
+        return tier, kickoff
+
+    candidates.sort(key=prefetch_priority)
     seen = set()
     processed = teams_warmed = identities_missing = quota_paused = 0
+    core_newly_warmed = core_already_ready = 0
     early_core_matches = deep_matches = 0
     errors = []
 
@@ -16785,6 +16862,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             break
 
         match = entry.get("match") or {}
+        core_ready_before = _prefetch_core_is_ready(entry.get("source"), match)
         home_name = str(match.get("home") or "").strip()
         away_name = str(match.get("away") or "").strip()
         hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
@@ -16903,6 +16981,15 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
                     if hours_to_kickoff <= 2:
                         fetch_lineups_api(fixture_id, 0.25, purpose=purpose)
+
+                if _mark_prefetch_core_ready(
+                    entry.get("source"), match,
+                    home_id=home_id, away_id=away_id, kickoff=kickoff,
+                ):
+                    if core_ready_before:
+                        core_already_ready += 1
+                    else:
+                        core_newly_warmed += 1
         except (ApiQuotaUnavailable, ApiRateLimited) as error:
             quota_paused = 1
             errors.append(f"quota:{error}")
@@ -16916,6 +17003,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         "identities_missing": identities_missing,
         "early_core_matches": early_core_matches,
         "deep_matches": deep_matches,
+        "core_newly_warmed": core_newly_warmed,
+        "core_already_ready": core_already_ready,
         "early_horizon_hours": DATA_PREFETCH_EARLY_HORIZON_HOURS,
         "deep_horizon_hours": DATA_PREFETCH_HORIZON_HOURS,
         "quota_paused": quota_paused,
@@ -16946,6 +17035,8 @@ def run_team_identity_job():
         data_prefetch_identity_missing=int(prefetch.get("identities_missing") or 0),
         data_prefetch_early_core_matches=int(prefetch.get("early_core_matches") or 0),
         data_prefetch_deep_matches=int(prefetch.get("deep_matches") or 0),
+        data_prefetch_core_newly_warmed=int(prefetch.get("core_newly_warmed") or 0),
+        data_prefetch_core_already_ready=int(prefetch.get("core_already_ready") or 0),
         data_prefetch_early_horizon_hours=int(prefetch.get("early_horizon_hours") or 0),
         data_prefetch_deep_horizon_hours=int(prefetch.get("deep_horizon_hours") or 0),
         data_prefetch_quota_paused=bool(prefetch.get("quota_paused")),
@@ -16956,6 +17047,8 @@ def run_team_identity_job():
             "⚡ 분석자료 선수집 완료: "
             f"경기 {prefetch.get('processed', 0)}건 / "
             f"팀 캐시 {prefetch.get('teams_warmed', 0)}건 / "
+            f"신규 공용자료 {prefetch.get('core_newly_warmed', 0)}건 / "
+            f"재확인 {prefetch.get('core_already_ready', 0)}건 / "
             f"신원 대기 {prefetch.get('identities_missing', 0)}건"
         )
     if summary.get("processed") or summary.get("pending") or repaired_cards:
