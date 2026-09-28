@@ -60,6 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
+COLLECTOR_PATCH_VERSION = "R7.12.32-proto-repeat-analysis-guard"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -11254,9 +11255,25 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     temporary_odds_stage = candidate_stage in {
         "overseas-preview", "model-only-preview"
     }
+
+    # The odds-source label is not an evidence-completion stage.  R7.12.31
+    # compared e.g. ``model-only-preview`` directly with ``regular`` and
+    # therefore treated the same already-analysed card as stale on every
+    # master pass.  Keep a separate evidence stage so a temporary-odds card
+    # is refreshed only when the real pre-match stage advances (T-90/T-60/
+    # T-30), Betman odds arrive, or the official/robot revision actually
+    # changes.  Existing cards created before this field existed are adopted
+    # at the current evidence stage once; the adopted stage is written back to
+    # dashboard_data.json on the next checkpoint, so later stage transitions
+    # still trigger one legitimate refresh.
+    stored_evidence_stage = str(
+        candidate.get("analysis_evidence_stage")
+        or (target_stage if temporary_odds_stage else candidate_stage)
+    )
+    stage_refresh_needed = stored_evidence_stage != target_stage
     refresh_now = datetime.now(KST)
     if require_current_stage and (
-        candidate_stage != target_stage
+        stage_refresh_needed
         or (temporary_odds_stage and betman_odds_ready)
         or _needs_current_analysis_refresh(
             candidate, match_dt, refresh_now, ANALYSIS_VERSION
@@ -11265,6 +11282,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     ):
         return None
 
+    candidate["analysis_evidence_stage"] = stored_evidence_stage
     candidate["match"] = dict(match)
     candidate["final_match_time"] = final_match_time
     candidate["timestamp"] = match_dt.timestamp()
@@ -12496,7 +12514,8 @@ def build_dashboard_data():
                     "html_pick", selected.get("html_pick", "")
                 )
 
-        analysis_stage = prediction_stage(diff_hours, lineup_confirmed)
+        analysis_evidence_stage = prediction_stage(diff_hours, lineup_confirmed)
+        analysis_stage = analysis_evidence_stage
         if analysis_odds_source == "overseas_fallback":
             analysis_stage = "overseas-preview"
         elif analysis_odds_source == "model_only":
@@ -12687,7 +12706,9 @@ def build_dashboard_data():
             "home_form": h_form, "away_form": a_form,
             "analysis_version": ANALYSIS_VERSION, "analysis_confidence": analysis_confidence,
             "underdog_gate_version": UNDERDOG_GATE_VERSION,
-            "analysis_stage": analysis_stage, "reliability_score": reliability_score,
+            "analysis_stage": analysis_stage,
+            "analysis_evidence_stage": analysis_evidence_stage,
+            "reliability_score": reliability_score,
             "odds_source": analysis_odds_source,
             "betman_odds_pending": bool(m.get("betman_odds_pending")),
             "data_coverage": data_coverage,
