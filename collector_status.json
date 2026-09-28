@@ -5,15 +5,16 @@
       "supervisor_pid": 463988,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-28T21:52:25+00:00",
+      "heartbeat_at": "2026-09-28T21:58:04+00:00",
       "pid": 463988,
       "last_started_at": "2026-09-28T15:10:55+00:00",
       "active_jobs": {
-        "score": 466042
+        "master": 466064,
+        "team": 466477
       },
       "pending_jobs": [
         "live",
-        "master"
+        "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -60,16 +61,23 @@
       "duration_seconds": 466.35
     },
     "master": {
-      "last_success_at": "2026-09-28T21:10:02+00:00",
-      "last_success_duration_seconds": 128.99,
+      "last_success_at": "2026-09-28T21:58:06+00:00",
+      "last_success_duration_seconds": 318.73,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
       "last_failure_duration_seconds": 916.8,
       "run_id": "master-1790632365598206441",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-28T21:52:48+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-28T21:58:06+00:00",
       "pid": 466064,
-      "last_started_at": "2026-09-28T21:52:48+00:00"
+      "last_started_at": "2026-09-28T21:52:48+00:00",
+      "child_pid": 466064,
+      "elapsed_seconds": 317.6,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 23,
+      "proto_checkpoint_deferred": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 318.73
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -87,36 +95,18 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_success_duration_seconds": 19.49,
       "last_success_at": "2026-09-28T21:52:14+00:00",
       "last_failure_at": "2026-09-15T09:58:09+00:00",
-      "run_id": "team-1790632305356520169",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-09-28T21:52:14+00:00",
-      "pid": 466061,
-      "last_started_at": "2026-09-28T21:51:55+00:00",
-      "child_pid": 466061,
-      "elapsed_seconds": 10.1,
-      "overlap_skips": 0,
-      "team_retry_processed": 0,
-      "team_retry_resolved": 213,
-      "team_retry_pending": 4,
-      "team_retry_due": 0,
-      "team_retry_seeded": 1,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 36,
-      "data_prefetch_teams": 68,
-      "data_prefetch_identity_missing": 2,
-      "data_prefetch_early_core_matches": 2,
-      "data_prefetch_deep_matches": 34,
-      "data_prefetch_core_newly_warmed": 0,
-      "data_prefetch_core_already_ready": 34,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 19.49
+      "last_success_duration_seconds": 19.49,
+      "run_id": "team-1790632606665749305",
+      "child_pid": 466477,
+      "last_stage": "starting",
+      "state": "running",
+      "heartbeat_at": "2026-09-28T21:58:04+00:00",
+      "pid": 463988,
+      "last_started_at": "2026-09-28T21:56:50+00:00",
+      "elapsed_seconds": 73.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 2020.71,
@@ -151,7 +141,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-28T21:52:48+00:00",
+  "updated_at": "2026-09-28T21:58:06+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -221,31 +211,31 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 5849
+        "count": 5857
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 4947
+        "count": 4957
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 3697
+        "count": 3706
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 3432
+        "count": 3442
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 2362
+        "count": 2371
       },
       {
         "metric": "cache_hit",
@@ -269,25 +259,25 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 1944
+        "count": 1949
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 1864
+        "count": 1869
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 831
+        "count": 833
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 640
+        "count": 644
       },
       {
         "metric": "cache_hit",
@@ -299,13 +289,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "count": 460
+        "count": 468
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 460
+        "count": 468
       },
       {
         "metric": "cache_hit",
