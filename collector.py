@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.38-provider-status-direct-reconcile"
+COLLECTOR_PATCH_VERSION = "R7.12.39-world-fast-publication"
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -223,8 +223,12 @@ WORLD_ANALYSIS_SOFT_SECONDS = max(
     180, min(720, int(os.getenv("WORLD_ANALYSIS_SOFT_SECONDS", "300")))
 )
 WORLD_ANALYSIS_NEW_MATCHES_PER_PASS = 50
+# WORLD는 분석이 끝난 뒤에만 화면을 갱신하면, 첫 5~10경기 분석이 오래
+# 걸리는 동안 웹이 이전 날짜의 빈 목록을 계속 보여준다. 한 경기 단위로
+# 공개본 체크포인트를 남겨서 관리자 화면은 즉시 진행 상태를 받고, 고객
+# 화면은 기존의 시작 전·최종픽 조건을 그대로 통과한 카드만 보게 한다.
 WORLD_ANALYSIS_CHECKPOINT_EVERY = max(
-    5, min(20, int(os.getenv("WORLD_ANALYSIS_CHECKPOINT_EVERY", "10")))
+    1, min(20, int(os.getenv("WORLD_ANALYSIS_CHECKPOINT_EVERY", "1")))
 )
 WORLD_MARKET_WATCH_HORIZON_HOURS = max(
     3, min(48, int(os.getenv("WORLD_MARKET_WATCH_HORIZON_HOURS", "24")))
@@ -535,6 +539,25 @@ def _write_world_publication_file():
         "(로컬 전체 학습·감사자료 보존)"
     )
     return WORLD_PUBLICATION_FILE
+
+
+def _publish_world_dashboard(reason=""):
+    """Publish the compact WORLD feed without coupling it to a long analysis pass.
+
+    The local full document remains the audit/learning source.  This only
+    replaces the compact Streamlit copy after it has been written and size
+    checked, so an upload failure never erases a prior public board.
+    """
+    publication_file = _write_world_publication_file()
+    if publication_file is None:
+        return False
+    if not upload_to_github(
+        publication_file, remote_path=WORLD_DASHBOARD_FILE.name
+    ):
+        return False
+    if reason:
+        print(f"⚡ WORLD 웹 게시 완료: {reason}")
+    return True
 
 
 def _exclude_proto_overlaps(payload, proto_by_fixture=None):
@@ -17177,21 +17200,23 @@ def run_world_job():
         schedule_refreshed = bool(collect_world_schedule())
         if not schedule_refreshed:
             print("↩️ 세계경기 마지막 정상 일정으로 분석 대기열을 계속 진행합니다.")
+        else:
+            # Schedule discovery must reach Streamlit before the slower
+            # full-context analysis begins.  The admin board can then show
+            # fresh waiting rows, while the public visibility gate below
+            # still prevents a pending row from becoming a customer pick.
+            if not _publish_world_dashboard("최신 일정·배당 대기열"):
+                _update_collector_status(
+                    "world", "running", last_stage="world_schedule_publish_failed"
+                )
+                return False
 
     analysis_ok, analysis_changed = analyze_world_schedule()
     if not analysis_ok:
         return False
 
-    if schedule_refreshed or analysis_changed:
-        publication_file = _write_world_publication_file()
-        if publication_file is None:
-            _update_collector_status(
-                "world", "running", last_stage="world_publication_build_failed"
-            )
-            return False
-        if not upload_to_github(
-            publication_file, remote_path=WORLD_DASHBOARD_FILE.name
-        ):
+    if analysis_changed:
+        if not _publish_world_dashboard("분석 체크포인트"):
             _update_collector_status(
                 "world", "running", last_stage="world_dashboard_publish_failed"
             )
