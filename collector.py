@@ -60,7 +60,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.12.40-world-paused-proto-toto14-focus"
+COLLECTOR_PATCH_VERSION = "R7.13.0-proto-toto14-shared-dossier"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
 # WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 다시 켤 때만 1로 둔다.
 WORLD_FEATURE_ENABLED = str(os.getenv("WORLD_FEATURE_ENABLED", "0")).strip().lower() in {
@@ -149,6 +149,13 @@ DATA_PREFETCH_TEAM_TTL_HOURS = max(
 DATA_PREFETCH_COMPLETION_TTL_HOURS = max(
     DATA_PREFETCH_EARLY_HORIZON_HOURS,
     min(120, int(os.getenv("DATA_PREFETCH_COMPLETION_TTL_HOURS", "84")))
+)
+# This is deliberately a local, reusable evidence record rather than another
+# provider job.  The team worker writes it after its normal cache warming pass;
+# every PROTO/TOTO14 analyst reads the same record and keeps its own pick logic.
+SHARED_DOSSIER_TTL_HOURS = max(
+    DATA_PREFETCH_EARLY_HORIZON_HOURS,
+    min(120, int(os.getenv("SHARED_DOSSIER_TTL_HOURS", "84")))
 )
 DATA_PREFETCH_CRITICAL_HOURS = max(
     1, min(6, int(os.getenv("DATA_PREFETCH_CRITICAL_HOURS", "2")))
@@ -1224,7 +1231,7 @@ def _render_toto14_picks_html(picks):
         "패": "background: #EF4444; color: #0B0F19; font-weight: 900; border: 1px solid #EF4444;" if "패" in picks else "background: transparent; color: #64748B; border: 1px solid #1E293B;",
     }
     return "".join(
-        f"<div style='flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 14px; {styles[pick]}'>{pick}</div>"
+        f"<div style='width:38px;height:38px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;text-align:center;border-radius:7px;font-size:13px; {styles[pick]}'>{pick}</div>"
         for pick in ("승", "무", "패")
     )
 
@@ -10788,6 +10795,62 @@ def calculate_survival_motivation(standing):
     return result
 
 
+def build_match_importance_profile(home_standing, away_standing, home_next,
+                                   away_next, *, is_derby=False):
+    """Describe verified stakes and schedule pressure without guessing intent.
+
+    This is a transparent analysis label, not a claim that a club will rest
+    players or discard a match.  The pick model may use the existing measured
+    rest/rotation penalties, while customers can see why volatility is higher.
+    """
+    home_survival = calculate_survival_motivation(home_standing)
+    away_survival = calculate_survival_motivation(away_standing)
+    score, reasons, rotation_teams = 0, [], []
+    if is_derby:
+        score += 3
+        reasons.append("더비 일정")
+    for side, standing, survival, next_fixture in (
+        ("홈", home_standing or {}, home_survival, home_next or {}),
+        ("원정", away_standing or {}, away_survival, away_next or {}),
+    ):
+        try:
+            rank = int(standing.get("rank") or 99)
+        except (TypeError, ValueError):
+            rank = 99
+        if 1 <= rank <= 3:
+            score += 2
+            reasons.append(f"{side} 상위권 경쟁")
+        if survival.get("active"):
+            score += 2
+            reasons.append(f"{side} 잔류 경쟁")
+        try:
+            days = int(next_fixture.get("days_until_next") or 99)
+        except (TypeError, ValueError):
+            days = 99
+        if bool(next_fixture.get("is_important")) and days <= 4:
+            rotation_teams.append(side)
+            reasons.append(f"{side} {days}일 내 다음 중요 일정")
+    if score >= 5:
+        label, level = "핵심 경쟁 경기", "high"
+    elif score >= 2:
+        label, level = "순위·일정 주의 경기", "medium"
+    else:
+        label, level = "일반 리그 일정", "standard"
+    return {
+        "schema_version": "match-importance.v1",
+        "label": label,
+        "level": level,
+        "score": score,
+        "reasons": reasons[:5],
+        "rotation_watch": bool(rotation_teams),
+        "rotation_watch_teams": rotation_teams,
+        "notice": (
+            "로테이션 가능성을 단정하지 않으며, 공식 선발 발표 전에는 일정상 주의 신호로만 반영합니다."
+            if rotation_teams else "공식 순위·일정 자료 기준의 경기 맥락입니다."
+        ),
+    }
+
+
 def calculate_squad_depth_factor(standing):
     """Scale absence damage by relative table position, not a fixed rank 15."""
     standing = standing if isinstance(standing, dict) else {}
@@ -11880,9 +11943,23 @@ def build_dashboard_data():
         # team pair is already verified locally, allow the existing model-only
         # analysis below to finish instead of publishing an empty card until a
         # later cycle.  Unknown teams still follow the normal bounded queue.
+        shared_dossier = _load_shared_fixture_dossier(m)
+        dossier_home = shared_dossier.get("home") if isinstance(shared_dossier, dict) else {}
+        dossier_away = shared_dossier.get("away") if isinstance(shared_dossier, dict) else {}
+        dossier_identity_ready = bool(
+            isinstance(dossier_home, dict) and isinstance(dossier_away, dict)
+            and int(dossier_home.get("id") or 0) > 0
+            and int(dossier_away.get("id") or 0) > 0
+        )
         model_only_recovery = _proto_can_finish_model_only_analysis(m)
 
-        if model_only_recovery:
+        if dossier_identity_ready:
+            # The team worker already verified this exact scheduled pair.  Do
+            # not make the analysis worker resolve it a second time.
+            home_info = dict(dossier_home)
+            away_info = dict(dossier_away)
+            identity_fixture = int(shared_dossier.get("fixture_id") or 0)
+        elif model_only_recovery:
             # This pair was already verified in the local identity cache.  Do
             # not send it back through the match/logo robot merely because a
             # source has not supplied a current fixture or logo yet.  The
@@ -12213,6 +12290,9 @@ def build_dashboard_data():
          
         h_next = fetch_team_next_fixture_api(home_info.get("id"), heavy_ttl)
         a_next = fetch_team_next_fixture_api(away_info.get("id"), heavy_ttl)
+        match_importance = build_match_importance_profile(
+            h_stand, a_stand, h_next, a_next, is_derby=is_derby
+        )
         h_long = fetch_team_long_term_stats_api(home_info.get("id"), heavy_ttl)
         a_long = fetch_team_long_term_stats_api(away_info.get("id"), heavy_ttl)
         h_recent = fetch_team_recent_form_metrics(home_info.get("id"), heavy_ttl)
@@ -12723,6 +12803,11 @@ def build_dashboard_data():
         if a_manager_buff > 0: story += f" 👔 [감독 변경 참고] {away_team}의 최근 감독 변경 확인. 경기력 개선 여부는 미검증입니다."
         if h_survival.get("active"): story += f" [순위 경쟁 참고] {home_team}: {h_survival['reason']}. 의지·전술 변화를 단정하지 않습니다."
         if a_survival.get("active"): story += f" [순위 경쟁 참고] {away_team}: {a_survival['reason']}. 의지·전술 변화를 단정하지 않습니다."
+        if match_importance.get("reasons"):
+            story += (
+                " [경기 맥락] " + ", ".join(match_importance["reasons"])
+                + ". " + str(match_importance.get("notice") or "")
+            )
 
         h_inj_html = _render_team_availability_status(
             h_inj_data, diff_hours, lineup_confirmed, h_lineup_msg
@@ -12852,6 +12937,7 @@ def build_dashboard_data():
             "model_market_edge": highest_prob_pick.get("edge"),
             "used_feature_evidence": evidence,
             "survival_motivation": {"home": h_survival, "away": a_survival},
+            "match_importance": match_importance,
             "market_probability_analysis": [
                 {
                     "market": infer_pick_market(pick),
@@ -13084,10 +13170,21 @@ def build_dashboard_data():
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
             continue
 
-        home_info, away_info, identity_fixture = resolve_match_team_pair(
-            home_team, away_team, match_time, ttl_h=2,
-            league_name=m.get("league") or "",
-        )
+        shared_dossier = _load_shared_fixture_dossier(m)
+        dossier_home = shared_dossier.get("home") if isinstance(shared_dossier, dict) else {}
+        dossier_away = shared_dossier.get("away") if isinstance(shared_dossier, dict) else {}
+        if (
+            isinstance(dossier_home, dict) and isinstance(dossier_away, dict)
+            and int(dossier_home.get("id") or 0) > 0
+            and int(dossier_away.get("id") or 0) > 0
+        ):
+            home_info, away_info = dict(dossier_home), dict(dossier_away)
+            identity_fixture = int(shared_dossier.get("fixture_id") or 0)
+        else:
+            home_info, away_info, identity_fixture = resolve_match_team_pair(
+                home_team, away_team, match_time, ttl_h=2,
+                league_name=m.get("league") or "",
+            )
         if (
             not home_info.get('id')
             or not away_info.get('id')
@@ -13258,6 +13355,9 @@ def build_dashboard_data():
 
         h_next = fetch_team_next_fixture_api(home_info.get("id"), heavy_ttl)
         a_next = fetch_team_next_fixture_api(away_info.get("id"), heavy_ttl)
+        match_importance = build_match_importance_profile(
+            h_stand, a_stand, h_next, a_next, is_derby=is_derby
+        )
         h_long = fetch_team_long_term_stats_api(home_info.get("id"), heavy_ttl)
         a_long = fetch_team_long_term_stats_api(away_info.get("id"), heavy_ttl)
         h_recent = fetch_team_recent_form_metrics(home_info.get("id"), heavy_ttl)
@@ -13584,6 +13684,7 @@ def build_dashboard_data():
                 "goal_model_audit": goal_model_audit,
                 "analysis_stage": analysis_stage,
                 "survival_motivation": {"home": h_survival, "away": a_survival},
+                "match_importance": match_importance,
                 "robot_features": robot_features,
                 "robot_full_evidence": toto_full_evidence,
                 "robot_lineup_prediction": lineup_learning,
@@ -16790,6 +16891,62 @@ def _prefetch_core_marker_key(source, match):
     return f"prefetch_core_ready_v1_identity_{digest}"
 
 
+def _shared_dossier_key(match):
+    """Return one source-independent key for the same scheduled fixture.
+
+    PROTO and TOTO14 may publish different ticket rows for one real match.  A
+    source name must therefore never be part of this key: otherwise both
+    screens can accidentally warm the same overseas material independently.
+    """
+    match = match if isinstance(match, dict) else {}
+    kickoff = _parse_kst_match_time(
+        match.get("match_time") or match.get("time") or match.get("kickoff_at")
+    )
+    kickoff_key = kickoff.strftime("%Y-%m-%dT%H:%M") if kickoff else str(
+        match.get("match_time") or match.get("time") or match.get("kickoff_at") or ""
+    ).strip()
+    identity = "|".join([
+        str(match.get("home") or "").strip().casefold(),
+        str(match.get("away") or "").strip().casefold(),
+        kickoff_key,
+    ])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"shared_fixture_dossier_v1_{digest}"
+
+
+def _load_shared_fixture_dossier(match):
+    dossier = get_db_cache(_shared_dossier_key(match), SHARED_DOSSIER_TTL_HOURS)
+    return dossier if isinstance(dossier, dict) else {}
+
+
+def _store_shared_fixture_dossier(match, *, sources, home_info, away_info,
+                                  fixture_id, league_id, season, kickoff,
+                                  deep_refresh_due, evidence):
+    """Persist the exact prefetch material without initiating an API request."""
+    prior = _load_shared_fixture_dossier(match)
+    prior_sources = prior.get("sources") if isinstance(prior, dict) else []
+    merged_sources = sorted({
+        str(source).upper() for source in list(prior_sources or []) + list(sources or [])
+        if str(source).strip()
+    })
+    payload = {
+        "schema_version": "shared-fixture-dossier.v1",
+        "key": _shared_dossier_key(match),
+        "sources": merged_sources,
+        "home": dict(home_info or {}),
+        "away": dict(away_info or {}),
+        "fixture_id": int(fixture_id or 0),
+        "league_id": int(league_id or 0),
+        "season": int(season or 0),
+        "kickoff_at": kickoff.isoformat() if isinstance(kickoff, datetime) else "",
+        "core_ready": True,
+        "deep_refresh_ready": bool(deep_refresh_due),
+        "evidence": evidence if isinstance(evidence, dict) else {},
+        "warmed_at": datetime.now(KST).isoformat(),
+    }
+    return set_db_cache(_shared_dossier_key(match), payload)
+
+
 def _prefetch_core_is_ready(source, match):
     marker = get_db_cache(
         _prefetch_core_marker_key(source, match),
@@ -16842,15 +16999,20 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
             continue
         candidates.append((kickoff, "analysis", {"match": match, "source": "TOTO14"}))
 
-    world = _read_json(WORLD_DASHBOARD_FILE, {}) or {}
-    for item in world.get("matches", []) or []:
-        if not isinstance(item, dict):
-            continue
-        match = item.get("match") or {}
-        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("kickoff_at"))
-        if not kickoff or not (now < kickoff <= horizon):
-            continue
-        candidates.append((kickoff, "world", {"item": item, "match": match, "source": "WORLD"}))
+    # WORLD is commercially paused.  Do not even place stale WORLD rows in
+    # this queue: its old dashboard must never spend an API slot intended for
+    # PROTO LIVE or TOTO14.
+
+    sources_by_dossier = {}
+    for _kickoff, _purpose, entry in candidates:
+        dossier_key = _shared_dossier_key(entry.get("match") or {})
+        sources_by_dossier.setdefault(dossier_key, set()).add(
+            str(entry.get("source") or "").upper()
+        )
+    for _kickoff, _purpose, entry in candidates:
+        entry["shared_sources"] = sorted(
+            sources_by_dossier.get(_shared_dossier_key(entry.get("match") or {}), set())
+        )
 
     def prefetch_priority(row):
         kickoff, _, entry = row
@@ -16895,8 +17057,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         away_name = str(match.get("away") or "").strip()
         hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
         deep_refresh_due = hours_to_kickoff <= DATA_PREFETCH_HORIZON_HOURS
-        # The same official fixture can appear in PROTO, TOTO14 and WORLD.
-        # Prefetch its provider evidence once, then let every analyst reuse it.
+        # The same official fixture can appear in PROTO and TOTO14.  Prefetch
+        # its provider evidence once, then let every analyst reuse it.
         key = (
             home_name.casefold(), away_name.casefold(), kickoff.isoformat(),
         )
@@ -16972,48 +17134,72 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                 # From T-72, warm the common team record once.  These helpers
                 # share the recent-fixtures cache, so this is normally one
                 # provider request per distinct team plus one H2H request.
+                team_evidence = {}
                 for team_id in (home_id, away_id):
-                    fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                    fetch_team_last_match_date_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                    team_evidence[str(team_id)] = {
+                        "recent_fixtures": fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        "form": fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        "long_term": fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        "recent_metrics": fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        "last_match": fetch_team_last_match_date_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                    }
                     if deep_refresh_due:
-                        fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
-                        fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS)
+                        team_evidence[str(team_id)].update({
+                            "next_fixture": fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                            "recent_stats": fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        })
                         fetch_team_squad_cached(team_id)
-                        fetch_new_manager_status(team_id, 24)
+                        team_evidence[str(team_id)]["manager"] = fetch_new_manager_status(team_id, 24)
                     teams_warmed += 1
 
                 # Standings/key-player information changes often enough to
                 # wait for the normal T-30 refresh.  Core history is already
                 # available to all analyst engines from the early pass.
+                standings_evidence = {}
+                key_players = []
                 if deep_refresh_due and league_id and season:
                     # One shared standings table plus league key-player cache feeds
                     # rank/motivation, injury impact and predicted-XI context.
-                    fetch_team_standing_api(home_id, 12, league_id, season)
-                    fetch_team_standing_api(away_id, 12, league_id, season)
-                    fetch_league_key_players(league_id, season)
-                fetch_fixture_details_api(home_id, away_id, 24)
+                    standings_evidence = {
+                        "home": fetch_team_standing_api(home_id, 12, league_id, season),
+                        "away": fetch_team_standing_api(away_id, 12, league_id, season),
+                    }
+                    key_players = fetch_league_key_players(league_id, season)
+                h2h_evidence = fetch_fixture_details_api(home_id, away_id, 24)
+                injury_evidence = {}
+                lineup_evidence = {}
 
                 if deep_refresh_due and fixture_id and hours_to_kickoff <= 24:
                     injury_ttl = 3 if hours_to_kickoff <= 3 else 8
-                    if entry.get("source") == "WORLD":
-                        fetch_world_injuries_snapshot(
-                            fixture_id, home_id, away_id, league_id, season, injury_ttl
-                        )
-                        if not _has_valid_world_market((entry.get("item") or {}).get("market_snapshot")):
-                            fetch_world_market_snapshot(fixture_id, hours_to_kickoff)
-                    else:
-                        fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id)
-                        fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id)
+                    injury_evidence = {
+                        "home": fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id),
+                        "away": fetch_team_injuries_api(away_id, league_id, season, injury_ttl, fixture_id),
+                    }
                     if hours_to_kickoff <= 2:
-                        fetch_lineups_api(fixture_id, 0.25, purpose=purpose)
+                        lineup_evidence = fetch_lineups_api(fixture_id, 0.25, purpose=purpose)
 
-                if _mark_prefetch_core_ready(
-                    entry.get("source"), match,
+                _store_shared_fixture_dossier(
+                    match,
+                    sources=entry.get("shared_sources") or [entry.get("source")],
+                    home_info=home_info if entry.get("source") in {"PROTO", "TOTO14"} else {"id": home_id},
+                    away_info=away_info if entry.get("source") in {"PROTO", "TOTO14"} else {"id": away_id},
+                    fixture_id=fixture_id, league_id=league_id, season=season,
+                    kickoff=kickoff, deep_refresh_due=deep_refresh_due,
+                    evidence={
+                        "teams": team_evidence,
+                        "standings": standings_evidence,
+                        "league_key_players": key_players,
+                        "h2h": h2h_evidence,
+                        "injuries": injury_evidence,
+                        "lineups": lineup_evidence,
+                    },
+                )
+
+                marked = all(_mark_prefetch_core_ready(
+                    source, match,
                     home_id=home_id, away_id=away_id, kickoff=kickoff,
-                ):
+                ) for source in (entry.get("shared_sources") or [entry.get("source")]))
+                if marked:
                     if core_ready_before:
                         core_already_ready += 1
                     else:

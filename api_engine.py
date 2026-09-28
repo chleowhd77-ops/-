@@ -44,12 +44,14 @@ API_HOST = "v3.football.api-sports.io"
 headers = {'x-apisports-key': API_KEY}
 DEFAULT_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Soccerball.svg/120px-Soccerball.svg.png"
 STRICT_REFEREES = ["Taylor", "Hernandez", "Lahoz", "Orsato", "Oliver", "Dean", "Turpin", "Makkelie"]
-ANALYSIS_VERSION = "V7.12.17-verified-comparative-pick-learning"
+ANALYSIS_VERSION = "V7.13.0-proto-toto14-shared-dossier-season"
 FORECAST_MODEL_VERSION = "goals-v4-full-context-coherent-v1"
 CALIBRATION_VERSION = "fixture-time-full-context-wdl-projection-v1"
 PICK_POLICY_VERSION = OFFICIAL_PICK_POLICY_VERSION
 ROBOT_PICK_VERSION = "robot-self-learning-online-v7-value-accuracy-goal"
-PUBLIC_SCORE_VERSION = ROBOT_PICK_VERSION
+# R7.13 starts a new public grading season.  Earlier immutable rows remain in
+# SQLite for audit/learning but are not blended into the new display totals.
+PUBLIC_SCORE_VERSION = "R7.13.0-proto-toto14-new-public-season"
 # 프로그램 배포 버전과 예측 모델 버전을 분리한다. 화면/수집/집계 오류를
 # 고쳤다는 이유만으로 과거 예측이 다른 모델 기록처럼 분리되면 안 된다.
 SYSTEM_VERSION = "R7.12.31-50-batch-world-parity-v3-sync"

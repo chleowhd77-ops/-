@@ -2449,6 +2449,7 @@ def _render_live_match_card(item):
         f"<div class='center-time-box' style='min-width:140px'>{time_display}</div>"
         f"<div class='team-box away'>{render_logo_html(item.get('away_logo'))}<div class='team-info-wrapper'><div class='team-name-text'>{escape(str(m.get('away') or ''))}</div><div class='team-form-text'>{escape(str(item.get('away_form') or ''))}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}{item.get('a_rest_html','')}</div></div>"
         "</div>"
+        f"{_match_importance_html(item)}"
         f"{event_html}<div style='color:#94A3B8;font-size:12px;margin:10px 0'>분석·픽·확률은 경기 전 기준입니다. 위 LIVE 점수·사건은 현재 상황이며 예측확률을 실시간으로 다시 계산한 것이 아닙니다.</div>"
         f"{_detail_html(detail_item)}<div class='pred-grid'>{boxes}</div>{odds_bar_html}"
         "</div>"
@@ -2892,6 +2893,29 @@ def _detail_html(item, *, always_visible=False):
     )
 
 
+def _match_importance_html(item):
+    """Show evidence-based stakes without pretending to know a lineup."""
+    profile = item.get("match_importance") if isinstance(item, dict) else {}
+    if not isinstance(profile, dict):
+        return ""
+    label = escape(str(profile.get("label") or ""))
+    if not label:
+        return ""
+    reasons = [escape(str(reason)) for reason in (profile.get("reasons") or []) if str(reason).strip()]
+    level = str(profile.get("level") or "standard")
+    color = {"high": "#F59E0B", "medium": "#38BDF8"}.get(level, "#64748B")
+    reason_text = " · ".join(reasons[:3]) or "공식 순위·일정 자료 기준"
+    rotation = (
+        " · 선발 발표 전 로테이션은 일정상 주의 신호만 반영"
+        if profile.get("rotation_watch") else ""
+    )
+    return (
+        "<div style='margin:8px 0 2px;padding:7px 9px;border-radius:8px;"
+        f"border:1px solid {color};color:#CBD5E1;font-size:11px;line-height:1.5;'>"
+        f"<b style='color:{color};'>📌 {label}</b> · {reason_text}{rotation}</div>"
+    )
+
+
 def _analysis_data_quality_html(item):
     """Keep evidence coverage separate from adjusted analysis confidence."""
     if not isinstance(item, dict):
@@ -3329,6 +3353,26 @@ def _v3_learning_pick_html(analysis_item, home_team=""):
     )
 
 
+def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
+    """Switch the visible analyst answer only; never alter the saved ticket."""
+    item = item if isinstance(item, dict) else {}
+    if analyst_key == "① Codex 공식픽":
+        pick = item.get("official_comparison_pick") or {}
+        return _human_pick_label(pick.get("raw_pick"), home_team) or "분석 대기"
+    if analyst_key == "② 자율 로봇픽":
+        pick = item.get("robot_pick") or {}
+        return _human_pick_label(pick.get("raw_pick"), home_team) or "분석 대기"
+    if analyst_key == "③ V2 알파고":
+        alphago = _extract_alphago_pick(item)
+        return {
+            "H": f"{home_team or '홈팀'} 승", "D": "무승부", "A": f"{away_team or '원정팀'} 승",
+        }.get(str(alphago.get("code") or ""), "분석 대기")
+    if analyst_key == "④ V3 학습픽":
+        pick = item.get("v3_learning_pick") or {}
+        return _human_pick_label(pick.get("raw_pick"), home_team) or "분석 대기"
+    return str(item.get("best_pick_display") or "분석 대기")
+
+
 def generate_pred_boxes(
     picks, is_top3_tab=False, pick_categories=None, grading=None,
     home_team="", analysis_item=None,
@@ -3570,6 +3614,47 @@ def _render_admin_shortlist(title, color, payload):
         )
 
 
+def _render_admin_learning_reference(items, analyst_key):
+    """Show V2/V3 answers to the administrator without inventing value picks."""
+    color = "#FCD34D" if analyst_key == "③ V2 알파고" else "#F9A8D4"
+    rows = []
+    for item in items or []:
+        match = item.get("match") or {}
+        home, away = str(match.get("home") or ""), str(match.get("away") or "")
+        if analyst_key == "③ V2 알파고":
+            value = _toto_analyst_pick_display(item, analyst_key, home, away)
+            note = "별도 승무패 방향 · 현재 배당가치 투자후보 산정에는 사용하지 않음"
+        else:
+            v3 = item.get("v3_learning_pick") or {}
+            value = _human_pick_label(v3.get("raw_pick"), home) or "분석 대기"
+            probability = float(v3.get("probability") or 0) * 100
+            note = f"학습·검증용 별도 답안 · 표시 확률 {probability:.1f}%" if value != "분석 대기" else "학습 답안 대기"
+        if value == "분석 대기":
+            continue
+        rows.append((
+            str(item.get("final_match_time") or match.get("match_time") or ""),
+            home, away, value, note,
+        ))
+    st.markdown(
+        "<div class='match-card' style='padding:16px 18px;margin-bottom:12px;"
+        f"border-color:{color};'><div style='color:{color};font-size:18px;font-weight:900;'>{escape(analyst_key)} 관리자 비교</div>"
+        "<div style='color:#94A3B8;font-size:12px;margin-top:5px;'>이 분석가는 독립 답안을 남기며, "
+        "고배당 투자후보는 보수확률·실배당·검증표본이 있는 분석가만 산정합니다.</div></div>",
+        unsafe_allow_html=True,
+    )
+    if not rows:
+        st.caption("현재 시작 전 경기에서 표시할 저장 답안이 없습니다.")
+        return
+    for when, home, away, value, note in rows[:10]:
+        st.markdown(
+            "<div class='engine-result-card' style='margin-bottom:8px;'>"
+            f"<div class='engine-result-head'><b>{escape(home)} vs {escape(away)}</b><span>{escape(when)}</span></div>"
+            f"<div style='color:{color};font-weight:900;'>{escape(value)}</div>"
+            f"<small style='color:#94A3B8;'>{escape(note)}</small></div>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_manager_investment_portfolio(payload):
     """Render only the separately frozen administrator investment ledger."""
     payload = payload if isinstance(payload, dict) else {}
@@ -3710,15 +3795,22 @@ if main_tab_admin is not None:
         ]
         official_daily = build_official_daily_shortlist(admin_pick_source, 5, 10)
         robot_daily = build_robot_daily_shortlist(admin_pick_source, 5, 10)
-        official_column, robot_column = st.columns(2)
-        with official_column:
+        admin_analyst_view = st.selectbox(
+            "관리자 비교 분석가",
+            ["① Codex 공식", "② 자율 로봇", "③ V2 알파고", "④ V3 학습"],
+            key="admin-analyst-view",
+        )
+        if admin_analyst_view == "① Codex 공식":
             _render_admin_shortlist("① Codex 공식 관리자픽", "#00F2FE", official_daily)
-        with robot_column:
+        elif admin_analyst_view == "② 자율 로봇":
             _render_admin_shortlist("② 자율 로봇 관리자픽", "#C4B5FD", robot_daily)
+        elif admin_analyst_view == "③ V2 알파고":
+            _render_admin_learning_reference(admin_pick_source, "③ V2 알파고")
+        else:
+            _render_admin_learning_reference(admin_pick_source, "④ V3 학습픽")
         st.caption(
-            "두 후보판은 공개 TOP3와 분리되며 각 분석가의 전체 시장 후보를 독립 비교합니다. "
-            "70%는 미래 실전 채점 목표이지 표시 확률 보장이 아니며, 경기 시작 뒤에는 "
-            "픽·확률·배당을 바꾸지 않습니다."
+            "관리자 투자 장부는 고배당이라도 보수확률·실배당·시간순 검증을 함께 통과한 후보만 동결합니다. "
+            "V2·V3는 별도 답안을 남기고 채점하지만, 검증표본 전에는 투자후보를 억지로 만들지 않습니다."
         )
         _render_back_to_top()
 
@@ -4119,6 +4211,7 @@ with main_tab2:
                 f"<div class='vs-row' style='margin-bottom:15px;'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}{item.get('h_inj_html','')}</div>{logo_h_tag}</div>"
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}</div></div></div>"
+                f"{_match_importance_html(item)}"
                 f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {item.get('p_h')}% | 무 {item.get('p_d')}% | 패 {item.get('p_a')}%</div>"
                 f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {item.get('p_h')}%;'></div><div class='prob-bar-draw' style='width: {item.get('p_d')}%;'></div><div class='prob-bar-lose' style='width: {item.get('p_a')}%;'></div></div>"
                 f"<div style='display: flex; gap: 10px;'>{item.get('picks_html', '')}{v3_learning_html}</div>"
@@ -4128,6 +4221,17 @@ with main_tab2:
                 f"제 {idx} 경기 상세 분석 · {m.get('home', '')} vs {m.get('away', '')}",
                 expanded=False,
             ):
+                analyst_view = st.selectbox(
+                    "표시 분석가",
+                    ["통합 마킹", "① Codex 공식픽", "② 자율 로봇픽", "③ V2 알파고", "④ V3 학습픽"],
+                    key=f"toto14-analyst-{m.get('id', idx)}",
+                )
+                analyst_pick = _toto_analyst_pick_display(
+                    item, analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
+                )
+                st.caption(
+                    f"{analyst_view}: {analyst_pick} · 이 메뉴는 표시만 바꾸며, 동결된 실제 승무패 마킹은 변경하지 않습니다."
+                )
                 st.markdown(html_code, unsafe_allow_html=True)
     elif toto14_round_closed:
         st.info("이전 승무패14 회차는 첫 경기 시작과 함께 마감되어 추천 화면에서 숨겼습니다. 예측과 결과는 채점 노트에 그대로 보존됩니다. 새 회차가 수집되면 자동으로 표시됩니다.")
@@ -4233,15 +4337,15 @@ def _render_three_engine_scorecard(snapshot):
     labels = {"official": "① Codex 공식픽", "robot": "② 자율 로봇픽"}
     colors = {"official": "#00F2FE", "robot": "#C4B5FD"}
     track_labels = {
-        "proto_world": "프로토 LIVE · 전체경기 LIVE",
+        "proto_world": "프로토 LIVE",
         "toto14": "승무패14",
     }
     hidden_count = int(comparison.get("legacy_rows_hidden") or 0)
     st.markdown(
         "<div class='section-intro'><div><h2>채점 노트</h2>"
-        "<p>프로토·전체경기와 승무패14를 분리해 Codex 공식픽과 자율 로봇픽을 각각 채점·복기합니다.</p>"
+        "<p>프로토 LIVE와 승무패14를 분리해 동결된 분석가 픽만 채점·복기합니다.</p>"
         "</div></div>"
-        f"<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>현행 버전만 공개 집계 · 이전 버전 {hidden_count}행은 삭제하지 않고 감사용으로 보존</p>",
+        f"<p style='color:#64748B;font-size:12px;margin-bottom:18px;'>R7.13 새 공개 채점 시즌 · 현재 0건부터 시작 · 이전 기록 {hidden_count}행은 삭제하지 않고 감사용으로 보존</p>",
         unsafe_allow_html=True,
     )
     if snapshot.get("_public_score_stale"):
@@ -4293,7 +4397,13 @@ def _render_three_engine_scorecard(snapshot):
                 unsafe_allow_html=True,
             )
 
-    for track_key in ("proto_world", "toto14"):
+    grade_track_view = st.selectbox(
+        "채점 출처",
+        ["프로토 LIVE", "승무패14"],
+        key="grade-track-view",
+    )
+    requested_track = "proto_world" if grade_track_view == "프로토 LIVE" else "toto14"
+    for track_key in (requested_track,):
         payload = tracks.get(track_key) or {}
         summary = payload.get("summary") or {}
         finished = list(payload.get("finished") or [])
