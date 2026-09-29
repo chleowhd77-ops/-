@@ -5,15 +5,15 @@
       "supervisor_pid": 463988,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-29T05:37:23+00:00",
+      "heartbeat_at": "2026-09-29T05:39:24+00:00",
       "pid": 463988,
       "last_started_at": "2026-09-28T15:10:55+00:00",
       "active_jobs": {
-        "master": 468002,
-        "team": 468003
+        "master": 468002
       },
       "pending_jobs": [
-        "live"
+        "live",
+        "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -60,19 +60,23 @@
       "duration_seconds": 407.27
     },
     "master": {
-      "last_success_duration_seconds": 126.22,
-      "last_success_at": "2026-09-29T05:28:00+00:00",
+      "last_success_duration_seconds": 156.52,
+      "last_success_at": "2026-09-29T05:39:25+00:00",
       "last_failure_duration_seconds": 916.8,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
       "run_id": "master-1790660125307723944",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-29T05:37:23+00:00",
-      "pid": 463988,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-29T05:39:25+00:00",
+      "pid": 468002,
       "last_started_at": "2026-09-29T05:36:49+00:00",
       "child_pid": 468002,
-      "elapsed_seconds": 117.2,
-      "overlap_skips": 0
+      "elapsed_seconds": 238.0,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 29,
+      "proto_checkpoint_deferred": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 156.52
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -151,7 +155,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-29T05:37:32+00:00",
+  "updated_at": "2026-09-29T05:39:25+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -221,49 +225,49 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 3132
+        "count": 3166
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 2000
+        "count": 2020
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "count": 1202
+        "count": 1222
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 1202
+        "count": 1222
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 893
+        "count": 904
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 308
+        "count": 312
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 140
+        "count": 144
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 122
+        "count": 123
       },
       {
         "metric": "cache_only_miss",
@@ -281,13 +285,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 76
+        "count": 77
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 53
+        "count": 54
       },
       {
         "metric": "cache_hit",
@@ -299,7 +303,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "count": 17
+        "count": 18
       },
       {
         "metric": "cache_only_miss",
