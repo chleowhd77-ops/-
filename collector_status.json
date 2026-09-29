@@ -5,15 +5,13 @@
       "supervisor_pid": 463988,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-29T17:51:18+00:00",
+      "heartbeat_at": "2026-09-29T17:52:18+00:00",
       "pid": 463988,
       "last_started_at": "2026-09-28T15:10:55+00:00",
       "active_jobs": {
-        "score": 472335
+        "master": 472345
       },
-      "pending_jobs": [
-        "master"
-      ],
+      "pending_jobs": [],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -56,16 +54,23 @@
       "duration_seconds": 92.36
     },
     "master": {
-      "last_success_at": "2026-09-29T17:47:48+00:00",
+      "last_success_at": "2026-09-29T17:52:33+00:00",
       "last_failure_duration_seconds": 916.8,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
-      "last_success_duration_seconds": 57.07,
+      "last_success_duration_seconds": 56.32,
       "run_id": "master-1790704294824683219",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-09-29T17:51:38+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-29T17:52:33+00:00",
       "pid": 472345,
-      "last_started_at": "2026-09-29T17:51:37+00:00"
+      "last_started_at": "2026-09-29T17:51:37+00:00",
+      "child_pid": 472345,
+      "elapsed_seconds": 44.0,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 12,
+      "proto_checkpoint_deferred": 0,
+      "db_backup_requested": true,
+      "duration_seconds": 56.32
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -88,10 +93,10 @@
       "last_success_duration_seconds": 18.48,
       "run_id": "team-1790704286730599625",
       "last_stage": "complete",
-      "state": "success",
+      "state": "running",
       "heartbeat_at": "2026-09-29T17:51:48+00:00",
-      "pid": 472342,
-      "last_started_at": "2026-09-29T17:51:29+00:00",
+      "pid": 463988,
+      "last_started_at": "2026-09-29T17:51:48+00:00",
       "team_retry_processed": 3,
       "team_retry_resolved": 213,
       "team_retry_pending": 4,
@@ -109,7 +114,10 @@
       "data_prefetch_deep_horizon_hours": 30,
       "data_prefetch_quota_paused": false,
       "data_prefetch_errors": [],
-      "duration_seconds": 18.48
+      "duration_seconds": 18.48,
+      "child_pid": 472342,
+      "elapsed_seconds": 22.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 1.7,
@@ -144,7 +152,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-29T17:51:48+00:00",
+  "updated_at": "2026-09-29T17:52:33+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -214,37 +222,37 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 8150
+        "count": 8154
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 4458
+        "count": 4462
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "count": 3991
+        "count": 3999
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 3991
+        "count": 3999
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 2887
+        "count": 2890
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 1294
+        "count": 1297
       },
       {
         "metric": "cache_only_miss",
@@ -256,13 +264,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 378
+        "count": 394
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "count": 311
+        "count": 322
       },
       {
         "metric": "cache_only_miss",
