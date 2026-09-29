@@ -102,12 +102,12 @@ NO_CACHE_HEADERS = {
     'Expires': '0'
 }
 
-# Buttons cause a Streamlit rerun.  Keep the customer-facing published files
-# briefly in memory so a menu click does not make five GitHub requests and
-# rebuild the page from network latency.  The collector remains the source of
-# truth; a fresh publication is visible at most 20 seconds later.
-UI_DATA_CACHE_SECONDS = 20
-UI_LIVE_SCORE_CACHE_SECONDS = 10
+# A normal Streamlit widget reruns its whole script.  Published data stays in
+# memory long enough that a navigation click does not repeat several GitHub
+# requests.  The scorecard itself is additionally rendered as a fragment
+# below, so its analyst/source buttons rerun only that small section.
+UI_DATA_CACHE_SECONDS = 45
+UI_LIVE_SCORE_CACHE_SECONDS = 15
 
 # -----------------------------------------------------------------------------
 # 1. 초경량 데이터 로더
@@ -3400,6 +3400,18 @@ def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
 ANALYST_MENU = ["① Codex 공식픽", "② 자율 로봇픽", "③ V2 알파고", "④ V3 학습픽"]
 
 
+def _scorecard_fragment(function):
+    """Use Streamlit fragment when available, without breaking older builds.
+
+    In a fragment, a button click reruns only the scorecard rather than the
+    login/sidebar/dashboard pages and their remote data loaders.  Streamlit
+    Cloud currently supports this API; the fallback keeps the app usable if a
+    pinned older runtime is ever restored.
+    """
+    fragment = getattr(st, "fragment", None)
+    return fragment(function) if callable(fragment) else function
+
+
 def _analyst_button_menu(state_key, default="① Codex 공식픽"):
     """Small, fixed analyst buttons instead of long select boxes."""
     selected = st.session_state.get(state_key, default)
@@ -4361,6 +4373,7 @@ with main_tab3:
 # -----------------------------------------------------------------------------
 # [TAB 4] 🔥 AI 리포트
 # -----------------------------------------------------------------------------
+@_scorecard_fragment
 def _render_three_engine_scorecard(snapshot):
     """Render current-version grades without mixing PROTO/WORLD and TOTO14."""
     if active_role != ROLE_ADMIN or not isinstance(snapshot, dict):
@@ -4475,6 +4488,47 @@ def _render_three_engine_scorecard(snapshot):
         "① Codex 공식픽": "official", "② 자율 로봇픽": "robot",
         "③ V2 알파고": "v2", "④ V3 학습픽": "v3",
     }[analyst_view]
+
+    # Always show the selected analyst's whole score scope before opening one
+    # product.  Previously the page only rendered the selected source, which
+    # made an otherwise valid cumulative record look like it had disappeared.
+    overview_cards = []
+    for track_key in ("top3", "proto_world", "toto14"):
+        value = ((tracks.get(track_key) or {}).get("summary") or {}).get(selected_engine) or {}
+        graded = int(value.get("graded") or 0)
+        correct = int(value.get("correct") or 0)
+        accuracy = value.get("accuracy")
+        accuracy_text = f"{float(accuracy) * 100:.1f}%" if accuracy is not None else "채점 대기"
+        overview_cards.append(
+            "<div class='engine-result-card'>"
+            f"<small>{track_labels[track_key]}</small>"
+            f"<div style='font-size:20px;font-weight:900;margin-top:5px;'>{accuracy_text}</div>"
+            f"<small>{correct}/{graded} 적중</small></div>"
+        )
+    manager_rows_for_overview = [
+        row for row in (manager_investment_data.get("picks") or {}).values()
+        if isinstance(row, dict) and row.get("is_correct") in (0, 1)
+    ]
+    if selected_engine == "official" and manager_rows_for_overview:
+        manager_hits = sum(int(row.get("is_correct") or 0) for row in manager_rows_for_overview)
+        manager_text = f"{manager_hits / len(manager_rows_for_overview) * 100:.1f}%"
+        manager_detail = f"{manager_hits}/{len(manager_rows_for_overview)} 적중"
+    else:
+        manager_text = "답안 없음"
+        manager_detail = "독립 동결 기록 대기"
+    overview_cards.insert(
+        0,
+        "<div class='engine-result-card'>"
+        "<small>관리자픽</small>"
+        f"<div style='font-size:20px;font-weight:900;margin-top:5px;'>{manager_text}</div>"
+        f"<small>{manager_detail}</small></div>",
+    )
+    st.markdown(
+        f"<p style='color:#CBD5E1;font-size:13px;font-weight:900;margin:20px 0 8px;'>"
+        f"{escape(analyst_view)} · 전체 누적 채점</p>"
+        "<div class='engine-score-grid'>" + "".join(overview_cards) + "</div>",
+        unsafe_allow_html=True,
+    )
     if selected_source == "관리자픽 채점":
         manager_rows = [row for row in (manager_investment_data.get("picks") or {}).values() if isinstance(row, dict)]
         finished_manager = [row for row in manager_rows if row.get("is_correct") in (0, 1)]
