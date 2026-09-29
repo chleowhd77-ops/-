@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from html import unescape as html_unescape
 from pathlib import Path
+from scorecard_core import build_scorecard, freeze_products
 from urllib.parse import urljoin
 
 import requests
@@ -60,12 +61,11 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.13.0-proto-toto14-shared-dossier"
+COLLECTOR_PATCH_VERSION = "R7.13.7-analyst-scorecard-fragments"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
-# WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 다시 켤 때만 1로 둔다.
-WORLD_FEATURE_ENABLED = str(os.getenv("WORLD_FEATURE_ENABLED", "0")).strip().lower() in {
-    "1", "true", "yes", "on"
-}
+# WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 재개하는 별도 배포에서만
+# 이 값을 바꾼다.  기존 서버 환경변수에 1이 남아 있어도 현재는 절대 재가동하지 않는다.
+WORLD_FEATURE_ENABLED = False
 UNDERDOG_GATE_VERSION = "U3-alternative-pick-20260902"
 PICK_AUDIT_SCHEMA_VERSION = "pick-audit.v2"
 # GitHub Contents API cannot accept an arbitrarily large object.  Leave a
@@ -1608,7 +1608,7 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
             preserve_history(
                 frozen_payload, match_time, frozen_payload.get("frozen_at")
             )
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO toto14_prediction_freezes
                 (match_id, home_team, away_team, match_time, payload_json, frozen_at)
@@ -4269,15 +4269,28 @@ def _alphago_pick_payload(source_pick):
     not make a retrospective result for a match that has already started.
     """
     if not isinstance(source_pick, dict):
-        return {}
+        return {
+            "engine": "v2-ai", "engine_version": ALPHAGO_PICK_DISPLAY_VERSION,
+            "status": "source_pending", "reason": "V2 원본 답안 대기",
+        }
     code = str(source_pick.get("v2_ai_pick") or "").strip().upper()
     side = {"H": "home", "D": "draw", "A": "away"}.get(code)
     if not side:
-        return {}
+        reason_map = {
+            "V2_OFF": "V2 모델 파일 연결 대기",
+            "NO_ODDS": "V2용 1X2 배당 미수신",
+            "ERROR": "V2 모델 계산 오류",
+        }
+        return {
+            "engine": "v2-ai", "engine_version": ALPHAGO_PICK_DISPLAY_VERSION,
+            "status": "unavailable", "source_code": code,
+            "reason": reason_map.get(code, "V2 원본 답안 대기"),
+        }
     return {
         "engine": "v2-ai",
         "engine_version": ALPHAGO_PICK_DISPLAY_VERSION,
         "code": code,
+        "status": "ready",
         "market_key": "1x2",
         "selection_side": side,
         "pre_match_only": True,
@@ -4791,11 +4804,19 @@ def save_three_engine_picks(
         str(int((robot_pick or {}).get("robot_training_samples") or 0)),
         str((robot_pick or {}).get("robot_learning_revision") or "no-revision"),
     ))
-    engines = (
+    engines = [
         ("official", ANALYSIS_VERSION, official_pick),
         ("robot", robot_version, robot_pick),
-    )
-    if any(not str((pick or {}).get("raw_pick") or "").strip() for _, _, pick in engines):
+    ]
+    v2_pick = _alphago_pick_payload(robot_pick)
+    v2_code = str(v2_pick.get("code") or "")
+    v2_raw = {
+        "H": f"{home_team} 승", "D": "무승부", "A": f"{away_team} 승",
+    }.get(v2_code, "")
+    if v2_raw:
+        v2_pick.update({"raw_pick": v2_raw, "prob": 0.0})
+        engines.append(("v2", ALPHAGO_PICK_DISPLAY_VERSION, v2_pick))
+    if any(not str((pick or {}).get("raw_pick") or "").strip() for _, _, pick in engines[:2]):
         return False
     comparison_key = f"{str(source or 'UNKNOWN').upper()}:{str(match_id)}"
     conn = None
@@ -4934,6 +4955,192 @@ def _grade_three_engine_picks(conn):
     return graded
 
 
+def _archive_track_source(is_toto14):
+    """Map a preserved prediction row to its real product without guessing."""
+    return "TOTO14" if int(is_toto14 or 0) == 1 else "PROTO"
+
+
+def _archive_compact_candidate(raw_pick, candidates_json):
+    """Recover only the exact stored candidate that matches a frozen answer."""
+    for candidate in _json_rows(candidates_json):
+        if str(candidate.get("raw_pick") or "").strip() == str(raw_pick or "").strip():
+            return candidate
+    return {"raw_pick": str(raw_pick or "").strip()}
+
+
+def _backfill_archived_three_engine_picks(conn):
+    """Reconnect historical, timestamped answers without manufacturing picks.
+
+    Old rows predate ``three_engine_pick_snapshots`` but the database still
+    retains two auditable sources: official analysis snapshots and autonomous
+    robot learning samples.  This migration copies only answers captured
+    before the stored kickoff, and skips a match that already has a modern
+    three-engine snapshot.  It never updates a pick or result.
+    """
+    _ensure_three_engine_tables(conn)
+    prediction_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(predictions)")
+    }
+    required_prediction_columns = {
+        "match_id", "home_team", "away_team", "match_time", "is_toto14",
+    }
+    if not required_prediction_columns.issubset(prediction_columns):
+        return {"official": 0, "robot": 0, "v2": 0}
+    fixture_expr = "p.api_fixture_id" if "api_fixture_id" in prediction_columns else "0"
+    league_expr = "p.league" if "league" in prediction_columns else "''"
+    protected_keys = {
+        str(row[0]) for row in conn.execute(
+            "SELECT DISTINCT comparison_key FROM three_engine_pick_snapshots"
+        ).fetchall()
+    }
+    inserted = {"official": 0, "robot": 0, "v2": 0}
+    official_seen = set()
+
+    # Official: select the last stored answer that demonstrably existed before
+    # kickoff.  Descending id plus INSERT OR IGNORE preserves that final
+    # pre-kickoff answer when a match has multiple historical revisions.
+    try:
+        official_rows = conn.execute(
+            f"""
+            SELECT p.match_id,{fixture_expr},COALESCE({league_expr},''),
+                   p.home_team,p.away_team,p.match_time,p.is_toto14,
+                   s.analysis_version,s.selected_market,s.selected_pick,
+                   s.candidates_json,s.created_at
+            FROM prediction_analysis_snapshots s
+            JOIN predictions p ON p.match_id=s.match_id
+            WHERE TRIM(COALESCE(s.selected_pick,''))<>''
+            ORDER BY s.id DESC
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        official_rows = []
+    for row in official_rows:
+        match_id, fixture_id, league, home, away, match_time, is_toto14, version, market, raw_pick, candidates_json, captured_at = row
+        source = _archive_track_source(is_toto14)
+        comparison_key = f"{source}:{str(match_id)}"
+        if comparison_key in protected_keys or comparison_key in official_seen:
+            continue
+        kickoff = _parse_kst_match_time(match_time)
+        if not kickoff or not _snapshot_existed_before_kickoff(captured_at, kickoff):
+            continue
+        candidate = _archive_compact_candidate(raw_pick, candidates_json)
+        captured = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO three_engine_pick_snapshots (
+                comparison_key,source,match_id,api_fixture_id,league,home_team,away_team,
+                kickoff_at,kickoff_timestamp,engine_key,engine_version,market_key,
+                selection_side,raw_pick,probability,odd,pick_json,captured_at,captured_timestamp
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                comparison_key, source, str(match_id), int(fixture_id or 0), str(league or ""),
+                str(home), str(away), kickoff.astimezone(timezone.utc).isoformat(),
+                kickoff.timestamp(), "official", "archive-official-snapshot-v1",
+                str(candidate.get("market_key") or market or ""),
+                str(candidate.get("selection_side") or ""), str(raw_pick).strip(),
+                float(candidate.get("probability", candidate.get("prob", 0)) or 0),
+                float(candidate.get("odd") or 0),
+                json.dumps(_three_engine_compact_pick(candidate), ensure_ascii=False, sort_keys=True),
+                captured.astimezone(timezone.utc).isoformat(), captured.timestamp(),
+            ),
+        )
+        if int(cursor.rowcount or 0) > 0:
+            inserted["official"] += 1
+        official_seen.add(comparison_key)
+
+    # Robot/V2: these come from the original pre-kickoff robot sample.  V2 is
+    # included only when that sample already contains an explicit V2 code.
+    robot_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='robot_learning_samples'"
+    ).fetchone()
+    if robot_table:
+        try:
+            robot_rows = conn.execute(
+                """
+                SELECT source,match_id,api_fixture_id,league,home_team,away_team,
+                       kickoff_at,kickoff_timestamp,captured_at,captured_timestamp,
+                       robot_pick_json
+                FROM robot_learning_samples
+                ORDER BY captured_timestamp DESC,id DESC
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            robot_rows = []
+        robot_seen = set()
+        for row in robot_rows:
+            source, match_id, fixture_id, league, home, away, kickoff_at, kickoff_ts, captured_at, captured_ts, pick_json = row
+            source = str(source or "PROTO").upper()
+            source = "TOTO14" if source == "TOTO14" else "PROTO"
+            comparison_key = f"{source}:{str(match_id)}"
+            if comparison_key in protected_keys or comparison_key in robot_seen:
+                continue
+            pick = _json_object(pick_json)
+            raw_pick = str(pick.get("raw_pick") or "").strip()
+            if not raw_pick:
+                continue
+            try:
+                kickoff = datetime.fromisoformat(str(kickoff_at).replace("Z", "+00:00"))
+                if kickoff.tzinfo is None:
+                    kickoff = kickoff.replace(tzinfo=timezone.utc)
+                captured = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+                if captured.tzinfo is None:
+                    captured = captured.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if captured.astimezone(timezone.utc) > kickoff.astimezone(timezone.utc):
+                continue
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO three_engine_pick_snapshots (
+                    comparison_key,source,match_id,api_fixture_id,league,home_team,away_team,
+                    kickoff_at,kickoff_timestamp,engine_key,engine_version,market_key,
+                    selection_side,raw_pick,probability,odd,pick_json,captured_at,captured_timestamp
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    comparison_key, source, str(match_id), int(fixture_id or 0), str(league or ""),
+                    str(home), str(away), kickoff.astimezone(timezone.utc).isoformat(),
+                    float(kickoff_ts or kickoff.timestamp()), "robot", "archive-robot-sample-v1",
+                    str(pick.get("market_key") or ""), str(pick.get("selection_side") or ""),
+                    raw_pick, float(pick.get("probability", pick.get("prob", 0)) or 0),
+                    float(pick.get("odd") or 0),
+                    json.dumps(_three_engine_compact_pick(pick), ensure_ascii=False, sort_keys=True),
+                    captured.astimezone(timezone.utc).isoformat(), float(captured_ts or captured.timestamp()),
+                ),
+            )
+            if int(cursor.rowcount or 0) > 0:
+                inserted["robot"] += 1
+            v2_pick = _alphago_pick_payload(pick)
+            v2_code = str(v2_pick.get("code") or "")
+            v2_raw = {"H": f"{home} 승", "D": "무승부", "A": f"{away} 승"}.get(v2_code, "")
+            if v2_raw:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO three_engine_pick_snapshots (
+                        comparison_key,source,match_id,api_fixture_id,league,home_team,away_team,
+                        kickoff_at,kickoff_timestamp,engine_key,engine_version,market_key,
+                        selection_side,raw_pick,probability,odd,pick_json,captured_at,captured_timestamp
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        comparison_key, source, str(match_id), int(fixture_id or 0), str(league or ""),
+                        str(home), str(away), kickoff.astimezone(timezone.utc).isoformat(),
+                        float(kickoff_ts or kickoff.timestamp()), "v2", "archive-v2-sample-v1",
+                        "1x2", str(v2_pick.get("selection_side") or ""), v2_raw, 0.0, 0.0,
+                        json.dumps(v2_pick, ensure_ascii=False, sort_keys=True),
+                        captured.astimezone(timezone.utc).isoformat(), float(captured_ts or captured.timestamp()),
+                    ),
+                )
+                if int(cursor.rowcount or 0) > 0:
+                    inserted["v2"] += 1
+            robot_seen.add(comparison_key)
+    conn.commit()
+    return inserted
+
+
 def _grading_pending_state(kickoff_at, now=None):
     """Classify an ungraded row without hiding future or grace-period games."""
     now = now or datetime.now(KST)
@@ -4965,36 +5172,32 @@ def _grading_pending_state(kickoff_at, now=None):
 
 
 def _three_engine_grading_payload(conn):
-    """Return current-version grades split into PROTO/WORLD and TOTO14 tracks."""
+    """Return every preserved pre-kickoff analyst grade by product track.
+
+    A version change must never erase a real, already-frozen answer from the
+    scorecard.  Different engine versions remain auditable in ``pick_json``;
+    the public total below only combines their genuine frozen outcomes and
+    never invents an answer for a missing analyst.
+    """
     _ensure_three_engine_tables(conn)
+    # Historical recovery is now a read-only projection in scorecard_core.
+    # Do not execute R7.13.6's match-wide migration that skipped other engines.
+    reconnected = {}
     _grade_three_engine_picks(conn)
     cursor = conn.execute(
         "SELECT * FROM three_engine_pick_snapshots "
-        "WHERE (engine_key='official' AND engine_version=?) "
-        "   OR (engine_key='robot' AND (engine_version=? OR engine_version LIKE ?)) "
-        "ORDER BY kickoff_timestamp DESC,id",
-        (ANALYSIS_VERSION, ROBOT_PICK_VERSION, ROBOT_PICK_VERSION + ":%"),
+        "WHERE engine_key IN ('official','robot','v2') "
+        "ORDER BY kickoff_timestamp DESC,id DESC",
     )
     columns = [str(description[0]) for description in cursor.description]
     rows = [
         dict(row) if isinstance(row, sqlite3.Row) else dict(zip(columns, row))
         for row in cursor.fetchall()
     ]
-    previous_cursor = conn.execute(
-        "SELECT * FROM three_engine_pick_snapshots "
-        "WHERE engine_key='robot' "
-        "AND NOT (engine_version=? OR engine_version LIKE ?) "
-        "ORDER BY id DESC",
-        (ROBOT_PICK_VERSION, ROBOT_PICK_VERSION + ":%"),
-    )
-    previous_columns = [
-        str(description[0]) for description in previous_cursor.description
-    ]
-    previous_robot_rows = [
-        dict(row) if isinstance(row, sqlite3.Row)
-        else dict(zip(previous_columns, row))
-        for row in previous_cursor.fetchall()
-    ]
+    # All frozen robot versions belong to the same cumulative audit total.
+    # Keep this variable for the existing payload shape; there is no separate
+    # hidden predecessor total any more.
+    previous_robot_rows = []
     grouped = {}
     for row in rows:
         group = grouped.setdefault(row["comparison_key"], {
@@ -5004,6 +5207,10 @@ def _three_engine_grading_payload(conn):
             "away_team": row["away_team"], "kickoff_at": row["kickoff_at"],
             "engines": {},
         })
+        # Rows are newest-first within a kickoff.  One engine contributes its
+        # final pre-kickoff frozen answer only once for that product/match.
+        if row["engine_key"] in group["engines"]:
+            continue
         group["engines"][row["engine_key"]] = {
             "engine_version": row["engine_version"], "market_key": row["market_key"],
             "selection_side": row["selection_side"], "raw_pick": row["raw_pick"],
@@ -5080,7 +5287,7 @@ def _three_engine_grading_payload(conn):
         pending_summary["total"] = len(pending)
         today = now.date()
         summary = {}
-        for engine_key in ("official", "robot"):
+        for engine_key in ("official", "robot", "v2"):
             graded_rows = [
                 row for row in track_matches
                 if (row.get("engines", {}).get(engine_key) or {}).get("is_correct")
@@ -5124,7 +5331,7 @@ def _three_engine_grading_payload(conn):
             "previous_robot_summary": previous_robot_summary(track_key),
             "formula_review": {
                 "threshold": 0.70,
-                "basis": "current-version-frozen-picks-cumulative",
+                "basis": "all-preserved-prekickoff-frozen-picks-cumulative",
                 "official_formula_hold_until_next_check": bool(
                     summary["official"]["target_reached"]
                 ),
@@ -5136,29 +5343,32 @@ def _three_engine_grading_payload(conn):
         }
 
     proto_world_matches = [
-        row for row in matches if str(row.get("source") or "").upper() != "TOTO14"
+        row for row in matches
+        if str(row.get("source") or "").upper() not in {"TOTO14", "TOP3"}
     ]
     toto14_matches = [
         row for row in matches if str(row.get("source") or "").upper() == "TOTO14"
     ]
+    top3_matches = [
+        row for row in matches if str(row.get("source") or "").upper() == "TOP3"
+    ]
     tracks = {
         "proto_world": track_payload(proto_world_matches, "proto_world"),
         "toto14": track_payload(toto14_matches, "toto14"),
+        "top3": track_payload(top3_matches, "top3"),
     }
-    all_current_ids = {int(row.get("id") or 0) for row in rows}
-    total_engine_rows = int(conn.execute(
-        "SELECT COUNT(*) FROM three_engine_pick_snapshots "
-        "WHERE engine_key IN ('official','robot')"
-    ).fetchone()[0] or 0)
     return {
-        "schema_version": "two-analyzer-grading.v3",
+        "schema_version": "three-analyzer-grading.v5",
         "engine_versions": {
             "official": ANALYSIS_VERSION,
             "robot": ROBOT_PICK_VERSION,
+            "v2": ALPHAGO_PICK_DISPLAY_VERSION,
         },
         "tracks": tracks,
-        "legacy_rows_hidden": max(0, total_engine_rows - len(all_current_ids)),
-        # Compatibility totals are current-version only. New UI reads tracks.
+        "legacy_rows_hidden": 0,
+        "reconnected_archive_answers": reconnected,
+        "history_scope": "all-preserved-prekickoff-records",
+        # Compatibility totals are PROTO LIVE. New UI reads individual tracks.
         "summary": tracks["proto_world"]["summary"],
         "finished": tracks["proto_world"]["finished"],
         "pending": tracks["proto_world"]["pending"],
@@ -7422,10 +7632,11 @@ def _prefer_canonical_prediction_rows(rows):
 
 
 def _build_grading_snapshot():
-    """Publish only the new robot-era public scorecard.
+    """Publish an auditable scorecard from all preserved frozen records.
 
-    Legacy rows remain untouched in SQLite for audit and learning. They are not
-    copied into the customer JSON after the explicitly requested 0-0 reset.
+    Database rows and frozen answers are never rewritten.  The score feed
+    includes them from the beginning instead of hiding a prior version behind
+    a 0-game reset.
     """
     conn = None
     try:
@@ -7436,7 +7647,7 @@ def _build_grading_snapshot():
         if "ev_pick" not in columns:
             return {
                 "schema_version": "grading-results.v1",
-                "public_history_mode": "current-robot-version-only",
+                "public_history_mode": "all-frozen-prekickoff-records",
                 "public_score_version": PUBLIC_SCORE_VERSION,
                 "three_engine": _three_engine_grading_payload(conn),
                 "finished": [], "pending": [], "generated_at": _utc_iso(),
@@ -7572,20 +7783,24 @@ def _build_grading_snapshot():
         finished.sort(key=sort_timestamp, reverse=True)
         pending.sort(key=sort_timestamp, reverse=True)
         three_engine = _three_engine_grading_payload(conn)
+        scorecard = build_scorecard(
+            conn, evaluate_single_pick,
+            _read_json('v3_learning_picks.json', {}),
+            _read_json('manager_investment_picks.json', {}),
+        )
+        print('✅ R7.13.7 채점 연결: ' + json.dumps({
+            track: {engine: cell['summary'] for engine, cell in cells.items()}
+            for track, cells in scorecard['tracks'].items()
+        }, ensure_ascii=False))
         return {
             "schema_version": "grading-results.v1",
+            "scorecard_v2": scorecard,
             "analysis_version": ANALYSIS_VERSION,
             "system_version": SYSTEM_VERSION,
-            "public_history_mode": "current-robot-version-only",
+            "public_history_mode": "all-frozen-prekickoff-records",
             "public_score_version": PUBLIC_SCORE_VERSION,
-            "public_score_label": "새 로봇 독립픽 공개 성적",
-            "legacy_rows_hidden": max(0, len([
-                row for row in all_rows
-                if int(row.get("is_toto14") or 0) == 0
-            ]) - len([
-                row for row in public_rows
-                if int(row.get("is_toto14") or 0) == 0
-            ])),
+            "public_score_label": "전체 동결픽 누적 공개 성적",
+            "legacy_rows_hidden": 0,
             "three_engine": three_engine,
             "finished": finished,
             "pending": pending,
@@ -11675,6 +11890,12 @@ def _proto_can_finish_model_only_analysis(match):
     return bool(home_id > 0 and away_id > 0 and home_id != away_id)
 
 
+def _freeze_displayed_products(payload):
+    with sqlite3.connect(str(_local_path('ai_predictions.db')), timeout=30) as conn:
+        freeze_products(conn, payload, _read_json('v3_learning_picks.json', {}),
+                        build_official_daily_shortlist, build_robot_daily_shortlist)
+
+
 def _publish_proto_checkpoint(
     dashboard_proto, previous_dashboard, proto_matches, toto_14_matches,
     raw_proto_matches, rejected_placeholder_count, rejected_auxiliary_count,
@@ -11705,6 +11926,7 @@ def _publish_proto_checkpoint(
         key=lambda item: (item.get("reliability_score", 0), item.get("analysis_confidence", 0)),
         reverse=True,
     )[:3]
+    # Product receipts are frozen once below, together with the published payload.
     source_meta = dict(previous_dashboard.get("source_meta") or {})
     source_meta.update({
         "analysis_version": ANALYSIS_VERSION,
@@ -11740,6 +11962,7 @@ def _publish_proto_checkpoint(
         "honey_two_pick": build_honey_two_pick(upcoming_proto),
         "source_meta": source_meta,
     }
+    _freeze_displayed_products(payload)
     _atomic_write_json("dashboard_data.json", payload)
     published = False
     if MASTER_PROTO_CHECKPOINT_UPLOAD:
@@ -13634,6 +13857,7 @@ def build_dashboard_data():
             source="TOTO14", robot_artifact=toto14_robot_artifact,
             serving_only=MASTER_CACHE_ONLY_SERVING,
         )
+        alphago_pick = _alphago_pick_payload(robot_pick)
         robot_wdl_probabilities = {
             str(candidate.get("selection_side")): float(candidate.get("robot_probability") or 0)
             for candidate in robot_candidates
@@ -13700,6 +13924,7 @@ def build_dashboard_data():
                 "robot_candidates": robot_candidates,
                 "robot_wdl_probabilities": robot_wdl_probabilities,
                 "robot_pick": robot_pick,
+                "alphago_pick": alphago_pick,
                 "robot_mark": robot_mark,
                 "robot_pick_display": _human_pick_label(
                     (robot_pick or {}).get("raw_pick"), home_team
@@ -13792,10 +14017,14 @@ def build_dashboard_data():
             ),
             "proto_parity_ok": len(proto_matches) == len(dashboard_proto),
             "toto14_parity_ok": len(toto_14_matches) == len(dashboard_toto14),
+            # Read-only review list for the admin page.  It contains no
+            # guessed match; unresolved pairs remain quarantined.
+            "team_identity_review": list_team_identity_review_queue(limit=40),
             "api_usage": get_api_usage_status(),
             "generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
         },
     }
+    _freeze_displayed_products(final_output)
     _atomic_write_json("dashboard_data.json", final_output)
     if len(proto_matches) != len(dashboard_proto):
         print(f"❌ 경기 수 불일치: 베트맨 {len(proto_matches)}경기 / 화면 데이터 {len(dashboard_proto)}경기")
@@ -14506,6 +14735,49 @@ def _allocate_toto14_round(items, max_combinations=None):
     return items
 
 
+def _toto14_mark_from_raw_pick(raw_pick, home_team="", away_team=""):
+    """Translate an already-issued 1X2 answer into one Toto mark only."""
+    raw = str(raw_pick or "").strip()
+    upper = raw.upper()
+    if upper in {"H", "HOME"}:
+        return "승"
+    if upper in {"D", "DRAW"} or "무승부" in raw:
+        return "무"
+    if upper in {"A", "AWAY"}:
+        return "패"
+    if away_team and str(away_team) in raw and "승" in raw:
+        return "패"
+    if home_team and str(home_team) in raw and "승" in raw:
+        return "승"
+    if raw in {"승", "무", "패"}:
+        return raw
+    return ""
+
+
+def _build_toto14_analyst_marks(item):
+    """Store separate analyst marks without creating missing answers."""
+    item = item if isinstance(item, dict) else {}
+    match = item.get("match") or {}
+    home, away = str(match.get("home") or ""), str(match.get("away") or "")
+    official = _normalize_toto14_picks(item.get("picks") or [])
+    robot = _toto14_mark_from_raw_pick(
+        (item.get("robot_pick") or {}).get("raw_pick") or item.get("robot_mark"),
+        home, away,
+    )
+    alphago = item.get("alphago_pick") or {}
+    v2 = _toto14_mark_from_raw_pick(
+        alphago.get("code") or alphago.get("raw_pick"), home, away
+    )
+    return {
+        "official": {"marks": official, "available": bool(official)},
+        "robot": {"marks": [robot] if robot else [], "available": bool(robot)},
+        "v2": {"marks": [v2] if v2 else [], "available": bool(v2)},
+        # V3 is published by its independent learner and attached by app.py;
+        # it is intentionally not manufactured by the collector.
+        "v3": {"marks": [], "available": False},
+    }
+
+
 def _finalize_toto14_round(items):
     # Discard analyses crossing kickoff before allocating; no past result can
     # influence another game's marks through a rewritten frozen ticket.
@@ -14538,6 +14810,10 @@ def _finalize_toto14_round(items):
         coverage = sum(float(item.get({'승':'p_h','무':'p_d','패':'p_a'}[mark]) or 0) for mark in marks)
         item.update(best_pick_display=display, picks_html=_render_toto14_picks_html(marks),
                     covered_probability=round(coverage, 1))
+        # Every analyst keeps its own 14-match answer.  These are display
+        # records only: the official multi-mark ticket above remains the
+        # settlement source and no analyst may overwrite another's answer.
+        item["analyst_toto14_marks"] = _build_toto14_analyst_marks(item)
         match_id = 'TOTO14_' + str(match['id'])
         kickoff = _parse_kst_match_time(match.get('match_time'))
         if (
