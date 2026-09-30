@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 from html import escape
 from scorecard_core import published_scorecard
+from analyst_products import manager_engine_payload, toto_ticket_for_engine, mark_grid, toto_marks
 from scorecard_ui import render_scorecard, select_buttons
 from api_engine import (
     ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
@@ -3385,6 +3386,10 @@ def _v3_learning_pick_html(analysis_item, home_team=""):
 def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
     """Switch the visible analyst answer only; never alter the saved ticket."""
     item = item if isinstance(item, dict) else {}
+    engine = dict(zip(ANALYST_MENU, ('official', 'robot', 'v2', 'v3'))).get(analyst_key)
+    marks = toto_marks(item, engine) if engine else []
+    if marks:
+        return ' / '.join({'승':f'{home_team or "홈팀"} 승', '무':'무승부', '패':f'{away_team or "원정팀"} 승'}[mark] for mark in marks)
     if analyst_key == "① Codex 공식픽":
         pick = item.get("official_comparison_pick") or {}
         return _human_pick_label(pick.get("raw_pick"), home_team) or "분석 대기"
@@ -3425,41 +3430,12 @@ def _analyst_button_menu(state_key, default="① Codex 공식픽"):
 
 
 def _toto_analyst_marks(item, analyst_key, home_team="", away_team=""):
-    """Read only stored marks; never create an answer for a missing analyst."""
-    item = item if isinstance(item, dict) else {}
-    stored = item.get("analyst_toto14_marks") or {}
-    key = {
-        "① Codex 공식픽": "official", "② 자율 로봇픽": "robot",
-        "③ V2 알파고": "v2", "④ V3 학습픽": "v3",
-    }.get(analyst_key, "official")
-    marks = list((stored.get(key) or {}).get("marks") or [])
-    if not marks:
-        shown = _toto_analyst_pick_display(item, analyst_key, home_team, away_team)
-        if shown == "분석 대기":
-            return []
-        if shown == "무승부":
-            marks = ["무"]
-        elif away_team and away_team in shown and "승" in shown:
-            marks = ["패"]
-        elif "승" in shown:
-            marks = ["승"]
-    return [mark for mark in marks if mark in {"승", "무", "패"}]
+    engine = dict(zip(ANALYST_MENU, ('official', 'robot', 'v2', 'v3')))[analyst_key]
+    return toto_marks(item, engine)
 
 
 def _render_toto14_picks_html(picks):
-    """Render stored Toto14 marks.  This is display-only and never edits a ticket."""
-    picks = {str(pick) for pick in (picks or []) if str(pick) in {"승", "무", "패"}}
-    styles = {
-        "승": "background:#00F2FE;color:#0B0F19;font-weight:900;border:1px solid #00F2FE;",
-        "무": "background:#10B981;color:#0B0F19;font-weight:900;border:1px solid #10B981;",
-        "패": "background:#EF4444;color:#0B0F19;font-weight:900;border:1px solid #EF4444;",
-    }
-    return "".join(
-        "<div style='width:38px;height:38px;display:flex;align-items:center;"
-        "justify-content:center;box-sizing:border-box;text-align:center;border-radius:7px;"
-        f"font-size:13px;{styles[pick] if pick in picks else 'background:transparent;color:#64748B;border:1px solid #1E293B;'}'>{pick}</div>"
-        for pick in ("승", "무", "패")
-    )
+    return mark_grid(picks or [])
 
 
 def generate_pred_boxes(
@@ -3793,9 +3769,9 @@ def _render_manager_investment_portfolio(payload):
 
     st.markdown(
         "<div class='match-card' style='padding:18px;margin-bottom:14px;border-color:#F59E0B;'>"
-        "<div style='color:#FCD34D;font-size:19px;font-weight:900;'>🎯 관리자 전용 투자픽</div>"
+        f"<div style='color:#FCD34D;font-size:19px;font-weight:900;'>🎯 {escape(str(payload.get('analyst_label') or ''))} 관리자 투자픽</div>"
         "<div style='color:#CBD5E1;font-size:12px;margin-top:6px;'>"
-        "고객 공식픽·로봇·알파고·V3와 분리된 별도 후보선정/동결/채점 장부입니다. "
+        "선택한 분석가의 분석 결과로 선정하고 별도로 저장·채점하는 투자픽입니다. "
         "시작 전 보정 확률·실제 배당·시간순 검증을 모두 통과한 경우만 표시합니다. "
         "고배당은 가격대 검증 표본이 부족하면 후보를 만들지 않습니다.</div>"
         "</div>",
@@ -3880,54 +3856,22 @@ def _render_manager_investment_portfolio(payload):
                 )
 
 
-@st.cache_data(ttl=45, show_spinner=False)
-def _admin_shortlists(items):
-    return {'official': build_official_daily_shortlist(items, 5, 10),
-            'robot': build_robot_daily_shortlist(items, 5, 10)}
-
-
-_admin_items = [item for item in dashboard_data.get('proto', []) if _recommendation_is_upcoming(item)]
-_admin_fallback = _admin_shortlists(_admin_items) if active_role == ROLE_ADMIN and 'manager_analyst_picks' not in dashboard_data else {}
-
-
 @st.fragment
 def _render_admin_analysts():
     if st.session_state.get('role') != ROLE_ADMIN:
         return
     label = _analyst_button_menu('admin-analyst-view')
     engine = dict(zip(ANALYST_MENU, ('official', 'robot', 'v2', 'v3')))[label]
-    stored = dashboard_data.get('manager_analyst_picks')
-    if isinstance(stored, dict):
-        rows = [r for r in stored.get(engine, []) if _recommendation_is_upcoming({'kickoff_at': r.get('kickoff_at')})]
-        if engine in ('official', 'robot'):
-            rows = [{**r, 'home': r.get('home_team'), 'away': r.get('away_team'),
-                     'pick': r.get('raw_pick'), 'match_time': r.get('kickoff_at')} for r in rows]
-            _render_admin_shortlist(label + ' 관리자픽', '#00F2FE' if engine == 'official' else '#C4B5FD',
-                                    {'picks': rows, 'selected_count': len(rows)})
-        elif rows:
-            st.caption('관리자 비교 답안 · 투자후보 성적과 별도로 채점합니다.')
-            st.dataframe([{'경기': str(r.get('home_team')) + ' vs ' + str(r.get('away_team')),
-                           '픽': r.get('raw_pick'), '시각': r.get('kickoff_at')} for r in rows],
-                         use_container_width=True, hide_index=True)
-        else:
-            st.info('현재 시작 전 경기의 저장 답안이 없습니다.')
-    elif engine in ('official', 'robot'):
-        st.caption('서버의 관리자 동결 목록 갱신 대기 · 기존 후보 표시')
-        _render_admin_shortlist(label, '#00F2FE' if engine == 'official' else '#C4B5FD', _admin_fallback.get(engine) or {})
-    else:
-        _render_admin_learning_reference(_admin_items, label)
+    _render_manager_investment_portfolio(manager_engine_payload(manager_investment_data, engine))
 
 
 if main_tab_admin is not None:
     with main_tab_admin:
         st.markdown(
             "<div class='section-intro'><div><h2>관리자픽</h2>"
-            "<p>관리자 본인 판단용 투자 후보와 기존 분석가 비교판입니다.</p></div></div>",
+            "<p>분석가별 투자픽과 채점 결과를 비교합니다.</p></div></div>",
             unsafe_allow_html=True,
         )
-        _render_manager_investment_portfolio(manager_investment_data)
-        st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
-        st.caption("아래는 기존 공식/로봇 원본을 비교하기 위한 참고 후보판이며, 위 투자 장부와 별개입니다.")
         _render_admin_analysts()
         review_rows = list(
             (dashboard_data.get("source_meta") or {}).get("team_identity_review") or []
@@ -4184,7 +4128,8 @@ if WORLD_FEATURE_ENABLED:
 # -----------------------------------------------------------------------------
 # [TAB 2] 승무패 14경기
 # -----------------------------------------------------------------------------
-with main_tab2:
+@st.fragment
+def _render_toto14_tab():
     st.markdown("<p style='color:#64748B; font-weight:700; margin-bottom:20px;'>승무패 14폴더 AI 확률 분포 (복수 마킹 참고용)</p>", unsafe_allow_html=True)
     stored_toto14_list = dashboard_data.get("toto14", [])
     toto14_round_closed = _toto14_round_has_started(stored_toto14_list)
@@ -4198,7 +4143,8 @@ with main_tab2:
         # The cards are the source of truth.  A partially published/stale meta
         # object must never turn 10 singles + 3 doubles into 0 won.
         toto14_meta = toto14_display_meta(
-            toto14_list, dashboard_data.get("toto14_meta", {})
+            toto_ticket_for_engine(toto14_list, dict(zip(ANALYST_MENU, ('official','robot','v2','v3')))[toto14_analyst_view]),
+            dashboard_data.get("toto14_meta", {})
         )
         total_combinations = toto14_meta["total_combinations"]
         single_pick_count = toto14_meta["single_pick_count"]
@@ -4210,7 +4156,7 @@ with main_tab2:
         unavailable_pick_count = toto14_meta["unavailable_pick_count"]
         combination_label = "최종" if ticket_complete else "현재 계산"
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>AI 승무패 14경기 풀-스탯 분석 결과 · 소액 상한 {max_budget:,}원</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>{escape(toto14_analyst_view)} · 단일마킹 우선 · 필요한 복수마킹만</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
         if not ticket_complete:
             warning_text = (
@@ -4220,7 +4166,7 @@ with main_tab2:
             if active_role == ROLE_ADMIN:
                 unresolved = []
                 for unresolved_item in toto14_list:
-                    if unresolved_item.get("picks"):
+                    if _toto_analyst_marks(unresolved_item, toto14_analyst_view):
                         continue
                     unresolved_match = unresolved_item.get("match") or {}
                     matchup = (
@@ -4238,7 +4184,7 @@ with main_tab2:
                     warning_text += "\n관리자 확인: " + " / ".join(unresolved[:3])
             st.warning(warning_text)
         if cap_exceeded_by_frozen:
-            st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 새 회차부터 8,000원 상한이 적용됩니다.")
+            st.warning("이미 경기 직전 동결된 조합은 과거 기록 보호를 위해 바꾸지 않습니다. 기존 표는 보존하며 새 표는 단일마킹을 우선합니다.")
 
         toto_displayed = 0
         toto_paywall_shown = False
@@ -4281,9 +4227,9 @@ with main_tab2:
             analyst_pick = _toto_analyst_pick_display(
                 item, toto14_analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
             )
-            analyst_marks_html = _render_toto14_picks_html(analyst_marks) if analyst_marks else (
-                "<div style='color:#F59E0B;font-weight:900;'>분석 대기</div>"
-            )
+            analyst_marks_html = _render_toto14_picks_html(analyst_marks)
+            if not analyst_marks:
+                analyst_marks_html += "<div style='color:#F59E0B;margin-top:8px;'>분석 대기</div>"
             html_code = (
                 f"<div class='match-card' style='padding: 16px;'>"
                 f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;'><span class='badge-primary'>제 {idx} 경기</span><span style='color:#94A3B8; font-size:14px; font-weight:700;'>{escape(toto14_analyst_view)} 마킹: <b style='color:#00F2FE;'>{escape(analyst_pick)}</b></span></div>"
@@ -4291,9 +4237,7 @@ with main_tab2:
                 f"<div class='center-time-box' style='width:80px;'>{live_score_html}</div>"
                 f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}{item.get('a_inj_html','')}</div></div></div>"
                 f"{_match_importance_html(item)}"
-                f"<div style='font-size:12px; color:#64748B; font-weight:700; text-align:center;'>확률 분포: 승 {item.get('p_h')}% | 무 {item.get('p_d')}% | 패 {item.get('p_a')}%</div>"
-                f"<div class='prob-bar-container' style='margin-bottom: 15px;'><div class='prob-bar-win' style='width: {item.get('p_h')}%;'></div><div class='prob-bar-draw' style='width: {item.get('p_d')}%;'></div><div class='prob-bar-lose' style='width: {item.get('p_a')}%;'></div></div>"
-                f"<div style='display: flex; gap: 10px;'>{analyst_marks_html}</div>"
+                f"{analyst_marks_html}"
                 f"</div>"
             )
             st.caption(
@@ -4306,6 +4250,9 @@ with main_tab2:
         st.info("현재 진행 중인 승무패 14경기 데이터가 없습니다.")
 
     _render_back_to_top()
+
+with main_tab2:
+    _render_toto14_tab()
 
 # -----------------------------------------------------------------------------
 # [TAB 3] 오늘의 TOP 3

@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 ENGINES = ('official', 'robot', 'v2', 'v3')
 TRACKS = ('manager', 'top3', 'proto_world', 'toto14')
 KST = timezone(timedelta(hours=9))
-VERSION = 'R7.13.7'
+VERSION = 'R7.13.10'
 
 
 def obj(value):
@@ -104,6 +104,8 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
     predictions = {str(r['match_id']): r for r in table_rows(conn, 'predictions',
         'match_id,home_team,away_team,match_time,is_toto14,api_fixture_id,actual_result,actual_score')}
     records, audit = {}, Counter()
+    legacy_references = []
+    manager_v2 = (manager or {}).get('schema_version') == 'dj-sports.manager-investment-ledger.v2'
     result_index = {}
     for p in predictions.values():
         if p.get('actual_result') == 'FINISHED' and re.fullmatch(r'\d+\s*:\s*\d+', str(p.get('actual_score') or '')):
@@ -147,12 +149,33 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
 
     for row in table_rows(conn, 'product_pick_receipts', order='ORDER BY captured_at ASC'):
         data = obj(row['payload_json'])
+        if manager_v2 and row['track'] == 'manager':
+            legacy_references.append({**data, 'record_kind':'legacy_analyst_reference'})
+            continue
         add(data, row['engine'], data, row['captured_at'], 'product_receipt')
+    for row in table_rows(conn, 'toto14_prediction_freezes'):
+        payload = obj(row.get('payload_json'))
+        mid = str(row.get('match_id'))
+        mid = mid if mid.startswith('TOTO14_') else 'TOTO14_' + mid
+        meta = {**row, 'match_id': mid, 'track': 'toto14', 'kickoff_at': row.get('match_time'),
+                'api_fixture_id': payload.get('api_fixture_id')}
+        marks = payload.get('analyst_toto14_marks') or {}
+        for engine in ENGINES:
+            values = (marks.get(engine) or {}).get('marks') or (payload.get('picks') if engine == 'official' else [])
+            raw = ', '.join(str(x) for x in values) if values else ''
+            if not raw:
+                raw = str((payload.get('robot_pick') or {}).get('raw_pick') or '') if engine == 'robot' else ''
+            if raw:
+                add(meta, engine, {'raw_pick': raw}, row.get('frozen_at'), 'toto14_ticket')
+
     # Existing primary engine receipts take precedence over archive recovery.
     for row in table_rows(conn, 'three_engine_pick_snapshots', order='ORDER BY captured_timestamp DESC,id DESC'):
         if str(row.get('engine_version') or '').startswith('archive-'):
             continue  # Revalidate the original receipt instead of the old R7.13.6 migration.
         meta = {**row, 'track': source_track(row.get('source'))}
+        if manager_v2 and meta['track'] == 'manager':
+            legacy_references.append({**row, 'record_kind':'legacy_analyst_reference'})
+            continue
         score = f"{row['actual_home_goals']}:{row['actual_away_goals']}" if row.get('actual_home_goals') is not None else ''
         add(meta, row.get('engine_key'), row, row.get('captured_at'), 'engine_snapshot', row.get('is_correct'), score)
 
@@ -186,26 +209,14 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             add(from_prediction(p), 'v2', v2pick, row.get('created_at'), 'v2_decision')
     for row in table_rows(conn, 'robot_learning_samples', order='ORDER BY captured_timestamp DESC,id DESC'):
         meta = {**row, 'track': source_track(row.get('source'))}
+        if manager_v2 and meta['track'] == 'manager':
+            legacy_references.append({**row, 'record_kind':'legacy_analyst_reference'})
+            continue
         pick = obj(row.get('robot_pick_json'))
         add(meta, 'robot', pick, row.get('captured_at'), 'robot_learning_sample')
         v2pick = v2_answer(pick, row.get('home_team'), row.get('away_team'))
         if v2pick:
             add(meta, 'v2', v2pick, row.get('captured_at'), 'v2_learning_sample')
-    for row in table_rows(conn, 'toto14_prediction_freezes'):
-        payload = obj(row.get('payload_json'))
-        mid = str(row.get('match_id'))
-        mid = mid if mid.startswith('TOTO14_') else 'TOTO14_' + mid
-        meta = {**row, 'match_id': mid, 'track': 'toto14', 'kickoff_at': row.get('match_time'),
-                'api_fixture_id': payload.get('api_fixture_id')}
-        marks = payload.get('analyst_toto14_marks') or {}
-        for engine in ENGINES:
-            values = (marks.get(engine) or {}).get('marks') or (payload.get('picks') if engine == 'official' else [])
-            raw = ', '.join(str(x) for x in values) if values else ''
-            if not raw:
-                raw = str((payload.get('robot_pick') or {}).get('raw_pick') or '') if engine == 'robot' else ''
-            if raw:
-                add(meta, engine, {'raw_pick': raw}, row.get('frozen_at'), 'toto14_ticket')
-
     # Independent V3 file already owns its grades; do not hide those behind a
     # current-version filter or pretend they are TOP3/manager publication receipts.
     for mid, pick in ((v3 or {}).get('picks') or {}).items():
@@ -227,7 +238,7 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         add(meta, 'v3', pick, pick.get('frozen_at'), 'v3_independent_ledger',
             pick.get('is_correct'), pick.get('actual_score', ''), trusted=pick.get('is_correct') in (0, 1))
 
-    legacy = []
+    legacy = list(legacy_references)
     for pick in ((manager or {}).get('picks') or {}).values():
         if not isinstance(pick, dict):
             continue
@@ -324,7 +335,8 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
                    'kind': kind}
         conn.execute('INSERT OR IGNORE INTO product_pick_receipts VALUES (?,?,?,?,?)',
                      (track, payload['match_id'], engine, now.isoformat(), json.dumps(payload, ensure_ascii=False)))
-    for engine, selector in (('official', official_selector), ('robot', robot_selector)):
+    selectors = () if dashboard.get('manager_product_mode') == 'investment_by_analyst' else (('official', official_selector), ('robot', robot_selector))
+    for engine, selector in selectors:
         for pick in selector(proto, 5, 10).get('picks', []):
             card = by_fixture.get(str(pick.get('fixture_id')))
             if card:
@@ -341,11 +353,24 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
         }
         if not 0 < epoch(pick3.get('frozen_at')) <= now.timestamp():
             answers['v3'] = {}
-        for engine in ('v2', 'v3'):
-            save('manager', card, engine, answers[engine], 'comparison')
+        if dashboard.get('manager_product_mode') != 'investment_by_analyst':
+            for engine in ('v2', 'v3'):
+                save('manager', card, engine, answers[engine], 'comparison')
         if any(str((x.get('match') or {}).get('id')) == mid for x in dashboard.get('top3', [])):
             for engine, pick in answers.items():
                 save('top3', card, engine, pick)
+    for original in dashboard.get('toto14', []):
+        match = original.get('match') or {}
+        ko = epoch(match.get('match_time'), KST)
+        if ko <= now.timestamp():
+            continue
+        mid = 'TOTO14_' + str(match.get('id') or '')
+        card = {**original, 'match':{**match, 'id':mid}}
+        v2 = v2_answer(original.get('alphago_pick'), match.get('home'), match.get('away'))
+        save('toto14', card, 'v2', v2)
+        pick3 = ((v3 or {}).get('picks') or {}).get(mid) or {}
+        if 0 < epoch(pick3.get('frozen_at')) <= now.timestamp() and pick3.get('market_key') == '1x2':
+            save('toto14', card, 'v3', pick3)
     conn.commit()
     # Send the very same frozen manager answers to the UI. No selection work
     # is repeated on button clicks and a shown answer cannot drift from grading.

@@ -2087,7 +2087,7 @@ _COUNTRY_FLAG_ROWS = (
     ("ao", "Angola", "앙골라"),
     ("ag", "Antigua and Barbuda", "Antigua Barbuda", "앤티가 바부다"),
     ("ar", "Argentina", "아르헨티나"),
-    ("am", "Armenia", "아르메니아"),
+    ("am", "Armenia", "아르메니아", "아르메니"),
     ("au", "Australia", "호주", "오스트레일리아"),
     ("at", "Austria", "오스트리아"),
     ("az", "Azerbaijan", "아제르바이잔"),
@@ -2122,7 +2122,7 @@ _COUNTRY_FLAG_ROWS = (
     ("cg", "Congo", "Congo Republic", "콩고"),
     ("cd", "DR Congo", "Congo DR", "Democratic Republic of the Congo", "콩고민주공화국"),
     ("cr", "Costa Rica", "코스타리카"),
-    ("hr", "Croatia", "크로아티아"),
+    ("hr", "Croatia", "크로아티아", "크로아티"),
     ("cu", "Cuba", "쿠바"),
     ("cw", "Curacao", "Curaçao", "퀴라소"),
     ("cy", "Cyprus", "키프로스"),
@@ -2137,7 +2137,7 @@ _COUNTRY_FLAG_ROWS = (
     ("gb-eng", "England", "잉글랜드"),
     ("gq", "Equatorial Guinea", "적도기니"),
     ("er", "Eritrea", "에리트레아"),
-    ("ee", "Estonia", "에스토니아"),
+    ("ee", "Estonia", "에스토니아", "에스토니"),
     ("sz", "Eswatini", "Swaziland", "에스와티니"),
     ("et", "Ethiopia", "에티오피아"),
     ("fo", "Faroe Islands", "페로 제도"),
@@ -2185,7 +2185,7 @@ _COUNTRY_FLAG_ROWS = (
     ("ly", "Libya", "리비아"),
     ("li", "Liechtenstein", "리히텐슈타인"),
     ("lt", "Lithuania", "리투아니아"),
-    ("lu", "Luxembourg", "룩셈부르크"),
+    ("lu", "Luxembourg", "룩셈부르크", "룩셈부르"),
     ("mo", "Macau", "Macao", "마카오"),
     ("mg", "Madagascar", "마다가스카르"),
     ("mw", "Malawi", "말라위"),
@@ -2211,7 +2211,7 @@ _COUNTRY_FLAG_ROWS = (
     ("ne", "Niger", "니제르"),
     ("ng", "Nigeria", "나이지리아"),
     ("mk", "North Macedonia", "Macedonia FYR", "북마케도니아", "북마케도"),
-    ("gb-nir", "Northern Ireland", "북아일랜드"),
+    ("gb-nir", "Northern Ireland", "북아일랜드", "북아일랜"),
     ("kp", "North Korea", "Korea DPR", "북한"),
     ("no", "Norway", "노르웨이"),
     ("om", "Oman", "오만"),
@@ -2232,13 +2232,13 @@ _COUNTRY_FLAG_ROWS = (
     ("ws", "Samoa", "사모아"),
     ("sm", "San Marino", "산마리노"),
     ("sa", "Saudi Arabia", "사우디아라비아", "사우디"),
-    ("gb-sct", "Scotland", "스코틀랜드"),
+    ("gb-sct", "Scotland", "스코틀랜드", "스코틀랜"),
     ("sn", "Senegal", "세네갈"),
     ("rs", "Serbia", "세르비아"),
     ("sl", "Sierra Leone", "시에라리온"),
     ("sg", "Singapore", "싱가포르"),
     ("sk", "Slovakia", "슬로바키아"),
-    ("si", "Slovenia", "슬로베니아"),
+    ("si", "Slovenia", "슬로베니아", "슬로베니"),
     ("sb", "Solomon Islands", "솔로몬 제도"),
     ("so", "Somalia", "소말리아"),
     ("za", "South Africa", "남아프리카공화국", "남아공"),
@@ -2262,7 +2262,7 @@ _COUNTRY_FLAG_ROWS = (
     ("tr", "Turkey", "Turkiye", "Türkiye", "튀르키예", "터키"),
     ("tm", "Turkmenistan", "투르크메니스탄"),
     ("ug", "Uganda", "우간다"),
-    ("ua", "Ukraine", "우크라이나"),
+    ("ua", "Ukraine", "우크라이나", "우크라이"),
     ("ae", "United Arab Emirates", "UAE", "아랍에미리트"),
     ("us", "United States", "USA", "United States of America", "미국"),
     ("uy", "Uruguay", "우루과이"),
@@ -3752,12 +3752,13 @@ def fetch_overseas_odds_and_fixture_api(
     odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
     cache_key = f"odds_fixture_v13_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
+    if cached_data and odds_requested and not all(float(cached_data.get(k) or 0) > 1 for k in ('odd_h','odd_d','odd_a')):
+        cached_data = get_db_cache(cache_key, min(float(ttl_h), 0.2))
     if cached_data: return cached_data
     try:
         # 팀 신원을 확정할 때 받은 같은 날짜 경기표를 그대로 재사용한다.
         date_fixtures = _fetch_date_fixtures_api(date_str, ttl_h)
-        if date_fixtures is None:
-            return None
+        date_fixtures = date_fixtures or []
 
         exact_matches = []
         for fixture_data in date_fixtures:
@@ -3767,6 +3768,10 @@ def fetch_overseas_odds_and_fixture_api(
                     and abs(float(fixture_data.get("fixture", {}).get("timestamp") or 0)-m_dt.timestamp()) <= 3*3600):
                 exact_matches.append(fixture_data)
 
+        if not exact_matches:
+            recovered, _ = _recover_pair_fixture(home_id, away_id, m_dt)
+            if recovered:
+                exact_matches = [recovered]
         if exact_matches and len({item["fixture"]["id"] for item in exact_matches}) == 1:
             match_data = min(
                 exact_matches,
@@ -3807,7 +3812,8 @@ def fetch_overseas_odds_and_fixture_api(
                         res_val["odds_source"] = "overseas_median"
                 except Exception as odds_error:
                     print(f"⚠️ 해외배당 조회 실패({fix_id}): {odds_error}")
-            set_db_cache(cache_key, res_val)
+            if not (_API_CACHE_ONLY and odds_requested and not res_val.get('odds_source')):
+                set_db_cache(cache_key, res_val)
             return res_val
         print(f"⚠️ 두 팀이 정확히 일치하는 경기 ID 없음: {home_id} vs {away_id} ({date_str})")
     except Exception as e:

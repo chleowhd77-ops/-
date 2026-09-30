@@ -10,6 +10,9 @@ historical records.  Its only local write is its own JSON publication file.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
+import pickle
 import json
 import os
 import sqlite3
@@ -22,7 +25,7 @@ from typing import Any
 import official_meta_v3 as meta
 
 
-AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v3-proto-world-id"
+AUTOPILOT_VERSION = "official-meta-v3-autonomous-web-learning-v4-products"
 OUTPUT_SCHEMA = "official-meta-v3.web-learning-picks.v1"
 MINIMUM_COMPLETED_MATCHES = meta.MIN_TRAIN_MATCHES
 
@@ -96,11 +99,12 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
             raise AutopilotNotReady("required tables missing: " + ", ".join(missing))
         rows = connection.execute(
             """
-            SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json
+            SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json, p.match_time
             FROM prediction_analysis_snapshots AS s
             JOIN predictions AS p ON p.match_id = s.match_id
             WHERE COALESCE(p.actual_result, 'PENDING') = 'PENDING'
-              AND s.stage LIKE 'T-%'
+              AND (s.stage LIKE 'T-%' OR s.stage='regular')
+              AND p.match_id NOT LIKE 'WORLD_%'
             ORDER BY s.match_id ASC, s.id DESC
             """
         ).fetchall()
@@ -115,6 +119,10 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
 
     pending: list[PendingSnapshot] = []
     for match_id, row in latest.items():
+        from scorecard_core import epoch, KST
+        kickoff = epoch(row['match_time'], KST)
+        if not 0 < epoch(row['created_at']) < kickoff or kickoff <= datetime.now(timezone.utc).timestamp():
+            continue
         candidates = meta._safe_json(row["candidates_json"], [])
         valid = tuple(candidate for candidate in candidates if isinstance(candidate, dict))
         if valid:
@@ -161,7 +169,7 @@ def _load_pending_dashboard_cards(dashboard_path: str | Path) -> list[PendingSna
         return []
 
     pending: dict[str, PendingSnapshot] = {}
-    for collection_name in ("proto", "top3"):
+    for collection_name in ("proto", "top3", "toto14"):
         cards = payload.get(collection_name) or []
         if not isinstance(cards, list):
             continue
@@ -172,10 +180,20 @@ def _load_pending_dashboard_cards(dashboard_path: str | Path) -> list[PendingSna
             if not isinstance(match, dict):
                 continue
             match_id = str(match.get("id") or "").strip()
-            kickoff_epoch = _future_epoch(card.get("timestamp"))
+            from scorecard_core import epoch, KST
+            if collection_name == "toto14":
+                match_id = "TOTO14_" + match_id
+            kickoff_epoch = _future_epoch(card.get("timestamp") or epoch(match.get("match_time"), KST))
             if not match_id or kickoff_epoch is None or match_id in pending:
                 continue
             source_candidates = card.get("display_candidates") or []
+            if collection_name == "toto14" and not card.get("probabilities_unavailable"):
+                source_candidates = [_toto14_candidate(str(match.get("home") or ""),
+                    str(match.get("away") or ""), side, _probability(card.get(field)),
+                    _probability(card.get("analysis_confidence")))
+                    for side,field in (("home","p_h"),("draw","p_d"),("away","p_a"))]
+            if str(card.get("analysis_stage") or "").upper().startswith(("PENDING", "PREVIEW")):
+                continue
             if not isinstance(source_candidates, list):
                 continue
             candidates = tuple(
@@ -200,7 +218,7 @@ def _load_pending_dashboard_cards(dashboard_path: str | Path) -> list[PendingSna
                 ),
                 stage="DASHBOARD_PREKICKOFF",
                 candidates=candidates,
-                source_kind="dashboard_card",
+                source_kind="toto14_dashboard_card" if collection_name == "toto14" else "dashboard_card",
             )
     return sorted(pending.values(), key=lambda item: (item.created_at, item.match_id))
 
@@ -321,6 +339,10 @@ def _load_pending_toto14_freezes(database_path: str | Path) -> list[PendingSnaps
         payload = meta._safe_json(row["payload_json"], {})
         if not match_id or not isinstance(payload, dict):
             continue
+        from scorecard_core import epoch, KST
+        kickoff = epoch(row['match_time'], KST)
+        if not 0 < epoch(row['frozen_at']) < kickoff or kickoff <= datetime.now(timezone.utc).timestamp():
+            continue
         home_team = str(payload.get("match", {}).get("home") or row["home_team"] or "홈팀")
         away_team = str(payload.get("match", {}).get("away") or row["away_team"] or "원정팀")
         probabilities = {
@@ -367,7 +389,7 @@ def _candidate_example(snapshot: PendingSnapshot, candidate: dict[str, Any]) -> 
     )
 
 
-def _model_from_completed_history(
+def _train_from_completed_history(
     database_path: str | Path,
 ) -> tuple[meta.ChallengerModel, meta.FrozenFeatureEncoder, dict[str, Any]]:
     completed, source = meta.load_frozen_examples(database_path)
@@ -397,6 +419,31 @@ def _model_from_completed_history(
         },
     }
     return model, encoder, summary
+
+
+def _model_from_completed_history(database_path):
+    # Local trusted cache; completed score changes invalidate the model.
+    connection = _readonly_connection(database_path)
+    try:
+        rows = connection.execute("SELECT match_id,actual_score FROM predictions WHERE actual_result='FINISHED' ORDER BY match_id").fetchall()
+        candidate_rows = connection.execute("SELECT COUNT(*),MAX(id) FROM prediction_candidate_results WHERE is_correct IN (0,1)").fetchone()
+        signature = hashlib.sha256(repr(([tuple(r) for r in rows], tuple(candidate_rows), AUTOPILOT_VERSION)).encode()).hexdigest()
+    finally:
+        connection.close()
+    cache = Path(database_path).with_name('.v3_serving_cache.pkl')
+    try:
+        with cache.open('rb') as stream:
+            saved = pickle.load(stream)
+        if saved.get('signature') == signature:
+            return saved['result']
+    except (OSError, ValueError, EOFError, pickle.PickleError, AttributeError, ImportError):
+        pass
+    result = _train_from_completed_history(database_path)
+    temp = cache.with_suffix('.tmp')
+    with temp.open('wb') as stream:
+        pickle.dump({'signature':signature,'result':result},stream)
+    os.replace(temp,cache)
+    return result
 
 
 def _score_result_side(home_score: float, away_score: float) -> str:
@@ -456,7 +503,7 @@ def _grade_frozen_picks(
             if pick.get("is_correct") in (0, 1):
                 graded += 1
                 continue
-            if str(pick.get("source_kind") or "") == "toto14_freeze":
+            if str(match_id).startswith("TOTO14_") or str(pick.get("source_kind") or "") in {"toto14_freeze", "toto14_dashboard_card"}:
                 row = connection.execute(
                     """
                     SELECT actual_result, actual_score
@@ -576,6 +623,12 @@ def _visible_pick(
         "totals_base": selected_candidate.get("totals_base"),
         "handicap_base": selected_candidate.get("handicap_base"),
         "probability": round(float(probability), 6),
+        "candidate_scores": [
+            {**candidate, "v3_probability":round(float(prob),6)}
+            for example,prob in zip(examples, probabilities)
+            for candidate in snapshot.candidates
+            if candidate.get("raw_pick") == example.raw_pick and candidate.get("market_key") == example.market_key
+        ],
         "label": "V3 학습픽 · 검증 중",
         "official_pick_changed": False,
         "reason": "종료 결과가 누적될 때마다 재학습한 V3 도전자 결과입니다.",
@@ -617,15 +670,20 @@ def build_autopilot_payload(
         pending_snapshots.extend(_load_pending_world_cards(world_dashboard_path))
         pending_snapshots.extend(_load_pending_snapshots(database_path))
         pending_snapshots.extend(_load_pending_toto14_freezes(database_path))
+        investment_candidates, visited = {}, set()
         for snapshot in pending_snapshots:
+            if snapshot.match_id in visited:
+                continue
+            visited.add(snapshot.match_id)
             # V3 itself may learn a new model later, but a pick already shown
             # for this match remains immutable for honest future grading.
-            if snapshot.match_id in picks:
-                continue
             pick = _visible_pick(snapshot, model, encoder, generated_at)
             if pick is not None:
-                picks[snapshot.match_id] = pick
-                created += 1
+                investment_candidates[snapshot.match_id] = pick
+                if snapshot.match_id not in picks:
+                    picks[snapshot.match_id] = pick
+                    created += 1
+        base['investment_candidates'] = investment_candidates
         graded, total = _grade_frozen_picks(database_path, picks)
         base.update(
             {
@@ -666,11 +724,15 @@ def refresh_autopilot(
     world_dashboard_path: str | Path | None = None,
 ) -> dict[str, Any]:
     output = Path(output_path)
-    payload = build_autopilot_payload(
-        database_path, _read_json(output, {}), dashboard_path, world_dashboard_path
-    )
-    _write_json_atomically(output, payload)
-    return payload
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = build_autopilot_payload(
+            database_path, _read_json(output, {}), dashboard_path, world_dashboard_path
+        )
+        _write_json_atomically(output, payload)
+        return payload
+
 
 
 def _main() -> int:

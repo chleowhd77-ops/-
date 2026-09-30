@@ -34,3 +34,31 @@ def get_v2_ai_pick(h_odds, d_odds, a_odds):
         return ai_pick 
     except Exception:
         return "ERROR"
+
+
+def get_v2_prediction(h_odds, d_odds, a_odds):
+    """Expose this model's own 1X2 probabilities, never another analyst's."""
+    import math
+    try:
+        odds = [float(x) for x in (h_odds, d_odds, a_odds)]
+        if not all(math.isfinite(x) and x > 1 for x in odds):
+            return {'status':'unavailable','source_code':'NO_ODDS','reason':'V2용 1X2 배당 미수신'}
+    except (TypeError, ValueError):
+        return {'status':'unavailable','source_code':'NO_ODDS','reason':'V2용 1X2 배당 미수신'}
+    if v2_brain is None:
+        return {'status':'unavailable','source_code':'V2_OFF','reason':'V2 모델 파일 연결 대기'}
+    try:
+        data = pd.DataFrame([dict(zip(('B365H','B365D','B365A'),odds))])
+        code = str(v2_brain.predict(data)[0]).upper()
+        if code not in ('H','D','A'):
+            raise ValueError('unknown V2 class')
+        result = {'engine':'v2-ai','code':code,'status':'ready','market_key':'1x2',
+                  'selection_side':{'H':'home','D':'draw','A':'away'}[code],
+                  'odds':dict(zip(('home','draw','away'),odds))}
+        if hasattr(v2_brain,'predict_proba'):
+            result['probabilities'] = {{'H':'home','D':'draw','A':'away'}[str(k).upper()]:float(v)
+                for k,v in zip(v2_brain.classes_,v2_brain.predict_proba(data)[0]) if str(k).upper() in ('H','D','A')}
+            result['probability'] = result['probabilities'].get(result['selection_side'])
+        return result
+    except Exception as e:
+        return {'status':'unavailable','source_code':'ERROR','reason':f'V2 모델 계산 오류: {type(e).__name__}'}

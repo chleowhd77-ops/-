@@ -61,7 +61,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.13.9-manager-publication-recovery"
+COLLECTOR_PATCH_VERSION = "R7.13.10-analyst-products"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
 # WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 재개하는 별도 배포에서만
 # 이 값을 바꾼다.  기존 서버 환경변수에 1이 남아 있어도 현재는 절대 재가동하지 않는다.
@@ -11190,10 +11190,35 @@ def _needs_current_robot_refresh(item, kickoff, now, source="PROTO"):
     return bool(current_revision and stored_revision != current_revision)
 
 
+def _repair_toto_v2(item, match):
+    from v2_ml_engine import get_v2_prediction
+    if not isinstance(item, dict):
+        return item
+    kickoff = _parse_kst_match_time(match.get("match_time"))
+    if not kickoff or datetime.now(KST) >= kickoff:
+        return item
+    if (item.get("alphago_pick") or {}).get("code") in {"H", "D", "A"}:
+        return item
+    hi, ai, fixture = _collect_match_identity(match)
+    if not hi.get("id") or not ai.get("id") or not fixture:
+        return item
+    quotes = fetch_overseas_odds_and_fixture_api(hi["id"], ai["id"], 4,
+                    match.get("match_time"), include_odds=True) or {}
+    result = get_v2_prediction(*(quotes.get(k) for k in ("odd_h", "odd_d", "odd_a")))
+    if result.get("code") in {"H", "D", "A"}:
+        item["alphago_pick"] = result
+        item["v2_recovered_at"] = _utc_iso()
+        item.setdefault("analyst_toto14_marks", {})["v2"] = {
+            "marks": [{"H":"승", "D":"무", "A":"패"}[result["code"]]], "available": True}
+    return item
+
+
 def _scheduled_toto_revision_needs_refresh(item, kickoff, now):
     """Combine formula, robot-learning and evidence-stage refresh rules."""
     if not isinstance(item, dict) or kickoff is None or now is None or now >= kickoff:
         return False
+    if item.get("marking_policy") != "minimum-cost-ambiguity7-v3":
+        return True
     if _needs_current_analysis_refresh(item, kickoff, now, ANALYSIS_VERSION):
         return True
     if _needs_current_robot_refresh(item, kickoff, now, "TOTO14"):
@@ -11920,6 +11945,7 @@ def _proto_can_finish_model_only_analysis(match):
 
 
 def _freeze_displayed_products(payload):
+    payload['manager_product_mode'] = 'investment_by_analyst'
     with sqlite3.connect(str(_local_path('ai_predictions.db')), timeout=30) as conn:
         freeze_products(conn, payload, _read_json('v3_learning_picks.json', {}),
                         build_official_daily_shortlist, build_robot_daily_shortlist)
@@ -13223,6 +13249,7 @@ def build_dashboard_data():
             deferred_proto_count, proto_market_watch_count, proto_cycle_started,
             proto_brake_reason=proto_brake_reason,
         )
+        _refresh_manager_after_analysis()
         if deferred_proto_count and toto_14_matches:
             print("↪️ PROTO 미완료 경기는 재시도 큐로 유지하고 승무패14 분석을 계속합니다.")
 
@@ -13362,6 +13389,7 @@ def build_dashboard_data():
             frozen_item = dict(frozen_item)
             frozen_item["match"] = dict(m)
             frozen_item["prediction_frozen"] = True
+            _repair_toto_v2(frozen_item, m)
             if not kickoff_passed and scheduled_dt is not None:
                 _observe_locked_pick_market_flow(
                     frozen_item, "TOTO14", match_id,
@@ -13423,7 +13451,7 @@ def build_dashboard_data():
         odds_ttl = 0.5 if diff_hours <= 2 else 4
         lineup_ttl = 0.25 if diff_hours <= 1.5 else 12
          
-        os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, m.get("match_time") or "시간 미정")
+        os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, m.get("match_time") or "시간 미정", include_odds=True)
         api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
         if api_fixture_id <= 0:
             queue_team_identity_retry(
@@ -13515,10 +13543,14 @@ def build_dashboard_data():
         h_predicted_xi, h_lineup_prediction = predict_starting_xi(
             home_info.get("id"), h_stand.get("league_id"), h_stand.get("season"),
             h_inj_data.get("all_names") or h_inj_data.get("ace_names") or [],
+            historical_lineups=not MASTER_CACHE_ONLY_SERVING,
+            cached_learning_only=MASTER_CACHE_ONLY_SERVING,
         )
         a_predicted_xi, a_lineup_prediction = predict_starting_xi(
             away_info.get("id"), a_stand.get("league_id"), a_stand.get("season"),
             a_inj_data.get("all_names") or a_inj_data.get("ace_names") or [],
+            historical_lineups=not MASTER_CACHE_ONLY_SERVING,
+            cached_learning_only=MASTER_CACHE_ONLY_SERVING,
         )
         if 0 < diff_hours <= 1.5 and api_fixture_id:
             lineup_data = fetch_lineups_api(api_fixture_id, lineup_ttl)
@@ -13841,7 +13873,8 @@ def build_dashboard_data():
             source="TOTO14", robot_artifact=toto14_robot_artifact,
             serving_only=MASTER_CACHE_ONLY_SERVING,
         )
-        alphago_pick = _alphago_pick_payload(robot_pick)
+        from v2_ml_engine import get_v2_prediction
+        alphago_pick = get_v2_prediction(*(market_odds if len(market_odds) == 3 else [0,0,0]))
         robot_wdl_probabilities = {
             str(candidate.get("selection_side")): float(candidate.get("robot_probability") or 0)
             for candidate in robot_candidates
@@ -14720,11 +14753,10 @@ def _allocate_toto14_round(items, max_combinations=None):
         ranked = sorted(values, key=lambda mark: values[mark], reverse=True)
         item['picks'] = ranked[:1]
         item['top_outcome_probability'] = values[ranked[0]]
-        item['marking_policy'] = 'round-coverage-marginal-gain-budget8-v2'
-        # A round has only three double-mark slots at an 8-combination cap.
-        # Allocate them to the largest covered-probability gain, rather than a
-        # fixed 7% gap that can waste the budget or depend on row order.
-        if values[ranked[0]] > 0 and values[ranked[1]] > 0:
+        item['marking_policy'] = 'minimum-cost-ambiguity7-v3'
+        # A cap is never a spending target. Only an existing close-call
+        # signal can propose a double; confident singles consume no slots.
+        if values[ranked[0]] > 0 and values[ranked[1]] > 0 and values[ranked[0]] - values[ranked[1]] <= 7.0:
             gain_ratio = (values[ranked[0]] + values[ranked[1]]) / values[ranked[0]]
             uncertainty = 1.0 - values[ranked[0]] / 100.0
             candidates.append((gain_ratio, uncertainty, str(item.get('match', {}).get('id')), item, ranked[1]))
@@ -17142,7 +17174,7 @@ def run_live_score_job():
     return published
 
 
-def _refresh_manager_after_analysis():
+def _refresh_manager_after_analysis(job="master"):
     """Create and publish the separate investment ledger from the new analysis."""
     try:
         from manager_investment_autopilot import refresh_manager_ledger
@@ -17154,14 +17186,16 @@ def _refresh_manager_after_analysis():
               f"입력 {payload.get('input_snapshot_count', 0)}경기 / "
               f"신규 {payload.get('newly_frozen_picks', 0)}건 / "
               f"현재 {payload.get('current_pending_count', 0)}건 / 게시 {published}")
-        _update_collector_status("master", "running", manager_published=published,
+        for engine, info in (payload.get('engines') or {}).items():
+            print(f"  관리자[{engine}] 입력 {info.get('input_snapshot_count', 0)} / 신규 {info.get('newly_frozen_picks', 0)} / 사유 {info.get('candidate_rejections') or '-'}")
+        _update_collector_status(job, "running", manager_published=published,
             manager_input_count=payload.get("input_snapshot_count", 0),
             manager_current_count=payload.get("current_pending_count", 0),
             manager_reason=payload.get("reason", ""))
         return published
     except Exception as error:
         print(f"⚠️ 관리자 투자픽 갱신 실패: {type(error).__name__}: {error}")
-        _update_collector_status("master", "running", manager_published=False,
+        _update_collector_status(job, "running", manager_published=False,
                                 manager_reason=str(error)[:300])
         return False
 
@@ -17506,14 +17540,14 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         # Date-fixture identity data already gives the early
                         # pass the correct pair/logo/competition.  Do not spend
                         # a volatile odds request until the normal T-30 refresh.
-                        if deep_refresh_due:
+                        if deep_refresh_due or "TOTO14" in entry.get("shared_sources", []):
                             need_overseas_odds = not _valid_three_way_odds([
                                 match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
                             ])
                             fixture_info = fetch_overseas_odds_and_fixture_api(
                                 home_id, away_id, 2,
                                 match.get("match_time") or match.get("time") or "",
-                                include_odds=need_overseas_odds,
+                                include_odds=need_overseas_odds or "TOTO14" in entry.get("shared_sources", []),
                             ) or {}
                             fixture_id = int(fixture_info.get("fixture_id") or fixture_id or 0)
                             league_id = int(fixture_info.get("league_id") or league_id or 0)
@@ -17672,6 +17706,26 @@ def run_team_identity_job():
             f"화면 재등록 {seeded_cards}건 / 화면 갱신 {repaired_cards}장"
         )
     return True
+
+
+def run_products_job():
+    from official_meta_v3_autopilot import refresh_autopilot
+    payload = refresh_autopilot(_local_path("ai_predictions.db"),
+        _local_path("v3_learning_picks.json"), _local_path("dashboard_data.json"))
+    published = upload_to_github("v3_learning_picks.json")
+    print(f"✅ V3 답안 생성·게시: 신규 {payload.get('newly_frozen_picks', 0)}건 / 상태 {payload.get('status')} / 게시 {published}")
+    manager_ok = _refresh_manager_after_analysis("products")
+    dashboard = _read_json("dashboard_data.json", {})
+    _freeze_displayed_products(dashboard)
+    _atomic_write_json("dashboard_data.json", dashboard)
+    dashboard_ok = upload_to_github("dashboard_data.json")
+    snapshot = _build_grading_snapshot()
+    if not snapshot.get("error"):
+        _atomic_write_json("grading_results.json", snapshot)
+        grading_ok = upload_to_github("grading_results.json")
+    else:
+        grading_ok = False
+    return bool(published and manager_ok and dashboard_ok and grading_ok)
 
 
 def run_score_job():
@@ -17864,11 +17918,13 @@ JOB_FUNCTIONS = {
     "recovery": run_scheduled_pick_recovery_job,
     "live": run_live_score_job,
     "score": run_score_job,
+    "products": run_products_job,
     "world": run_world_job,
     "team": run_team_identity_job,
     "backup": run_db_backup_job,
 }
 JOB_TIMEOUTS = {
+    "products": 600,
     "master": max(600, min(1200, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "900")))),
     "recovery": max(60, int(os.getenv("RECOVERY_JOB_TIMEOUT_SECONDS", "180"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
@@ -17942,13 +17998,14 @@ MIN_AVAILABLE_MEMORY_MB = max(
 # These jobs either scan, update, checkpoint, or snapshot ai_predictions.db.
 # On the 1 GiB production host only one may run at a time.  The team identity
 # job uses the small runtime DB and may occupy the second worker slot.
-MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup"})
+MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup", "products"})
 JOB_PRIORITY = {
+    "products": 1,
     "live": 0,
     "score": 4,
     "recovery": 2,
     "team": 3,
-    "master": 1,
+    "master": 2,
     "world": 4,
     "backup": 5,
 }
@@ -17999,6 +18056,9 @@ def _start_isolated_job(job_name):
             **os.environ,
             "PYTHONUNBUFFERED": "1",
             "DJ_JOB_RUN_ID": run_id,
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
         },
     }
     if os.name == "nt":
@@ -18182,6 +18242,7 @@ def run_scheduler():
     # rules allow it. Remaining work stays queued and is drained after reaping.
     _launch_isolated_job("live")
     _launch_isolated_job("master")
+    _launch_isolated_job("products")
     _launch_isolated_job("score")
     if WORLD_FEATURE_ENABLED:
         _launch_isolated_job("world")
@@ -18191,6 +18252,7 @@ def run_scheduler():
     # A large board can need several resumable passes. The overlap guard keeps
     # one worker at a time while a five-minute tick starts the next pass soon.
     schedule.every(5).minutes.do(_launch_isolated_job, "master")
+    schedule.every(5).minutes.do(_launch_isolated_job, "products")
     if WORLD_FEATURE_ENABLED:
         schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
             _launch_isolated_job, "world"
@@ -18244,7 +18306,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "recovery", "live", "score", "world", "team", "backup"),
+        choices=("scheduler", "master", "recovery", "live", "score", "world", "team", "backup", "products"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )

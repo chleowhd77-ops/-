@@ -18,15 +18,15 @@ import re
 import sqlite3
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from api_engine import ANALYSIS_VERSION
 
-MANAGER_ENGINE_VERSION = "manager-investment-independent-v2-validated-value"
-OUTPUT_SCHEMA = "dj-sports.manager-investment-ledger.v1"
+MANAGER_ENGINE_VERSION = "manager-investment-four-analysts-v3"
+OUTPUT_SCHEMA = "dj-sports.manager-investment-ledger.v2"
 KST = timezone(timedelta(hours=9))
 
 # These are safety filters, not targets to fill.  A candidate must clear every
@@ -578,9 +578,10 @@ def _grade_frozen_picks(
     graded = total = 0
     unresolved: list[dict[str, str]] = []
     try:
-        for match_id, pick in picks.items():
+        for ledger_key, pick in picks.items():
             if not isinstance(pick, dict):
                 continue
+            match_id = str(pick.get("match_id") or ledger_key)
             total += 1
             if pick.get("is_correct") in (0, 1):
                 graded += 1
@@ -731,19 +732,48 @@ def build_manager_payload(
         history = _load_history(database_path)
         snapshots = _load_pending_snapshots(database_path)
         rejections: dict[str, int] = {}
-        selected = _select_portfolio(snapshots, history, generated_at, rejections)
+        from analyst_products import investment_candidates, LABELS
+        dashboard = _read_json(Path(database_path).with_name("dashboard_data.json"), {})
+        cards = {str((c.get("match") or {}).get("id")):c for c in dashboard.get("proto", [])}
+        v3_payload = _read_json(Path(database_path).with_name("v3_learning_picks.json"), {})
+        v3 = v3_payload.get("investment_candidates") or v3_payload.get("picks") or {}
+        created, engines = 0, {}
+        for engine in LABELS:
+            engine_snapshots, reasons = [], {}
+            for snapshot in snapshots:
+                card = cards.get(snapshot.match_id)
+                if card and ((card.get('match') or {}).get('home'), (card.get('match') or {}).get('away')) != (snapshot.home, snapshot.away):
+                    reasons['화면 경기와 저장 분석의 팀 연결 확인 필요'] = reasons.get('화면 경기와 저장 분석의 팀 연결 확인 필요', 0) + 1
+                    continue
+                candidates = investment_candidates(card, engine, v3.get(snapshot.match_id)) if card else (
+                    list(snapshot.candidates) if engine == "official" else [])
+                if candidates:
+                    engine_snapshots.append(replace(snapshot, candidates=tuple(candidates)))
+                else:
+                    reason = {'official':'공식 분석 후보 수신 대기', 'robot':'자율 로봇의 독립 후보 수신 대기',
+                              'v2':'V2 실배당·모델 확률 수신 대기', 'v3':'V3 독립 후보 생성 대기'}[engine]
+                    reasons[reason] = reasons.get(reason, 0) + 1
+            selected = _select_portfolio(engine_snapshots, history, generated_at, reasons)
+            engine_created = 0
+            for pick in selected:
+                key = engine + ':' + str(pick['match_id'])
+                if key not in picks:
+                    picks[key] = {**pick, 'engine_key':engine, 'analyst_label':LABELS[engine],
+                                  'product':'manager_investment', 'selection_axis':'own_model_value'}
+                    created += 1
+                    engine_created += 1
+            engines[engine] = dict(input_snapshot_count=len(engine_snapshots),
+                input_candidate_count=sum(len(x.candidates) for x in engine_snapshots),
+                candidate_rejections=reasons, newly_frozen_picks=engine_created)
         base.update(input_snapshot_count=len(snapshots),
                     input_candidate_count=sum(len(row.candidates) for row in snapshots),
-                    candidate_rejections=rejections)
-        created = 0
-        for pick in selected:
-            match_id = str(pick["match_id"])
-            # First public manager answer is append-only in this separate ledger.
-            if match_id not in picks:
-                picks[match_id] = pick
-                created += 1
+                    engines=engines)
         graded, total, unresolved = _grade_frozen_picks(database_path, picks)
         performance = _performance(picks)
+        for engine, info in engines.items():
+            own = {k:v for k,v in picks.items() if v.get('engine_key') == engine}
+            info['performance'] = _performance(own)
+            info['frozen_pick_count'] = len(own)
         base.update(
             {
                 "status": "READY",
