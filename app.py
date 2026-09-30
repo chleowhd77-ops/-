@@ -1,4 +1,5 @@
 import os
+print('[DJ WEB R7.13.12] Python entry', flush=True)
 import hmac
 import streamlit as st
 import json
@@ -11,6 +12,7 @@ import re
 import base64
 from pathlib import Path
 from html import escape
+from runtime_publisher import read_published_json
 from scorecard_core import published_scorecard
 from analyst_products import manager_engine_payload, toto_ticket_for_engine, mark_grid, toto_marks
 from scorecard_ui import render_scorecard, select_buttons
@@ -80,6 +82,7 @@ APP_TITLE = "D.J SPORTS ANALYTICS"
 APP_DIR = Path(__file__).resolve().parent
 BRAND_LOGO_PATH = APP_DIR / "assets" / "dj-analytics-logo.svg"
 
+print('[DJ WEB R7.13.12] UI imports ready', flush=True)
 st.set_page_config(
     page_title=APP_TITLE, 
     page_icon="📊",
@@ -118,15 +121,7 @@ UI_LIVE_SCORE_CACHE_SECONDS = 15
 @st.cache_data(ttl=UI_DATA_CACHE_SECONDS, show_spinner=False)
 def _load_published_json(filename):
     """Fetch one published JSON file once per short UI cache window."""
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{filename}"
-    try:
-        res = requests.get(url, headers=NO_CACHE_HEADERS, timeout=5)
-        if res.status_code == 200:
-            payload = res.json()
-            return payload if isinstance(payload, (dict, list)) else {}
-    except Exception:
-        pass
-    return {}
+    return read_published_json(GITHUB_REPO, filename, NO_CACHE_HEADERS)
 
 
 def load_dashboard_data():
@@ -320,7 +315,11 @@ def _is_displayable_match_item(item):
 # -----------------------------------------------------------------------------
 # 2. 회원·권한·게시판 DB 엔진
 # -----------------------------------------------------------------------------
+_startup_notice = st.empty()
+_startup_notice.caption('화면을 준비하고 있습니다.')
+print('[DJ WEB R7.13.12] Member storage starting', flush=True)
 init_member_db()
+print('[DJ WEB R7.13.12] Member storage ready', flush=True)
 MEMBER_STORAGE_STATUS = get_member_storage_status()
 
 
@@ -1828,6 +1827,7 @@ visible_match_limit = access_profile["match_limit"]
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
+print('[DJ WEB R7.13.12] Published feeds starting', flush=True)
 dashboard_data = load_dashboard_data()
 v3_learning_picks = load_v3_learning_picks()
 manager_investment_data = load_manager_investment_picks()
@@ -1897,6 +1897,8 @@ if not _is_current_robot_public_snapshot(grading_snapshot):
         }
 prediction_results_data = load_prediction_results(grading_snapshot)
 scorecard_data = published_scorecard(grading_snapshot, v3_learning_picks, manager_investment_data)
+_startup_notice.empty()
+print('[DJ WEB R7.13.12] Published feeds ready', flush=True)
 
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
@@ -3869,9 +3871,11 @@ def _render_learning_status():
         labels = {'official':'공식픽','robot_proto':'자율로봇 · 프로토',
                   'robot_toto14':'자율로봇 · 승무패14','v2':'V2 알파고 · 승무패','v3':'V3 · 전 시장'}
         states = {'READY':'검증 모델 적용','BASELINE':'기초모형 유지','RETAINED':'기존 승인 모델 유지',
-                  'WAITING_DATA':'학습 표본 대기','TRAINING':'서버에서 학습 중','ERROR':'실패 · 기존 모델 유지'}
+                  'WAITING_DATA':'학습 표본 대기','TRAINING':'서버에서 학습 중',
+                  'PAUSED':'중간 저장 · 다음 차례에 계속','ERROR':'실패 · 기존 모델 유지'}
         st.dataframe(pd.DataFrame([{'분석가':label,'상태':states.get(entries.get(key,{}).get('status'),'첫 검토 대기'),
             '표본':entries.get(key,{}).get('training_samples',0),
+            '진행 단계':entries.get(key,{}).get('stage','—'),
             '최근 검토':entries.get(key,{}).get('last_review_at','—'),
             '최근 검증 적용':entries.get(key,{}).get('last_success_at','—'),
             '적용 모델':entries.get(key,{}).get('active_version','기존 모델 · 버전 확인 대기'),

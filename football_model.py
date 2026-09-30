@@ -1315,43 +1315,60 @@ def _robot_correlation(rows, key, target):
 
 
 def _fit_robot_linear(rows, names, interactions, target, ridge, half_life_days):
-    raw = [_robot_expand_features(row.get("features") or {}, names, interactions) for row in rows]
-    dimension = len(raw[0]) if raw else 0
-    means = [sum(vector[index] for vector in raw) / len(raw) for index in range(dimension)]
-    scales = []
-    for index in range(dimension):
-        variance = sum((vector[index] - means[index]) ** 2 for vector in raw) / len(raw)
-        scales.append(max(.05, math.sqrt(variance)))
-    design = [
-        [(vector[index] - means[index]) / scales[index] for index in range(dimension)]
-        for vector in raw
-    ]
+    # Sparse, centred matrix algebra preserves the same 160 gradient steps.
+    # The former Python loop revisited every absent feature for every sample
+    # and iteration; full API evidence can have thousands of sparse fields.
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    lookup = {name: i for i, name in enumerate(names)}
+    indices, values, indptr = [], [], [0]
+    for row in rows:
+        features = row.get("features") or {}
+        for name, value in features.items():
+            index = lookup.get(name)
+            value = _finite_number(value)
+            if index is not None and value:
+                indices.append(index)
+                values.append(value)
+        for offset, (left, right) in enumerate(interactions):
+            value = (_finite_number(features.get(left)) if left in lookup else 0.0) * (
+                _finite_number(features.get(right)) if right in lookup else 0.0)
+            if value:
+                indices.append(len(names) + offset)
+                values.append(value)
+        indptr.append(len(values))
+    dimension = len(names) + len(interactions)
+    design = csr_matrix((values, indices, indptr), shape=(len(rows), dimension), dtype=float)
+    means = np.asarray(design.mean(axis=0)).ravel()
+    # Stable variance, including the implicit zeroes without densifying them.
+    deviations = design.copy()
+    deviations.data = (deviations.data - means[deviations.indices]) ** 2
+    counts = np.bincount(design.indices, minlength=dimension)
+    variances = (np.asarray(deviations.sum(axis=0)).ravel() +
+                 (len(rows) - counts) * means ** 2) / len(rows)
+    scales = np.maximum(.05, np.sqrt(np.maximum(0.0, variances)))
+    design = design.multiply(1.0 / scales).tocsr()
+    centre = means / scales
     latest = max(_finite_number(row.get("kickoff")) for row in rows)
-    sample_weights = [
+    sample_weights = np.asarray([
         2 ** (-(latest - _finite_number(row.get("kickoff"))) / (half_life_days * 86400.0))
         for row in rows
-    ]
-    targets = [_finite_number(row.get(target)) for row in rows]
-    intercept = sum(y * weight for y, weight in zip(targets, sample_weights)) / max(1e-9, sum(sample_weights))
-    weights = [0.0] * dimension
-    # The collector can run on a small EC2 instance.  A bounded optimizer keeps
-    # retraining responsive while every completed sample remains in the audit DB.
+    ])
+    targets = np.asarray([_finite_number(row.get(target)) for row in rows])
+    weight_sum = max(1e-9, float(sample_weights.sum()))
+    intercept = float(targets @ sample_weights) / weight_sum
+    weights = np.zeros(dimension)
     for iteration in range(160):
-        grad_intercept = 0.0
-        gradients = [ridge * weight for weight in weights]
-        weight_sum = max(1e-9, sum(sample_weights))
-        for vector, y, sample_weight in zip(design, targets, sample_weights):
-            error = intercept + sum(w * x for w, x in zip(weights, vector)) - y
-            grad_intercept += sample_weight * error
-            for index, value in enumerate(vector):
-                gradients[index] += sample_weight * error * value
+        error = intercept + design @ weights - float(centre @ weights) - targets
+        weighted_error = sample_weights * error
+        grad_intercept = float(weighted_error.sum())
+        gradients = ridge * weights + design.T @ weighted_error - centre * grad_intercept
         rate = .08 / math.sqrt(1.0 + iteration / 35.0)
         intercept -= rate * grad_intercept / weight_sum
-        for index in range(dimension):
-            weights[index] -= rate * gradients[index] / weight_sum
+        weights -= rate * gradients / weight_sum
     return {
-        "intercept": intercept, "weights": weights,
-        "means": means, "scales": scales,
+        "intercept": intercept, "weights": weights.tolist(),
+        "means": means.tolist(), "scales": scales.tolist(),
     }
 
 
@@ -1819,7 +1836,7 @@ def _clean_robot_examples(examples):
     )
 
 
-def train_autonomous_robot(examples):
+def train_autonomous_robot(examples, checkpoint=None):
     """Evolve the robot's own arithmetic on clean, chronological samples.
 
     The robot compares a learned linear program with formulas it generates
@@ -1830,7 +1847,10 @@ def train_autonomous_robot(examples):
     already published predictions never change, so later real results remain
     the honest live scorecard.
     """
-    rows = _clean_robot_examples(examples)
+    if checkpoint is not None:
+        checkpoint.prepare(examples)
+    stage = checkpoint.run if checkpoint is not None else lambda name, compute: compute()
+    rows = stage('clean-input', lambda: _clean_robot_examples(examples))
     artifact = {
         "model_version": ROBOT_MODEL_VERSION,
         "feature_schema_version": ROBOT_FEATURE_SCHEMA_VERSION,
@@ -1936,15 +1956,17 @@ def train_autonomous_robot(examples):
             ]
         return parameters
 
-    def fit_symbolic_parameters(source_rows, strength):
-        _, _, _, half_life = model_layout(source_rows)
+    def fit_symbolic_parameters(source_rows, strength, label):
+        # Symbolic search needs only decay, not the linear feature ranking.
+        # Avoid rescanning all sparse evidence solely to discard that ranking.
+        half_life = max(30.0, min(420.0, 60.0 * math.sqrt(max(1, len(source_rows)))))
         fitted_rows = prepared_rows(source_rows)
-        home_formula = _search_robot_formula(
+        home_formula = stage(label + '-symbolic-home', lambda: _search_robot_formula(
             fitted_rows, "target_h", half_life
-        )
-        away_formula = _search_robot_formula(
+        ))
+        away_formula = stage(label + '-symbolic-away', lambda: _search_robot_formula(
             fitted_rows, "target_a", half_life
-        )
+        ))
         if not home_formula or not away_formula:
             return None
         for formula in (home_formula, away_formula):
@@ -1972,9 +1994,9 @@ def train_autonomous_robot(examples):
         }
 
     final_models = {
-        "linear_residual": fit_linear_parameters(rows, learning_strength),
+        "linear_residual": stage('full-linear', lambda: fit_linear_parameters(rows, learning_strength)),
     }
-    symbolic_final = fit_symbolic_parameters(rows, learning_strength)
+    symbolic_final = fit_symbolic_parameters(rows, learning_strength, 'full')
     if symbolic_final:
         final_models["symbolic_formula"] = symbolic_final
 
@@ -2001,28 +2023,28 @@ def train_autonomous_robot(examples):
                 "rho": -.15,
                 "learning_strength": 0.0,
             },
-            "linear_residual": fit_linear_parameters(
+            "linear_residual": stage('exam-linear', lambda: fit_linear_parameters(
                 goal_training_rows, validation_strength
-            ),
+            )),
         }
         symbolic_validation = fit_symbolic_parameters(
-            goal_training_rows, validation_strength
+            goal_training_rows, validation_strength, 'exam'
         )
         if symbolic_validation:
             validation_models["symbolic_formula"] = symbolic_validation
         family_validation = {
-            family: _robot_frozen_pick_metrics(
-                goal_validation_rows, parameters
-            )
+            family: stage('exam-score-' + family, lambda p=parameters: _robot_frozen_pick_metrics(
+                goal_validation_rows, p
+            ))
             for family, parameters in validation_models.items()
         }
         final_models["context_baseline"] = validation_models[
             "context_baseline"
         ]
 
-    baseline = _robot_loss(rows)
+    baseline = stage('baseline-loss', lambda: _robot_loss(rows))
     final_losses = {
-        family: _robot_loss(rows, parameters)
+        family: stage('fit-loss-' + family, lambda p=parameters: _robot_loss(rows, p))
         for family, parameters in final_models.items()
     }
     # Fit diagnostics use all completed rows, but they do not decide the model

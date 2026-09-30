@@ -27,12 +27,20 @@ def _load_brain(root):
     return None,'unavailable'
 
 
-v2_brain, v2_model_version = _load_brain(Path(__file__).resolve().parent)
+_BRAIN_UNLOADED = object()
+v2_brain, v2_model_version = _BRAIN_UNLOADED, 'not-loaded'
+
+
+def _ensure_brain():
+    global v2_brain, v2_model_version
+    if v2_brain is _BRAIN_UNLOADED:
+        v2_brain, v2_model_version = _load_brain(Path(__file__).resolve().parent)
 
 def get_v2_ai_pick(h_odds, d_odds, a_odds):
     """
     메인 로봇(V1)이 배당을 던져주면, V2 머신러닝이 'H(홈)', 'D(무)', 'A(원정)' 픽을 반환합니다.
     """
+    _ensure_brain()
     if v2_brain is None:
         return "V2_OFF" # 뇌가 없으면 기존 V1 로직만 가동
     
@@ -60,6 +68,7 @@ def get_v2_prediction(h_odds, d_odds, a_odds):
             return {'status':'unavailable','source_code':'NO_ODDS','reason':'V2용 1X2 배당 미수신'}
     except (TypeError, ValueError):
         return {'status':'unavailable','source_code':'NO_ODDS','reason':'V2용 1X2 배당 미수신'}
+    _ensure_brain()
     if v2_brain is None:
         return {'status':'unavailable','source_code':'V2_OFF','reason':'V2 모델 파일 연결 대기'}
     try:

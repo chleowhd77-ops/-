@@ -1,5 +1,6 @@
 """Offline, one-engine-at-a-time training. No sports API or UI work here."""
 import csv
+import faulthandler
 import fcntl
 import hashlib
 import json
@@ -15,6 +16,34 @@ from pathlib import Path
 from learning_state import (CAMPAIGN, ENGINES, active_artifact, atomic_json,
                             digest, now_iso, read_json, state)
 from scorecard_core import epoch, KST
+from learning_runtime import LearningPaused, StageCache
+
+_PROGRESS = None
+
+
+def progress(stage):
+    if _PROGRESS:
+        _PROGRESS(stage)
+
+
+def mark_interrupted(root, reason):
+    """Scheduler calls this only after stopping the child process tree."""
+    root = Path(root)
+    with (root/'.learning_worker.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        info = state(root)
+        changed = False
+        for engine, entry in (info.get('engines') or {}).items():
+            if entry.get('status') == 'TRAINING':
+                stage = entry.get('stage', '단계 기록 없음')
+                entry.update(status='ERROR', reason=f'{reason} · {stage} · 기존 모델 유지',
+                             last_failure_at=now_iso())
+                print(f'❌ 학습 중단 [{engine}] · {reason} · 마지막 단계: {stage}', flush=True)
+                changed = True
+        if changed:
+            info['updated_at'] = now_iso()
+            atomic_json(root/'learning_status.json', info)
+        return changed
 
 
 def result_signature(root):
@@ -89,8 +118,9 @@ def train_official(root, old):
 def train_robot(root, old, source):
     import collector as c
     engine = 'robot_toto14' if source=='TOTO14' else 'robot_proto'
+    checkpoint = StageCache(root, engine, notify=progress)
     c._AUTONOMOUS_ROBOT_CACHE.clear()
-    artifact = c._load_autonomous_robot_artifact(source,serving_only=False)
+    artifact = c._load_autonomous_robot_artifact(source,serving_only=False,checkpoint=checkpoint)
     if artifact.get('reason') == '학습표본 저장소 확인 대기':
         raise RuntimeError('자율로봇 학습 함수가 저장소 오류를 반환함')
     previous = active_artifact(root,engine)
@@ -333,6 +363,7 @@ def train_v3(root, old):
 
 
 def run_one(root, on_status=None):
+    global _PROGRESS
     root=Path(root)
     with (root/'.learning_worker.lock').open('a') as lock:
         fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -348,21 +379,38 @@ def run_one(root, on_status=None):
         if interrupted:
             atomic_json(root/'learning_status.json',info)
             if on_status: on_status()
-        pending=[e for e in ENGINES if (engines.get(e) or {}).get('reviewed_signature')!=signature
-                 or ((engines.get(e) or {}).get('status') == 'ERROR' and time.time()-epoch((engines.get(e) or {}).get('last_attempt_at')) > 1800)]
+        # An error's cooldown applies even when the result signature changed.
+        # Otherwise one broken learner is retried on every scheduler cycle.
+        pending=[e for e in ENGINES
+                 if ((engines.get(e) or {}).get('status') != 'ERROR'
+                     or time.time()-epoch((engines.get(e) or {}).get('last_attempt_at')) > 1800)
+                 and ((engines.get(e) or {}).get('reviewed_signature') != signature
+                      or (engines.get(e) or {}).get('status') in ('ERROR','PAUSED'))]
         if not pending:return info
         engine=min(pending,key=lambda e:(engines.get(e) or {}).get('last_attempt_at',''))
         old=dict(engines.get(engine) or {})
         started=now_iso()
-        engines[engine]={**old,'status':'TRAINING','last_attempt_at':started}
+        engines[engine]={**old,'status':'TRAINING','last_attempt_at':started,'stage':'자료 읽기',
+                         'reason':'저장된 경기 자료로 학습 중'}
         info['updated_at']=started
         atomic_json(root/'learning_status.json',info)
         if on_status: on_status()
         print(f'📚 학습 시작 [{engine}] · 새 결과 묶음 {signature}',flush=True)
+        monotonic_start = time.monotonic()
+        def notify(stage):
+            engines[engine].update(stage=stage, stage_updated_at=now_iso(),
+                elapsed_seconds=round(time.monotonic()-monotonic_start,1))
+            info['updated_at']=now_iso()
+            atomic_json(root/'learning_status.json',info)
+            print(f'📚 학습 단계 [{engine}] {stage} · {engines[engine]["elapsed_seconds"]}초',flush=True)
+        _PROGRESS = notify
         functions={'official':train_official,'v2':train_v2,'v3':train_v3,
                    'robot_proto':lambda r,o:train_robot(r,o,'PROTO'),
                    'robot_toto14':lambda r,o:train_robot(r,o,'TOTO14')}
         try:
+            # Stack traces show the actual slow call if an unexpected DB/model
+            # operation stalls, before the scheduler's 600-second hard limit.
+            faulthandler.dump_traceback_later(120, repeat=True)
             from threadpoolctl import threadpool_limits
             with threadpool_limits(limits=1):
                 result=functions[engine](root,old)
@@ -370,13 +418,21 @@ def run_one(root, on_status=None):
                              'reviewed_signature':signature,'campaign_reviewed':CAMPAIGN}
             if result.get('status') == 'READY':
                 engines[engine]['last_success_at']=now_iso()
+        except LearningPaused as paused:
+            engines[engine].update(status='PAUSED',stage=str(paused),
+                reason='학습 중간 결과 저장 완료·다음 차례에 이어서 진행·기존 모델 유지')
+            print(f'⏸️ 학습 중간 저장 [{engine}] · {paused} · 수집 작업에 차례 반환',flush=True)
         except Exception as error:
             engines[engine]={**old,'status':'ERROR','reason':f'{type(error).__name__}: {error}',
                              'last_attempt_at':started,'last_failure_at':now_iso(),
                              'reviewed_signature':signature}
             print(f'⚠️ 학습 실패 [{engine}] · 기존 모델 유지 · {type(error).__name__}: {error}',flush=True)
+        finally:
+            faulthandler.cancel_dump_traceback_later()
+            _PROGRESS = None
         info['refresh_ready']=all((engines.get(e) or {}).get('campaign_reviewed')==CAMPAIGN for e in ENGINES)
         info['updated_at']=now_iso()
         atomic_json(root/'learning_status.json',info)
-        print(f"📚 학습 완료 [{engine}] · {engines[engine]['status']} · {engines[engine].get('reason','')} · 경기전 1회 갱신 준비={info['refresh_ready']}",flush=True)
+        label = '학습 일시 저장' if engines[engine]['status']=='PAUSED' else '학습 검토 종료'
+        print(f"📚 {label} [{engine}] · {engines[engine]['status']} · {engines[engine].get('reason','')} · 경기전 1회 갱신 준비={info['refresh_ready']}",flush=True)
         return info

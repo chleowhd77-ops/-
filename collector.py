@@ -20,6 +20,7 @@ from html import unescape as html_unescape
 from pathlib import Path
 from scorecard_core import build_scorecard, freeze_products
 import learning_state as learning
+from runtime_publisher import DATA_BRANCH, ensure_data_branch
 from urllib.parse import urljoin
 
 import requests
@@ -911,7 +912,7 @@ def _validate_sqlite_integrity_offline(path):
 
 def download_latest_db_from_github():
     print(f"\n[🔄 {time.strftime('%Y-%m-%d %H:%M:%S')}] 기존 DB를 확인합니다 (정상 로컬 기록 우선)...")
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db?t={int(time.time())}"
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{DATA_BRANCH}/ai_predictions.db?t={int(time.time())}"
     final_path = _local_path("ai_predictions.db")
     # EC2 is authoritative; failed uploads leave GitHub behind.
     if _validate_sqlite_file(final_path):
@@ -921,6 +922,8 @@ def download_latest_db_from_github():
     backup_path = final_path.with_name(f"{final_path.name}.last_good")
     try:
         res = requests.get(url, timeout=30)
+        if res.status_code == 404:
+            res = requests.get(f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/ai_predictions.db", timeout=30)
         if res.status_code != 200:
             print(f"⚠️ GitHub DB 다운로드 실패: HTTP {res.status_code} (로컬 정상본 보존)")
             return False
@@ -990,6 +993,9 @@ def upload_to_github(file_path, remote_path=None):
             "Authorization": f"token {GITHUB_TOKEN}",
             "Accept": "application/vnd.github.v3+json",
         }
+        # Never fall back to main for writes: that would restart the web on
+        # every collector publication and recreate the deployment loop.
+        ensure_data_branch(GITHUB_REPO, git_headers)
         with open(local_path, "rb") as file:
             content = file.read()
         b64_content = base64.b64encode(content).decode("utf-8")
@@ -998,12 +1004,19 @@ def upload_to_github(file_path, remote_path=None):
         for attempt in range(max_attempts):
             try:
                 sha = None
-                r_get = requests.get(url, headers=git_headers, timeout=15)
+                r_get = requests.get(url, headers=git_headers, params={'ref': DATA_BRANCH}, timeout=15)
                 if r_get.status_code == 200:
                     sha = r_get.json().get("sha")
+                    blob_sha = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\x00' + content).hexdigest()
+                    if sha == blob_sha:
+                        return True
                 elif r_get.status_code not in (404,):
                     print(f"⚠️ GitHub 현재 버전 조회 실패({remote_path}): HTTP {r_get.status_code}")
-                data = {"message": f"Auto update {remote_path}", "content": b64_content}
+                    if attempt + 1 < max_attempts:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return False
+                data = {"message": f"Auto update {remote_path}", "content": b64_content, "branch": DATA_BRANCH}
                 if sha:
                     data["sha"] = sha
                 r_put = requests.put(url, headers=git_headers, json=data, timeout=45)
@@ -1018,7 +1031,7 @@ def upload_to_github(file_path, remote_path=None):
                 time.sleep(2 ** attempt)
                 continue
             if r_put.status_code in (200, 201):
-                print(f"✅ GitHub 동기화 완료: {remote_path}")
+                print(f"✅ GitHub 동기화 완료 [{DATA_BRANCH}]: {remote_path}")
                 return True
             detail = _github_upload_error_detail(r_put)
             if not _github_upload_is_retryable(r_put, detail) or attempt + 1 >= max_attempts:
@@ -6773,7 +6786,7 @@ def _select_autonomous_robot_artifact(
     return selected_artifact
 
 
-def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
+def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoint=None):
     track = _robot_learning_track(source)
 
     if serving_only:
@@ -6846,6 +6859,8 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
 
     conn = None
     try:
+        if checkpoint is not None:
+            checkpoint.note('로봇 학습 DB·표본 조회')
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
@@ -6957,7 +6972,9 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
                 "away_goals": int(goals_a),
                 "candidates": candidates if isinstance(candidates, list) else [],
             })
-        artifact = train_autonomous_robot(examples)
+        if checkpoint is not None:
+            checkpoint.note(f'로봇 입력 {len(examples)}경기 조회 완료')
+        artifact = train_autonomous_robot(examples, checkpoint=checkpoint)
         artifact["learning_track"] = track
         artifact["learning_revision_marker"] = signature
         artifact["grading_experience"] = _load_robot_self_grading_experience(
@@ -18227,6 +18244,7 @@ def _terminate_process_tree(process):
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
+            process.wait(timeout=3)
         except Exception:
             pass
 
@@ -18240,6 +18258,13 @@ def _reap_job_processes():
         if return_code is None and elapsed > info["timeout"]:
             print(f"❌ {job_name} 작업 제한시간 초과({int(elapsed)}초) - 프로세스 트리 종료")
             _terminate_process_tree(process)
+            if job_name == 'learning':
+                try:
+                    from learning_worker import mark_interrupted
+                    if mark_interrupted(APP_DIR, f'제한시간 {int(elapsed)}초 초과'):
+                        upload_to_github('learning_status.json')
+                except Exception as error:
+                    print(f'⚠️ 학습 중단 상태 저장 실패: {type(error).__name__}', flush=True)
             _update_collector_status(
                 job_name,
                 "failed",
