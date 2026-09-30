@@ -19,6 +19,7 @@ from datetime import datetime, timezone, timedelta
 from html import unescape as html_unescape
 from pathlib import Path
 from scorecard_core import build_scorecard, freeze_products
+import learning_state as learning
 from urllib.parse import urljoin
 
 import requests
@@ -61,7 +62,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.13.10-analyst-products"
+COLLECTOR_PATCH_VERSION = "R7.13.11-learning-loop"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
 # WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 재개하는 별도 배포에서만
 # 이 값을 바꾼다.  기존 서버 환경변수에 1이 남아 있어도 현재는 절대 재가동하지 않는다.
@@ -1294,6 +1295,10 @@ def _choose_toto14_picks(probs_dict, current_combinations, max_combinations=None
 
 def _toto14_from_canonical_proto(match, proto_items, probability_policy=None):
     """Reuse current same-fixture WDL; never rewrite a previously frozen ticket."""
+    # Once independent TOTO learning exists, common evidence is reused through
+    # the cache, while the TOTO model must calculate its own W/D/L answer.
+    if learning.active_artifact(APP_DIR, 'robot_toto14'):
+        return None
     when = _parse_kst_match_time(match.get("match_time"))
     if when is None or when <= datetime.now(KST):
         return None
@@ -1550,12 +1555,25 @@ def _freeze_toto14_prediction(match_id, home_team, away_team, match_time, payloa
                 existing_payload = {}
         existing_version = str(existing_payload.get("analysis_version") or "")
         kickoff = _parse_kst_match_time((existing[2] if existing else None) or match_time)
+        # Canonical match status and both stored/new kickoff times win over
+        # a stale dashboard time. Do this after opening the DB, before writes.
+        times = [t for t in (kickoff, _parse_kst_match_time(match_time)) if t]
+        canonical = None
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predictions'").fetchone():
+            canonical = conn.execute('SELECT actual_result,match_time FROM predictions WHERE match_id=?',(str(match_id),)).fetchone()
+            if canonical and _parse_kst_match_time(canonical[1]):
+                times.append(_parse_kst_match_time(canonical[1]))
+        if not times or any(datetime.now(KST)>=t for t in times) or (canonical and canonical[0]!='PENDING'):
+            return existing_payload or None
         def current_pick_signature(value):
             value = value if isinstance(value, dict) else {}
             official = value.get("official_comparison_pick") or {}
             robot = value.get("robot_pick") or {}
             return json.dumps({
                 "analysis_version": str(value.get("analysis_version") or ""),
+                "learning_models": value.get("learning_models"),
+                "learning_campaign": value.get("learning_campaign"),
+                "alphago_pick": value.get("alphago_pick"),
                 "picks": _normalize_toto14_picks(value.get("picks") or []),
                 "best_pick_display": str(value.get("best_pick_display") or ""),
                 "probabilities": [
@@ -2441,10 +2459,14 @@ def _lightweight_market_performance(league_name=None):
     return summary
 
 
-def load_market_performance(league_name=None, serving_only=False):
+def load_market_performance(league_name=None, serving_only=False, force_refresh=False):
     """Read honest market records, with a persistent fast cache for serving."""
+    if serving_only:
+        learned = learning.active_artifact(APP_DIR, "official")
+        if learned:
+            return learned
     cache_key = _market_performance_cache_key(league_name)
-    cached_summary = get_db_cache(cache_key, MASTER_MARKET_POLICY_CACHE_HOURS)
+    cached_summary = None if force_refresh else get_db_cache(cache_key, MASTER_MARKET_POLICY_CACHE_HOURS)
     if isinstance(cached_summary, dict):
         return cached_summary
     if serving_only:
@@ -3257,6 +3279,9 @@ def _verified_toto14_probability_policy(conn):
 
 def load_toto14_probability_policy():
     """Read the local frozen scorecard once; never calls a sports API."""
+    learned = learning.active_artifact(APP_DIR, 'official').get('_toto14')
+    if isinstance(learned, dict):
+        return learned
     conn = None
     try:
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=10)
@@ -4809,7 +4834,7 @@ def save_three_engine_picks(
         str((robot_pick or {}).get("robot_learning_revision") or "no-revision"),
     ))
     engines = [
-        ("official", ANALYSIS_VERSION, official_pick),
+        ("official", ANALYSIS_VERSION + ":" + learning.versions(APP_DIR, source)["official"], official_pick),
         ("robot", robot_version, robot_pick),
     ]
     v2_pick = _alphago_pick_payload(robot_pick)
@@ -4819,7 +4844,7 @@ def save_three_engine_picks(
     }.get(v2_code, "")
     if v2_raw:
         v2_pick.update({"raw_pick": v2_raw, "prob": 0.0})
-        engines.append(("v2", ALPHAGO_PICK_DISPLAY_VERSION, v2_pick))
+        engines.append(("v2", ALPHAGO_PICK_DISPLAY_VERSION + ":" + learning.versions(APP_DIR, source)["v2"], v2_pick))
     if any(not str((pick or {}).get("raw_pick") or "").strip() for _, _, pick in engines[:2]):
         return False
     comparison_key = f"{str(source or 'UNKNOWN').upper()}:{str(match_id)}"
@@ -4830,6 +4855,8 @@ def save_three_engine_picks(
         _ensure_three_engine_tables(conn)
         for engine_key, engine_version, pick in engines:
             compact = _three_engine_compact_pick(pick)
+            compact.update(learning.stamp(APP_DIR, source))
+            compact["model_version"] = learning.versions(APP_DIR, source).get(engine_key, engine_version)
             probability = float(
                 pick.get("probability")
                 if pick.get("probability") is not None
@@ -5418,6 +5445,7 @@ def save_prediction_analysis(
         categories_json = json.dumps(
             compact_categories, ensure_ascii=False, sort_keys=True
         )
+        decision.update(learning.stamp(APP_DIR, "TOTO14" if str(match_id).startswith("TOTO14_") else "PROTO"))
         decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
         fingerprint_payload = "|".join((
             target_analysis_version, str(analysis_stage), str(odds_source or ""),
@@ -5521,7 +5549,7 @@ def _first_three_engine_pick(conn, match_id, home_team, away_team, engine_key, k
         if not _snapshot_existed_before_kickoff(row[8], kickoff):
             continue
         engine_version = str(row[1] or "")
-        if engine_key == "official" and engine_version != ANALYSIS_VERSION:
+        if engine_key == "official" and not engine_version.startswith(ANALYSIS_VERSION):
             continue
         if engine_key == "robot" and not engine_version.startswith(ROBOT_PICK_VERSION):
             continue
@@ -6749,6 +6777,10 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
     track = _robot_learning_track(source)
 
     if serving_only:
+        saved = learning.active_artifact(APP_DIR, 'robot_toto14' if track == 'toto14' else 'robot_proto')
+        if saved:
+            return saved
+    if serving_only:
         cached = _AUTONOMOUS_ROBOT_CACHE.get(track) or {}
         cached_artifact = cached.get("artifact") if isinstance(cached, dict) else None
         if isinstance(cached_artifact, dict) and cached_artifact:
@@ -6768,7 +6800,7 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
                 latest_row = serving_conn.execute(
                     """
                     SELECT sample_signature,artifact_json FROM robot_model_promotions
-                    WHERE robot_pick_version=? AND model_version=?
+                    WHERE robot_pick_version=? AND model_version=? AND active=1
                       AND sample_signature LIKE ?
                     ORDER BY id DESC LIMIT 1
                     """,
@@ -6830,7 +6862,7 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False):
             track_params,
         ).fetchone()
         signature = (
-            f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:"
+            f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:R71311:"
             f"{int(signature_row[0] or 0)}:"
             f"{float(signature_row[1] or 0):.3f}"
         )
@@ -7070,6 +7102,14 @@ def save_autonomous_robot_sample(
         conn = sqlite3.connect(str(_local_path("ai_predictions.db")), timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
         _ensure_autonomous_robot_tables(conn)
+        now = datetime.now(timezone.utc)
+        if now >= kickoff_utc:
+            return False
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predictions'").fetchone():
+            canonical = conn.execute('SELECT actual_result,match_time FROM predictions WHERE match_id=?',(str(match_id),)).fetchone()
+            canonical_time = _parse_kst_match_time(canonical[1]) if canonical else None
+            if canonical and (canonical[0]!='PENDING' or not canonical_time or now>=canonical_time):
+                return False
         observation_fingerprint = hashlib.sha256(
             (feature_json + "\x1f" + evidence_json).encode("utf-8")
         ).hexdigest()
@@ -11125,6 +11165,8 @@ def _needs_current_analysis_refresh(item, kickoff, now, target_version):
         now = now.replace(tzinfo=KST)
     if now >= kickoff:
         return False
+    if learning.needs_refresh(APP_DIR, item, kickoff, now):
+        return True
     analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
     stored_version = str(
         item.get("analysis_version")
@@ -11185,8 +11227,10 @@ def _needs_current_robot_refresh(item, kickoff, now, source="PROTO"):
     stored_model_version = str(robot.get("robot_model_version") or "")
     if stored_model_version != ROBOT_MODEL_VERSION:
         return True
-    current_revision = _robot_learning_revision_marker(source)
-    stored_revision = str(robot.get("robot_learning_revision") or "")
+    deployed = learning.active_artifact(APP_DIR, 'robot_toto14' if source == 'TOTO14' else 'robot_proto')
+    current_revision = str(deployed.get('learning_revision_marker') or '')
+    stored_revision = str(robot.get('robot_learning_revision') or '')
+    # A newly graded row is not a deployed model. Only a reviewed artifact changes this marker.
     return bool(current_revision and stored_revision != current_revision)
 
 
@@ -13107,6 +13151,7 @@ def build_dashboard_data():
                 dashboard_proto.append(frozen_item)
             continue
         dashboard_proto.append({
+            **learning.stamp(APP_DIR, "PROTO"),
             "match": m, "final_match_time": final_match_time, "timestamp": m_dt.timestamp(), "league": league_n,
             "goal_model_audit": goal_model_audit,
             "wdl_forecast": {"probabilities": list(probabilities[:3]),
@@ -13422,6 +13467,7 @@ def build_dashboard_data():
             m, dashboard_proto, toto14_probability_policy
         )
         if canonical_toto is not None:
+            canonical_toto.update(learning.stamp(APP_DIR, "TOTO14"))
             canonical_toto["_policy_migration"] = policy_migration
             dashboard_toto14.append(canonical_toto)
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
@@ -13921,6 +13967,7 @@ def build_dashboard_data():
                     league_name=m.get("league") or "",
                 )
             toto_item = {
+                **learning.stamp(APP_DIR, "TOTO14"),
                 "_pending_toto_save": True, "api_fixture_id": api_fixture_id,
                 "_policy_migration": policy_migration,
                 "home_team_id": int(home_info.get("id") or 0),
@@ -13959,6 +14006,8 @@ def build_dashboard_data():
                 toto_item.get("best_pick_display"), home_team, away_team
             )
         )
+        if toto_item.get("_pending_toto_save"):
+            toto_item.update(learning.stamp(APP_DIR, "TOTO14"))
         toto_item["picks"] = final_picks
         toto_item["picks_html"] = _render_toto14_picks_html(final_picks)
         if len(final_picks) == 2:
@@ -17708,6 +17757,12 @@ def run_team_identity_job():
     return True
 
 
+def run_learning_job():
+    from learning_worker import run_one
+    run_one(APP_DIR, on_status=lambda: upload_to_github('learning_status.json'))
+    return upload_to_github('learning_status.json')
+
+
 def run_products_job():
     from official_meta_v3_autopilot import refresh_autopilot
     payload = refresh_autopilot(_local_path("ai_predictions.db"),
@@ -17919,12 +17974,14 @@ JOB_FUNCTIONS = {
     "live": run_live_score_job,
     "score": run_score_job,
     "products": run_products_job,
+    "learning": run_learning_job,
     "world": run_world_job,
     "team": run_team_identity_job,
     "backup": run_db_backup_job,
 }
 JOB_TIMEOUTS = {
     "products": 600,
+    "learning": 600,
     "master": max(600, min(1200, int(os.getenv("MASTER_JOB_TIMEOUT_SECONDS", "900")))),
     "recovery": max(60, int(os.getenv("RECOVERY_JOB_TIMEOUT_SECONDS", "180"))),
     "live": max(90, int(os.getenv("LIVE_JOB_TIMEOUT_SECONDS", "180"))),
@@ -17998,8 +18055,9 @@ MIN_AVAILABLE_MEMORY_MB = max(
 # These jobs either scan, update, checkpoint, or snapshot ai_predictions.db.
 # On the 1 GiB production host only one may run at a time.  The team identity
 # job uses the small runtime DB and may occupy the second worker slot.
-MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup", "products"})
+MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup", "products", "learning"})
 JOB_PRIORITY = {
+    "learning": 3,
     "products": 1,
     "live": 0,
     "score": 4,
@@ -18094,7 +18152,7 @@ def _pending_sort_key(job_name, now):
     # brief wait instead of making it lose to every new five-minute LIVE/score
     # request. WORLD gets a slower fairness boost; the generic starvation guard
     # remains the final fallback for every job.
-    if job_name == "master" and waited >= MASTER_PRIORITY_AGE_SECONDS:
+    if job_name in {"master", "learning"} and waited >= MASTER_PRIORITY_AGE_SECONDS:
         return (0, requested_at, 0)
     if job_name == "world" and waited >= WORLD_PRIORITY_AGE_SECONDS:
         return (0, requested_at, 0)
@@ -18243,6 +18301,7 @@ def run_scheduler():
     _launch_isolated_job("live")
     _launch_isolated_job("master")
     _launch_isolated_job("products")
+    _launch_isolated_job("learning")
     _launch_isolated_job("score")
     if WORLD_FEATURE_ENABLED:
         _launch_isolated_job("world")
@@ -18253,6 +18312,7 @@ def run_scheduler():
     # one worker at a time while a five-minute tick starts the next pass soon.
     schedule.every(5).minutes.do(_launch_isolated_job, "master")
     schedule.every(5).minutes.do(_launch_isolated_job, "products")
+    schedule.every(2).minutes.do(_launch_isolated_job, "learning")
     if WORLD_FEATURE_ENABLED:
         schedule.every(WORLD_ANALYSIS_INTERVAL_MINUTES).minutes.do(
             _launch_isolated_job, "world"
@@ -18263,7 +18323,7 @@ def run_scheduler():
     )
 
     print(
-        "\n🚀 [감시 스케줄러] master/live/score/world/team/backup 분리 · 중복 방지 · "
+        "\n🚀 [감시 스케줄러] master/live/score/products/learning/team/backup 분리 · 중복 방지 · "
         f"WORLD {'활성' if WORLD_FEATURE_ENABLED else '정지'} · "
         f"DB 백업 {DB_BACKUP_INTERVAL_MINUTES}분"
     )
@@ -18306,7 +18366,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="D.J SPORTS collector")
     parser.add_argument(
         "--mode",
-        choices=("scheduler", "master", "recovery", "live", "score", "world", "team", "backup", "products"),
+        choices=("scheduler", "master", "recovery", "live", "score", "world", "team", "backup", "products", "learning"),
         default="scheduler",
         help="scheduler supervises isolated workers; other modes run one job once",
     )

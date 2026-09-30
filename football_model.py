@@ -1802,7 +1802,7 @@ def _clean_robot_examples(examples):
         ):
             continue
         row = {
-            "fixture_key": fixture_key, "kickoff": kickoff,
+            "fixture_key": fixture_key, "kickoff": kickoff, "known_at": known_at,
             "features": features, "home_goals": int(home_goals),
             "away_goals": int(away_goals),
             "candidates": (
@@ -1986,8 +1986,12 @@ def train_autonomous_robot(examples):
             ROBOT_GOAL_MAX_VALIDATION,
             max(ROBOT_GOAL_MIN_VALIDATION, len(candidate_rows) // 5),
         )
-        goal_training_rows = candidate_rows[:-validation_size]
         goal_validation_rows = candidate_rows[-validation_size:]
+        boundary = goal_validation_rows[0]['kickoff']
+        goal_training_rows = [r for r in candidate_rows[:-validation_size] if r['known_at'] < boundary]
+        if len(goal_training_rows) < MIN_TRAIN:
+            artifact.update(reason='결과 확정 시각 분리 후 학습 표본 대기')
+            return artifact
         validation_strength = len(goal_training_rows) / (
             len(goal_training_rows) + 8.0
         )
@@ -2166,6 +2170,7 @@ def train_autonomous_robot(examples):
             for side in ("home", "away")
         },
         "model_family_validation": family_validation,
+        "goal_validation_fixture_keys": [r["fixture_key"] for r in goal_validation_rows],
         "model_family_completed_history_fit": family_fit_diagnostics,
         "online_learning_strength": round(learning_strength, 6),
         "accuracy_goal": ROBOT_TARGET_ACCURACY,

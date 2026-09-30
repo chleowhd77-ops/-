@@ -154,14 +154,16 @@ class CandidateExample:
     baseline_selected: bool
     baseline_fallback: bool
     features: dict[str, float]
+    kickoff_timestamp: float = 0.0
+    result_known_timestamp: float = 0.0
 
 
 def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExample], dict[str, Any]]:
     """Read a single, latest pre-kickoff snapshot per completed match.
 
     The database is opened immutable/read-only.  Only grades that have an
-    explicit completed score are accepted.  No ``regular`` or after-kickoff
-    analysis is silently mixed into the exam.
+    explicit completed score are accepted. Regular snapshots are eligible only
+    when their saved timestamp is strictly before the verified kickoff.
     """
     path = Path(database_path)
     if not path.exists():
@@ -170,7 +172,7 @@ def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExamp
     connection.row_factory = sqlite3.Row
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        required = {"prediction_candidate_results", "prediction_analysis_snapshots"}
+        required = {"predictions", "prediction_candidate_results", "prediction_analysis_snapshots"}
         missing = sorted(required - tables)
         if missing:
             raise DataReadinessError(f"required tables missing: {', '.join(missing)}")
@@ -183,21 +185,41 @@ def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExamp
                 result.fair_probability, result.odd, result.is_correct,
                 result.actual_score, result.graded_at,
                 snapshot.stage AS snapshot_stage, snapshot.created_at,
-                snapshot.candidates_json, snapshot.decision_json
+                snapshot.candidates_json, snapshot.decision_json,
+                prediction.match_time, prediction.api_fixture_id, prediction.actual_result
             FROM prediction_candidate_results AS result
             JOIN prediction_analysis_snapshots AS snapshot
               ON snapshot.id = result.analysis_snapshot_id
+            JOIN predictions AS prediction ON prediction.match_id=result.match_id
             WHERE result.is_correct IN (0, 1)
               AND COALESCE(result.actual_score, '') NOT IN ('', '-:-', 'PENDING', 'UNKNOWN')
-              AND snapshot.stage LIKE 'T-%'
+              AND prediction.actual_result='FINISHED'
+              AND (snapshot.stage LIKE 'T-%' OR snapshot.stage='regular')
             ORDER BY snapshot.created_at ASC, result.analysis_snapshot_id ASC, result.id ASC
             """
         ).fetchall()
     finally:
         connection.close()
 
-    snapshots: dict[tuple[str, int], list[sqlite3.Row]] = defaultdict(list)
+    from scorecard_core import epoch, KST
+    rejected_time = 0
+    verified = []
     for row in rows:
+        ko = epoch(row['match_time'], KST)
+        if not 0 < epoch(row['created_at']) < ko < epoch(row['graded_at']) <= datetime.now(timezone.utc).timestamp():
+            rejected_time += 1
+            continue
+        verified.append(row)
+    # Deduplicate PROTO/WORLD mirrors of one API fixture, preferring customer PROTO.
+    canonical = {}
+    for row in verified:
+        key = str(row['api_fixture_id'] or row['match_id'])
+        mid = str(row['match_id'])
+        if key not in canonical or (canonical[key].startswith('WORLD_') and not mid.startswith('WORLD_')):
+            canonical[key] = mid
+    verified = [r for r in verified if str(r['match_id']) == canonical[str(r['api_fixture_id'] or r['match_id'])]]
+    snapshots: dict[tuple[str, int], list[sqlite3.Row]] = defaultdict(list)
+    for row in verified:
         snapshots[(str(row["match_id"]), int(row["analysis_snapshot_id"]))].append(row)
 
     # A match can be analysed at T-90 and again at T-30.  Use the latest frozen
@@ -248,11 +270,15 @@ def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExamp
                     baseline_selected=candidate_key == (baseline_key or fallback_key),
                     baseline_fallback=baseline_key is None,
                     features=_feature_dict(candidate),
+                    kickoff_timestamp=epoch(row["match_time"], KST),
+                    result_known_timestamp=epoch(row["graded_at"]),
                 )
             )
 
     metadata = {
         "source_database": str(path),
+        "excluded_unverified_time_rows": rejected_time,
+        "excluded_fixture_mirror_rows": len(rows)-rejected_time-len(verified),
         "completed_candidate_rows": len(rows),
         "usable_matches": len(best_snapshot_by_match),
         "usable_candidates": len(examples),
@@ -305,7 +331,7 @@ def _group_examples(examples: Iterable[CandidateExample]) -> list[list[Candidate
     grouped: dict[str, list[CandidateExample]] = defaultdict(list)
     for example in examples:
         grouped[example.match_id].append(example)
-    return [grouped[match_id] for match_id in sorted(grouped, key=lambda key: (grouped[key][0].created_at, key))]
+    return [grouped[match_id] for match_id in sorted(grouped, key=lambda key: (grouped[key][0].kickoff_timestamp or grouped[key][0].created_at, key))]
 
 
 def chronological_split(
@@ -320,6 +346,12 @@ def chronological_split(
     tune_end = max(train_end + 1, int(len(groups) * (train_ratio + tune_ratio)))
     tune_end = min(tune_end, len(groups) - 1)
     train, tune, final = groups[:train_end], groups[train_end:tune_end], groups[tune_end:]
+    if tune and tune[0][0].kickoff_timestamp:
+        boundary = tune[0][0].kickoff_timestamp
+        train = [g for g in train if max(r.result_known_timestamp for r in g) < boundary]
+    if final and final[0][0].kickoff_timestamp:
+        boundary = final[0][0].kickoff_timestamp
+        tune = [g for g in tune if max(r.result_known_timestamp for r in g) < boundary]
     if not train or not tune or not final:
         raise DataReadinessError("chronological split produced an empty segment")
     return train, tune, final

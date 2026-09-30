@@ -3857,6 +3857,38 @@ def _render_manager_investment_portfolio(payload):
 
 
 @st.fragment
+def _render_learning_status():
+    if st.session_state.get('role') != ROLE_ADMIN:
+        return
+    with st.expander('분석가 학습 현황 · 적용 모델과 시험 결과', expanded=False):
+        status = _load_published_json('learning_status.json')
+        entries = status.get('engines') or {} if isinstance(status,dict) else {}
+        if not entries:
+            st.caption('서버 학습 작업의 첫 상태 게시를 기다리고 있습니다.')
+            return
+        labels = {'official':'공식픽','robot_proto':'자율로봇 · 프로토',
+                  'robot_toto14':'자율로봇 · 승무패14','v2':'V2 알파고 · 승무패','v3':'V3 · 전 시장'}
+        states = {'READY':'검증 모델 적용','BASELINE':'기초모형 유지','RETAINED':'기존 승인 모델 유지',
+                  'WAITING_DATA':'학습 표본 대기','TRAINING':'서버에서 학습 중','ERROR':'실패 · 기존 모델 유지'}
+        st.dataframe(pd.DataFrame([{'분석가':label,'상태':states.get(entries.get(key,{}).get('status'),'첫 검토 대기'),
+            '표본':entries.get(key,{}).get('training_samples',0),
+            '최근 검토':entries.get(key,{}).get('last_review_at','—'),
+            '최근 검증 적용':entries.get(key,{}).get('last_success_at','—'),
+            '적용 모델':entries.get(key,{}).get('active_version','기존 모델 · 버전 확인 대기'),
+            '설명':entries.get(key,{}).get('reason','')}
+            for key,label in labels.items()]),use_container_width=True,hide_index=True)
+        for source,label in [('proto','프로토'),('toto14','승무패14')]:
+            future=[c for c in dashboard_data.get(source,[]) if float(c.get('timestamp') or 0)>datetime.now().timestamp()]
+            done=sum(c.get('learning_campaign')==status.get('campaign') for c in future)
+            st.caption(f'{label} · 현재 화면의 경기 전 재분석 {done}/{len(future)}경기')
+        st.caption('실패·표본 부족이면 기존 모델로 분석합니다. 시험 성적과 실제 고객 픽의 누적 채점은 별개입니다. 화면 버튼은 학습을 실행하지 않습니다.')
+        for key,label in labels.items():
+            item=entries.get(key) or {}
+            st.markdown('**'+label+' 시험 상세**')
+            st.json({k:item[k] for k in ('exam','toto14_exam','exam_method','source_counts','source_notice','excluded') if k in item},expanded=False)
+
+
+@st.fragment
 def _render_admin_analysts():
     if st.session_state.get('role') != ROLE_ADMIN:
         return
@@ -3873,6 +3905,7 @@ if main_tab_admin is not None:
             unsafe_allow_html=True,
         )
         _render_admin_analysts()
+        _render_learning_status()
         review_rows = list(
             (dashboard_data.get("source_meta") or {}).get("team_identity_review") or []
         )

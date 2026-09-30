@@ -7,12 +7,13 @@ import math
 import re
 from copy import deepcopy
 from collections import Counter
+from learning_state import CAMPAIGN, digest, revision_allowed, before_kickoff
 from datetime import datetime, timezone, timedelta
 
 ENGINES = ('official', 'robot', 'v2', 'v3')
 TRACKS = ('manager', 'top3', 'proto_world', 'toto14')
 KST = timezone(timedelta(hours=9))
-VERSION = 'R7.13.10'
+VERSION = 'R7.13.11'
 
 
 def obj(value):
@@ -306,11 +307,15 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
     Receipt insertion is idempotent; subsequent cycles serve the same answer.
     V2/V3 manager rows remain clearly labelled comparison answers, not value picks.
     """
+    simulated_now = now
     now = now or datetime.now(timezone.utc)
     conn.execute('''CREATE TABLE IF NOT EXISTS product_pick_receipts (
         track TEXT NOT NULL, match_id TEXT NOT NULL, engine TEXT NOT NULL,
         captured_at TEXT NOT NULL, payload_json TEXT NOT NULL,
         PRIMARY KEY(track,match_id,engine))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS product_pick_revision_history (
+        fingerprint TEXT PRIMARY KEY, track TEXT,match_id TEXT,engine TEXT,
+        captured_at TEXT,payload_json TEXT,archived_at TEXT,reason TEXT)''')
     proto = []
     for card in dashboard.get('proto', []):
         match = card.get('match') or {}
@@ -333,6 +338,45 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
                    'away_team': match.get('away'), 'api_fixture_id': card.get('api_fixture_id', 0),
                    'kickoff_at': match.get('match_time') or datetime.fromtimestamp(epoch(card.get('timestamp')), timezone.utc).isoformat(),
                    'kind': kind}
+        payload.update(learning_campaign=card.get('learning_campaign',''),
+                       model_version=pick.get('model_version') or (card.get('learning_models') or {}).get(engine,'legacy-unverified'))
+        # V3 must have been regenerated as well; do not mark its old answer refreshed.
+        if engine == 'v3':
+            payload['learning_campaign'] = pick.get('learning_campaign','')
+        # Use the injected clock for replay tests, the real clock for publishing.
+        checked_at = simulated_now or datetime.now(timezone.utc)
+        if epoch(payload['kickoff_at'],KST) <= checked_at.timestamp():
+            return
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predictions'").fetchone():
+            saved = conn.execute('SELECT actual_result,match_time,home_team,away_team FROM predictions WHERE match_id=?',(payload['match_id'],)).fetchone()
+            if saved and (saved[0]!='PENDING' or epoch(saved[1],KST)<=checked_at.timestamp()
+                          or (saved[2],saved[3])!=(match.get('home'),match.get('away'))):
+                return
+        old_row = conn.execute('SELECT captured_at,payload_json FROM product_pick_receipts WHERE track=? AND match_id=? AND engine=?',
+                               (track,payload['match_id'],engine)).fetchone()
+        old_payload = obj(old_row[1]) if old_row else {}
+        # PROTO retains its pre-existing stage-refresh policy. Its grading
+        # receipt must follow the exact displayed pre-kickoff answer. TOP3
+        # remains a separately frozen selection after the one-time migration.
+        proto_revision = (track=='proto_world' and old_row
+            and old_payload.get('learning_campaign')==payload.get('learning_campaign')==CAMPAIGN
+            and any(old_payload.get(k)!=payload.get(k) for k in ('raw_pick','model_version','market_key','selection_side'))
+            and before_kickoff(match,now))
+        if old_row and (revision_allowed(old_payload,payload,match,now) or proto_revision):
+            old_payload = obj(old_row[1])
+            old_ko = epoch(old_payload.get('kickoff_at'),KST)
+            if old_ko <= datetime.now(timezone.utc).timestamp():
+                return
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predictions'").fetchone():
+                saved = conn.execute('SELECT actual_result,match_time,home_team,away_team FROM predictions WHERE match_id=?', (payload['match_id'],)).fetchone()
+                if saved and (saved[0]!='PENDING' or epoch(saved[1],KST)<=datetime.now(timezone.utc).timestamp()
+                              or (saved[2],saved[3])!=(match.get('home'),match.get('away'))):
+                    return
+            conn.execute('INSERT OR IGNORE INTO product_pick_revision_history VALUES (?,?,?,?,?,?,?,?)',
+                         (digest([track,payload['match_id'],engine,old_row[1]]),track,payload['match_id'],engine,
+                          old_row[0],old_row[1],now.isoformat(),CAMPAIGN))
+            conn.execute('UPDATE product_pick_receipts SET captured_at=?,payload_json=? WHERE track=? AND match_id=? AND engine=?',
+                         (now.isoformat(),json.dumps(payload,ensure_ascii=False),track,payload['match_id'],engine))
         conn.execute('INSERT OR IGNORE INTO product_pick_receipts VALUES (?,?,?,?,?)',
                      (track, payload['match_id'], engine, now.isoformat(), json.dumps(payload, ensure_ascii=False)))
     selectors = () if dashboard.get('manager_product_mode') == 'investment_by_analyst' else (('official', official_selector), ('robot', robot_selector))
@@ -356,6 +400,9 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
         if dashboard.get('manager_product_mode') != 'investment_by_analyst':
             for engine in ('v2', 'v3'):
                 save('manager', card, engine, answers[engine], 'comparison')
+        if card.get('learning_campaign') == CAMPAIGN:
+            for engine, pick in answers.items():
+                save('proto_world',card,engine,pick)
         if any(str((x.get('match') or {}).get('id')) == mid for x in dashboard.get('top3', [])):
             for engine, pick in answers.items():
                 save('top3', card, engine, pick)

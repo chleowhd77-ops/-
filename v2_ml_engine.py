@@ -4,15 +4,30 @@ import warnings
 import os
 warnings.filterwarnings('ignore')
 
-# 서버가 켜질 때 인공지능 뇌를 미리 메모리에 장착 (속도 0.01초 최적화)
-try:
-    # 파일 경로를 서버 환경에 맞게 절대경로로 안전하게 탐색
-    brain_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'v2_ai_brain.pkl')
-    with open(brain_path, 'rb') as f:
-        v2_brain = pickle.load(f)
-except Exception as e:
-    v2_brain = None
-    print(f"⚠️ V2 뇌 연결 대기중... (에러: {e})")
+from pathlib import Path
+from learning_state import active_entry
+
+
+def _load_brain(root):
+    entry = active_entry(root, 'v2')
+    name = entry.get('artifact')
+    paths = []
+    if name and Path(name).name == name:
+        paths.append((root/'.learning_models'/name,entry.get('active_version','unverified')))
+    paths.append((root/'v2_ai_brain.pkl','legacy-v2-fallback'))
+    for path,version in paths:
+        try:
+            with path.open('rb') as stream:
+                model = pickle.load(stream)
+            if not callable(getattr(model,'predict',None)):
+                continue
+            return model,version
+        except (OSError, ValueError, EOFError, pickle.PickleError, AttributeError, ImportError, TypeError):
+            continue
+    return None,'unavailable'
+
+
+v2_brain, v2_model_version = _load_brain(Path(__file__).resolve().parent)
 
 def get_v2_ai_pick(h_odds, d_odds, a_odds):
     """
@@ -54,6 +69,7 @@ def get_v2_prediction(h_odds, d_odds, a_odds):
             raise ValueError('unknown V2 class')
         result = {'engine':'v2-ai','code':code,'status':'ready','market_key':'1x2',
                   'selection_side':{'H':'home','D':'draw','A':'away'}[code],
+                  'model_version': v2_model_version,
                   'odds':dict(zip(('home','draw','away'),odds))}
         if hasattr(v2_brain,'predict_proba'):
             result['probabilities'] = {{'H':'home','D':'draw','A':'away'}[str(k).upper()]:float(v)

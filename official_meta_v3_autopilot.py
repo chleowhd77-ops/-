@@ -422,28 +422,31 @@ def _train_from_completed_history(
 
 
 def _model_from_completed_history(database_path):
-    # Local trusted cache; completed score changes invalidate the model.
-    connection = _readonly_connection(database_path)
-    try:
-        rows = connection.execute("SELECT match_id,actual_score FROM predictions WHERE actual_result='FINISHED' ORDER BY match_id").fetchall()
-        candidate_rows = connection.execute("SELECT COUNT(*),MAX(id) FROM prediction_candidate_results WHERE is_correct IN (0,1)").fetchone()
-        signature = hashlib.sha256(repr(([tuple(r) for r in rows], tuple(candidate_rows), AUTOPILOT_VERSION)).encode()).hexdigest()
-    finally:
-        connection.close()
-    cache = Path(database_path).with_name('.v3_serving_cache.pkl')
+    # Serving only. Training and promotion belong to the independent worker.
+    from learning_state import active_entry
+    root = Path(database_path).parent
+    entry = active_entry(root, 'v3')
+    name = entry.get('artifact')
+    if name and Path(name).name == name:
+        try:
+            with (root/'.learning_models'/name).open('rb') as stream:
+                result = pickle.load(stream)
+            if not isinstance(result,tuple) or len(result)!=3:
+                raise ValueError('invalid V3 artifact')
+            result[2]['active_model_version'] = entry.get('active_version','unverified')
+            return result
+        except (OSError, ValueError, EOFError, pickle.PickleError, AttributeError, ImportError, TypeError):
+            pass
+    cache = root/'.v3_serving_cache.pkl'
     try:
         with cache.open('rb') as stream:
             saved = pickle.load(stream)
-        if saved.get('signature') == signature:
-            return saved['result']
-    except (OSError, ValueError, EOFError, pickle.PickleError, AttributeError, ImportError):
-        pass
-    result = _train_from_completed_history(database_path)
-    temp = cache.with_suffix('.tmp')
-    with temp.open('wb') as stream:
-        pickle.dump({'signature':signature,'result':result},stream)
-    os.replace(temp,cache)
-    return result
+        result = saved['result']
+        result[2]['retained_legacy_model'] = True
+        result[2]['active_model_version'] = 'legacy-v3-fallback'
+        return result
+    except (OSError, ValueError, KeyError, EOFError, pickle.PickleError, AttributeError, ImportError):
+        raise AutopilotNotReady('V3 기존 모델 없음 · 독립 학습 작업의 검증 완료 대기')
 
 
 def _score_result_side(home_score: float, away_score: float) -> str:
@@ -658,6 +661,8 @@ def build_autopilot_payload(
         "promotion": "KEEP_CURRENT_OFFICIAL_PICK",
         "picks": picks,
     }
+    from learning_state import archive_json_row, revision_allowed, versions
+    base['pick_revision_history'] = dict(existing_payload.get('pick_revision_history') or {})
     try:
         model, encoder, training = _model_from_completed_history(database_path)
         created = 0
@@ -666,6 +671,13 @@ def build_autopilot_payload(
             if dashboard_path is not None
             else Path(database_path).with_name("dashboard_data.json")
         )
+        board = _read_json(dashboard, {})
+        cards = {}
+        for kind in ('proto','top3','toto14'):
+            for card in board.get(kind, []):
+                mid = str((card.get('match') or {}).get('id') or '')
+                if kind == 'toto14': mid = 'TOTO14_' + mid
+                cards.setdefault(mid, card)
         pending_snapshots = _load_pending_dashboard_cards(dashboard)
         pending_snapshots.extend(_load_pending_world_cards(world_dashboard_path))
         pending_snapshots.extend(_load_pending_snapshots(database_path))
@@ -679,8 +691,31 @@ def build_autopilot_payload(
             # for this match remains immutable for honest future grading.
             pick = _visible_pick(snapshot, model, encoder, generated_at)
             if pick is not None:
+                card = cards.get(snapshot.match_id) or {}
+                match = card.get('match') or {}
+                with _readonly_connection(database_path) as guard:
+                    identity = guard.execute('SELECT actual_result,match_time,home_team,away_team FROM predictions WHERE match_id=?',(snapshot.match_id,)).fetchone()
+                if identity:
+                    if match and (match.get('home'),match.get('away')) != (identity['home_team'],identity['away_team']):
+                        continue
+                    if not match:
+                        match={'home':identity['home_team'],'away':identity['away_team'],'match_time':identity['match_time']}
+                pick.update(learning_campaign=card.get('learning_campaign',''),
+                            model_version=training.get('active_model_version','legacy-unverified'),
+                            home_team=match.get('home'), away_team=match.get('away'),
+                            kickoff_at=match.get('match_time'), api_fixture_id=card.get('api_fixture_id'))
                 investment_candidates[snapshot.match_id] = pick
-                if snapshot.match_id not in picks:
+                old = picks.get(snapshot.match_id)
+                if old is None or revision_allowed(old,pick,match):
+                    # Recheck canonical result/time after model inference, before replacing.
+                    with _readonly_connection(database_path) as guard:
+                        row = guard.execute('SELECT actual_result,match_time FROM predictions WHERE match_id=?', (snapshot.match_id,)).fetchone()
+                    from learning_state import before_kickoff
+                    if row and (row['actual_result'] != 'PENDING' or not before_kickoff({'match_time':row['match_time']})):
+                        continue
+                    if match and not before_kickoff(match):
+                        continue
+                    if old: archive_json_row(base,snapshot.match_id,old)
                     picks[snapshot.match_id] = pick
                     created += 1
         base['investment_candidates'] = investment_candidates
@@ -727,9 +762,12 @@ def refresh_autopilot(
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.with_suffix('.lock').open('a') as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        previous = _read_json(output, {})
         payload = build_autopilot_payload(
-            database_path, _read_json(output, {}), dashboard_path, world_dashboard_path
+            database_path, previous, dashboard_path, world_dashboard_path
         )
+        from learning_state import guard_ledger_revisions
+        guard_ledger_revisions(database_path,payload,previous)
         _write_json_atomically(output, payload)
         return payload
 

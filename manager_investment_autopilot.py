@@ -737,6 +737,9 @@ def build_manager_payload(
         cards = {str((c.get("match") or {}).get("id")):c for c in dashboard.get("proto", [])}
         v3_payload = _read_json(Path(database_path).with_name("v3_learning_picks.json"), {})
         v3 = v3_payload.get("investment_candidates") or v3_payload.get("picks") or {}
+        from learning_state import CAMPAIGN, archive_json_row, before_kickoff
+        base['pick_revision_history'] = dict(existing_payload.get('pick_revision_history') or {})
+        base['reanalysis_receipts'] = dict(existing_payload.get('reanalysis_receipts') or {})
         created, engines = 0, {}
         for engine in LABELS:
             engine_snapshots, reasons = [], {}
@@ -755,7 +758,24 @@ def build_manager_payload(
                     reasons[reason] = reasons.get(reason, 0) + 1
             selected = _select_portfolio(engine_snapshots, history, generated_at, reasons)
             engine_created = 0
+            # Only reviewed, freshly reanalysed scheduled cards authorize one replacement.
+            for snapshot in engine_snapshots:
+                card = cards.get(snapshot.match_id) or {}
+                key = engine + ':' + snapshot.match_id
+                if (card.get('learning_campaign') == CAMPAIGN
+                        and base['reanalysis_receipts'].get(key) != CAMPAIGN
+                        and before_kickoff({'match_time':snapshot.kickoff_at})):
+                    old_pick = picks.get(key)
+                    if old_pick and old_pick.get('is_correct') not in (0,1) and old_pick.get('status') != 'FINISHED':
+                        archive_json_row(base,key,old_pick)
+                        del picks[key]
+                    base['reanalysis_receipts'][key] = CAMPAIGN
             for pick in selected:
+                card = cards.get(str(pick['match_id'])) or {}
+                pick.update(learning_campaign=card.get('learning_campaign',''),
+                            model_version=(card.get('learning_models') or {}).get(engine,'legacy-unverified'))
+                if not before_kickoff({'match_time':pick.get('kickoff_at')}):
+                    continue
                 key = engine + ':' + str(pick['match_id'])
                 if key not in picks:
                     picks[key] = {**pick, 'engine_key':engine, 'analyst_label':LABELS[engine],
@@ -808,7 +828,8 @@ def refresh_manager_ledger(database_path: str | Path, output_path: str | Path) -
     # with the analysis-triggered refresh so neither can lose frozen records.
     with output.with_suffix('.lock').open('a') as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        payload = build_manager_payload(database_path, _read_json(output, {}))
+        previous = _read_json(output, {})
+        payload = build_manager_payload(database_path, previous)
         now = datetime.now(KST)
         payload['current_pending_count'] = sum(
             1 for row in (payload.get('picks') or {}).values()
@@ -816,6 +837,8 @@ def refresh_manager_ledger(database_path: str | Path, output_path: str | Path) -
             and row.get('status') != 'FINISHED'
             and (_kickoff_datetime(row.get('kickoff_at')) or now) > now
         )
+        from learning_state import guard_ledger_revisions
+        guard_ledger_revisions(database_path,payload,previous)
         _write_json_atomically(output, payload)
         return payload
 
