@@ -376,6 +376,14 @@ def _runtime_connect():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE INDEX IF NOT EXISTS idx_team_identity_retry_due
             ON team_identity_retry_queue(status,next_retry_at,updated_at);
+        CREATE TABLE IF NOT EXISTS team_identity_manual_aliases (
+            normalized_alias TEXT PRIMARY KEY,
+            local_name TEXT NOT NULL,
+            api_team_id INTEGER NOT NULL,
+            api_team_name TEXT NOT NULL DEFAULT '',
+            approved_note TEXT NOT NULL DEFAULT '',
+            approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS runtime_meta (key TEXT PRIMARY KEY);
     """)
     # Existing servers already have this durable queue.  Add the league hint
@@ -2447,6 +2455,94 @@ def _team_identity_retry_key(home_name, away_name, match_time=""):
     ))
 
 
+def list_team_identity_review_queue(limit=40):
+    """Return unresolved pairs for an administrator review screen.
+
+    This function deliberately returns only evidence already collected by the
+    worker.  It does not make a paid API request and it never suggests a team
+    identity as if it were confirmed.
+    """
+    try:
+        conn = _runtime_connect()
+        rows = conn.execute(
+            """
+            SELECT home_name,away_name,match_time,league_name,attempts,last_reason,
+                   home_team_id,away_team_id,updated_at
+            FROM team_identity_retry_queue
+            WHERE status!='RESOLVED'
+            ORDER BY updated_at DESC,retry_key ASC LIMIT ?
+            """,
+            (max(1, min(int(limit or 40), 200)),),
+        ).fetchall()
+        conn.close()
+        return [
+            {
+                "home_name": str(row[0] or ""), "away_name": str(row[1] or ""),
+                "match_time": str(row[2] or ""), "league_name": str(row[3] or ""),
+                "attempts": int(row[4] or 0), "reason": str(row[5] or ""),
+                "observed_home_team_id": int(row[6] or 0),
+                "observed_away_team_id": int(row[7] or 0),
+                "updated_at": str(row[8] or ""),
+            }
+            for row in rows
+        ]
+    except Exception:
+        return []
+
+
+def save_confirmed_team_alias(local_name, api_team_id, api_team_name="", note=""):
+    """Persist one administrator-confirmed alias; no automatic guesses.
+
+    The pair resolver still verifies date, home/away order and fixture before
+    publication.  A mapping therefore helps name matching only and cannot by
+    itself turn an unrelated fixture into an issued pick.
+    """
+    local_name = str(local_name or "").strip()
+    normalized = _normalize_team_alias(local_name)
+    try:
+        api_team_id = int(api_team_id or 0)
+    except (TypeError, ValueError):
+        api_team_id = 0
+    if not normalized or api_team_id <= 0:
+        raise ValueError("local_name and a positive api_team_id are required")
+    conn = _runtime_connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO team_identity_manual_aliases
+                (normalized_alias,local_name,api_team_id,api_team_name,approved_note,approved_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(normalized_alias) DO UPDATE SET
+                local_name=excluded.local_name,api_team_id=excluded.api_team_id,
+                api_team_name=excluded.api_team_name,approved_note=excluded.approved_note,
+                approved_at=excluded.approved_at
+            """,
+            (normalized, local_name, api_team_id, str(api_team_name or "").strip(),
+             str(note or "").strip()[:300], datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _manual_team_alias(team_name):
+    normalized = _normalize_team_alias(team_name)
+    if not normalized:
+        return None
+    try:
+        conn = _runtime_connect()
+        row = conn.execute(
+            "SELECT api_team_id,api_team_name FROM team_identity_manual_aliases WHERE normalized_alias=?",
+            (normalized,),
+        ).fetchone()
+        conn.close()
+        if row and int(row[0] or 0) > 0:
+            return {"id": int(row[0]), "name": str(row[1] or "")}
+    except Exception:
+        return None
+    return None
+
+
 def queue_team_identity_retry(
     home_name, away_name, match_time="", reason="unresolved", league_name=""
 ):
@@ -2580,6 +2676,7 @@ def process_team_identity_retry_queue(limit=4):
                 )
                 home_id = int((home_info or {}).get("id") or 0)
                 away_id = int((away_info or {}).get("id") or 0)
+                reason = (home_info or {}).get("identity_error") or (away_info or {}).get("identity_error") or reason
                 if home_id and away_id and home_id != away_id:
                     home_form_ready = bool(fetch_team_form_api(home_id, 0.2))
                     away_form_ready = bool(fetch_team_form_api(away_id, 0.2))
@@ -2605,6 +2702,7 @@ def process_team_identity_retry_queue(limit=4):
 
         delay_minutes = min(120, 5 * (2 ** min(max(0, attempts - 1), 4)))
         next_retry = (now + timedelta(minutes=delay_minutes)).isoformat(timespec="seconds")
+        print(f"🔄 팀 자료 수집 미완료: {home_name} vs {away_name} · {reason} · 재시도 {next_retry}")
         conn = _runtime_connect()
         try:
             conn.execute(
@@ -3150,6 +3248,59 @@ def _fixture_team_payload(fixture_data, side):
     return team
 
 
+def _recover_pair_fixture(home_id, away_id, match_dt):
+    """Retry a missing date-board entry through the provider's pair endpoint.
+
+    One shared attempt per pair/date per 12 minutes, including empty responses.
+    Only the returned fixture (both IDs, order and kickoff) can repair identity.
+    """
+    if not home_id or not away_id or int(home_id) == int(away_id):
+        return None, "team_id_lookup_pending"
+    date_str = match_dt.strftime("%Y-%m-%d")
+    key = f"fixture_pair_recovery_v1_{home_id}_{away_id}_{date_str}"
+    cached = get_db_cache(key, 0.2)
+    if isinstance(cached, dict):
+        return cached.get("fixture"), str(cached.get("reason") or "")
+    if _API_CACHE_ONLY:
+        # A serving-worker cache miss is not a provider failure. Never write
+        # a negative result that would delay the real collection worker.
+        return None, "shared_pair_cache_pending"
+    fixture = None
+    reason = "provider_pair_empty"
+    try:
+        response = api_get("/fixtures/headtohead", params={
+            "h2h": f"{home_id}-{away_id}",
+            "from": (match_dt - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "to": (match_dt + timedelta(days=1)).strftime("%Y-%m-%d"),
+            "timezone": "Asia/Seoul",
+        }, timeout=12, purpose="analysis")
+        if response.status_code != 200:
+            reason = f"provider_http_{response.status_code}"
+        else:
+            payload = response.json()
+            if payload.get("errors"):
+                reason = "provider_pair_api_error"
+            else:
+                rows = payload.get("response") or []
+                exact = [row for row in rows if isinstance(row, dict)
+                    and int(((row.get("teams") or {}).get("home") or {}).get("id") or 0) == int(home_id)
+                    and int(((row.get("teams") or {}).get("away") or {}).get("id") or 0) == int(away_id)
+                    and int((row.get("fixture") or {}).get("id") or 0) > 0
+                    and abs(float((row.get("fixture") or {}).get("timestamp") or 0) - match_dt.timestamp()) <= 3 * 3600]
+                ids = {int(row["fixture"]["id"]) for row in exact}
+                if len(ids) == 1:
+                    fixture, reason = exact[0], "pair_fixture_recovered"
+                elif rows:
+                    reason = "provider_pair_time_or_team_mismatch" if not exact else "provider_pair_ambiguous"
+    except (ApiQuotaUnavailable, ApiRateLimited):
+        raise
+    except Exception as error:
+        reason = f"provider_pair_{type(error).__name__}"
+    set_db_cache(key, {"fixture": fixture, "reason": reason})
+    print(f"[수집 복구] {home_id}-{away_id} {date_str} · {reason}")
+    return fixture, reason
+
+
 def resolve_match_team_pair(
     home_name, away_name, match_time_str, ttl_h=2, league_name=""
 ):
@@ -3163,6 +3314,10 @@ def resolve_match_team_pair(
     away_name = str(away_name or "").strip()
     league_name = str(league_name or "").strip()
     different_teams = _normalize_team_alias(home_name) != _normalize_team_alias(away_name)
+    # A manual alias is an administrator-confirmed name-to-ID hint only.  It
+    # must still agree with the date-board fixture and home/away order below.
+    manual_home = _manual_team_alias(home_name)
+    manual_away = _manual_team_alias(away_name)
 
     # A stored team ID alone is never enough for a scheduled pick.  Cached
     # aliases can be stale or ambiguous; when kickoff is known the two names,
@@ -3192,6 +3347,10 @@ def resolve_match_team_pair(
                     continue
                 home_score = _team_name_match_score(home_name, home_api.get("name"))
                 away_score = _team_name_match_score(away_name, away_api.get("name"))
+                if manual_home:
+                    home_score = 1.0 if int(home_api.get("id") or 0) == manual_home["id"] else -1.0
+                if manual_away:
+                    away_score = 1.0 if int(away_api.get("id") or 0) == manual_away["id"] else -1.0
                 timestamp = int(fixture_data.get("fixture", {}).get("timestamp") or 0)
                 time_delta = (
                     abs(timestamp - int(match_dt.timestamp())) / 3600.0
@@ -3322,6 +3481,10 @@ def resolve_match_team_pair(
                         continue
                     home_score = _team_name_match_score(home_name, home_api.get("name"))
                     away_score = _team_name_match_score(away_name, away_api.get("name"))
+                    if manual_home:
+                        home_score = 1.0 if int(home_api.get("id") or 0) == manual_home["id"] else -1.0
+                    if manual_away:
+                        away_score = 1.0 if int(away_api.get("id") or 0) == manual_away["id"] else -1.0
                     timestamp = int(fixture_data.get("fixture", {}).get("timestamp") or 0)
                     time_delta = (
                         abs(timestamp - int(match_dt.timestamp())) / 3600.0
@@ -3378,6 +3541,25 @@ def resolve_match_team_pair(
                     )
                     return verified_home, verified_away, fixture_data
 
+    # A date-list miss does not finish collection. Use a different provider
+    # endpoint with known identity hints and require its actual scheduled pair.
+    recovery_reason = "fixture_pair_not_verified"
+    if not no_scheduled_time:
+        fixture_data, recovery_reason = _recover_pair_fixture(
+            (manual_home or {}).get("id") or known_home,
+            (manual_away or {}).get("id") or known_away,
+            match_dt,
+        )
+        if fixture_data:
+            home_api, away_api = _fixture_team_payload(fixture_data, "home"), _fixture_team_payload(fixture_data, "away")
+            if ((manual_home or _team_name_match_score(home_name, home_api.get("name")) >= 0.72)
+                    and (manual_away or _team_name_match_score(away_name, away_api.get("name")) >= 0.72)):
+                verified_home = _remember_verified_team(home_name, home_api)
+                verified_away = _remember_verified_team(away_name, away_api)
+                if verified_home and verified_away:
+                    return verified_home, verified_away, fixture_data
+            recovery_reason = "provider_pair_name_mismatch"
+
     # A known kickoff without one verified date-board pair is a quarantine,
     # not permission to guess each team independently.  This is the final
     # guard that prevents a same-name club or stale alias from reaching any
@@ -3385,11 +3567,11 @@ def resolve_match_team_pair(
     if not no_scheduled_time:
         queue_team_identity_retry(
             home_name, away_name, match_time_str,
-            reason="fixture_pair_not_verified", league_name=league_name,
+            reason=recovery_reason, league_name=league_name,
         )
         return (
-            {"id": 0, "name": home_name, "logo": None, "identity_error": "fixture_pair_not_verified"},
-            {"id": 0, "name": away_name, "logo": None, "identity_error": "fixture_pair_not_verified"},
+            {"id": 0, "name": home_name, "logo": None, "identity_error": recovery_reason},
+            {"id": 0, "name": away_name, "logo": None, "identity_error": recovery_reason},
             None,
         )
 

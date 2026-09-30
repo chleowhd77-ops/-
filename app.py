@@ -2571,6 +2571,8 @@ def _item_kickoff_datetime(item):
             pass
     return _ui_match_datetime(
         item.get("final_match_time")
+        or kickoff_at
+        or item.get("match_time")
         or match.get("match_time")
         or match.get("time")
         or match.get("date")
@@ -3491,13 +3493,14 @@ def generate_pred_boxes(
             or display_item.get("public_pick_blocked")
         )
         if analysis_pending:
+            collection_reason = escape(str(display_item.get("data_warning") or
+                "경기 자료를 수집하고 있습니다. 수집 완료 후 분석 결과가 표시됩니다."))
             return (
                 "<div class='pred-box' style='border-style:dashed;border-color:#38BDF8;'>"
                 "<div class='pred-label' style='color:#38BDF8;'>🔍 분석자료 수집 중</div>"
                 "<span class='pred-value' style='color:#CBD5E1;'>해외 API 팀·최근 경기 자료 확인 중</span>"
                 "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:7px;'>"
-                "팀 신원·마크·최근 경기 자료를 먼저 확보한 뒤 공식픽과 로봇픽을 생성합니다. "
-                "배당만으로 임시 최종픽을 표시하지 않습니다.</span></div>"
+                f"{collection_reason}</span></div>"
             )
     picks = picks or []
     away_team = ""
@@ -3611,7 +3614,6 @@ def generate_pred_boxes(
     robot = extract_robot_pick(analysis_item)
     if (
         viewer_role == globals().get("ROLE_ADMIN", "admin")
-        and not is_top3_tab
         and isinstance(robot, dict)
         and str(robot.get("raw_pick") or "").strip()
     ):

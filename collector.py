@@ -61,7 +61,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.13.7-analyst-scorecard-fragments"
+COLLECTOR_PATCH_VERSION = "R7.13.8-collection-to-picks"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
 # WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 재개하는 별도 배포에서만
 # 이 값을 바꾼다.  기존 서버 환경변수에 1이 남아 있어도 현재는 절대 재가동하지 않는다.
@@ -1760,7 +1760,7 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
     try:
         cursor.execute("""
             SELECT stage, confidence, prob_pick, prob_pick_prob, ev_pick, ev_pick_prob,
-                   analysis_version
+                   analysis_version, odd_h, odd_d, odd_a, api_fixture_id
             FROM prediction_snapshots
             WHERE match_id = ?
             ORDER BY id DESC LIMIT 1
@@ -1845,6 +1845,8 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
             str(analysis_stage), round(float(confidence or 0), 4), str(prob_pick),
             round(float(prob_val or 0), 2), str(ev_pick), round(float(ev_val or 0), 2),
             target_analysis_version,
+            round(float(odd_h or 0), 4), round(float(odd_d or 0), 4),
+            round(float(odd_a or 0), 4), int(fixture_id or 0),
         )
         previous_normalized = None
         if previous:
@@ -1852,6 +1854,8 @@ def save_dual_predictions_to_local_db(m_id, league, home_team, away_team, prob_p
                 str(previous[0]), round(float(previous[1] or 0), 4), str(previous[2]),
                 round(float(previous[3] or 0), 2), str(previous[4]), round(float(previous[5] or 0), 2),
                 str(previous[6] or ""),
+                round(float(previous[7] or 0), 4), round(float(previous[8] or 0), 4),
+                round(float(previous[9] or 0), 4), int(previous[10] or 0),
             )
         if previous_normalized != current:
             cursor.execute("""
@@ -5629,7 +5633,19 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
     except sqlite3.Error:
         analysis_rows = []
 
+    # A later inserted model-only snapshot may have the same winning pick.
+    # Recover the analysis for the actual public stage, not just its pick text.
+    eligible_analysis = [row for row in analysis_rows
+        if str(row[6] or "").strip() == official_pick
+        and _snapshot_existed_before_kickoff(row[11], kickoff)]
+    recover_current_stage = datetime.now(KST) < kickoff
     official_analysis = next(
+        (row for row in eligible_analysis
+         if recover_current_stage and str(row[1] or "") == str(public_row[1] or "")
+         and str(row[2] or "") == str(public_row[2] or "")),
+        None,
+    )
+    official_analysis = official_analysis or next(
         (
             row for row in analysis_rows
             if str(row[6] or "").strip() == official_pick
@@ -5690,7 +5706,10 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
 
     robot_pick = None
     robot_analysis_id = None
-    for row in analysis_rows:
+    robot_rows = sorted(analysis_rows, key=lambda row: (
+        recover_current_stage and str(row[1] or "") == str(public_row[1] or "")
+        and str(row[2] or "") == str(public_row[2] or ""), int(row[0])), reverse=True)
+    for row in robot_rows:
         if not _snapshot_existed_before_kickoff(row[11], kickoff):
             continue
         robot_categories = _json_object(row[8])
@@ -5722,8 +5741,10 @@ def _first_public_pick_bundle(conn, match_id, home_team, away_team, match_time="
         if robot_pick:
             frozen_categories["robot_independent"] = robot_pick
     alphago_pick = dict(decision.get("alphago_pick") or {})
-    if not alphago_pick:
-        alphago_pick = _alphago_pick_payload(robot_pick)
+    if not alphago_pick or (recover_current_stage and str(alphago_pick.get("code") or "").upper() not in {"H", "D", "A"}):
+        robot_v2 = _alphago_pick_payload(robot_pick)
+        if robot_v2.get("status") == "ready" or not alphago_pick:
+            alphago_pick = robot_v2
 
     if not candidates:
         candidates = [dict(selected)]
@@ -11635,9 +11656,16 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     betman_odds_ready = _valid_three_way_odds([
         match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
     ])
-    temporary_odds_stage = candidate_stage in {
-        "overseas-preview", "model-only-preview"
-    }
+    temporary_odds_stage = bool(
+        {candidate_stage, str(candidate.get("analysis_stage") or "")} &
+        {"overseas-preview", "model-only-preview"}
+        or candidate.get("odds_source") in {"model_only", "overseas_fallback"}
+    )
+    v2_source = candidate.get("alphago_pick") or {}
+    missing_v2_odds = (
+        v2_source.get("source_code") == "NO_ODDS"
+        or (candidate.get("robot_pick") or {}).get("v2_ai_pick") == "NO_ODDS"
+    )
 
     # The odds-source label is not an evidence-completion stage.  R7.12.31
     # compared e.g. ``model-only-preview`` directly with ``regular`` and
@@ -11658,6 +11686,7 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     if require_current_stage and (
         stage_refresh_needed
         or (temporary_odds_stage and betman_odds_ready)
+        or (missing_v2_odds and betman_odds_ready)
         or _needs_current_analysis_refresh(
             candidate, match_dt, refresh_now, ANALYSIS_VERSION
         )
@@ -11916,6 +11945,15 @@ def _publish_proto_checkpoint(
         if isinstance(item, dict)
         and str((item.get("match") or {}).get("id") or "") in current_toto_ids
     ]
+    existing_toto_ids = {str((item.get("match") or {}).get("id") or "") for item in previous_toto14}
+    for match in toto_14_matches or []:
+        if str(match.get("id") or "") not in existing_toto_ids:
+            pending = _unavailable_toto14_item(match)
+            pending.update({"analysis_stage": "PENDING_COLLECTION", "best_pick_display": "분석자료 수집 중",
+                            "data_warning": "새 회차 경기표 수집 완료 · 공용 자료로 분석 진행 중"})
+            previous_toto14.append(pending)
+    previous_toto14.sort(key=lambda item: next((i for i, m in enumerate(toto_14_matches or [])
+        if str(m.get("id")) == str((item.get("match") or {}).get("id"))), 999))
     now_ts = datetime.now(KST).timestamp()
     upcoming_proto = [
         item for item in dashboard_proto
@@ -11940,6 +11978,7 @@ def _publish_proto_checkpoint(
         "display_proto_count": len(dashboard_proto),
         "betman_toto14_count": len(toto_14_matches),
         "display_toto14_count": len(previous_toto14),
+        "toto14_parity_ok": len(toto_14_matches) == len(previous_toto14),
         "resumed_proto_count": resumed_proto_count,
         "analyzed_proto_count": analyzed_proto_count,
         "master_analysis_new_matches_per_pass": MASTER_ANALYSIS_NEW_MATCHES_PER_PASS,
@@ -12168,60 +12207,25 @@ def build_dashboard_data():
             deferred_proto_count += 1
             continue
 
-        # Empty-price rows cannot receive a Betman market preview.  If their
-        # team pair is already verified locally, allow the existing model-only
-        # analysis below to finish instead of publishing an empty card until a
-        # later cycle.  Unknown teams still follow the normal bounded queue.
-        shared_dossier = _load_shared_fixture_dossier(m)
-        dossier_home = shared_dossier.get("home") if isinstance(shared_dossier, dict) else {}
-        dossier_away = shared_dossier.get("away") if isinstance(shared_dossier, dict) else {}
-        dossier_identity_ready = bool(
-            isinstance(dossier_home, dict) and isinstance(dossier_away, dict)
-            and int(dossier_home.get("id") or 0) > 0
-            and int(dossier_away.get("id") or 0) > 0
-        )
+        home_info, away_info, identity_fixture = _collect_match_identity(m)
+        # Keep the existing no-price model-only path, after attempting recovery.
         model_only_recovery = _proto_can_finish_model_only_analysis(m)
-
-        if dossier_identity_ready:
-            # The team worker already verified this exact scheduled pair.  Do
-            # not make the analysis worker resolve it a second time.
-            home_info = dict(dossier_home)
-            away_info = dict(dossier_away)
-            identity_fixture = int(shared_dossier.get("fixture_id") or 0)
-        elif model_only_recovery:
-            # This pair was already verified in the local identity cache.  Do
-            # not send it back through the match/logo robot merely because a
-            # source has not supplied a current fixture or logo yet.  The
-            # normal analysis below can use the cached team IDs and will keep
-            # the missing fixture explicit instead of leaving the card blank.
+        if model_only_recovery and not (home_info.get("id") and away_info.get("id")):
             home_info = dict(get_cached_team_display_profile(home_team) or {})
             away_info = dict(get_cached_team_display_profile(away_team) or {})
             home_info["id"] = int(home_info.get("id") or known_team_id(home_team) or 0)
             away_info["id"] = int(away_info.get("id") or known_team_id(away_team) or 0)
-            identity_fixture = 0
-        else:
-            home_info, away_info, identity_fixture = resolve_match_team_pair(
-                home_team, away_team, final_match_time, ttl_h=2,
-                league_name=m.get("league") or "",
-            )
         home_id = int(home_info.get("id") or 0)
         away_id = int(away_info.get("id") or 0)
         identity_ready = bool(
             home_id > 0
             and away_id > 0
             and home_id != away_id
-            and (
-                model_only_recovery
-                or (
-                    home_info.get("logo") not in (None, "", DEFAULT_LOGO)
-                    and away_info.get("logo") not in (None, "", DEFAULT_LOGO)
-                )
-            )
         )
         if not identity_ready:
             queue_team_identity_retry(
                 home_team, away_team, final_match_time,
-                reason="proto_identity_and_logo_required_before_public_pick",
+                reason=home_info.get("identity_error") or "proto_fixture_collection_pending",
                 league_name=m.get("league") or "",
             )
             preserved = _preserve_visible_proto_pick_for_retry(
@@ -12243,7 +12247,7 @@ def build_dashboard_data():
                 "api_fixture_id": int(identity_fixture or 0),
                 "home_logo": home_info.get("logo") or DEFAULT_LOGO,
                 "away_logo": away_info.get("logo") or DEFAULT_LOGO,
-                "data_warning": "양 팀 신원·마크·최근 경기 자료를 먼저 확보한 뒤 분석픽을 생성합니다.",
+                "data_warning": "경기 자료 재수집 중 · " + str(home_info.get("identity_error") or "fixture_pair_not_verified"),
             })
             dashboard_proto.append(pending)
             deferred_proto_count += 1
@@ -13219,17 +13223,8 @@ def build_dashboard_data():
             deferred_proto_count, proto_market_watch_count, proto_cycle_started,
             proto_brake_reason=proto_brake_reason,
         )
-        if (
-            MASTER_SKIP_TOTO_WHILE_PROTO_BACKLOG
-            and analyzed_proto_count > 0
-            and deferred_proto_count > 0
-        ):
-            print(
-                "↪️ PROTO 대기 경기가 남아 이번 master는 여기서 양보합니다. "
-                f"현재 최대 {MASTER_ANALYSIS_NEW_MATCHES_PER_PASS}경기 묶음/자동 브레이크이며 "
-                "남은 시작 전 경기는 다음 master 차례에서 계속 분석합니다. 승무패14 기존 공개본은 보존합니다."
-            )
-            return True
+        if deferred_proto_count and toto_14_matches:
+            print("↪️ PROTO 미완료 경기는 재시도 큐로 유지하고 승무패14 분석을 계속합니다.")
 
     double_pick_count = 0
     single_pick_count = 0
@@ -13399,37 +13394,21 @@ def build_dashboard_data():
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
             continue
 
-        shared_dossier = _load_shared_fixture_dossier(m)
-        dossier_home = shared_dossier.get("home") if isinstance(shared_dossier, dict) else {}
-        dossier_away = shared_dossier.get("away") if isinstance(shared_dossier, dict) else {}
-        if (
-            isinstance(dossier_home, dict) and isinstance(dossier_away, dict)
-            and int(dossier_home.get("id") or 0) > 0
-            and int(dossier_away.get("id") or 0) > 0
-        ):
-            home_info, away_info = dict(dossier_home), dict(dossier_away)
-            identity_fixture = int(shared_dossier.get("fixture_id") or 0)
-        else:
-            home_info, away_info, identity_fixture = resolve_match_team_pair(
-                home_team, away_team, match_time, ttl_h=2,
-                league_name=m.get("league") or "",
-            )
+        home_info, away_info, identity_fixture = _collect_match_identity(m)
         if (
             not home_info.get('id')
             or not away_info.get('id')
             or home_info.get('id') == away_info.get('id')
-            or home_info.get("logo") in (None, "", DEFAULT_LOGO)
-            or away_info.get("logo") in (None, "", DEFAULT_LOGO)
         ):
             queue_team_identity_retry(
                 home_team, away_team, match_time,
-                reason="toto14_identity_and_logo_required_before_public_pick",
+                reason=home_info.get("identity_error") or "toto14_fixture_collection_pending",
                 league_name=m.get("league") or "",
             )
             unavailable = dict(_unavailable_toto14_item(m))
             unavailable["match"] = dict(m)
             unavailable['data_warning'] = (
-                '양 팀 신원·마크 확인 대기 · 기본값으로 예측하지 않음'
+                "경기 자료 재수집 중 · " + str(home_info.get("identity_error") or "fixture_pair_not_verified")
             )
             dashboard_toto14.append(unavailable)
             continue
@@ -16251,6 +16230,58 @@ def _betman_round_target(row, base_url=BETMAN_BASE_URL):
     }
 
 
+def _betman_round_rows(payload, inherited_id=""):
+    """Accept both top-level and enveloped official round-list responses."""
+    if isinstance(payload, list):
+        return [row for child in payload for row in _betman_round_rows(child, inherited_id)]
+    if not isinstance(payload, dict):
+        return []
+    rows = []
+    if payload.get("gmTs"):
+        rows.append(dict(payload, gmId=payload.get("gmId") or inherited_id))
+    for key, value in payload.items():
+        if isinstance(value, (dict, list)):
+            kind = {"protoGames": "G101", "totoGames": "G011"}.get(key, inherited_id)
+            rows.extend(_betman_round_rows(value, kind))
+    return rows
+
+
+def _toto_round_is_upcoming(records, now=None):
+    now = now or datetime.now(KST)
+    kickoffs = [_parse_kst_match_time(row.get("match_time") or row.get("time")) for row in records or []]
+    return bool(kickoffs) and all(kickoff is not None and kickoff > now for kickoff in kickoffs)
+
+
+def _collect_current_toto_round(session, round_targets):
+    """Try official candidates; don't accept an expired 14-row saved board."""
+    candidates = list(round_targets.get("toto14_candidates") or [])
+    saved = round_targets.get("toto14")
+    if not candidates and saved:
+        candidates.append(saved)
+        number = str(saved.get("gm_ts") or "")
+        # Recover from a broken sale-list endpoint with a bounded forward probe.
+        # A candidate is accepted only after the official endpoint returns a
+        # complete actual ticket with upcoming kickoffs. No schedule is invented.
+        if number.isdigit():
+            for offset in (1, 2):
+                candidates.append(_betman_round_target({"gmId": "G011", "gmTs": str(int(number) + offset)}))
+    errors = []
+    for target in candidates[:BETMAN_ROUND_CANDIDATE_LIMIT]:
+        if not target:
+            continue
+        try:
+            payload = _fetch_betman_game_data(session, target)
+            rows = parse_betman_toto14_json(payload, str(target["gm_ts"]))
+            if not _valid_toto14_round(rows):
+                raise ValueError(f"14경기 완본 아님 ({len(rows)}건)")
+            if not _toto_round_is_upcoming(rows):
+                raise ValueError("지난 회차: 첫 경기 시작 또는 시간 미확인")
+            return rows, target
+        except Exception as error:
+            errors.append(f"{target.get('gm_ts')}: {error}")
+    raise RuntimeError(" / ".join(errors) or "공식 승무패 현재 회차 미확인")
+
+
 def _fetch_betman_round_targets(session=None):
     """Read current Proto/Toto round IDs without rendering Betman's heavy hub.
 
@@ -16299,11 +16330,12 @@ def _fetch_betman_round_targets(session=None):
         if status and status.get("statusCode") not in (None, "S"):
             raise RuntimeError(f"베트맨 회차 조회 상태 오류: {status.get('statusCode')}")
 
+        round_rows = _betman_round_rows(result)
         proto_candidates = _ordered_betman_round_targets(
-            result.get("protoGames"), "G101", resolved_base_url
+            round_rows, "G101", resolved_base_url
         )
         toto_candidates = _ordered_betman_round_targets(
-            result.get("totoGames"), "G011", resolved_base_url
+            round_rows, "G011", resolved_base_url
         )
 
         return {
@@ -16824,13 +16856,10 @@ def scrape_betman():
 
     if round_targets.get("toto14"):
         try:
-            toto_target = round_targets["toto14"]
-            toto_payload = _fetch_betman_game_data(betman_session, toto_target)
-            round_id = str(toto_target.get("gm_ts") or toto_target.get("display_round"))
-            matches_14 = parse_betman_toto14_json(toto_payload, round_id)
-            toto_stable = _valid_toto14_round(matches_14)
-            if not toto_stable:
-                raise RuntimeError(f"공식 승무패 JSON이 14경기 완본 아님: {len(matches_14)}건")
+            matches_14, toto_target = _collect_current_toto_round(betman_session, round_targets)
+            round_targets["toto14"] = toto_target
+            round_id = str(toto_target["gm_ts"])
+            toto_stable = True
             print(
                 "✅ 공식 JSON 승무패 "
                 f"{toto_target.get('display_round', round_id)}회차 추출: 14경기 (브라우저 미사용)"
@@ -16839,6 +16868,8 @@ def scrape_betman():
             matches_14 = []
             toto_stable = False
             toto_error = str(error)
+            # The rejected saved round must not be opened again in the browser.
+            round_targets["toto14"] = None
             print(f"⚠️ 공식 JSON 승무패 조회 실패, 브라우저 1회 대체: {error}")
     betman_session.close()
 
@@ -16940,7 +16971,7 @@ def scrape_betman():
         if not round_id:
             raise RuntimeError("승무패 회차 ID를 확인할 수 없어 기존 동결본을 보호합니다.")
         parsed = parse_betman_toto14_html(driver.page_source, round_id)
-        if not stable or not _valid_toto14_round(parsed):
+        if not stable or not _valid_toto14_round(parsed) or not _toto_round_is_upcoming(parsed):
             raise RuntimeError(f"승무패 완본 미확인: 안정={stable}, 행={len(parsed)}")
         return parsed, stable, round_id
 
@@ -17196,6 +17227,43 @@ def _shared_dossier_key(match):
     return f"shared_fixture_dossier_v1_{digest}"
 
 
+def _fixture_identity_id(value):
+    if isinstance(value, dict):
+        value = (value.get("fixture") or {}).get("id") or value.get("fixture_id")
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _collect_match_identity(match):
+    """Reuse a complete shared identity; actively repair incomplete dossiers."""
+    dossier = _load_shared_fixture_dossier(match)
+    home = dossier.get("home") or {}
+    away = dossier.get("away") or {}
+    fixture_id = _fixture_identity_id(dossier.get("fixture_id"))
+    if (fixture_id and home.get("id") and away.get("id")
+            and home.get("id") != away.get("id")):
+        return dict(home), dict(away), fixture_id
+    home, away, fixture = resolve_match_team_pair(
+        match.get("home"), match.get("away"),
+        match.get("match_time") or match.get("time") or "",
+        ttl_h=0.2, league_name=match.get("league") or "",
+    )
+    fixture_id = _fixture_identity_id(fixture)
+    if fixture_id and home.get("id") and away.get("id"):
+        # Publish the repaired identity immediately; the prefetch worker adds
+        # form/lineups to the same dossier, without issuing duplicate lookups.
+        dossier.update({"home": dict(home), "away": dict(away), "fixture_id": fixture_id,
+                        "identity_recovered_at": datetime.now(KST).isoformat()})
+        set_db_cache(_shared_dossier_key(match), dossier)
+        print(f"✅ 수집→경기 연결 완료: {match.get('home')} vs {match.get('away')} · fixture={fixture_id}")
+    else:
+        reason = home.get("identity_error") or away.get("identity_error") or "fixture_pair_not_verified"
+        print(f"🔄 수집 재시도: {match.get('home')} vs {match.get('away')} · {reason}")
+    return home, away, fixture_id
+
+
 def _load_shared_fixture_dossier(match):
     dossier = get_db_cache(_shared_dossier_key(match), SHARED_DOSSIER_TTL_HOURS)
     return dossier if isinstance(dossier, dict) else {}
@@ -17234,7 +17302,9 @@ def _prefetch_core_is_ready(source, match):
         _prefetch_core_marker_key(source, match),
         DATA_PREFETCH_COMPLETION_TTL_HOURS,
     )
-    return isinstance(marker, dict) and bool(marker.get("core_ready"))
+    dossier = _load_shared_fixture_dossier(match)
+    return (isinstance(marker, dict) and bool(marker.get("core_ready"))
+            and _fixture_identity_id(dossier.get("fixture_id")) > 0)
 
 
 def _mark_prefetch_core_ready(source, match, *, home_id, away_id, kickoff):
@@ -17251,35 +17321,31 @@ def _mark_prefetch_core_ready(source, match, *, home_id, away_id, kickoff):
     )
 
 
+def _ticket_prefetch_entries(betman, now):
+    """Every future match on the two active tickets needs a core dossier."""
+    entries = []
+    for key, source in (("proto_matches", "PROTO"), ("toto_14_matches", "TOTO14")):
+        for match in betman.get(key, []) or []:
+            if not isinstance(match, dict) or _is_placeholder_match(match):
+                continue
+            kickoff = _parse_kst_match_time(match.get("match_time") or match.get("time"))
+            if kickoff and kickoff > now:
+                entries.append((kickoff, "analysis", {"match": match, "source": source}))
+    return entries
+
+
 def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
     """Warm reusable overseas data before any pick engine needs it.
 
-    This job deliberately does not create a prediction.  From T-72 it resolves
-    the shared, slow-changing team dossier (identity/logo, form source and H2H).
+    This job resolves all future matches on the published PROTO/TOTO14 tickets
+    into a shared, slow-changing team dossier (identity, form source and H2H).
     From T-30 it additionally refreshes volatile/detailed evidence (market,
     standings, squad, injuries and lineup).  Official, robot, V2 and V3 then
     read the same evidence without four independent overseas-data jobs.
     """
     now = datetime.now(KST)
-    horizon = now + timedelta(hours=DATA_PREFETCH_EARLY_HORIZON_HOURS)
-    candidates = []
-
     betman = _read_json("betman_data.json", {}) or {}
-    for match in betman.get("proto_matches", []) or []:
-        if not isinstance(match, dict) or _is_placeholder_match(match):
-            continue
-        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("time"))
-        if not kickoff or not (now < kickoff <= horizon):
-            continue
-        candidates.append((kickoff, "analysis", {"match": match, "source": "PROTO"}))
-
-    for match in betman.get("toto_14_matches", []) or []:
-        if not isinstance(match, dict) or _is_placeholder_match(match):
-            continue
-        kickoff = _parse_kst_match_time(match.get("match_time") or match.get("time"))
-        if not kickoff or not (now < kickoff <= horizon):
-            continue
-        candidates.append((kickoff, "analysis", {"match": match, "source": "TOTO14"}))
+    candidates = _ticket_prefetch_entries(betman, now)
 
     # WORLD is commercially paused.  Do not even place stale WORLD rows in
     # this queue: its old dashboard must never spend an API slot intended for
