@@ -5,7 +5,7 @@
       "supervisor_pid": 474496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-30T00:12:04+00:00",
+      "heartbeat_at": "2026-09-30T00:13:34+00:00",
       "pid": 474496,
       "last_started_at": "2026-09-29T21:59:49+00:00",
       "active_jobs": {
@@ -52,16 +52,23 @@
       "last_error": "hard timeout after 600 seconds"
     },
     "master": {
-      "last_success_duration_seconds": 379.46,
+      "last_success_duration_seconds": 116.79,
       "last_failure_duration_seconds": 916.8,
       "last_failure_at": "2026-09-27T15:26:16+00:00",
-      "last_success_at": "2026-09-30T00:01:37+00:00",
+      "last_success_at": "2026-09-30T00:14:01+00:00",
       "run_id": "master-1790727120236397529",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-09-30T00:12:05+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-09-30T00:14:01+00:00",
       "pid": 475547,
-      "last_started_at": "2026-09-30T00:12:05+00:00"
+      "last_started_at": "2026-09-30T00:12:05+00:00",
+      "child_pid": 475547,
+      "elapsed_seconds": 94.2,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 30,
+      "proto_checkpoint_deferred": 1,
+      "db_backup_requested": true,
+      "duration_seconds": 116.79
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -136,7 +143,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-30T00:12:05+00:00",
+  "updated_at": "2026-09-30T00:14:01+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -206,49 +213,67 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 38
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/statistics",
-        "count": 36
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "analysis",
-        "endpoint": "/standings",
-        "count": 24
+        "count": 92
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 22
+        "count": 64
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 20
+        "count": 58
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 15
+        "endpoint": "/fixtures/statistics",
+        "count": 47
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/standings",
+        "count": 36
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 13
+        "count": 31
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 22
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/players/topassists",
+        "count": 16
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/players/topscorers",
+        "count": 16
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 9
+        "count": 13
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/standings",
+        "count": 12
       },
       {
         "metric": "cache_hit",
@@ -263,10 +288,10 @@
         "count": 8
       },
       {
-        "metric": "cache_only_miss",
+        "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/standings",
-        "count": 6
+        "endpoint": "/fixtures/lineups",
+        "count": 1
       }
     ],
     "accounting": "local-preflight-reservation-v2",
