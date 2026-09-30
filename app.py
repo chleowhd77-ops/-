@@ -3830,6 +3830,11 @@ def _render_manager_investment_portfolio(payload):
 
     if not active_picks:
         st.caption("현재는 R7.13 공용자료·보수 기대값·자료 신뢰도·시간순 검증 기준을 함께 통과한 시작 전 투자 후보가 없습니다.")
+        if "input_snapshot_count" in payload:
+            st.caption(f"최근 투자픽 검토 입력: {int(payload.get('input_snapshot_count') or 0)}경기 · "
+                       f"후보 {int(payload.get('input_candidate_count') or 0)}개")
+            for reason, count in (payload.get("candidate_rejections") or {}).items():
+                st.caption(f"{reason}: {int(count)}개")
 
     def _sort_key(item):
         return (-float(item.get("manager_score") or 0), str(item.get("kickoff_at") or ""))

@@ -2160,7 +2160,7 @@ _COUNTRY_FLAG_ROWS = (
     ("hn", "Honduras", "온두라스"),
     ("hk", "Hong Kong", "Hong Kong SAR", "홍콩"),
     ("hu", "Hungary", "헝가리"),
-    ("is", "Iceland", "아이슬란드"),
+    ("is", "Iceland", "아이슬란드", "아이슬란"),
     ("in", "India", "인도"),
     ("id", "Indonesia", "인도네시아"),
     ("ir", "Iran", "Iran Islamic Republic", "이란"),
@@ -2210,7 +2210,7 @@ _COUNTRY_FLAG_ROWS = (
     ("ni", "Nicaragua", "니카라과"),
     ("ne", "Niger", "니제르"),
     ("ng", "Nigeria", "나이지리아"),
-    ("mk", "North Macedonia", "Macedonia FYR", "북마케도니아"),
+    ("mk", "North Macedonia", "Macedonia FYR", "북마케도니아", "북마케도"),
     ("gb-nir", "Northern Ireland", "북아일랜드"),
     ("kp", "North Korea", "Korea DPR", "북한"),
     ("no", "Norway", "노르웨이"),
@@ -2326,7 +2326,17 @@ def _national_team_flag_url(team_name, api_team=None):
 
 def _national_team_english_name(team_name):
     iso_code = _national_team_country_code(team_name)
-    return COUNTRY_FLAG_NAME_BY_ISO.get(iso_code, "")
+    country = COUNTRY_FLAG_NAME_BY_ISO.get(iso_code, "")
+    if not country:
+        return ""
+    text = str(team_name or "").casefold()
+    # Do not turn e.g. '중국_여자' into the senior men's 'China' search.
+    if re.search(r'여자|여성|women|female|ladies|(?:^|[\s_])w$', text):
+        country += " W"
+    age = re.search(r'(?:under[\s_-]*|u[\s_-]*)(\d{1,2})|(?:(\d{1,2})세이하)', text)
+    if age:
+        country += ' U' + (age.group(1) or age.group(2))
+    return country
 
 def _resolve_team_logo(team_name, team_id=0, api_logo=None, api_team=None):
     """Use verified crests and deterministic flags before the generic ball."""
@@ -3141,6 +3151,10 @@ def parse_match_time(match_time_str):
 
 def _team_name_match_score(local_name, api_name):
     """고정 ID를 배제하고 이름만으로 동일 팀 신뢰도를 계산한다."""
+    def womens(value):
+        return bool(re.search(r'여자|여성|women|female|ladies|(?:^|[\s_])w(?:$|[\s_])', str(value or '').casefold()))
+    if womens(local_name) != womens(api_name):
+        return -1.0
     translated = _resolve_translated_team_name(local_name)
     national_name = _national_team_english_name(local_name)
     api_key = _romanized_team_key(api_name)
@@ -3257,7 +3271,7 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
     if not home_id or not away_id or int(home_id) == int(away_id):
         return None, "team_id_lookup_pending"
     date_str = match_dt.strftime("%Y-%m-%d")
-    key = f"fixture_pair_recovery_v1_{home_id}_{away_id}_{date_str}"
+    key = f"fixture_pair_recovery_v2_{home_id}_{away_id}_{int(match_dt.timestamp())}"
     cached = get_db_cache(key, 0.2)
     if isinstance(cached, dict):
         return cached.get("fixture"), str(cached.get("reason") or "")
@@ -3267,6 +3281,8 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
         return None, "shared_pair_cache_pending"
     fixture = None
     reason = "provider_pair_empty"
+    lookup = {"home_id": int(home_id), "away_id": int(away_id), "date": date_str,
+              "kickoff_kst": match_dt.isoformat(), "pair_rows": None, "team_date_rows": None}
     try:
         response = api_get("/fixtures/headtohead", params={
             "h2h": f"{home_id}-{away_id}",
@@ -3282,6 +3298,23 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
                 reason = "provider_pair_api_error"
             else:
                 rows = payload.get("response") or []
+                lookup["pair_rows"] = len(rows)
+                if not rows:
+                    # The H2H feed may lag the scheduled-fixtures endpoint.
+                    # Query the actual home team's date board once, sharing
+                    # its positive/negative result through this same cache.
+                    team_response = api_get("/fixtures", params={
+                        "team": int(home_id), "date": date_str, "timezone": "Asia/Seoul"
+                    }, timeout=12, purpose="analysis")
+                    if team_response.status_code == 200:
+                        team_payload = team_response.json()
+                        if not team_payload.get("errors"):
+                            rows = team_payload.get("response") or []
+                            lookup["team_date_rows"] = len(rows)
+                        else:
+                            reason = "provider_team_schedule_api_error"
+                    else:
+                        reason = f"provider_team_schedule_http_{team_response.status_code}"
                 exact = [row for row in rows if isinstance(row, dict)
                     and int(((row.get("teams") or {}).get("home") or {}).get("id") or 0) == int(home_id)
                     and int(((row.get("teams") or {}).get("away") or {}).get("id") or 0) == int(away_id)
@@ -3296,8 +3329,9 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
         raise
     except Exception as error:
         reason = f"provider_pair_{type(error).__name__}"
-    set_db_cache(key, {"fixture": fixture, "reason": reason})
-    print(f"[수집 복구] {home_id}-{away_id} {date_str} · {reason}")
+    set_db_cache(key, {"fixture": fixture, "reason": reason, "lookup": lookup})
+    print(f"[수집 복구] {home_id}-{away_id} {date_str} · {reason} · "
+          f"팀쌍 응답 {lookup['pair_rows']} / 팀별 일정 응답 {lookup['team_date_rows']}")
     return fixture, reason
 
 
@@ -3425,14 +3459,14 @@ def resolve_match_team_pair(
             if selected is None:
                 partner_candidates = [
                     item for item in candidates
-                    if (
+                    if min(item[1], item[2]) >= 0 and ((
                         max(item[1], item[2]) >= 0.90 and item[3] <= 2.5
                     ) or (
                         bool(league_name) and item[7] >= 0.90
                         and max(item[1], item[2]) >= 0.80
                         and min(item[1], item[2]) >= 0.20
                         and item[3] <= 0.35
-                    )
+                    ))
                 ]
                 unique_pairs = {
                     (int(item[5].get("id") or 0), int(item[6].get("id") or 0))

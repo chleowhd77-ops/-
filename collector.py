@@ -61,7 +61,7 @@ WORLD_DASHBOARD_FILE = APP_DIR / "world_dashboard.json"
 WORLD_PUBLICATION_FILE = APP_DIR / ".world_dashboard.public.json"
 DB_BACKUP_REQUEST_FILE = APP_DIR / ".db-backup-requested.json"
 KST = timezone(timedelta(hours=9))
-COLLECTOR_PATCH_VERSION = "R7.13.8-collection-to-picks"
+COLLECTOR_PATCH_VERSION = "R7.13.9-manager-publication-recovery"
 # 상용화 전에는 프로토 LIVE와 승무패14에만 API·서버 자원을 사용한다.
 # WORLD 코드는 삭제하지 않으며, 추후 별도 API 예산으로 재개하는 별도 배포에서만
 # 이 값을 바꾼다.  기존 서버 환경변수에 1이 남아 있어도 현재는 절대 재가동하지 않는다.
@@ -13238,12 +13238,17 @@ def build_dashboard_data():
     # TOTO14 historical policy loading is deliberately deferred so it cannot
     # keep the main customer pick board blank.
     if toto_14_matches:
+        _update_collector_status("master", "running", last_stage="toto14_policy_loading")
+        print(f"⏱️ 승무패14 분석 시작: {len(toto_14_matches)}경기 · 저장 채점 기준 읽기")
         toto14_probability_policy = load_toto14_probability_policy()
     else:
         toto14_probability_policy = validate_toto14_probability_policy([])
 
     for idx, m in enumerate(toto_14_matches, 1):
         home_team, away_team = m["home"], m["away"]
+        print(f"⏱️ 승무패14 분석 진행: {idx}/{len(toto_14_matches)} · {home_team} vs {away_team}")
+        _update_collector_status("master", "running", last_stage="toto14_analysis",
+                                 toto14_index=idx, toto14_total=len(toto_14_matches))
         match_id = f"TOTO14_{m['id']}"
         match_time = m.get("match_time") or "시간 미정"
         now = datetime.now(KST)
@@ -14045,8 +14050,9 @@ def _cached_fixture_identity_board(date_key, purpose="scoring"):
         raise
 
 
-def _stored_team_identity_matches(local_name, stored_name, api_id=0):
+def _stored_team_identity_matches(local_name, stored_name, api_id=0, identity_lookup=None):
     """Exact names/curated aliases or verified IDs, never a fuzzy recovery."""
+    lookup = identity_lookup or known_team_id
     def keys(name):
         values = {str(name or "")}
         for english, korean in WORLD_TEAM_NAME_KO_OVERRIDES.items():
@@ -14060,7 +14066,7 @@ def _stored_team_identity_matches(local_name, stored_name, api_id=0):
     # known mismatch before accepting an identical or translated team name.
     explicit_api_id = int(api_id or 0)
     if explicit_api_id:
-        expected_id = int(known_team_id(local_name) or 0)
+        expected_id = int(lookup(local_name) or 0)
         if expected_id and expected_id != explicit_api_id:
             return False
     if keys(local_name) & keys(stored_name):
@@ -14068,8 +14074,8 @@ def _stored_team_identity_matches(local_name, stored_name, api_id=0):
     # Only consult the already verified ID cache when exact/curated names did
     # not settle the identity. This keeps the local grading recovery path free
     # of unnecessary cache work for the common exact-name case.
-    expected = known_team_id(local_name)
-    actual = int(explicit_api_id or known_team_id(stored_name) or 0)
+    expected = lookup(local_name)
+    actual = int(explicit_api_id or lookup(stored_name) or 0)
     return bool(expected and actual and expected == actual)
 
 
@@ -14092,16 +14098,32 @@ def _recover_due_fixture_ids(rows, conn, local_only=False):
     # date board. Ordered teams + kickoff still have to match, and ambiguity
     # never silently chooses the first row.
     recovered_local = {}
+    identity_ids = {}
+    def identity_lookup(name):
+        if name not in identity_ids:
+            identity_ids[name] = known_team_id(name)
+        return identity_ids[name]
     known = conn.execute("SELECT home_team,away_team,match_time,api_fixture_id FROM predictions WHERE api_fixture_id > 0").fetchall()
+    # Parse each stored kickoff once, instead of once per unresolved match.
+    # Neighbouring 15-minute buckets preserve the existing exact-time rule.
+    known_by_time = {}
+    for home, away, when, fixture in known:
+        known_dt = _parse_kst_match_time(when)
+        if known_dt:
+            bucket = int(known_dt.timestamp()) // 900
+            known_by_time.setdefault(bucket, []).append((home, away, known_dt, fixture))
     for row in rows:
         if int(row[6] or 0):
             continue
         match_dt = _parse_kst_match_time(row[5])
         candidates = set()
-        for home, away, when, fixture in known:
-            known_dt = _parse_kst_match_time(when)
+        bucket = int(match_dt.timestamp()) // 900 if match_dt else 0
+        nearby = [entry for key in (bucket - 1, bucket, bucket + 1)
+                  for entry in known_by_time.get(key, [])] if match_dt else []
+        for home, away, known_dt, fixture in nearby:
             if (match_dt and known_dt and abs((match_dt-known_dt).total_seconds()) <= 15*60
-                    and _stored_team_identity_matches(row[1], home) and _stored_team_identity_matches(row[2], away)):
+                    and _stored_team_identity_matches(row[1], home, identity_lookup=identity_lookup)
+                    and _stored_team_identity_matches(row[2], away, identity_lookup=identity_lookup)):
                 candidates.add(int(fixture))
         if len(candidates) == 1:
             recovered_local[str(row[0])] = candidates.pop()
@@ -14928,6 +14950,7 @@ def auto_score_matches():
                 "(예측·확률·버전은 보존)"
             )
         conn.commit()  # Repairs must survive even when no due batches run.
+        print("⏱️ 채점 진행: 기존 판정 확인 완료 · 저장 학습 기록 보강")
         backfilled_count = _backfill_finished_postmortems(
             conn, limit=SCORE_POSTMORTEM_BACKFILL_BATCH
         )
@@ -14957,9 +14980,11 @@ def auto_score_matches():
         # applying retry_at. This spends no API and fixes the old starvation
         # where an ID-recovery candidate never reached the recovery function.
         _ensure_scoring_queue(conn)
+        identity_started = time.monotonic()
         pending_matches, stored_recovered_count = _recover_due_fixture_ids(
             pending_matches, conn, local_only=True
         )
+        print(f"⏱️ 채점 진행: 저장 경기 연결 {time.monotonic() - identity_started:.1f}초 · 결과 조회 시작")
         due_matches = _select_scoring_due(pending_matches,conn,now)
 
         due_matches, recovered_count = _recover_due_fixture_ids(due_matches, conn)
@@ -17117,6 +17142,30 @@ def run_live_score_job():
     return published
 
 
+def _refresh_manager_after_analysis():
+    """Create and publish the separate investment ledger from the new analysis."""
+    try:
+        from manager_investment_autopilot import refresh_manager_ledger
+        payload = refresh_manager_ledger(
+            _local_path("ai_predictions.db"), _local_path("manager_investment_picks.json")
+        )
+        published = bool(upload_to_github("manager_investment_picks.json"))
+        print(f"{'✅' if published else '⚠️'} 관리자 투자픽 생성·게시: "
+              f"입력 {payload.get('input_snapshot_count', 0)}경기 / "
+              f"신규 {payload.get('newly_frozen_picks', 0)}건 / "
+              f"현재 {payload.get('current_pending_count', 0)}건 / 게시 {published}")
+        _update_collector_status("master", "running", manager_published=published,
+            manager_input_count=payload.get("input_snapshot_count", 0),
+            manager_current_count=payload.get("current_pending_count", 0),
+            manager_reason=payload.get("reason", ""))
+        return published
+    except Exception as error:
+        print(f"⚠️ 관리자 투자픽 갱신 실패: {type(error).__name__}: {error}")
+        _update_collector_status("master", "running", manager_published=False,
+                                manager_reason=str(error)[:300])
+        return False
+
+
 def run_master_job():
     scraped = bool(scrape_betman())
     built = False
@@ -17146,6 +17195,7 @@ def run_master_job():
             "master", "running", last_stage="dashboard_publish_failed"
         )
         return False
+    _refresh_manager_after_analysis()
     # The dedicated team worker owns identity/logo/form retries. Keeping this
     # work out of master returns the production DB slot immediately after the
     # customer board is published. It can be re-enabled explicitly for repair.
@@ -17636,6 +17686,9 @@ def run_score_job():
     # kept this MAIN_DB worker alive and prevented master from receiving the DB
     # turn even after the visible grading feed was already published.
     snapshot_started = time.monotonic()
+    _update_collector_status("score", "running", last_stage="grading_snapshot_building",
+                             scoring_seconds=round(scoring_seconds, 2))
+    print(f"⏱️ 결과 채점 {scoring_seconds:.1f}초 완료 · 누적 성적표 생성 시작")
     snapshot = _build_grading_snapshot()
     if snapshot.get("error"):
         _update_collector_status("score", "running", last_stage="snapshot_failed")
@@ -17892,10 +17945,10 @@ MIN_AVAILABLE_MEMORY_MB = max(
 MAIN_DB_JOBS = frozenset({"live", "score", "master", "recovery", "world", "backup"})
 JOB_PRIORITY = {
     "live": 0,
-    "score": 1,
+    "score": 4,
     "recovery": 2,
     "team": 3,
-    "master": 4,
+    "master": 1,
     "world": 4,
     "backup": 5,
 }
@@ -18128,8 +18181,8 @@ def run_scheduler():
     # Requests start immediately only when the low-memory/main-DB admission
     # rules allow it. Remaining work stays queued and is drained after reaping.
     _launch_isolated_job("live")
-    _launch_isolated_job("score")
     _launch_isolated_job("master")
+    _launch_isolated_job("score")
     if WORLD_FEATURE_ENABLED:
         _launch_isolated_job("world")
     _launch_isolated_job("team")

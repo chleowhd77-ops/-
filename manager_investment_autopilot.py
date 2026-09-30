@@ -10,6 +10,7 @@ grades only that frozen selection after the result is available.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import math
 import os
@@ -21,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+from api_engine import ANALYSIS_VERSION
 
 MANAGER_ENGINE_VERSION = "manager-investment-independent-v2-validated-value"
 OUTPUT_SCHEMA = "dj-sports.manager-investment-ledger.v1"
@@ -62,6 +65,7 @@ class PendingSnapshot:
     kickoff_at: str
     home: str
     away: str
+    analysis_version: str
     candidates: tuple[dict[str, Any], ...]
 
 
@@ -319,14 +323,18 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
         rows = connection.execute(
             """
             SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json,
+                   s.analysis_version,
                    p.match_time, p.home_team, p.away_team
             FROM prediction_analysis_snapshots AS s
             JOIN predictions AS p ON p.match_id = s.match_id
             WHERE COALESCE(p.actual_result, 'PENDING') = 'PENDING'
               AND COALESCE(p.is_toto14, 0) = 0
-              AND s.stage LIKE 'T-%'
+              AND (s.stage LIKE 'T-%' OR s.stage = 'regular')
+              AND s.analysis_version = ?
+              AND p.match_id NOT LIKE 'WORLD_%'
             ORDER BY s.match_id ASC, s.id DESC
-            """
+            """,
+            (ANALYSIS_VERSION,),
         ).fetchall()
     finally:
         connection.close()
@@ -348,9 +356,18 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
     pending: list[PendingSnapshot] = []
     for row in latest.values():
         kickoff_at = str(row["match_time"] or "")
+        analysis_version = str(row["analysis_version"] or "").strip()
         kickoff = _kickoff_datetime(kickoff_at)
         # The manager ledger must never create an answer after a fixture starts.
-        if kickoff is None or kickoff <= now:
+        if kickoff is None or kickoff <= now or analysis_version != ANALYSIS_VERSION:
+            continue
+        try:
+            created = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        if created >= kickoff:
             continue
         candidates = _json(row["candidates_json"], [])
         valid = tuple(candidate for candidate in candidates if isinstance(candidate, dict))
@@ -363,6 +380,7 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
                     kickoff_at=kickoff.isoformat(timespec="minutes"),
                     home=str(row["home_team"] or ""),
                     away=str(row["away_team"] or ""),
+                    analysis_version=analysis_version,
                     candidates=valid,
                 )
             )
@@ -415,8 +433,13 @@ def _interval_width(candidate: dict[str, Any]) -> float:
 
 
 def _manager_candidate(
-    snapshot: PendingSnapshot, candidate: dict[str, Any], history: dict[str, Any], frozen_at: str
+    snapshot: PendingSnapshot, candidate: dict[str, Any], history: dict[str, Any], frozen_at: str,
+    rejections: dict[str, int] | None = None,
 ) -> dict[str, Any] | None:
+    def reject(reason):
+        if rejections is not None:
+            rejections[reason] = rejections.get(reason, 0) + 1
+        return None
     market = str(candidate.get("market_key") or "").strip()
     raw_pick = str(candidate.get("raw_pick") or "").strip()
     probability = _probability(candidate.get("model_probability", candidate.get("prob")))
@@ -431,7 +454,7 @@ def _manager_candidate(
         or data_confidence < MIN_DATA_CONFIDENCE
         or candidate.get("settlement_supported") is False
     ):
-        return None
+        return reject("배당·확률·자료 신뢰도 확인 필요")
 
     calibrated, statistical_lower, calibration_samples = _calibrate_probability(
         probability, market, history
@@ -442,7 +465,7 @@ def _manager_candidate(
     if odd >= 5.0 and odds_history.count < MIN_HIGH_ODDS_HISTORY_ROWS:
         # A longshot cannot be promoted from its price alone.  Keep gathering
         # frozen samples first; this is a deliberate no-pick, not a fallback.
-        return None
+        return reject("고배당 구간 채점 표본 부족")
     uncertainty = _interval_width(candidate)
     confidence_factor = 0.85 + 0.15 * data_confidence
     conservative = min(probability, calibrated, statistical_lower) * confidence_factor
@@ -457,7 +480,7 @@ def _manager_candidate(
     market_edge = conservative - market_reference
     conservative_ev = conservative * odd - 1.0
     if conservative_ev < MIN_CONSERVATIVE_EV or market_edge < MIN_MARKET_EDGE:
-        return None
+        return reject("보수 기대값·시장 대비 확률 기준 미충족")
 
     # A value-first score: price only matters through conservative EV.  The
     # small confidence term resolves otherwise equal candidates without
@@ -476,6 +499,7 @@ def _manager_candidate(
         "match_id": snapshot.match_id,
         "source_snapshot_id": snapshot.snapshot_id,
         "source_created_at": snapshot.created_at,
+        "analysis_version": snapshot.analysis_version,
         "kickoff_at": snapshot.kickoff_at,
         "home": snapshot.home,
         "away": snapshot.away,
@@ -500,14 +524,15 @@ def _manager_candidate(
 
 
 def _select_portfolio(
-    snapshots: list[PendingSnapshot], history: dict[str, Any], frozen_at: str
+    snapshots: list[PendingSnapshot], history: dict[str, Any], frozen_at: str,
+    rejections: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     per_fixture: list[dict[str, Any]] = []
     for snapshot in snapshots:
         options = [
             row
             for candidate in snapshot.candidates
-            for row in (_manager_candidate(snapshot, candidate, history, frozen_at),)
+            for row in (_manager_candidate(snapshot, candidate, history, frozen_at, rejections),)
             if row is not None
         ]
         if options:
@@ -704,7 +729,12 @@ def build_manager_payload(
     }
     try:
         history = _load_history(database_path)
-        selected = _select_portfolio(_load_pending_snapshots(database_path), history, generated_at)
+        snapshots = _load_pending_snapshots(database_path)
+        rejections: dict[str, int] = {}
+        selected = _select_portfolio(snapshots, history, generated_at, rejections)
+        base.update(input_snapshot_count=len(snapshots),
+                    input_candidate_count=sum(len(row.candidates) for row in snapshots),
+                    candidate_rejections=rejections)
         created = 0
         for pick in selected:
             match_id = str(pick["match_id"])
@@ -743,9 +773,21 @@ def build_manager_payload(
 
 def refresh_manager_ledger(database_path: str | Path, output_path: str | Path) -> dict[str, Any]:
     output = Path(output_path)
-    payload = build_manager_payload(database_path, _read_json(output, {}))
-    _write_json_atomically(output, payload)
-    return payload
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # The old six-hour timer may still run. Serialize its read/merge/write
+    # with the analysis-triggered refresh so neither can lose frozen records.
+    with output.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = build_manager_payload(database_path, _read_json(output, {}))
+        now = datetime.now(KST)
+        payload['current_pending_count'] = sum(
+            1 for row in (payload.get('picks') or {}).values()
+            if row.get('analysis_version') == ANALYSIS_VERSION
+            and row.get('status') != 'FINISHED'
+            and (_kickoff_datetime(row.get('kickoff_at')) or now) > now
+        )
+        _write_json_atomically(output, payload)
+        return payload
 
 
 def _main() -> int:
