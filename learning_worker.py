@@ -57,7 +57,7 @@ def result_signature(root):
                 counts.append((table,db.execute(f'SELECT COUNT(*),MAX(id) FROM {table} WHERE {where}').fetchone()))
     textbook = Path(root)/'master_training_data.csv'
     textbook_hash = hashlib.sha256(textbook.read_bytes()).hexdigest() if textbook.exists() else 'missing'
-    return digest([CAMPAIGN, rows, counts, textbook_hash])
+    return digest(['R7.13.13', CAMPAIGN, rows, counts, textbook_hash])
 
 
 def save_model(root, engine, value, binary=False):
@@ -146,22 +146,23 @@ def train_robot(root, old, source):
             comparison = {'candidate':left,'incumbent':right,'matches':len(exam_rows),
                           'method':'candidate-heldout-before-refit-versus-incumbent'}
             challenger = metric_pass(left,right)
-    if previous.get('deployment_eligible') and not challenger:
-        return dict(status='RETAINED', training_samples=artifact.get('samples',0),
-                    exam=comparison or {'reason':artifact.get('latest_challenger_reason') or artifact.get('reason')},
-                    reason='새 계산식 검증 미통과·기존 승인 모델과 보정 유지')
     artifact = dict(artifact)
+    validating = bool(artifact.get('parameters') and artifact.get('samples') and not challenger)
+    if validating:
+        artifact.update(active=True,validation_status='VALIDATING',
+                        reason='자체 학습 결과 공개·실전 채점 검증 중')
     with sqlite3.connect(Path(root)/'ai_predictions.db') as db:
         where,params = c._robot_track_sql(source)
         last = db.execute(f'SELECT MAX(kickoff_timestamp) FROM robot_learning_samples WHERE actual_home_goals IS NOT NULL AND {where}',params).fetchone()[0]
     artifact['grading_experience_samples'] = (artifact.get('grading_experience') or {}).get('samples',0)
     artifact['learning_revision_marker'] = digest(artifact)
     name = save_model(root,engine,artifact)
-    return dict(artifact=name,active_version=name[:-5],status='READY' if artifact.get('deployment_eligible') else 'BASELINE',
+    return dict(artifact=name,previous_artifact=old.get('artifact'),active_version=name[:-5],
+                status='VALIDATING' if validating else 'READY' if artifact.get('deployment_eligible') else 'BASELINE',
                 training_samples=artifact.get('samples',0),exam=comparison or {
                     k:artifact.get(k) for k in ('validation_fixtures','goal_validation_accuracy','deployment_eligible','reason')},
-                trained_through=last if challenger or not previous else old.get('trained_through'),
-                reason=artifact.get('reason','') if challenger or not previous else '기존 승인 계산식 유지·자체 채점 확률 보정 갱신',
+                trained_through=last,
+                reason=artifact.get('reason',''),
                 scope='승무패14 전용' if source=='TOTO14' else '프로토 전 시장')
 
 
@@ -288,13 +289,11 @@ def train_v2(root, old):
         source_counts=dict(Counter(r['source'] for r in rows)),scope='승무패만·배당 세 값',
         source_notice='B365 역사 배당과 사이트 배당은 공급사·시점이 다를 수 있으며 출처별 시험을 별도 표시',
         exam_method=('기존 승인 모델이 학습하지 않은 새 경기만 비교' if incumbent is not None else '기존 학습 기간 불명: 같은 과거 구간으로 설정 재훈련·미래 구간 비교'))
-    if passed:
-        name=save_model(root,'v2',fit(rows,leaf),binary=True)
-        info.update(status='READY',reason='시간순 비교 통과',artifact=name,active_version=name[:-4],
-                    parameters={'min_samples_leaf':leaf},trained_through=max(r['time'] for r in rows))
-    elif not old.get('active_version'):
-        legacy=Path(root)/'v2_ai_brain.pkl'
-        if legacy.exists():info['active_version']='legacy-v2-'+hashlib.sha256(legacy.read_bytes()).hexdigest()[:16]
+    name=save_model(root,'v2',fit(rows,leaf),binary=True)
+    info.update(status='READY' if passed else 'VALIDATING',
+                reason='시간순 비교 통과' if passed else '새 학습 모델 공개·실전 채점 검증 중',
+                previous_artifact=old.get('artifact'),artifact=name,active_version=name[:-4],
+                parameters={'min_samples_leaf':leaf},trained_through=max(r['time'] for r in rows))
     return info
 
 
@@ -350,15 +349,14 @@ def train_v3(root, old):
         source_audit=audit,exam={'candidate':a,'incumbent':b,'passed':passed,'by_market':by_market},
         exam_method=('기존 승인 V3가 학습하지 않은 새 경기만 비교' if deployed is not None else '기존 학습 기간 불명: 같은 과거 구간으로 설정 재훈련·미래 구간 비교'),scope='승무패·핸디캡·언오버 후보 평가')
     legacy=Path(root)/'.v3_serving_cache.pkl'
-    if passed or (not old.get('artifact') and not legacy.exists() and exam.get('qualification')=='PASS'):
-        encoder=meta.FrozenFeatureEncoder().fit(data)
-        model=meta.ChallengerModel(**new_config).fit(encoder.transform(data),[r.label for r in data])
-        summary=dict(completed_matches=audit['usable_matches'],completed_candidates=len(data),training_config=new_config,
-                     historical_exam=exam,learner_backend=model.backend,source_audit=audit)
-        name=save_model(root,'v3',(model,encoder,summary),binary=True)
-        info.update(status='READY',reason='시간순 비교 통과',artifact=name,active_version=name[:-4],parameters=new_config,trained_through=max(r.kickoff_timestamp for r in data))
-    elif not old.get('active_version') and legacy.exists():
-        info['active_version']='legacy-v3-'+hashlib.sha256(legacy.read_bytes()).hexdigest()[:16]
+    encoder=meta.FrozenFeatureEncoder().fit(data)
+    model=meta.ChallengerModel(**new_config).fit(encoder.transform(data),[r.label for r in data])
+    summary=dict(completed_matches=audit['usable_matches'],completed_candidates=len(data),training_config=new_config,
+                 historical_exam=exam,learner_backend=model.backend,source_audit=audit)
+    name=save_model(root,'v3',(model,encoder,summary),binary=True)
+    info.update(status='READY' if passed else 'VALIDATING',
+                reason='시간순 비교 통과' if passed else '새 학습 모델 공개·실전 채점 검증 중',
+                previous_artifact=old.get('artifact'),artifact=name,active_version=name[:-4],parameters=new_config,trained_through=max(r.kickoff_timestamp for r in data))
     return info
 
 
@@ -414,6 +412,15 @@ def run_one(root, on_status=None):
             from threadpoolctl import threadpool_limits
             with threadpool_limits(limits=1):
                 result=functions[engine](root,old)
+                if engine == 'v2':
+                    from analyst_curriculum import prepare
+                    from v2_market_learning import train
+                    try:
+                        result['course'] = prepare(root)
+                        result['market_learning'] = train(root)
+                    except Exception as error:
+                        result['market_learning'] = {'status':'ERROR','reason':str(error)}
+                        print(f'⚠️ V2 확장 학습 준비 실패: {type(error).__name__}: {error}',flush=True)
             engines[engine]={**old,**result,'last_attempt_at':started,'last_review_at':now_iso(),
                              'reviewed_signature':signature,'campaign_reviewed':CAMPAIGN}
             if result.get('status') == 'READY':

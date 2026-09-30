@@ -502,6 +502,18 @@ def _grade_frozen_picks(
         for match_id, pick in picks.items():
             if not isinstance(pick, dict):
                 continue
+            if not pick.get('home_team') or not pick.get('kickoff_at'):
+                # Repair labels only; never change the frozen answer or grade.
+                from scorecard_core import epoch, KST
+                identity = connection.execute('''SELECT home_team,away_team,match_time,api_fixture_id
+                    FROM predictions WHERE match_id=?''',(str(match_id),)).fetchone()
+                if identity:
+                    ko=epoch(identity['match_time'],KST)
+                    captured=epoch(pick.get('frozen_at'))
+                    same_fixture=bool(pick.get('api_fixture_id')) and str(pick['api_fixture_id'])==str(identity['api_fixture_id'])
+                    if same_fixture and 0<captured<ko and ko-captured<=14*86400:
+                        for field,value in zip(('home_team','away_team','kickoff_at','api_fixture_id'),identity):
+                            if not pick.get(field):pick[field]=value
             total += 1
             if pick.get("is_correct") in (0, 1):
                 graded += 1

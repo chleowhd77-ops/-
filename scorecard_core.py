@@ -269,6 +269,8 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
 
 def v2_answer(pick, home, away):
     pick = obj(pick)
+    if pick.get('engine') in ('v2-ai','v2') and pick.get('raw_pick') and pick.get('market_key') in ('1x2','totals','handicap'):
+        return dict(pick)
     code = str(pick.get('code') or pick.get('v2_ai_pick') or '').upper()
     raw = {'H': f'{home} 승', 'D': '무승부', 'A': f'{away} 승'}.get(code)
     return {'raw_pick': raw, 'code': code, 'selection_side': {'H': 'home', 'D': 'draw', 'A': 'away'}.get(code),
@@ -280,10 +282,12 @@ def published_scorecard(snapshot, v3, manager):
     if (snapshot.get('scorecard_v2') or {}).get('version') == VERSION:
         return snapshot['scorecard_v2']
     records, seen = [], set()
+    identities = {}
     for track, data in ((snapshot.get('three_engine') or {}).get('tracks') or {}).items():
         if track not in TRACKS:
             continue
         for row in (data.get('finished') or []) + (data.get('pending') or []):
+            identities[(track,str(row.get('match_id')))] = row
             for engine, pick in (row.get('engines') or {}).items():
                 key = (track, str(row.get('match_id')), engine)
                 if key in seen or engine not in ENGINES:
@@ -294,7 +298,12 @@ def published_scorecard(snapshot, v3, manager):
         if not isinstance(pick, dict) or str(mid).startswith('WORLD_') or pick.get('source_kind') == 'world_dashboard_card':
             continue
         track = 'toto14' if str(mid).startswith('TOTO14_') or pick.get('source_kind') == 'toto14_freeze' else 'proto_world'
-        records.append({**pick, 'track': track, 'engine': 'v3', 'match_id': str(mid), 'provenance': 'v3_independent_ledger'})
+        identity = identities.get((track,str(mid))) or {}
+        records.append({**pick,
+            'home_team':pick.get('home_team') or pick.get('home') or identity.get('home_team') or identity.get('home'),
+            'away_team':pick.get('away_team') or pick.get('away') or identity.get('away_team') or identity.get('away'),
+            'kickoff_at':pick.get('kickoff_at') or identity.get('kickoff_at') or identity.get('match_time'),
+            'track': track, 'engine': 'v3', 'match_id': str(mid), 'provenance': 'v3_independent_ledger'})
     data = project(records, {'collector_update_pending': True},
                    [p for p in (manager.get('picks') or {}).values() if isinstance(p, dict)])
     data['generated_at'] = snapshot.get('generated_at')
@@ -392,7 +401,7 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
         answers = {
             'official': (card.get('pick_categories') or {}).get('high_probability') or {},
             'robot': card.get('robot_pick') or {},
-            'v2': v2_answer(card.get('alphago_pick') or card.get('robot_pick'), card['match'].get('home'), card['match'].get('away')),
+            'v2': v2_answer(card.get('v2_market_pick') or card.get('alphago_pick') or card.get('robot_pick'), card['match'].get('home'), card['match'].get('away')),
             'v3': pick3,
         }
         if not 0 < epoch(pick3.get('frozen_at')) <= now.timestamp():
@@ -439,4 +448,5 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
             card['v3_learning_pick'] = stored['v3']
         if 'v2' in stored:
             card['alphago_pick'] = stored['v2']
+            card['v2_market_pick'] = {**stored['v2'], 'engine':'v2-ai'}
     return manager_picks

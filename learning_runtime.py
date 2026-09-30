@@ -16,7 +16,8 @@ class StageCache:
         self.root = Path(root)
         self.engine = engine
         self.notify = notify
-        self.deadline = time.monotonic() + budget_seconds
+        self.budget_seconds = budget_seconds
+        self.compute_seconds = 0.0
         self.folder = None
 
     def note(self, stage):
@@ -37,14 +38,15 @@ class StageCache:
         if saved.get('complete') is True:
             self.note(stage + ' · 저장 결과 재사용')
             return saved['result']
-        if time.monotonic() >= self.deadline:
+        if self.compute_seconds >= self.budget_seconds:
             self.note(stage + ' · 다음 주기에 이어서 진행')
             raise LearningPaused(stage)
         self.note(stage + ' · 계산 시작')
         started = time.monotonic()
         result = compute()
+        self.compute_seconds += time.monotonic() - started
         atomic_json(path, dict(complete=True, result=result))
         self.note(f'{stage} · 저장 완료 {time.monotonic()-started:.1f}초')
-        if time.monotonic() >= self.deadline:
+        if self.compute_seconds >= self.budget_seconds:
             raise LearningPaused(stage)
         return result

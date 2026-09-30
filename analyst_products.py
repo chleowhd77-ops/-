@@ -15,12 +15,15 @@ def investment_candidates(card, engine, v3_pick=None):
         source = (v3_pick or {}).get('candidate_scores') or []
     else:
         from v2_ml_engine import get_v2_prediction
+        from v2_market_learning import predict
+        from pathlib import Path
         source = [p for p in card.get('display_candidates', []) if p.get('market_key') == '1x2']
         quotes = {p.get('selection_side'): p.get('odd') for p in source}
         prediction = get_v2_prediction(*(quotes.get(k) for k in ('home','draw','away')))
         probabilities = prediction.get('probabilities') or {}
         source = [{**p, 'model_probability': probabilities.get(p.get('selection_side'))}
                   for p in source if probabilities.get(p.get('selection_side')) is not None]
+        source += predict(card.get('display_candidates') or [],Path(__file__).resolve().parent)
     result = []
     for candidate in source:
         row = dict(candidate)
@@ -34,6 +37,26 @@ def investment_candidates(card, engine, v3_pick=None):
                    analyst=engine)
         result.append(row)
     return result
+
+
+def attach_v2_markets(card, root):
+    """Compute on the collector, never on a UI click. Preserve the WDL answer for Toto14."""
+    from v2_market_learning import predict
+    from learning_state import before_kickoff
+    if not before_kickoff(card.get('match') or {}) or card.get('public_pick_block_reason'):
+        return card
+    candidates=predict(card.get('display_candidates') or [],root)
+    old=card.get('alphago_pick') or {}
+    probabilities=old.get('probabilities') or {}
+    for c in card.get('display_candidates') or []:
+        p=probabilities.get(c.get('selection_side'))
+        if c.get('market_key')=='1x2' and p is not None:
+            candidates.append({**c,'probability':p,'prob':p,'model_probability':p,
+                'model_version':old.get('model_version'),'engine':'v2-ai','validation_status':'VALIDATING'})
+    if candidates:
+        card['v2_market_candidates']=candidates
+        card['v2_market_pick']=dict(max(candidates,key=lambda c:c['probability']))
+    return card
 
 
 def manager_engine_payload(payload, engine):

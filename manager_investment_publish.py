@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from runtime_publisher import DATA_BRANCH, ensure_data_branch
 
 
 REMOTE_PATH = "manager_investment_picks.json"
@@ -40,11 +41,12 @@ def publish(file_path: str | Path) -> None:
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github+json",
     }
-    existing = requests.get(url, headers=headers, timeout=20)
+    ensure_data_branch(repo, headers)
+    existing = requests.get(url, headers=headers, params={'ref': DATA_BRANCH}, timeout=20)
     payload: dict[str, Any] = {
         "message": "chore: refresh manager investment ledger",
         "content": base64.b64encode(source.read_bytes()).decode("ascii"),
-        "branch": "main",
+        "branch": DATA_BRANCH,
     }
     if existing.status_code == 200:
         sha = str((existing.json() or {}).get("sha") or "")

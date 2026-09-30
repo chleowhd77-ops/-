@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from runtime_publisher import DATA_BRANCH, ensure_data_branch
 
 
 def _settings() -> tuple[str, str]:
@@ -39,11 +40,12 @@ def publish(file_path: str | Path, remote_path: str = "v3_learning_picks.json") 
         "Accept": "application/vnd.github+json",
     }
     local_bytes = source.read_bytes()
-    existing = requests.get(url, headers=headers, timeout=20)
+    ensure_data_branch(repo, headers)
+    existing = requests.get(url, headers=headers, params={'ref': DATA_BRANCH}, timeout=20)
     payload: dict[str, Any] = {
         "message": "chore: refresh autonomous V3 learning picks",
         "content": base64.b64encode(local_bytes).decode("ascii"),
-        "branch": "main",
+        "branch": DATA_BRANCH,
     }
     if existing.status_code == 200:
         remote = existing.json() or {}

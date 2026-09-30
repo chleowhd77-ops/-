@@ -698,6 +698,64 @@ def _cache_only_miss_response(path):
     return response
 
 
+def _recovery_db():
+    conn = _runtime_connect()
+    conn.execute('''CREATE TABLE IF NOT EXISTS data_recovery_queue (
+        key TEXT PRIMARY KEY, path TEXT, params_json TEXT, attempts INTEGER DEFAULT 0,
+        next_attempt REAL DEFAULT 0, reason TEXT, updated_at REAL)''')
+    return conn
+
+
+def _queue_data_recovery(path, params, reason='cache_only_miss'):
+    # Serving workers request collection; they never turn a miss into fake data.
+    key = json.dumps([path, params], sort_keys=True, ensure_ascii=True)
+    with _recovery_db() as conn:
+        conn.execute('''INSERT INTO data_recovery_queue
+            (key,path,params_json,reason,updated_at) VALUES (?,?,?,?,?)
+            ON CONFLICT(key) DO UPDATE SET updated_at=excluded.updated_at''',
+            (key,path,json.dumps(params),reason,time.time()))
+    conn.close()
+
+
+def process_data_recovery_queue(limit=12):
+    """Collector-only bounded recovery of exact requests missed by analysts."""
+    conn = _recovery_db()
+    try:
+        rows = conn.execute('''SELECT key,path,params_json,attempts FROM data_recovery_queue
+            WHERE next_attempt<=? ORDER BY CASE WHEN path LIKE '/fixtures%' THEN 0
+            WHEN path='/odds' THEN 1 ELSE 2 END, next_attempt,updated_at LIMIT ?''',
+            (time.time(),int(limit))).fetchall()
+    finally:
+        conn.close()
+    done = 0
+    for key,path,raw,attempts in rows:
+        reason = 'unknown'
+        try:
+            with api_cache_only_context(False):
+                response = api_get(path, params=json.loads(raw), timeout=12, purpose='analysis')
+            payload = response.json() if response.status_code == 200 else {}
+            if response.status_code == 200 and not payload.get('errors'):
+                done += 1
+                reason = 'received' if payload.get('response') else 'provider_empty'
+                with _recovery_db() as conn:
+                    conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
+                conn.close()
+                print(f'[자료 복구] {path} · {reason}',flush=True)
+                continue
+            reason = f'provider_http_{response.status_code}' if response.status_code != 200 else 'provider_api_error'
+        except (ApiQuotaUnavailable, ApiRateLimited):
+            break
+        except Exception as error:
+            reason = type(error).__name__
+        with _recovery_db() as conn:
+            conn.execute('''UPDATE data_recovery_queue SET attempts=attempts+1,
+                next_attempt=?,reason=? WHERE key=?''',
+                (time.time()+min(1800,60*2**min(attempts,5)),reason,key))
+        conn.close()
+        print(f'[자료 복구 대기] {path} · {reason}',flush=True)
+    return {'requested':len(rows),'received':done}
+
+
 def _release_request_cache_lease(key):
     conn = None
     try:
@@ -753,6 +811,7 @@ def api_get(path, params=None, timeout=7, purpose=None):
     if _API_CACHE_ONLY:
         _release_request_cache_lease(key)
         _record_runtime_metric(day, "cache_only_miss", purpose, path)
+        _queue_data_recovery(path, params)
         return _cache_only_miss_response(path)
     saved = False
     try:
@@ -786,7 +845,15 @@ def api_get(path, params=None, timeout=7, purpose=None):
                     raise ApiRateLimited("Temporary provider rate limit")
                 time.sleep(min(10*(attempt+1),30))
                 continue
-            payload = response.json()
+            if response.status_code in (502,503,504,505):
+                print(f'[공급사 HTTP 오류] {path} · HTTP {response.status_code}',flush=True)
+                _queue_data_recovery(path, params, f'provider_http_{response.status_code}')
+                return response
+            try:
+                payload = response.json()
+            except ValueError:
+                _queue_data_recovery(path, params, 'provider_non_json')
+                return response
             if response.status_code == 200 and not payload.get("errors"):
                 _finish_request_cache(
                     key, payload, _request_cache_ttl(path, params, payload)
@@ -3239,7 +3306,10 @@ def _fetch_date_fixtures_api(date_str, ttl_h=2, purpose="analysis"):
             purpose=purpose,
         )
         if response.status_code != 200:
-            print(f"⚠️ 실제 경기표 조회 실패({date_str}): HTTP {response.status_code}")
+            if response.headers.get('X-DJ-Cache') == 'miss-cache-only':
+                print(f"[자료 수집 요청] 경기표 {date_str} · 공용 캐시 미수신 · 수집 대기열 등록")
+            else:
+                print(f"⚠️ 실제 경기표 조회 실패({date_str}): 공급사 HTTP {response.status_code}")
             return None
         payload = response.json()
         if payload.get("errors"):
@@ -3579,6 +3649,12 @@ def resolve_match_team_pair(
     # endpoint with known identity hints and require its actual scheduled pair.
     recovery_reason = "fixture_pair_not_verified"
     if not no_scheduled_time:
+        if not _API_CACHE_ONLY:
+            # Name search supplies hints, never permission to accept an unrelated fixture.
+            if not known_home:
+                known_home = int((fetch_team_info_api(home_name) or {}).get('id') or 0)
+            if not known_away:
+                known_away = int((fetch_team_info_api(away_name) or {}).get('id') or 0)
         fixture_data, recovery_reason = _recover_pair_fixture(
             (manual_home or {}).get("id") or known_home,
             (manual_away or {}).get("id") or known_away,

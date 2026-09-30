@@ -6910,7 +6910,7 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoi
             except (TypeError, ValueError, json.JSONDecodeError):
                 persisted_artifact = {}
             if isinstance(persisted_artifact, dict) and persisted_artifact:
-                if serving_only:
+                if serving_only or checkpoint is not None:
                     selected_artifact = dict(persisted_artifact)
                     selected_artifact["serving_only"] = True
                     selected_artifact["learning_revision_marker"] = signature
@@ -7005,6 +7005,8 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoi
             ),
         )
         conn.commit()
+        if checkpoint is not None:
+            return artifact
         selected_artifact = _select_autonomous_robot_artifact(
             conn, artifact, source, track, signature,
             grading_experience=artifact["grading_experience"],
@@ -17726,6 +17728,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
 
 def run_team_identity_job():
     """Prefetch shared evidence, then repair unresolved team profiles."""
+    from api_engine import process_data_recovery_queue
+    process_data_recovery_queue(limit=12)
     prefetch = _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT)
     seeded_cards = _queue_incomplete_dashboard_team_profiles()
     summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
@@ -17788,6 +17792,14 @@ def run_products_job():
     print(f"✅ V3 답안 생성·게시: 신규 {payload.get('newly_frozen_picks', 0)}건 / 상태 {payload.get('status')} / 게시 {published}")
     manager_ok = _refresh_manager_after_analysis("products")
     dashboard = _read_json("dashboard_data.json", {})
+    from analyst_products import attach_v2_markets
+    for card in dashboard.get('proto', []):
+        attach_v2_markets(card, APP_DIR)
+    enriched = {str((c.get('match') or {}).get('id')):c for c in dashboard.get('proto',[])}
+    for card in dashboard.get('top3',[]):
+        source = enriched.get(str((card.get('match') or {}).get('id'))) or {}
+        for field in ('v2_market_pick','v2_market_candidates'):
+            if field in source:card[field]=source[field]
     _freeze_displayed_products(dashboard)
     _atomic_write_json("dashboard_data.json", dashboard)
     dashboard_ok = upload_to_github("dashboard_data.json")

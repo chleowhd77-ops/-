@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-CAMPAIGN = 'R7.13.11-first-learning-review'
+CAMPAIGN = 'R7.13.13-visible-learning-review'
 ENGINES = ('official', 'robot_proto', 'robot_toto14', 'v2', 'v3')
 
 

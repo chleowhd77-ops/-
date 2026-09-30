@@ -1,5 +1,5 @@
 import os
-print('[DJ WEB R7.13.12] Python entry', flush=True)
+print('[DJ WEB R7.13.13] Python entry', flush=True)
 import hmac
 import streamlit as st
 import json
@@ -82,7 +82,7 @@ APP_TITLE = "D.J SPORTS ANALYTICS"
 APP_DIR = Path(__file__).resolve().parent
 BRAND_LOGO_PATH = APP_DIR / "assets" / "dj-analytics-logo.svg"
 
-print('[DJ WEB R7.13.12] UI imports ready', flush=True)
+print('[DJ WEB R7.13.13] UI imports ready', flush=True)
 st.set_page_config(
     page_title=APP_TITLE, 
     page_icon="📊",
@@ -317,9 +317,9 @@ def _is_displayable_match_item(item):
 # -----------------------------------------------------------------------------
 _startup_notice = st.empty()
 _startup_notice.caption('화면을 준비하고 있습니다.')
-print('[DJ WEB R7.13.12] Member storage starting', flush=True)
+print('[DJ WEB R7.13.13] Member storage starting', flush=True)
 init_member_db()
-print('[DJ WEB R7.13.12] Member storage ready', flush=True)
+print('[DJ WEB R7.13.13] Member storage ready', flush=True)
 MEMBER_STORAGE_STATUS = get_member_storage_status()
 
 
@@ -1827,7 +1827,7 @@ visible_match_limit = access_profile["match_limit"]
 # -----------------------------------------------------------------------------
 # 5. 레이아웃 뼈대 생성 (메인 콘텐츠)
 # -----------------------------------------------------------------------------
-print('[DJ WEB R7.13.12] Published feeds starting', flush=True)
+print('[DJ WEB R7.13.13] Published feeds starting', flush=True)
 dashboard_data = load_dashboard_data()
 v3_learning_picks = load_v3_learning_picks()
 manager_investment_data = load_manager_investment_picks()
@@ -1898,7 +1898,7 @@ if not _is_current_robot_public_snapshot(grading_snapshot):
 prediction_results_data = load_prediction_results(grading_snapshot)
 scorecard_data = published_scorecard(grading_snapshot, v3_learning_picks, manager_investment_data)
 _startup_notice.empty()
-print('[DJ WEB R7.13.12] Published feeds ready', flush=True)
+print('[DJ WEB R7.13.13] Published feeds ready', flush=True)
 
 proto_total = len(dashboard_data.get("proto", []))
 top3_total = min(3, len(dashboard_data.get("top3", [])))
@@ -3282,6 +3282,9 @@ def _final_pick_validation_html(item, pick, value_badge=False, vip_badge=False):
 def _extract_alphago_pick(analysis_item):
     """Read the existing V2 result without treating it as a robot or official pick."""
     item = analysis_item if isinstance(analysis_item, dict) else {}
+    market_pick=item.get('v2_market_pick') or {}
+    if market_pick.get('raw_pick') and market_pick.get('engine')=='v2-ai':
+        return market_pick
     nested = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
     candidates = []
     for source in (item, nested):
@@ -3300,6 +3303,8 @@ def _extract_alphago_pick(analysis_item):
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
+        if candidate.get('raw_pick') and candidate.get('market_key') in ('1x2','totals','handicap'):
+            return candidate
         code = str(candidate.get("code") or candidate.get("v2_ai_pick") or "").strip().upper()
         side = {"H": "home", "D": "draw", "A": "away"}.get(code)
         if side:
@@ -3324,7 +3329,7 @@ def _alphago_pick_html(analysis_item, home_team="", away_team=""):
     """Render the V2 AI answer as a distinct, non-scored display card."""
     alphago = _extract_alphago_pick(analysis_item)
     code = str(alphago.get("code") or "")
-    pick_text = {
+    pick_text = alphago.get('raw_pick') or {
         "H": f"{home_team or '홈팀'} 승",
         "D": "무승부",
         "A": f"{away_team or '원정팀'} 승",
@@ -3345,7 +3350,7 @@ def _alphago_pick_html(analysis_item, home_team="", away_team=""):
         "<div class='pred-label' style='color:#FCD34D;'>🧠 알파고픽 (V2 AI)</div>"
         f"<span class='pred-value'>{escape(pick_text)}</span>"
         "<span style='display:block;color:#CBD5E1;font-size:11px;margin-top:6px;'>"
-        "V2 딥러닝 AI의 별도 승무패 결과</span>"
+        "V2 자체 분석 · 학습 결과 실전 채점 중</span>"
         "<span style='display:block;color:#94A3B8;font-size:11px;margin-top:5px;'>"
         "공식 추천픽·자율학습 로봇픽을 변경하지 않습니다.</span></div>"
     )
@@ -3869,10 +3874,10 @@ def _render_learning_status():
             st.caption('서버 학습 작업의 첫 상태 게시를 기다리고 있습니다.')
             return
         labels = {'official':'공식픽','robot_proto':'자율로봇 · 프로토',
-                  'robot_toto14':'자율로봇 · 승무패14','v2':'V2 알파고 · 승무패','v3':'V3 · 전 시장'}
+                  'robot_toto14':'자율로봇 · 승무패14','v2':'V2 알파고 · 전 시장','v3':'V3 · 전 시장'}
         states = {'READY':'검증 모델 적용','BASELINE':'기초모형 유지','RETAINED':'기존 승인 모델 유지',
                   'WAITING_DATA':'학습 표본 대기','TRAINING':'서버에서 학습 중',
-                  'PAUSED':'중간 저장 · 다음 차례에 계속','ERROR':'실패 · 기존 모델 유지'}
+                  'PAUSED':'중간 저장 · 다음 차례에 계속','VALIDATING':'학습 후 실전 검증 중','ERROR':'실패 · 기존 모델 유지'}
         st.dataframe(pd.DataFrame([{'분석가':label,'상태':states.get(entries.get(key,{}).get('status'),'첫 검토 대기'),
             '표본':entries.get(key,{}).get('training_samples',0),
             '진행 단계':entries.get(key,{}).get('stage','—'),
@@ -3889,7 +3894,7 @@ def _render_learning_status():
         for key,label in labels.items():
             item=entries.get(key) or {}
             st.markdown('**'+label+' 시험 상세**')
-            st.json({k:item[k] for k in ('exam','toto14_exam','exam_method','source_counts','source_notice','excluded') if k in item},expanded=False)
+            st.json({k:item[k] for k in ('exam','toto14_exam','exam_method','source_counts','source_notice','excluded','course','market_learning') if k in item},expanded=False)
 
 
 @st.fragment
