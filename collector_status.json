@@ -5,12 +5,11 @@
       "supervisor_pid": 476610,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-09-30T03:42:01+00:00",
+      "heartbeat_at": "2026-09-30T03:44:32+00:00",
       "pid": 476610,
       "last_started_at": "2026-09-30T03:15:35+00:00",
       "active_jobs": {
-        "master": 476696,
-        "team": 476707
+        "master": 476696
       },
       "pending_jobs": [
         "live",
@@ -59,19 +58,21 @@
     "master": {
       "last_success_duration_seconds": 171.44,
       "last_success_at": "2026-09-30T03:14:27+00:00",
-      "last_failure_duration_seconds": 916.8,
-      "last_failure_at": "2026-09-27T15:26:16+00:00",
+      "last_failure_duration_seconds": 901.3,
+      "last_failure_at": "2026-09-30T03:45:02+00:00",
       "run_id": "master-1790739000762320631",
       "last_stage": "proto_checkpoint_published",
-      "state": "running",
-      "heartbeat_at": "2026-09-30T03:42:01+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-09-30T03:45:02+00:00",
       "pid": 476610,
       "last_started_at": "2026-09-30T03:30:06+00:00",
       "child_pid": 476696,
-      "elapsed_seconds": 720.6,
+      "elapsed_seconds": 871.2,
       "overlap_skips": 3,
       "proto_checkpoint_analyzed": 29,
-      "proto_checkpoint_deferred": 1
+      "proto_checkpoint_deferred": 1,
+      "duration_seconds": 901.3,
+      "last_error": "hard timeout after 901 seconds"
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -89,21 +90,21 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_failure_duration_seconds": 345.58,
-      "last_failure_at": "2026-09-30T03:42:21+00:00",
+      "last_failure_duration_seconds": 402.7,
+      "last_failure_at": "2026-09-30T03:42:25+00:00",
       "last_success_at": "2026-09-30T03:31:43+00:00",
       "last_success_duration_seconds": 50.75,
       "run_id": "team-1790739341898292124",
       "last_stage": "executing",
       "state": "failed",
-      "heartbeat_at": "2026-09-30T03:42:21+00:00",
-      "pid": 476707,
+      "heartbeat_at": "2026-09-30T03:42:25+00:00",
+      "pid": 476610,
       "last_started_at": "2026-09-30T03:36:33+00:00",
       "child_pid": 476707,
       "elapsed_seconds": 378.6,
       "overlap_skips": 1,
-      "duration_seconds": 345.58,
-      "last_error": "RuntimeError: team 작업이 정상 결과를 게시하지 못함"
+      "duration_seconds": 402.7,
+      "last_error": "worker exited with code 1"
     },
     "backup": {
       "last_success_at": "2026-09-29T15:12:37+00:00",
@@ -131,7 +132,7 @@
       "duration_seconds": 7.91
     }
   },
-  "updated_at": "2026-09-30T03:42:21+00:00",
+  "updated_at": "2026-09-30T03:45:02+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -201,7 +202,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 702
+        "count": 704
       },
       {
         "metric": "cache_hit",
@@ -213,13 +214,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 512
+        "count": 514
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 482
+        "count": 484
       },
       {
         "metric": "cache_hit",
@@ -249,7 +250,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 233
+        "count": 235
       },
       {
         "metric": "cache_hit",
