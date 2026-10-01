@@ -5,31 +5,37 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T23:31:43+00:00",
+      "heartbeat_at": "2026-10-01T23:32:13+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "master": 487597
+        "live": 487605
       },
       "pending_jobs": [
         "learning",
-        "live",
+        "master",
+        "products",
         "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 6.0,
-      "last_failure_at": "2026-10-01T23:19:14+00:00",
+      "last_failure_duration_seconds": 4.72,
+      "last_failure_at": "2026-10-01T23:32:15+00:00",
       "last_success_duration_seconds": 4.83,
       "last_success_at": "2026-10-01T01:50:29+00:00",
       "run_id": "live-1790897529138175808",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T23:32:10+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-01T23:32:15+00:00",
       "pid": 487605,
-      "last_started_at": "2026-10-01T23:32:10+00:00"
+      "last_started_at": "2026-10-01T23:32:10+00:00",
+      "child_pid": 487605,
+      "elapsed_seconds": 4.0,
+      "overlap_skips": 1,
+      "duration_seconds": 4.72,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_success_duration_seconds": 494.66,
@@ -198,7 +204,7 @@
       "duration_seconds": 7.05
     }
   },
-  "updated_at": "2026-10-01T23:32:10+00:00",
+  "updated_at": "2026-10-01T23:32:15+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
