@@ -1,5 +1,5 @@
 {
-  "current_pending_count": 19,
+  "current_pending_count": 20,
   "customer_official_pick_changed": false,
   "engine_version": "manager-investment-four-analysts-v3",
   "engines": {
@@ -42,12 +42,12 @@
     "robot": {
       "candidate_rejections": {
         "배당·확률·자료 신뢰도 확인 필요": 6,
-        "보수 기대값·시장 대비 확률 기준 미충족": 159
+        "보수 기대값·시장 대비 확률 기준 미충족": 160
       },
-      "frozen_pick_count": 6,
+      "frozen_pick_count": 7,
       "input_candidate_count": 176,
       "input_snapshot_count": 22,
-      "newly_frozen_picks": 0,
+      "newly_frozen_picks": 1,
       "performance": {
         "core": {
           "frozen_count": 0,
@@ -58,7 +58,7 @@
           "unit_roi": null
         },
         "overall": {
-          "frozen_count": 6,
+          "frozen_count": 7,
           "graded_count": 1,
           "hit_count": 1,
           "hit_rate": 1.0,
@@ -66,7 +66,7 @@
           "unit_roi": 3.65
         },
         "value": {
-          "frozen_count": 6,
+          "frozen_count": 7,
           "graded_count": 1,
           "hit_count": 1,
           "hit_rate": 1.0,
@@ -148,14 +148,14 @@
       }
     }
   },
-  "frozen_pick_count": 34,
-  "generated_at": "2026-10-01T08:33:27+00:00",
+  "frozen_pick_count": 35,
+  "generated_at": "2026-10-01T08:55:35+00:00",
   "graded_pick_count": 14,
   "history_rows": 11544,
   "input_candidate_count": 176,
   "input_snapshot_count": 22,
   "mode": "administrator_only_independent_investment_ledger",
-  "newly_frozen_picks": 0,
+  "newly_frozen_picks": 1,
   "performance": {
     "core": {
       "frozen_count": 0,
@@ -166,7 +166,7 @@
       "unit_roi": null
     },
     "overall": {
-      "frozen_count": 34,
+      "frozen_count": 35,
       "graded_count": 14,
       "hit_count": 3,
       "hit_rate": 0.214286,
@@ -174,7 +174,7 @@
       "unit_roi": -0.003571
     },
     "value": {
-      "frozen_count": 34,
+      "frozen_count": 35,
       "graded_count": 14,
       "hit_count": 3,
       "hit_rate": 0.214286,
@@ -1010,6 +1010,41 @@
       "status": "PENDING",
       "tier": "고배당 가치"
     },
+    "robot:5898": {
+      "analysis_version": "V7.13.0-proto-toto14-shared-dossier-season",
+      "analyst_label": "자율 로봇픽",
+      "away": "한국_여자",
+      "calibrated_probability": 0.333055,
+      "calibration_samples": 5681,
+      "conservative_ev": 0.42458,
+      "conservative_probability": 0.309691,
+      "data_confidence": 0.715,
+      "engine_key": "robot",
+      "engine_version": "manager-investment-four-analysts-v3",
+      "frozen_at": "2026-10-01T08:55:35+00:00",
+      "home": "중국_여자",
+      "kickoff_at": "2026-10-02T15:00+09:00",
+      "learning_campaign": "",
+      "manager_score": 0.4306,
+      "market_edge": 0.118329,
+      "market_key": "1x2",
+      "market_reference_probability": 0.191362,
+      "match_id": "5898",
+      "model_version": "robot_proto-d7b9f86fd2fc5f0633fa",
+      "odd": 4.6,
+      "odds_bucket_samples": 3082,
+      "probability": 0.371718,
+      "product": "manager_investment",
+      "raw_pick": "중국_여자 승",
+      "reason": "시작 전 저장 후보의 보정 확률·보수 기대값·시장 대비 우위를 모두 통과한 관리자 전용 선택입니다.",
+      "schema_version": "dj-sports.manager-investment-ledger.v2",
+      "selection_axis": "own_model_value",
+      "selection_side": "home",
+      "source_created_at": "2026-10-01 07:22:03",
+      "source_snapshot_id": 36027,
+      "status": "PENDING",
+      "tier": "고배당 가치"
+    },
     "v2:5695": {
       "actual_score": "1:1",
       "analysis_version": "V7.13.0-proto-toto14-shared-dossier-season",
@@ -1419,6 +1454,10 @@
     },
     {
       "match_id": "5866",
+      "reason": "결과 API 또는 후보 결과 연결 대기"
+    },
+    {
+      "match_id": "5898",
       "reason": "결과 API 또는 후보 결과 연결 대기"
     }
   ],
