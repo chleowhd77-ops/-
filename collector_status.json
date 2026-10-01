@@ -5,11 +5,17 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T16:00:20+00:00",
+      "heartbeat_at": "2026-10-01T16:02:51+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
-      "active_jobs": {},
-      "pending_jobs": [],
+      "active_jobs": {
+        "products": 486418
+      },
+      "pending_jobs": [
+        "learning",
+        "master",
+        "score"
+      ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
@@ -154,16 +160,25 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_failure_at": "2026-10-01T06:19:09+00:00",
-      "last_failure_duration_seconds": 601.0,
+      "last_failure_at": "2026-10-01T16:03:09+00:00",
+      "last_failure_duration_seconds": 153.51,
       "last_success_at": "2026-10-01T15:59:01+00:00",
       "last_success_duration_seconds": 152.42,
       "run_id": "products-1790870434982928484",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T16:00:35+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-01T16:03:09+00:00",
       "pid": 486418,
-      "last_started_at": "2026-10-01T16:00:35+00:00"
+      "last_started_at": "2026-10-01T16:00:35+00:00",
+      "child_pid": 486418,
+      "elapsed_seconds": 137.0,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 18,
+      "manager_current_count": 12,
+      "manager_reason": "",
+      "duration_seconds": 153.51,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_failure_duration_seconds": 638.8,
@@ -179,7 +194,7 @@
       "duration_seconds": 4.09
     }
   },
-  "updated_at": "2026-10-01T16:00:35+00:00",
+  "updated_at": "2026-10-01T16:03:09+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
