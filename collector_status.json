@@ -5,7 +5,7 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T23:12:27+00:00",
+      "heartbeat_at": "2026-10-01T23:16:32+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
@@ -71,11 +71,11 @@
       "run_id": "master-1790896160080717823",
       "last_stage": "proto_checkpoint_published",
       "state": "running",
-      "heartbeat_at": "2026-10-01T23:12:27+00:00",
+      "heartbeat_at": "2026-10-01T23:16:32+00:00",
       "pid": 482410,
       "last_started_at": "2026-10-01T23:09:21+00:00",
       "child_pid": 487546,
-      "elapsed_seconds": 187.1,
+      "elapsed_seconds": 431.9,
       "overlap_skips": 1,
       "proto_checkpoint_analyzed": 28,
       "proto_checkpoint_deferred": 28
@@ -96,16 +96,21 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_failure_duration_seconds": 402.7,
+      "last_failure_duration_seconds": 244.96,
       "last_success_at": "2026-10-01T23:07:23+00:00",
       "last_success_duration_seconds": 5.92,
-      "last_failure_at": "2026-09-30T03:42:25+00:00",
+      "last_failure_at": "2026-10-01T23:16:35+00:00",
       "run_id": "team-1790896335655375142",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T23:12:28+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-01T23:16:35+00:00",
       "pid": 487558,
-      "last_started_at": "2026-10-01T23:12:28+00:00"
+      "last_started_at": "2026-10-01T23:12:28+00:00",
+      "child_pid": 487558,
+      "elapsed_seconds": 255.1,
+      "overlap_skips": 0,
+      "duration_seconds": 244.96,
+      "last_error": "RuntimeError: team 작업이 정상 결과를 게시하지 못함"
     },
     "backup": {
       "last_success_at": "2026-10-01T21:57:33+00:00",
@@ -173,7 +178,7 @@
       "duration_seconds": 3.41
     }
   },
-  "updated_at": "2026-10-01T23:12:28+00:00",
+  "updated_at": "2026-10-01T23:16:35+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -243,13 +248,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 2461
+        "count": 2465
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 1780
+        "count": 2222
       },
       {
         "metric": "cache_hit",
@@ -260,8 +265,14 @@
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
+        "endpoint": "/standings",
+        "count": 208
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 152
+        "count": 166
       },
       {
         "metric": "cache_hit",
@@ -272,14 +283,8 @@
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
-        "endpoint": "/standings",
-        "count": 148
-      },
-      {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 102
+        "count": 144
       },
       {
         "metric": "cache_hit",
@@ -290,20 +295,38 @@
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
+        "endpoint": "/fixtures/statistics",
+        "count": 75
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
         "endpoint": "/players/squads",
-        "count": 48
+        "count": 60
       },
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "count": 41
+        "count": 42
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
         "count": 32
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/headtohead",
+        "count": 28
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 28
       },
       {
         "metric": "cache_hit",
@@ -318,12 +341,6 @@
         "count": 27
       },
       {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/statistics",
-        "count": 23
-      },
-      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/squads",
@@ -336,12 +353,6 @@
         "count": 9
       },
       {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/fixtures/headtohead",
-        "count": 7
-      },
-      {
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/odds",
@@ -351,12 +362,6 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 1
-      },
-      {
-        "metric": "singleflight_block",
-        "purpose": "live",
-        "endpoint": "/fixtures",
         "count": 1
       }
     ],
