@@ -5,34 +5,33 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T07:44:30+00:00",
+      "heartbeat_at": "2026-10-01T07:45:00+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "master": 484345
+        "products": 484348
       },
       "pending_jobs": [
         "learning",
-        "live",
-        "products",
         "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 3.26,
+      "last_failure_duration_seconds": 6.0,
       "last_success_at": "2026-10-01T01:50:29+00:00",
-      "last_failure_at": "2026-10-01T07:44:58+00:00",
+      "last_failure_at": "2026-10-01T07:45:00+00:00",
       "last_success_duration_seconds": 4.83,
       "run_id": "live-1790840694574396723",
       "last_stage": "executing",
       "state": "failed",
-      "heartbeat_at": "2026-10-01T07:44:58+00:00",
-      "pid": 484347,
+      "heartbeat_at": "2026-10-01T07:45:00+00:00",
+      "pid": 482410,
       "last_started_at": "2026-10-01T07:44:55+00:00",
-      "duration_seconds": 3.26,
-      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
+      "duration_seconds": 6.0,
+      "last_error": "worker exited with code 1",
+      "child_pid": 484347
     },
     "score": {
       "last_success_at": "2026-10-01T07:21:51+00:00",
@@ -163,24 +162,16 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_failure_at": "2026-10-01T06:19:09+00:00",
       "last_failure_duration_seconds": 601.0,
-      "last_success_at": "2026-10-01T07:33:31+00:00",
       "last_success_duration_seconds": 487.54,
-      "run_id": "products-1790839522683881070",
-      "last_stage": "executing",
+      "last_success_at": "2026-10-01T07:33:31+00:00",
+      "last_failure_at": "2026-10-01T06:19:09+00:00",
+      "run_id": "products-1790840700749620140",
+      "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T07:33:32+00:00",
-      "pid": 482410,
-      "last_started_at": "2026-10-01T07:33:32+00:00",
-      "child_pid": 484304,
-      "elapsed_seconds": 490.1,
-      "overlap_skips": 2,
-      "manager_published": true,
-      "manager_input_count": 22,
-      "manager_current_count": 19,
-      "manager_reason": "",
-      "duration_seconds": 487.54
+      "heartbeat_at": "2026-10-01T07:45:01+00:00",
+      "pid": 484348,
+      "last_started_at": "2026-10-01T07:45:01+00:00"
     },
     "learning": {
       "last_failure_at": "2026-10-01T07:43:48+00:00",
@@ -200,7 +191,7 @@
       "last_error": "hard timeout after 601 seconds"
     }
   },
-  "updated_at": "2026-10-01T07:44:58+00:00",
+  "updated_at": "2026-10-01T07:45:01+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
