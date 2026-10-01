@@ -3869,6 +3869,8 @@ def _render_learning_status():
         return
     with st.expander('분석가 학습 현황 · 적용 모델과 시험 결과', expanded=False):
         status = _load_published_json('learning_status.json')
+        if isinstance(status,dict) and status.get('operating_mode')=='stored-data-only':
+            st.caption('저장 자료 학습 모드 · 해외 API 수집 중지 · 기존 결과로 학습·채점 진행')
         entries = status.get('engines') or {} if isinstance(status,dict) else {}
         if not entries:
             st.caption('서버 학습 작업의 첫 상태 게시를 기다리고 있습니다.')

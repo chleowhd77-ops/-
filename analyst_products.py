@@ -21,7 +21,8 @@ def investment_candidates(card, engine, v3_pick=None):
         quotes = {p.get('selection_side'): p.get('odd') for p in source}
         prediction = get_v2_prediction(*(quotes.get(k) for k in ('home','draw','away')))
         probabilities = prediction.get('probabilities') or {}
-        source = [{**p, 'model_probability': probabilities.get(p.get('selection_side'))}
+        source = [{**p, 'model_probability': probabilities.get(p.get('selection_side')),
+                   'model_version':prediction.get('model_version')}
                   for p in source if probabilities.get(p.get('selection_side')) is not None]
         source += predict(card.get('display_candidates') or [],Path(__file__).resolve().parent)
     result = []
@@ -104,3 +105,34 @@ def mark_grid(marks):
         style=f'background:{color if selected else "#111827"};color:{"#07111F" if selected else "#94A3B8"};border:1px solid {color if selected else "#334155"};'
         cells.append(f'<div role="cell" aria-label="{mark} {"선택" if selected else "미선택"}" style="{style}padding:16px 0;border-radius:8px;text-align:center;font-size:20px;font-weight:900;">{mark}{" ✓" if selected else ""}</div>')
     return '<div role="group" aria-label="승무패 선택" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:100%;">'+''.join(cells)+'</div>'
+
+
+def refresh_saved_v2(card, root, toto=False):
+    """Recompute only V2 from saved real 1X2 quotes; never fetch or invent odds."""
+    from learning_state import before_kickoff, campaign_ready, CAMPAIGN, now_iso
+    from v2_ml_engine import get_v2_prediction
+    match=card.get('match') or {}
+    if not before_kickoff(match) or card.get('public_pick_block_reason'):
+        return card
+    quotes={p.get('selection_side'):p.get('odd') for p in
+        (card.get('display_candidates') or card.get('robot_candidates') or [])
+        if p.get('market_key')=='1x2'}
+    if not quotes:
+        quotes=(card.get('alphago_pick') or {}).get('odds') or {}
+    if not quotes:
+        quotes=dict(zip(('home','draw','away'),(match.get('odd_h'),match.get('odd_d'),match.get('odd_a'))))
+    result=get_v2_prediction(*(quotes.get(k) for k in ('home','draw','away')))
+    if result.get('status')!='ready':
+        card['v2_refresh_wait_reason']=result.get('reason','저장 배당·모델 확인 필요')
+        return card
+    if not before_kickoff(match):
+        return card
+    card['alphago_pick']=result
+    card.setdefault('learning_models',{})['v2']=result['model_version']
+    if campaign_ready(root):card['learning_campaign']=CAMPAIGN
+    card['v2_reanalysed_at']=now_iso()
+    card.pop('v2_refresh_wait_reason',None)
+    if toto:
+        card.setdefault('analyst_toto14_marks',{})['v2']={
+            'marks':[{'H':'승','D':'무','A':'패'}[result['code']]],'available':True}
+    return card

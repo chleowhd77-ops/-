@@ -17778,13 +17778,58 @@ def run_team_identity_job():
     return True
 
 
+def _prepare_stored_learning_results():
+    """Fill missing training labels from confirmed local finals, never fetch scores."""
+    from offline_mode import no_training_network
+    with no_training_network(), sqlite3.connect(str(_local_path('ai_predictions.db')),timeout=15) as conn:
+        _ensure_postmortem_column(conn)
+        candidates = _backfill_candidate_learning(conn,limit=40)
+        _ensure_autonomous_robot_tables(conn)
+        rows=conn.execute("""SELECT DISTINCT p.match_id,p.api_fixture_id,p.actual_score,p.match_time
+            FROM predictions p JOIN robot_learning_samples r
+              ON p.api_fixture_id=r.api_fixture_id AND p.api_fixture_id>0
+             AND p.home_team=r.home_team AND p.away_team=r.away_team
+            WHERE p.actual_result='FINISHED' AND r.actual_home_goals IS NULL
+            LIMIT 40""").fetchall()
+        robot=0
+        for mid,fid,score,kickoff in rows:
+            match=re.fullmatch(r'(\d+):(\d+)',str(score or ''))
+            ko=_parse_kst_match_time(kickoff)
+            if match and ko and ko<datetime.now(KST):
+                robot += int(_grade_autonomous_robot_sample(conn,mid,fid,*map(int,match.groups())) or 0)
+        conn.commit()
+    print(f'📚 저장 결과 복습 연결 · 후보 {candidates}경기 / 로봇 {robot}답안 · 외부 결과 조회 없음',flush=True)
+
+
 def run_learning_job():
     from learning_worker import run_one
+    print("📚 저장 자료 학습 작업 진입 · 해외 API 호출 없음", flush=True)
+    _prepare_stored_learning_results()
     run_one(APP_DIR, on_status=lambda: upload_to_github('learning_status.json'))
     return upload_to_github('learning_status.json')
 
 
+def _build_fast_grading_snapshot():
+    """Project all analysts from frozen records once; no historical N+1 queries."""
+    started = time.monotonic()
+    with sqlite3.connect(f"file:{_local_path('ai_predictions.db')}?mode=ro", uri=True) as conn:
+        scorecard = build_scorecard(conn, evaluate_single_pick,
+            _read_json('v3_learning_picks.json', {}), _read_json('manager_investment_picks.json', {}))
+        available={r[1] for r in conn.execute('PRAGMA table_info(predictions)')}
+        wanted=('match_id','api_fixture_id','actual_score','actual_result','home_team','away_team',
+                'match_time','prob_pick','ev_pick','is_correct_prob','is_correct_ev','postmortem_json')
+        columns=[name for name in wanted if name in available]
+        rows=[dict(zip(columns,row)) for row in conn.execute(
+            'SELECT '+','.join(columns)+" FROM predictions WHERE actual_result IN ('FINISHED','PENDING') AND match_id NOT LIKE 'WORLD_%'")]
+    print(f"✅ 저장 결과 채점 집계 · {time.monotonic()-started:.1f}초 · API 호출 없음", flush=True)
+    return dict(schema_version='grading-results.v1',scorecard_v2=scorecard,
+        public_history_mode='all-frozen-prekickoff-records',public_score_version=PUBLIC_SCORE_VERSION,generated_at=_utc_iso(),
+        source='stored-results-only',finished=[r for r in rows if r['actual_result']=='FINISHED'],
+        pending=[r for r in rows if r['actual_result']=='PENDING'])
+
+
 def run_products_job():
+    product_started = time.monotonic()
     from official_meta_v3_autopilot import refresh_autopilot
     payload = refresh_autopilot(_local_path("ai_predictions.db"),
         _local_path("v3_learning_picks.json"), _local_path("dashboard_data.json"))
@@ -17792,9 +17837,12 @@ def run_products_job():
     print(f"✅ V3 답안 생성·게시: 신규 {payload.get('newly_frozen_picks', 0)}건 / 상태 {payload.get('status')} / 게시 {published}")
     manager_ok = _refresh_manager_after_analysis("products")
     dashboard = _read_json("dashboard_data.json", {})
-    from analyst_products import attach_v2_markets
+    from analyst_products import attach_v2_markets, refresh_saved_v2
     for card in dashboard.get('proto', []):
+        refresh_saved_v2(card, APP_DIR)
         attach_v2_markets(card, APP_DIR)
+    for card in dashboard.get('toto14', []):
+        refresh_saved_v2(card, APP_DIR, toto=True)
     enriched = {str((c.get('match') or {}).get('id')):c for c in dashboard.get('proto',[])}
     for card in dashboard.get('top3',[]):
         source = enriched.get(str((card.get('match') or {}).get('id'))) or {}
@@ -17803,12 +17851,15 @@ def run_products_job():
     _freeze_displayed_products(dashboard)
     _atomic_write_json("dashboard_data.json", dashboard)
     dashboard_ok = upload_to_github("dashboard_data.json")
-    snapshot = _build_grading_snapshot()
+    snapshot = _build_fast_grading_snapshot()
     if not snapshot.get("error"):
         _atomic_write_json("grading_results.json", snapshot)
         grading_ok = upload_to_github("grading_results.json")
+        from learning_audit import build as audit_learning_connections
+        audit_learning_connections(APP_DIR,dashboard,snapshot['scorecard_v2'])
     else:
         grading_ok = False
+    print(f"✅ 픽·채점 게시 종료 · {time.monotonic()-product_started:.1f}초",flush=True)
     return bool(published and manager_ok and dashboard_ok and grading_ok)
 
 
@@ -18030,6 +18081,10 @@ def _publish_status():
 
 
 def _execute_job(job_name):
+    from offline_mode import enabled as offline_enabled
+    if offline_enabled(APP_DIR) and job_name not in {'learning','products'}:
+        print(f'⏸️ 저장 자료 학습 모드: {job_name} 실행 보류',flush=True)
+        return 0
     timeout = JOB_TIMEOUTS[job_name]
     with _job_lock(job_name, stale_after=timeout + 120) as acquired:
         if not acquired:
@@ -18181,6 +18236,9 @@ def _pending_sort_key(job_name, now):
     # brief wait instead of making it lose to every new five-minute LIVE/score
     # request. WORLD gets a slower fairness boost; the generic starvation guard
     # remains the final fallback for every job.
+    from offline_mode import enabled as offline_enabled
+    if job_name == 'learning' and offline_enabled(APP_DIR):
+        return (-1, requested_at, 0)
     if job_name in {"master", "learning"} and waited >= MASTER_PRIORITY_AGE_SECONDS:
         return (0, requested_at, 0)
     if job_name == "world" and waited >= WORLD_PRIORITY_AGE_SECONDS:
@@ -18218,6 +18276,11 @@ def _drain_pending_jobs():
 
 
 def _launch_isolated_job(job_name):
+    from offline_mode import enabled as offline_enabled
+    if offline_enabled(APP_DIR) and job_name not in {'learning','products'}:
+        _PENDING_JOBS.pop(job_name, None)
+        print(f'⏸️ 저장 자료 학습 모드: {job_name} 수집 작업 보류', flush=True)
+        return False
     existing = _JOB_PROCESSES.get(job_name)
     if existing and existing["process"].poll() is None:
         _update_collector_status(
@@ -18335,6 +18398,10 @@ def run_scheduler():
     schedule.clear()
     # Requests start immediately only when the low-memory/main-DB admission
     # rules allow it. Remaining work stays queued and is drained after reaping.
+    from offline_mode import enabled as offline_enabled
+    if offline_enabled(APP_DIR):
+        print("📚 저장 자료 학습 모드 · 해외 API 수집 보류 · 학습/기존 결과 채점 실행",flush=True)
+        _launch_isolated_job("learning")
     _launch_isolated_job("live")
     _launch_isolated_job("master")
     _launch_isolated_job("products")
@@ -18382,6 +18449,8 @@ def run_scheduler():
                         if info["process"].poll() is None
                     },
                     pending_jobs=sorted(_PENDING_JOBS),
+                    pending_wait_seconds={name:round(time.monotonic()-started,1) for name,started in _PENDING_JOBS.items()},
+                    offline_learning=offline_enabled(APP_DIR),
                     max_concurrent_workers=MAX_CONCURRENT_WORKERS,
                     min_available_memory_mb=MIN_AVAILABLE_MEMORY_MB,
                 )

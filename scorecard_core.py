@@ -146,7 +146,11 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         records[key] = {**compact_meta, 'engine': engine, 'raw_pick': raw,
                         'probability': number(pick.get('probability', pick.get('prob'))),
                         'odd': number(pick.get('odd')), 'is_correct': grade if grade in (0, 1) else None,
-                        'actual_score': score, 'captured_at': captured, 'provenance': provenance}
+                        'actual_score': score, 'captured_at': captured, 'provenance': provenance,
+                        'model_version':pick.get('model_version'),
+                        'grading_wait_reason':('' if grade in (0,1) else
+                            '경기 결과 미수집' if p and p.get('actual_result')!='FINISHED' else
+                            '경기 연결 또는 정산 자료 확인 필요')}
 
     for row in table_rows(conn, 'product_pick_receipts', order='ORDER BY captured_at ASC'):
         data = obj(row['payload_json'])
@@ -166,6 +170,11 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             raw = ', '.join(str(x) for x in values) if values else ''
             if not raw:
                 raw = str((payload.get('robot_pick') or {}).get('raw_pick') or '') if engine == 'robot' else ''
+            if not raw and engine == 'v2':
+                answer = v2_answer(payload.get('alphago_pick') or payload.get('robot_pick'),
+                                   meta.get('home_team'),meta.get('away_team'))
+                if answer:
+                    add(meta, engine, answer, row.get('frozen_at'), 'toto14_v2_saved_answer')
             if raw:
                 add(meta, engine, {'raw_pick': raw}, row.get('frozen_at'), 'toto14_ticket')
 
@@ -274,7 +283,8 @@ def v2_answer(pick, home, away):
     code = str(pick.get('code') or pick.get('v2_ai_pick') or '').upper()
     raw = {'H': f'{home} 승', 'D': '무승부', 'A': f'{away} 승'}.get(code)
     return {'raw_pick': raw, 'code': code, 'selection_side': {'H': 'home', 'D': 'draw', 'A': 'away'}.get(code),
-            'market_key': '1x2', 'probability': pick.get('probability')} if raw else {}
+            'market_key': '1x2', 'probability': pick.get('probability'),
+            'model_version':pick.get('model_version')} if raw else {}
 
 
 def published_scorecard(snapshot, v3, manager):

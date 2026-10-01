@@ -496,6 +496,7 @@ def _manager_candidate(
         "schema_version": OUTPUT_SCHEMA,
         "status": "PENDING",
         "engine_version": MANAGER_ENGINE_VERSION,
+        "model_version":candidate.get("model_version"),
         "match_id": snapshot.match_id,
         "source_snapshot_id": snapshot.snapshot_id,
         "source_created_at": snapshot.created_at,
@@ -737,7 +738,7 @@ def build_manager_payload(
         cards = {str((c.get("match") or {}).get("id")):c for c in dashboard.get("proto", [])}
         v3_payload = _read_json(Path(database_path).with_name("v3_learning_picks.json"), {})
         v3 = v3_payload.get("investment_candidates") or v3_payload.get("picks") or {}
-        from learning_state import CAMPAIGN, archive_json_row, before_kickoff
+        from learning_state import CAMPAIGN, archive_json_row, before_kickoff, digest
         base['pick_revision_history'] = dict(existing_payload.get('pick_revision_history') or {})
         base['reanalysis_receipts'] = dict(existing_payload.get('reanalysis_receipts') or {})
         created, engines = 0, {}
@@ -762,18 +763,20 @@ def build_manager_payload(
             for snapshot in engine_snapshots:
                 card = cards.get(snapshot.match_id) or {}
                 key = engine + ':' + snapshot.match_id
+                revision = CAMPAIGN + ':' + digest([(card.get('learning_models') or {}).get(engine,'legacy-unverified'),
+                    sorted({str(x.get('model_version') or '') for x in snapshot.candidates})])
                 if (card.get('learning_campaign') == CAMPAIGN
-                        and base['reanalysis_receipts'].get(key) != CAMPAIGN
+                        and base['reanalysis_receipts'].get(key) != revision
                         and before_kickoff({'match_time':snapshot.kickoff_at})):
                     old_pick = picks.get(key)
                     if old_pick and old_pick.get('is_correct') not in (0,1) and old_pick.get('status') != 'FINISHED':
                         archive_json_row(base,key,old_pick)
                         del picks[key]
-                    base['reanalysis_receipts'][key] = CAMPAIGN
+                    base['reanalysis_receipts'][key] = revision
             for pick in selected:
                 card = cards.get(str(pick['match_id'])) or {}
                 pick.update(learning_campaign=card.get('learning_campaign',''),
-                            model_version=(card.get('learning_models') or {}).get(engine,'legacy-unverified'))
+                            model_version=pick.get('model_version') or (card.get('learning_models') or {}).get(engine,'legacy-unverified'))
                 if not before_kickoff({'match_time':pick.get('kickoff_at')}):
                     continue
                 key = engine + ':' + str(pick['match_id'])

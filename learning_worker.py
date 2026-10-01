@@ -57,7 +57,7 @@ def result_signature(root):
                 counts.append((table,db.execute(f'SELECT COUNT(*),MAX(id) FROM {table} WHERE {where}').fetchone()))
     textbook = Path(root)/'master_training_data.csv'
     textbook_hash = hashlib.sha256(textbook.read_bytes()).hexdigest() if textbook.exists() else 'missing'
-    return digest(['R7.13.13', CAMPAIGN, rows, counts, textbook_hash])
+    return digest(['R7.13.14', CAMPAIGN, rows, counts, textbook_hash])
 
 
 def save_model(root, engine, value, binary=False):
@@ -362,11 +362,13 @@ def train_v3(root, old):
 
 def run_one(root, on_status=None):
     global _PROGRESS
-    root=Path(root)
+    root=Path(root).resolve()
     with (root/'.learning_worker.lock').open('a') as lock:
         fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         info=state(root)
-        info.update(schema_version='learning-status.v1',campaign=CAMPAIGN)
+        from offline_mode import enabled as offline_enabled
+        info.update(schema_version='learning-status.v1',campaign=CAMPAIGN,
+                    operating_mode='stored-data-only' if offline_enabled(root) else 'normal')
         engines=info.setdefault('engines',{})
         signature=result_signature(root)
         interrupted=False
@@ -384,7 +386,9 @@ def run_one(root, on_status=None):
                      or time.time()-epoch((engines.get(e) or {}).get('last_attempt_at')) > 1800)
                  and ((engines.get(e) or {}).get('reviewed_signature') != signature
                       or (engines.get(e) or {}).get('status') in ('ERROR','PAUSED'))]
-        if not pending:return info
+        if not pending:
+            print('📚 학습 대기: 새 정산 자료 없음 · 기존 모델/중간 결과 보존',flush=True)
+            return info
         engine=min(pending,key=lambda e:(engines.get(e) or {}).get('last_attempt_at',''))
         old=dict(engines.get(engine) or {})
         started=now_iso()
@@ -410,7 +414,8 @@ def run_one(root, on_status=None):
             # operation stalls, before the scheduler's 600-second hard limit.
             faulthandler.dump_traceback_later(120, repeat=True)
             from threadpoolctl import threadpool_limits
-            with threadpool_limits(limits=1):
+            from offline_mode import no_training_network, training_root
+            with threadpool_limits(limits=1), no_training_network(), training_root(root):
                 result=functions[engine](root,old)
                 if engine == 'v2':
                     from analyst_curriculum import prepare

@@ -70,9 +70,14 @@ def stamp(root, source='PROTO'):
                 learning_campaign=CAMPAIGN if campaign_ready(root) else '')
 
 
-def needs_refresh(root, card, kickoff, now):
+def needs_refresh(root, card, kickoff, now, source=None):
+    card = card or {}
+    if source is None:
+        source = 'TOTO14' if (card.get('marking_policy') or card.get('analyst_toto14_marks')
+            or str((card.get('match') or {}).get('id','')).startswith('TOTO14_')) else 'PROTO'
     return bool(kickoff and now < kickoff and campaign_ready(root)
-                and (card or {}).get('learning_campaign') != CAMPAIGN)
+                and (card.get('learning_campaign') != CAMPAIGN
+                     or card.get('learning_models') != versions(root,source)))
 
 
 def archive_json_row(payload, key, row, reason=CAMPAIGN):
@@ -89,7 +94,9 @@ def before_kickoff(match, now=None):
 
 def revision_allowed(old, fresh, match, now=None):
     return bool(old and fresh.get('learning_campaign') == CAMPAIGN
-                and old.get('learning_campaign') != CAMPAIGN
+                and (old.get('learning_campaign') != CAMPAIGN
+                     or (fresh.get('model_version') not in (None,'','legacy-unverified')
+                         and old.get('model_version') != fresh.get('model_version')))
                 and old.get('is_correct') not in (0,1)
                 and str(old.get('status','')).upper() not in ('FINISHED','CANCELED')
                 and before_kickoff(match,now))

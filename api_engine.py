@@ -808,7 +808,8 @@ def api_get(path, params=None, timeout=7, purpose=None):
     if cached is not None:
         _record_runtime_metric(day, "cache_hit", purpose, path)
         return cached
-    if _API_CACHE_ONLY:
+    from offline_mode import enabled as offline_enabled
+    if _API_CACHE_ONLY or offline_enabled():
         _release_request_cache_lease(key)
         _record_runtime_metric(day, "cache_only_miss", purpose, path)
         _queue_data_recovery(path, params)
@@ -869,6 +870,9 @@ def api_get(path, params=None, timeout=7, purpose=None):
 
 
 def refresh_provider_usage_status():
+    from offline_mode import enabled as offline_enabled
+    if offline_enabled():
+        return None
     """Read the provider's own daily usage before lifting a stale local brake.
 
     This deliberately bypasses the local request preflight because this method
