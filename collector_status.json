@@ -20,16 +20,18 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 6.36,
+      "last_failure_duration_seconds": 2.41,
       "last_success_at": "2026-10-01T01:50:29+00:00",
-      "last_failure_at": "2026-10-01T18:51:03+00:00",
+      "last_failure_at": "2026-10-01T18:51:09+00:00",
       "last_success_duration_seconds": 4.83,
       "run_id": "live-1790880665975169893",
       "last_stage": "executing",
-      "state": "running",
+      "state": "failed",
       "heartbeat_at": "2026-10-01T18:51:09+00:00",
       "pid": 486834,
-      "last_started_at": "2026-10-01T18:51:07+00:00"
+      "last_started_at": "2026-10-01T18:51:07+00:00",
+      "duration_seconds": 2.41,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_failure_at": "2026-10-01T00:15:27+00:00",
@@ -100,9 +102,9 @@
       "last_success_duration_seconds": 5.85,
       "last_failure_at": "2026-09-30T03:42:25+00:00",
       "run_id": "team-1790880665985129802",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T18:51:07+00:00",
+      "heartbeat_at": "2026-10-01T18:51:10+00:00",
       "pid": 486835,
       "last_started_at": "2026-10-01T18:51:07+00:00"
     },
@@ -172,7 +174,7 @@
       "duration_seconds": 7.53
     }
   },
-  "updated_at": "2026-10-01T18:51:09+00:00",
+  "updated_at": "2026-10-01T18:51:10+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -350,6 +352,12 @@
         "metric": "singleflight_block",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
+        "count": 1
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "live",
+        "endpoint": "/fixtures",
         "count": 1
       }
     ],
