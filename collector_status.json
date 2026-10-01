@@ -5,16 +5,15 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T02:21:23+00:00",
+      "heartbeat_at": "2026-10-01T02:22:23+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "score": 483201
+        "master": 483263
       },
       "pending_jobs": [
         "learning",
         "live",
-        "master",
         "products"
       ],
       "max_concurrent_workers": 2,
@@ -60,15 +59,26 @@
     },
     "master": {
       "last_failure_at": "2026-09-30T05:30:04+00:00",
-      "last_success_at": "2026-10-01T02:01:26+00:00",
-      "last_success_duration_seconds": 53.31,
+      "last_success_at": "2026-10-01T02:22:24+00:00",
+      "last_success_duration_seconds": 55.84,
       "last_failure_duration_seconds": 900.9,
       "run_id": "master-1790821287137268485",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T02:21:28+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-01T02:22:24+00:00",
       "pid": 483263,
-      "last_started_at": "2026-10-01T02:21:28+00:00"
+      "last_started_at": "2026-10-01T02:21:28+00:00",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "child_pid": 483263,
+      "elapsed_seconds": 56.6,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 21,
+      "manager_current_count": 17,
+      "manager_reason": "",
+      "db_backup_requested": true,
+      "duration_seconds": 55.84
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -181,7 +191,7 @@
       "last_error": "hard timeout after 601 seconds"
     }
   },
-  "updated_at": "2026-10-01T02:21:28+00:00",
+  "updated_at": "2026-10-01T02:22:24+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -266,6 +276,12 @@
         "count": 84
       },
       {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/odds",
+        "count": 38
+      },
+      {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
@@ -276,12 +292,6 @@
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
         "count": 27
-      },
-      {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
-        "endpoint": "/odds",
-        "count": 20
       },
       {
         "metric": "cache_hit",
