@@ -5,15 +5,14 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T13:10:23+00:00",
+      "heartbeat_at": "2026-10-01T13:10:53+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "score": 485835
+        "live": 485843
       },
       "pending_jobs": [
         "learning",
-        "live",
         "master",
         "products"
       ],
@@ -21,16 +20,21 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 10.0,
-      "last_failure_at": "2026-10-01T13:05:08+00:00",
+      "last_failure_duration_seconds": 2.44,
+      "last_failure_at": "2026-10-01T13:10:55+00:00",
       "last_success_duration_seconds": 4.83,
       "last_success_at": "2026-10-01T01:50:29+00:00",
       "run_id": "live-1790860251721902836",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T13:10:53+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-01T13:10:55+00:00",
       "pid": 485843,
-      "last_started_at": "2026-10-01T13:10:53+00:00"
+      "last_started_at": "2026-10-01T13:10:53+00:00",
+      "child_pid": 485843,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0,
+      "duration_seconds": 2.44,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_failure_at": "2026-10-01T00:15:27+00:00",
@@ -191,7 +195,7 @@
       "duration_seconds": 4.69
     }
   },
-  "updated_at": "2026-10-01T13:10:53+00:00",
+  "updated_at": "2026-10-01T13:10:55+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
