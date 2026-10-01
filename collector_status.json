@@ -5,31 +5,35 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T17:30:39+00:00",
+      "heartbeat_at": "2026-10-01T17:31:10+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "master": 486640
+        "live": 486649
       },
       "pending_jobs": [
-        "learning",
-        "live",
-        "products"
+        "products",
+        "score"
       ],
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
       "last_success_duration_seconds": 4.83,
-      "last_failure_duration_seconds": 6.0,
+      "last_failure_duration_seconds": 2.62,
       "last_success_at": "2026-10-01T01:50:29+00:00",
-      "last_failure_at": "2026-10-01T17:20:19+00:00",
+      "last_failure_at": "2026-10-01T17:31:11+00:00",
       "run_id": "live-1790875868408911437",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T17:31:09+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-01T17:31:11+00:00",
       "pid": 486649,
-      "last_started_at": "2026-10-01T17:31:09+00:00"
+      "last_started_at": "2026-10-01T17:31:09+00:00",
+      "child_pid": 486649,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0,
+      "duration_seconds": 2.62,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_failure_at": "2026-10-01T00:15:27+00:00",
@@ -190,7 +194,7 @@
       "duration_seconds": 4.75
     }
   },
-  "updated_at": "2026-10-01T17:31:09+00:00",
+  "updated_at": "2026-10-01T17:31:11+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
