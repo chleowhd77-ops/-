@@ -5,12 +5,11 @@
       "supervisor_pid": 482410,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-01T02:51:34+00:00",
+      "heartbeat_at": "2026-10-01T02:52:34+00:00",
       "pid": 482410,
       "last_started_at": "2026-09-30T21:11:10+00:00",
       "active_jobs": {
-        "master": 483323,
-        "team": 483324
+        "master": 483323
       },
       "pending_jobs": [
         "live",
@@ -63,17 +62,25 @@
     "master": {
       "last_failure_at": "2026-09-30T05:30:04+00:00",
       "last_failure_duration_seconds": 900.9,
-      "last_success_at": "2026-10-01T02:34:17+00:00",
-      "last_success_duration_seconds": 58.64,
+      "last_success_at": "2026-10-01T02:52:41+00:00",
+      "last_success_duration_seconds": 67.3,
       "run_id": "master-1790823087946280273",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-01T02:51:37+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-01T02:52:41+00:00",
       "pid": 483323,
       "last_started_at": "2026-10-01T02:51:33+00:00",
       "child_pid": 483323,
-      "elapsed_seconds": 6.1,
-      "overlap_skips": 0
+      "elapsed_seconds": 66.4,
+      "overlap_skips": 0,
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "manager_published": true,
+      "manager_input_count": 21,
+      "manager_current_count": 17,
+      "manager_reason": "",
+      "db_backup_requested": true,
+      "duration_seconds": 67.3
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -186,7 +193,7 @@
       "last_error": "hard timeout after 601 seconds"
     }
   },
-  "updated_at": "2026-10-01T02:51:38+00:00",
+  "updated_at": "2026-10-01T02:52:41+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -274,7 +281,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 56
+        "count": 73
       },
       {
         "metric": "cache_hit",
@@ -293,6 +300,12 @@
         "purpose": "analysis",
         "endpoint": "/coachs",
         "count": 2
+      },
+      {
+        "metric": "singleflight_block",
+        "purpose": "analysis",
+        "endpoint": "/odds",
+        "count": 1
       }
     ],
     "accounting": "local-preflight-reservation-v2",
