@@ -5,12 +5,21 @@
       "supervisor_pid": 493344,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T14:52:44+00:00",
+      "heartbeat_at": "2026-10-02T14:53:14+00:00",
       "pid": 493344,
       "last_started_at": "2026-10-02T10:37:30+00:00",
-      "active_jobs": {},
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "active_jobs": {
+        "team": 496201,
+        "products": 496202
+      },
+      "pending_jobs": [
+        "master",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 10.0,
+        "master": 10.0
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -99,9 +108,12 @@
       "run_id": "team-1790952786932607632",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T14:53:09+00:00",
-      "pid": 496201,
-      "last_started_at": "2026-10-02T14:53:07+00:00"
+      "heartbeat_at": "2026-10-02T14:53:14+00:00",
+      "pid": 493344,
+      "last_started_at": "2026-10-02T14:53:07+00:00",
+      "child_pid": 496201,
+      "elapsed_seconds": 8.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_at": "2026-10-01T21:57:33+00:00",
@@ -137,23 +149,15 @@
     },
     "products": {
       "last_failure_duration_seconds": 601.6,
-      "last_success_at": "2026-10-02T14:49:45+00:00",
-      "last_success_duration_seconds": 77.63,
       "last_failure_at": "2026-10-02T09:11:13+00:00",
-      "run_id": "products-1790952506646565733",
-      "last_stage": "executing",
-      "state": "success",
-      "heartbeat_at": "2026-10-02T14:49:45+00:00",
-      "pid": 496191,
-      "last_started_at": "2026-10-02T14:48:27+00:00",
-      "child_pid": 496191,
-      "elapsed_seconds": 78.1,
-      "overlap_skips": 0,
-      "manager_published": true,
-      "manager_input_count": 34,
-      "manager_current_count": 12,
-      "manager_reason": "",
-      "duration_seconds": 77.63
+      "last_success_duration_seconds": 77.63,
+      "last_success_at": "2026-10-02T14:49:45+00:00",
+      "run_id": "products-1790952794942395374",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-02T14:53:16+00:00",
+      "pid": 496202,
+      "last_started_at": "2026-10-02T14:53:16+00:00"
     },
     "learning": {
       "last_success_at": "2026-10-02T14:52:33+00:00",
@@ -172,7 +176,7 @@
       "duration_seconds": 19.05
     }
   },
-  "updated_at": "2026-10-02T14:53:11+00:00",
+  "updated_at": "2026-10-02T14:53:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
