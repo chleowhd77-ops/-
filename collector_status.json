@@ -5,25 +5,24 @@
       "supervisor_pid": 493344,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T19:57:16+00:00",
+      "heartbeat_at": "2026-10-02T19:57:47+00:00",
       "pid": 493344,
       "last_started_at": "2026-10-02T10:37:30+00:00",
       "active_jobs": {
-        "learning": 497476
+        "learning": 497476,
+        "team": 497490
       },
       "pending_jobs": [
         "live",
         "master",
         "products",
-        "score",
-        "team"
+        "score"
       ],
       "pending_wait_seconds": {
-        "score": 1105.1,
-        "live": 502.1,
-        "master": 496.0,
-        "products": 496.0,
-        "team": 182.9
+        "score": 1136.3,
+        "live": 533.3,
+        "master": 527.2,
+        "products": 527.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -106,16 +105,39 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_success_duration_seconds": 68.63,
-      "last_success_at": "2026-10-02T19:50:33+00:00",
+      "last_success_duration_seconds": 34.14,
+      "last_success_at": "2026-10-02T19:58:01+00:00",
       "last_failure_duration_seconds": 261.8,
       "last_failure_at": "2026-10-01T23:16:38+00:00",
       "run_id": "team-1790971040229753319",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-02T19:57:26+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-02T19:58:01+00:00",
       "pid": 497490,
-      "last_started_at": "2026-10-02T19:57:26+00:00"
+      "last_started_at": "2026-10-02T19:57:26+00:00",
+      "child_pid": 497490,
+      "elapsed_seconds": 26.3,
+      "overlap_skips": 0,
+      "team_retry_processed": 1,
+      "team_retry_resolved": 300,
+      "team_retry_pending": 3,
+      "team_retry_due": 0,
+      "team_retry_seeded": 0,
+      "team_profile_card_updates": 0,
+      "data_prefetch_matches": 1,
+      "data_prefetch_teams": 0,
+      "data_prefetch_identity_missing": 0,
+      "data_prefetch_early_core_matches": 1,
+      "data_prefetch_deep_matches": 0,
+      "data_prefetch_core_newly_warmed": 0,
+      "data_prefetch_core_already_ready": 0,
+      "data_prefetch_early_horizon_hours": 72,
+      "data_prefetch_deep_horizon_hours": 30,
+      "data_prefetch_quota_paused": true,
+      "data_prefetch_errors": [
+        "quota:Daily reserve protected"
+      ],
+      "duration_seconds": 34.14
     },
     "backup": {
       "last_success_duration_seconds": 106.17,
@@ -177,22 +199,22 @@
       "run_id": "learning-1790970501256458277",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T19:57:16+00:00",
+      "heartbeat_at": "2026-10-02T19:57:59+00:00",
       "pid": 493344,
       "last_started_at": "2026-10-02T19:48:25+00:00",
       "child_pid": 497476,
-      "elapsed_seconds": 534.3,
-      "overlap_skips": 4
+      "elapsed_seconds": 577.9,
+      "overlap_skips": 5
     }
   },
-  "updated_at": "2026-10-02T19:57:26+00:00",
+  "updated_at": "2026-10-02T19:58:01+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 2065
+        "calls": 2069
       },
       {
         "purpose": "analysis",
@@ -227,7 +249,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/headtohead",
-        "calls": 220
+        "calls": 221
       },
       {
         "purpose": "live",
@@ -375,13 +397,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-02",
     "reset_timezone": "UTC",
-    "local_calls": 6022,
-    "provider_remaining": 1504,
+    "local_calls": 6027,
+    "provider_remaining": 1499,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 5623,
+    "analysis_calls": 5628,
     "live_calls": 177,
     "scoring_calls": 222,
     "world_daily_limit": 4000,
