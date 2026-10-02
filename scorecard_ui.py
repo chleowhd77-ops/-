@@ -43,6 +43,7 @@ def render_rows(rows, key):
                        if row.get('home_team') else f"경기 ID {row.get('match_id', '')}",
                        '시각': str(row.get('kickoff_at') or ''), '픽': str(row.get('raw_pick') or ''),
                        '결과': str(row.get('actual_score') or ''), '채점': state,
+                       '픽 모델 버전': str(row.get('model_version') or '기록 없음'),
                        '대기 사유': str(row.get('grading_wait_reason') or '') if hit not in (0,1) else ''})
     st.dataframe(values, use_container_width=True, hide_index=True)
     st.caption(f'{len(rows)}경기 중 {(page - 1) * 30 + 1}–{min(page * 30, len(rows))} · 누적 통계는 전체 기록 기준')
@@ -66,6 +67,15 @@ def render_scorecard(data):
     cell = (cells.get(track) or {}).get(engine) or {}
     rows = cell.get('rows') or []
     st.markdown(f'#### {TRACK_LABELS[track]} · {ENGINE_LABELS[engine]}')
+    active = ((data.get('active_models') or {}).get(track) or {}).get(engine)
+    if active and active != 'legacy-unverified':
+        current = [r for r in rows if r.get('model_version') == active]
+        totals = summary(current)
+        st.caption(f"현재 적용 모델: {active} · 이 버전 저장 {len(current)}건 / 채점 {totals['graded']}건 / 적중 {totals['correct']}건 / 대기 {totals['pending']}건")
+        scope = st.radio('모델 기록', ['전체 누적','현재 적용 모델'],horizontal=True,key=f'grade-model-{track}-{engine}')
+        if scope == '현재 적용 모델':
+            rows = current
+        st.caption('상단 적중률은 전체 누적입니다. 버전 기록이 없는 과거 픽은 현재 모델 성적으로 간주하지 않습니다.')
     if track == 'manager':
         st.caption('선택한 분석가의 관리자 투자픽 장부입니다. TOP3·프로토와 별도로 집계합니다.')
     if not rows:

@@ -54,7 +54,12 @@ def result_signature(root):
         for table in ('prediction_candidate_results','robot_learning_samples'):
             if table in tables:
                 where = 'is_correct IN (0,1)' if table == 'prediction_candidate_results' else 'actual_home_goals IS NOT NULL'
-                counts.append((table,db.execute(f'SELECT COUNT(*),MAX(id) FROM {table} WHERE {where}').fetchone()))
+                available = {r[1] for r in db.execute(f'PRAGMA table_info({table})')}
+                wanted = ('id','is_correct','graded_at') if table=='prediction_candidate_results' else (
+                    'id','actual_home_goals','actual_away_goals','robot_pick_correct','result_known_timestamp')
+                columns = [c for c in wanted if c in available]
+                # Count/max alone miss corrected labels on already graded rows.
+                counts.append((table,db.execute(f'SELECT {",".join(columns)} FROM {table} WHERE {where} ORDER BY id').fetchall()))
     textbook = Path(root)/'master_training_data.csv'
     textbook_hash = hashlib.sha256(textbook.read_bytes()).hexdigest() if textbook.exists() else 'missing'
     return digest(['R7.13.16', CAMPAIGN, rows, counts, textbook_hash])
@@ -122,7 +127,7 @@ def train_robot(root, old, source):
     c._AUTONOMOUS_ROBOT_CACHE.clear()
     artifact = c._load_autonomous_robot_artifact(source,serving_only=False,checkpoint=checkpoint)
     if artifact.get('reason') == '학습표본 저장소 확인 대기':
-        raise RuntimeError('자율로봇 학습 함수가 저장소 오류를 반환함')
+        raise RuntimeError('자율로봇 학습 저장소 오류: '+str(artifact.get('failure_detail') or '상세 기록 없음'))
     previous = active_artifact(root,engine)
     # Compare the candidate's untouched chronological exam, never its final
     # all-history refit (which has already seen those exam outcomes).
@@ -414,7 +419,16 @@ def run_one(root, on_status=None):
                       or (e=='v2' and ((engines.get(e) or {}).get('market_learning') or {}).get('status')=='ERROR'
                           and time.time()-epoch((engines.get(e) or {}).get('last_attempt_at'))>1800))]
         if not pending:
-            print('📚 학습 대기: 새 정산 자료 없음 · 기존 모델/중간 결과 보존',flush=True)
+            failures = [(e,engines.get(e) or {}) for e in ENGINES
+                        if (engines.get(e) or {}).get('status')=='ERROR'
+                        or ((engines.get(e) or {}).get('market_learning') or {}).get('status')=='ERROR']
+            if failures:
+                for name,entry in failures:
+                    wait = max(0,int(1800-(time.time()-epoch(entry.get('last_attempt_at')))))
+                    reason = (entry.get('market_learning') or {}).get('reason') if entry.get('status')!='ERROR' else entry.get('reason')
+                    print(f'⚠️ 학습 재시도 대기 [{name}] · {wait}초 후 재시도 · {reason} · 기존 모델 유지',flush=True)
+            else:
+                print('📚 학습 대기: 새 정산 자료 없음 · 기존 모델/중간 결과 보존',flush=True)
             return info
         engine=min(pending,key=lambda e:(engines.get(e) or {}).get('last_attempt_at',''))
         old=dict(engines.get(engine) or {})

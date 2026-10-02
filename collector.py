@@ -6885,10 +6885,16 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoi
             track_params,
         ).fetchone()
         signature = (
-            f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:R71311:"
+            f"{track}:{ROBOT_PICK_VERSION}:{ROBOT_MODEL_VERSION}:R71319:"
             f"{int(signature_row[0] or 0)}:"
             f"{float(signature_row[1] or 0):.3f}"
         )
+        labels = conn.execute(
+            f'SELECT id,actual_home_goals,actual_away_goals,robot_pick_correct '
+            f'FROM robot_learning_samples WHERE actual_home_goals IS NOT NULL '
+            f'AND actual_away_goals IS NOT NULL AND {track_where} ORDER BY id',
+            track_params).fetchall()
+        signature += ':' + learning.digest(labels)
         if (
             (_AUTONOMOUS_ROBOT_CACHE.get(track) or {}).get("signature") == signature
             and isinstance((_AUTONOMOUS_ROBOT_CACHE.get(track) or {}).get("artifact"), dict)
@@ -7029,10 +7035,11 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoi
         }
         return selected_artifact
     except Exception as error:
-        print(f"⚠️ 자율학습 로봇 모델 준비 실패 · 기초 자율모형 유지: {type(error).__name__}")
+        print(f"⚠️ 자율학습 로봇 모델 준비 실패 · 기초 자율모형 유지: {type(error).__name__}: {error}", flush=True)
         return {
             "model_version": ROBOT_MODEL_VERSION, "active": False, "samples": 0,
             "validation_fixtures": 0, "reason": "학습표본 저장소 확인 대기",
+            "failure_detail": f"{type(error).__name__}: {error}",
             "learning_track": track,
             "learning_revision_marker": _robot_learning_revision_marker(source),
         }
@@ -17859,6 +17866,9 @@ def _build_fast_grading_snapshot():
     with sqlite3.connect(f"file:{_local_path('ai_predictions.db')}?mode=ro", uri=True) as conn:
         scorecard = build_scorecard(conn, evaluate_single_pick,
             _read_json('v3_learning_picks.json', {}), _read_json('manager_investment_picks.json', {}))
+        from learning_state import versions
+        scorecard['active_models'] = {track:versions(APP_DIR,'TOTO14' if track=='toto14' else 'PROTO')
+                                    for track in ('manager','top3','proto_world','toto14')}
         available={r[1] for r in conn.execute('PRAGMA table_info(predictions)')}
         wanted=('match_id','api_fixture_id','actual_score','actual_result','home_team','away_team',
                 'match_time','prob_pick','ev_pick','is_correct_prob','is_correct_ev','postmortem_json')

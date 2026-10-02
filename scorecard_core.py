@@ -156,6 +156,9 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
     legacy_references = []
     manager_v2 = (manager or {}).get('schema_version') == 'dj-sports.manager-investment-ledger.v2'
     def needs_answer(track, mid, engines, captured, kickoff):
+        mid = str(mid)
+        if track=='toto14' and not mid.startswith('TOTO14_'):
+            mid = 'TOTO14_'+mid
         if not track or not any((track,str(mid),e) not in records for e in engines):
             return False
         ko, stamp = epoch(kickoff, KST), epoch(captured)
@@ -199,6 +202,18 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             return
         key = (track, mid, engine)
         if key in records:
+            existing = records[key]
+            # A publication receipt can precede settlement in the independent
+            # ledger. Keep its answer/version, but link the exact same answer's
+            # confirmed grade rather than silently skipping the settled row.
+            if (existing.get('is_correct') not in (0, 1) and grade in (0, 1)
+                and existing.get('raw_pick') == raw
+                and all(existing.get(k) == meta.get(k) for k in ('home_team','away_team'))
+                and epoch(existing.get('kickoff_at'), KST) == ko
+                and (not existing.get('api_fixture_id') or not meta.get('api_fixture_id')
+                     or str(existing['api_fixture_id']) == str(meta['api_fixture_id']))):
+                existing.update(is_correct=grade, actual_score=score,
+                                grading_wait_reason='', settlement_provenance=provenance)
             return
         p = predictions.get(mid) or {}
         if (meta.get('home_team'), meta.get('away_team')) != (p.get('home_team'), p.get('away_team')):
@@ -255,7 +270,9 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
                 if answer:
                     add(meta, engine, answer, row.get('frozen_at'), 'toto14_v2_saved_answer')
             if raw:
-                add(meta, engine, {'raw_pick': raw}, row.get('frozen_at'), 'toto14_ticket')
+                version = ((payload.get('learning_models') or {}).get(engine)
+                           or ((payload.get('alphago_pick') or {}).get('model_version') if engine=='v2' else None))
+                add(meta, engine, {'raw_pick': raw, 'model_version':version}, row.get('frozen_at'), 'toto14_ticket')
 
     # Existing primary engine receipts take precedence over archive recovery.
     stage('toto_freezes')
@@ -270,6 +287,7 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             legacy_references.append({**row, 'record_kind':'legacy_analyst_reference'})
             continue
         score = f"{row['actual_home_goals']}:{row['actual_away_goals']}" if row.get('actual_home_goals') is not None else ''
+        row['model_version'] = str(row.get('engine_version') or '').rsplit(':',1)[-1] or None
         add(meta, row.get('engine_key'), row, row.get('captured_at'), 'engine_snapshot', row.get('is_correct'), score)
 
     # Official publication snapshots have the exact published answer, not a
@@ -319,6 +337,23 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         if v2pick:
             add(meta, 'v2', v2pick, row.get('captured_at'), 'v2_learning_sample')
     stage('robot_samples')
+    # A robot sample is updated in place; its pre-kickoff revision archive may
+    # be the only remaining verifiable answer. Recover missing analysts only.
+    for row in deferred_payload_rows(conn, 'robot_pick_revision_snapshots',
+        ('source','match_id','home_team','away_team','kickoff_timestamp','api_fixture_id','captured_at'),
+        'robot_pick_json', 'ORDER BY captured_timestamp DESC,id DESC',
+        lambda r: needs_answer(source_track(r.get('source')),r.get('match_id'),('robot','v2'),
+                               r.get('captured_at'),r.get('kickoff_timestamp'))):
+        meta = {**row, 'track':source_track(row.get('source')), 'kickoff_at':row.get('kickoff_timestamp')}
+        if meta['track']=='toto14' and not str(meta['match_id']).startswith('TOTO14_'):
+            meta['match_id'] = 'TOTO14_'+str(meta['match_id'])
+        if manager_v2 and meta['track']=='manager':
+            continue
+        pick = obj(row.get('robot_pick_json'))
+        add(meta,'robot',pick,row.get('captured_at'),'robot_revision_archive')
+        answer = v2_answer(pick,row.get('home_team'),row.get('away_team'))
+        if answer:
+            add(meta,'v2',answer,row.get('captured_at'),'v2_revision_archive')
     # Independent V3 file already owns its grades; do not hide those behind a
     # current-version filter or pretend they are TOP3/manager publication receipts.
     for mid, pick in ((v3 or {}).get('picks') or {}).items():
@@ -402,7 +437,8 @@ def v2_answer(pick, home, away):
     raw = {'H': f'{home} 승', 'D': '무승부', 'A': f'{away} 승'}.get(code)
     return {'raw_pick': raw, 'code': code, 'selection_side': {'H': 'home', 'D': 'draw', 'A': 'away'}.get(code),
             'market_key': '1x2', 'probability': pick.get('probability'),
-            'model_version':pick.get('model_version')} if raw else {}
+            'model_version':(pick.get('v2_model_version') if not pick.get('code') and pick.get('v2_ai_pick')
+                             else pick.get('model_version'))} if raw else {}
 
 
 def published_scorecard(snapshot, v3, manager):
@@ -548,13 +584,19 @@ def freeze_products(conn, dashboard, v3, official_selector, robot_selector, now=
         ko = epoch(match.get('match_time'), KST)
         if ko <= now.timestamp():
             continue
-        mid = 'TOTO14_' + str(match.get('id') or '')
+        mid = str(match.get('id') or '')
+        mid = mid if mid.startswith('TOTO14_') else 'TOTO14_' + mid
         card = {**original, 'match':{**match, 'id':mid}}
         v2 = v2_answer(original.get('alphago_pick'), match.get('home'), match.get('away'))
         save('toto14', card, 'v2', v2)
         pick3 = ((v3 or {}).get('picks') or {}).get(mid) or {}
         if 0 < epoch(pick3.get('frozen_at')) <= now.timestamp() and pick3.get('market_key') == '1x2':
             save('toto14', card, 'v3', pick3)
+        marks = original.get('analyst_toto14_marks') or {}
+        for engine in ('official','robot'):
+            values = (marks.get(engine) or {}).get('marks') or []
+            if values:
+                save('toto14',card,engine,{'raw_pick':', '.join(map(str,values)),'market_key':'1x2'})
     conn.commit()
     # Send the very same frozen manager answers to the UI. No selection work
     # is repeated on button clicks and a shown answer cannot drift from grading.
