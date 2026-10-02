@@ -6,7 +6,7 @@ import json
 import math
 import re
 import time
-from itertools import chain
+from itertools import chain, islice
 from copy import deepcopy
 from collections import Counter
 from learning_state import CAMPAIGN, digest, revision_allowed, before_kickoff
@@ -75,6 +75,40 @@ def source_track(source):
             'MANAGER': 'manager'}.get(str(source or '').upper())
 
 
+def deferred_payload_rows(conn, table, columns, payload_column, order, needed):
+    """Read small metadata first; fetch only still-needed blobs in bounded batches.
+
+    Recheck after each yield: an earlier answer may fill this analyst's slot.
+    No history is truncated; older rows remain eligible if newer ones lack an answer.
+    """
+    available = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+    if not available:
+        return
+    # Production histories have integer IDs. Preserve compatibility with older
+    # schemas that do not, without guessing a non-unique match_id as a row key.
+    if 'id' not in available:
+        for row in table_rows(conn, table, tuple(columns)+(payload_column,), order):
+            if needed(row):
+                yield row
+        return
+    columns = tuple(dict.fromkeys(('id',)+tuple(columns)))
+    metadata = iter(table_rows(conn, table, columns, order))
+    while True:
+        batch = list(islice(metadata, 32))
+        if not batch:
+            break
+        selected = [r for r in batch if needed(r)]
+        if not selected:
+            continue
+        ids = [r['id'] for r in selected]
+        placeholders = ','.join('?' for _ in ids)
+        payloads = dict(conn.execute(
+            f'SELECT id,{payload_column} FROM {table} WHERE id IN ({placeholders})', ids))
+        for row in selected:
+            if needed(row):
+                yield {**row, payload_column:payloads.get(row['id'])}
+
+
 def from_prediction(p):
     mid = str(p.get('match_id') or '')
     return {'match_id': mid, 'home_team': p.get('home_team', ''),
@@ -119,6 +153,30 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         stage_started = now
     legacy_references = []
     manager_v2 = (manager or {}).get('schema_version') == 'dj-sports.manager-investment-ledger.v2'
+    def needs_answer(track, mid, engines, captured, kickoff):
+        if not track or not any((track,str(mid),e) not in records for e in engines):
+            return False
+        ko, stamp = epoch(kickoff, KST), epoch(captured)
+        return bool(ko and stamp and stamp < ko)
+
+    def needs_toto(row):
+        mid = str(row.get('match_id'))
+        mid = mid if mid.startswith('TOTO14_') else 'TOTO14_'+mid
+        return needs_answer('toto14',mid,ENGINES,row.get('frozen_at'),row.get('match_time'))
+
+    def needs_decision(row):
+        p = predictions.get(str(row.get('match_id'))) or {}
+        return bool(p and not str(p['match_id']).startswith('WORLD_')
+            and 'preview' not in str(row.get('stage')).lower()
+            and needs_answer(from_prediction(p)['track'],p['match_id'],('robot','v2'),
+                             row.get('created_at'),p.get('match_time')))
+
+    def needs_sample(row):
+        track = source_track(row.get('source'))
+        if manager_v2 and track == 'manager':
+            return True  # Preserve the existing legacy reference list.
+        return needs_answer(track,row.get('match_id'),('robot','v2'),
+                            row.get('captured_at'),row.get('kickoff_at'))
     result_index = {}
     for p in predictions.values():
         if p.get('actual_result') == 'FINISHED' and re.fullmatch(r'\d+\s*:\s*\d+', str(p.get('actual_score') or '')):
@@ -173,8 +231,11 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
     stage('product_receipts')
     # Current immutable ticket first; archived pre-kickoff answers recover only
     # missing analysts. Never create a historical answer from today's model.
-    for row in chain(table_rows(conn, 'toto14_prediction_freezes'),
-                     table_rows(conn, 'toto14_prediction_freeze_snapshots', order='ORDER BY id DESC')):
+    toto_columns = ('match_id','home_team','away_team','match_time','frozen_at')
+    for row in chain(deferred_payload_rows(conn, 'toto14_prediction_freezes', toto_columns,
+                                          'payload_json', '', needs_toto),
+                     deferred_payload_rows(conn, 'toto14_prediction_freeze_snapshots', toto_columns,
+                                           'payload_json', 'ORDER BY id DESC', needs_toto)):
         payload = obj(row.get('payload_json'))
         mid = str(row.get('match_id'))
         mid = mid if mid.startswith('TOTO14_') else 'TOTO14_' + mid
@@ -227,16 +288,15 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
 
     # Recover saved robot/V2 decisions independently even if official already exists.
     stage('official_history')
-    for row in table_rows(conn, 'prediction_analysis_snapshots',
-                          'id,match_id,stage,created_at', 'ORDER BY id DESC'):
+    for row in deferred_payload_rows(conn, 'prediction_analysis_snapshots',
+                          ('match_id','stage','created_at'), 'decision_json', 'ORDER BY id DESC', needs_decision):
         p = predictions.get(str(row.get('match_id'))) or {}
         if not p or str(p.get('match_id')).startswith('WORLD_') or 'preview' in str(row.get('stage')).lower():
             continue
         track = from_prediction(p)['track']
         if all((track,str(p['match_id']),e) in records for e in ('robot','v2')):
             continue
-        payload = conn.execute('SELECT decision_json FROM prediction_analysis_snapshots WHERE id=?',(row['id'],)).fetchone()
-        decision = obj(payload[0] if payload else None)
+        decision = obj(row.get('decision_json'))
         robot = obj(decision.get('robot_pick'))
         if robot.get('raw_pick'):
             add(from_prediction(p), 'robot', robot, row.get('created_at'), 'robot_decision')
@@ -244,9 +304,9 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         if v2pick:
             add(from_prediction(p), 'v2', v2pick, row.get('created_at'), 'v2_decision')
     stage('robot_v2_decisions')
-    for row in table_rows(conn, 'robot_learning_samples',
-        ('source','match_id','home_team','away_team','kickoff_at','api_fixture_id','captured_at','robot_pick_json'),
-        order='ORDER BY captured_timestamp DESC,id DESC'):
+    for row in deferred_payload_rows(conn, 'robot_learning_samples',
+        ('source','match_id','home_team','away_team','kickoff_at','api_fixture_id','captured_at'),
+        'robot_pick_json', 'ORDER BY captured_timestamp DESC,id DESC', needs_sample):
         meta = {**row, 'track': source_track(row.get('source'))}
         if manager_v2 and meta['track'] == 'manager':
             legacy_references.append({**row, 'record_kind':'legacy_analyst_reference'})

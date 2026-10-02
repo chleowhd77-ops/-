@@ -3345,7 +3345,7 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
     if not home_id or not away_id or int(home_id) == int(away_id):
         return None, "team_id_lookup_pending"
     date_str = match_dt.strftime("%Y-%m-%d")
-    key = f"fixture_pair_recovery_v3_{home_id}_{away_id}_{int(match_dt.timestamp())}"
+    key = f"fixture_pair_recovery_v4_{home_id}_{away_id}_{int(match_dt.timestamp())}"
     cached = get_db_cache(key, 0.2)
     if isinstance(cached, dict):
         return cached.get("fixture"), str(cached.get("reason") or "")
@@ -3393,16 +3393,45 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
                             # Team queries can require season. Do not guess team
                             # identity: accept only the exact pair/time below.
                             if 'season' in json.dumps(errors).lower():
-                                for season in (match_dt.year, match_dt.year-1):
-                                    retry = api_get('/fixtures',params={'team':int(home_id),
-                                        'date':date_str,'timezone':'Asia/Seoul','season':season},
-                                        timeout=12,purpose='analysis')
-                                    if retry.status_code != 200: continue
-                                    retried = retry.json()
-                                    if retried.get('errors'): continue
-                                    rows = retried.get('response') or []
-                                    lookup['team_date_rows'] = len(rows)
-                                    if rows: break
+                                lookup['team_schedule_attempts'] = []
+                                recovered_rows = []
+                                successful = False
+                                for team_id in (int(home_id), int(away_id)):
+                                    for season in (match_dt.year, match_dt.year-1):
+                                        retry = api_get('/fixtures', params={
+                                            'team':team_id, 'season':season,
+                                            'from':(match_dt-timedelta(days=1)).strftime('%Y-%m-%d'),
+                                            'to':(match_dt+timedelta(days=1)).strftime('%Y-%m-%d'),
+                                            'timezone':'Asia/Seoul'}, timeout=12, purpose='analysis')
+                                        retried = retry.json() if retry.status_code == 200 else {}
+                                        error = retried.get('errors') or (f'HTTP {retry.status_code}' if retry.status_code != 200 else None)
+                                        items = retried.get('response') or []
+                                        lookup['team_schedule_attempts'].append({
+                                            'team':team_id,'season':season,'http':retry.status_code,
+                                            'rows':len(items),'errors':error})
+                                        if error:
+                                            lookup['team_schedule_errors'] = error
+                                            continue
+                                        successful = True
+                                        recovered_rows.extend(items)
+                                        if any(int(((r.get('teams') or {}).get('home') or {}).get('id') or 0)==int(home_id)
+                                               and int(((r.get('teams') or {}).get('away') or {}).get('id') or 0)==int(away_id)
+                                               and int((r.get('fixture') or {}).get('id') or 0)>0
+                                               and abs(float((r.get('fixture') or {}).get('timestamp') or 0)-match_dt.timestamp())<=3*3600
+                                               for r in items if isinstance(r,dict)):
+                                            break
+                                    # A home-team schedule already containing the exact
+                                    # pair needs no redundant away-team request.
+                                    if any(int(((r.get('teams') or {}).get('home') or {}).get('id') or 0)==int(home_id)
+                                           and int(((r.get('teams') or {}).get('away') or {}).get('id') or 0)==int(away_id)
+                                           and abs(float((r.get('fixture') or {}).get('timestamp') or 0)-match_dt.timestamp())<=3*3600
+                                           for r in recovered_rows if isinstance(r,dict)):
+                                        break
+                                rows = recovered_rows
+                                lookup['team_date_rows'] = len(rows)
+                                if successful:
+                                    lookup['team_schedule_errors'] = None
+                                    reason = 'provider_pair_empty'
                     else:
                         reason = f"provider_team_schedule_http_{team_response.status_code}"
                 exact = [row for row in rows if isinstance(row, dict)
@@ -3422,7 +3451,8 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
     set_db_cache(key, {"fixture": fixture, "reason": reason, "lookup": lookup})
     print(f"[수집 복구] {home_id}-{away_id} {date_str} · {reason} · "
           f"팀쌍 응답 {lookup['pair_rows']} / 팀별 일정 응답 {lookup['team_date_rows']} · "
-          f"API 오류 {lookup.get('team_schedule_errors') or lookup.get('pair_errors') or '없음'}")
+          f"API 오류 {lookup.get('team_schedule_errors') or lookup.get('pair_errors') or '없음'} · "
+          f"시즌 재시도 {json.dumps(lookup.get('team_schedule_attempts', []), ensure_ascii=False)}")
     return fixture, reason
 
 

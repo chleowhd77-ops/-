@@ -1190,7 +1190,7 @@ if 'supporter_expires_at' not in st.session_state:
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
-st.sidebar.caption('화면 버전 R7.13.16')
+st.sidebar.caption('화면 버전 R7.13.17')
 st.sidebar.markdown(
     """
     <div class="sidebar-brand">

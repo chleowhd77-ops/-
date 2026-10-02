@@ -99,7 +99,7 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
             raise AutopilotNotReady("required tables missing: " + ", ".join(missing))
         rows = connection.execute(
             """
-            SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json, p.match_time
+            SELECT s.id, s.match_id, s.stage, s.created_at, p.match_time
             FROM prediction_analysis_snapshots AS s
             JOIN predictions AS p ON p.match_id = s.match_id
             WHERE COALESCE(p.actual_result, 'PENDING') = 'PENDING'
@@ -117,13 +117,26 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
         if match_id and match_id not in latest:
             latest[match_id] = row
 
+    # Select latest metadata first; do not copy candidate blobs for every historical revision.
+    candidate_payloads = {}
+    connection = _readonly_connection(database_path)
+    try:
+        ids = [int(r['id']) for r in latest.values()]
+        for start in range(0, len(ids), 128):
+            batch = ids[start:start+128]
+            placeholders = ','.join('?' for _ in batch)
+            candidate_payloads.update((int(r[0]),r[1]) for r in connection.execute(
+                f'SELECT id,candidates_json FROM prediction_analysis_snapshots WHERE id IN ({placeholders})',batch))
+    finally:
+        connection.close()
+
     pending: list[PendingSnapshot] = []
     for match_id, row in latest.items():
         from scorecard_core import epoch, KST
         kickoff = epoch(row['match_time'], KST)
         if not 0 < epoch(row['created_at']) < kickoff or kickoff <= datetime.now(timezone.utc).timestamp():
             continue
-        candidates = meta._safe_json(row["candidates_json"], [])
+        candidates = meta._safe_json(candidate_payloads.get(int(row['id'])), [])
         valid = tuple(candidate for candidate in candidates if isinstance(candidate, dict))
         if valid:
             pending.append(

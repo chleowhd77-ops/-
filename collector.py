@@ -8889,6 +8889,11 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
     stale = get_db_cache(cache_key, 24)
     try:
         response = api_get("/odds", params={"fixture": fixture_id}, timeout=10)
+        if getattr(response, 'headers', {}).get('X-DJ-Cache') == 'miss-cache-only':
+            print(f"[자료 수집 요청] 배당 fixture={fixture_id} · 공용 캐시 미수신 · 수집 대기열 등록", flush=True)
+            if isinstance(stale, dict):
+                return {**stale, 'stale': True}
+            return None
         payload = response.json() if response.status_code == 200 else {}
         if response.status_code != 200 or payload.get("errors"):
             raise RuntimeError(f"odds HTTP {response.status_code}: {payload.get('errors')}")
@@ -8898,7 +8903,7 @@ def fetch_world_market_snapshot(fixture_id, diff_hours):
         set_db_cache(cache_key, snapshot)
         return snapshot
     except Exception as error:
-        print(f"⚠️ 세계경기 배당 조회 실패({fixture_id}): {error}")
+        print(f"⚠️ 공용 배당 조회 실패({fixture_id}): {error}")
         if isinstance(stale, dict):
             preserved = dict(stale)
             preserved["stale"] = True
@@ -17868,12 +17873,21 @@ def _build_fast_grading_snapshot():
 
 def run_products_job():
     product_started = time.monotonic()
+    stage_started = product_started
+    def product_stage(label):
+        nonlocal stage_started
+        now = time.monotonic()
+        print(f"⏱️ products 단계 · {label} · 구간 {now-stage_started:.1f}초 / 누적 {now-product_started:.1f}초", flush=True)
+        stage_started = now
+    print('⏱️ products 시작 · V3 답안 갱신 진입', flush=True)
     from official_meta_v3_autopilot import refresh_autopilot
     payload = refresh_autopilot(_local_path("ai_predictions.db"),
         _local_path("v3_learning_picks.json"), _local_path("dashboard_data.json"))
     published = upload_to_github("v3_learning_picks.json")
     print(f"✅ V3 답안 생성·게시: 신규 {payload.get('newly_frozen_picks', 0)}건 / 상태 {payload.get('status')} / 게시 {published}")
+    product_stage('V3 완료 · 관리자픽 진입')
     manager_ok = _refresh_manager_after_analysis("products")
+    product_stage('관리자픽 완료 · V2 답안 진입')
     dashboard = _read_json("dashboard_data.json", {})
     from analyst_products import attach_v2_markets, refresh_saved_v2
     for card in dashboard.get('proto', []):
@@ -17889,6 +17903,7 @@ def run_products_job():
     _freeze_displayed_products(dashboard)
     _atomic_write_json("dashboard_data.json", dashboard)
     dashboard_ok = upload_to_github("dashboard_data.json")
+    product_stage('답안 게시 완료 · 채점 집계 진입')
     snapshot = _build_fast_grading_snapshot()
     if not snapshot.get("error"):
         _atomic_write_json("grading_results.json", snapshot)
@@ -18263,7 +18278,8 @@ def _start_isolated_job(job_name):
         job_name, "running", _new_run=True, run_id=run_id,
         child_pid=process.pid, last_stage="starting",
     )
-    print(f"🚀 분리 작업 시작: {job_name} (PID {process.pid})")
+    waited = max(0.0, time.monotonic()-float(_PENDING_JOBS.get(job_name, time.monotonic())))
+    print(f"🚀 분리 작업 시작: {job_name} (PID {process.pid}) · 대기 {waited:.1f}초", flush=True)
     return True
 
 
@@ -18310,6 +18326,19 @@ def _drain_pending_jobs():
             break
         _PENDING_JOBS.pop(job_name, None)
         started_any = True
+    if 'learning' in _PENDING_JOBS:
+        now = time.monotonic()
+        last = getattr(_drain_pending_jobs, '_last_wait_report', -float('inf'))
+        if now-last >= 60:
+            active = _active_job_names()
+            if active & MAIN_DB_JOBS:
+                reason = 'DB 사용 중: '+','.join(sorted(active & MAIN_DB_JOBS))
+            elif len(active) >= MAX_CONCURRENT_WORKERS:
+                reason = '동시 작업 슬롯 사용 중'
+            else:
+                reason = f'가용 메모리/작업 시작 확인 필요 · {_available_memory_mb()}MB'
+            print(f"🕒 학습 대기 · {now-_PENDING_JOBS['learning']:.1f}초 · {reason}", flush=True)
+            _drain_pending_jobs._last_wait_report = now
     return started_any
 
 

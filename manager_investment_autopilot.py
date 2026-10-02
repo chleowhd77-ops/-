@@ -322,7 +322,7 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
             raise ManagerNotReady("required tables missing: " + ", ".join(sorted(missing)))
         rows = connection.execute(
             """
-            SELECT s.id, s.match_id, s.stage, s.created_at, s.candidates_json,
+            SELECT s.id, s.match_id, s.stage, s.created_at,
                    s.analysis_version,
                    p.match_time, p.home_team, p.away_team
             FROM prediction_analysis_snapshots AS s
@@ -353,6 +353,19 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
             latest[match_id] = row
 
     now = datetime.now(KST)
+    # Select latest metadata first; do not copy candidate blobs for every historical revision.
+    candidate_payloads = {}
+    connection = _readonly_connection(database_path)
+    try:
+        ids = [int(r['id']) for r in latest.values()]
+        for start in range(0, len(ids), 128):
+            batch = ids[start:start+128]
+            placeholders = ','.join('?' for _ in batch)
+            candidate_payloads.update((int(r[0]),r[1]) for r in connection.execute(
+                f'SELECT id,candidates_json FROM prediction_analysis_snapshots WHERE id IN ({placeholders})',batch))
+    finally:
+        connection.close()
+
     pending: list[PendingSnapshot] = []
     for row in latest.values():
         kickoff_at = str(row["match_time"] or "")
@@ -369,7 +382,7 @@ def _load_pending_snapshots(database_path: str | Path) -> list[PendingSnapshot]:
             continue
         if created >= kickoff:
             continue
-        candidates = _json(row["candidates_json"], [])
+        candidates = _json(candidate_payloads.get(int(row['id'])), [])
         valid = tuple(candidate for candidate in candidates if isinstance(candidate, dict))
         if valid:
             pending.append(
