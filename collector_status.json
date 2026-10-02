@@ -5,12 +5,23 @@
       "supervisor_pid": 493344,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T15:37:51+00:00",
+      "heartbeat_at": "2026-10-02T15:38:21+00:00",
       "pid": 493344,
       "last_started_at": "2026-10-02T10:37:30+00:00",
-      "active_jobs": {},
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "active_jobs": {
+        "team": 496820,
+        "products": 496823
+      },
+      "pending_jobs": [
+        "learning",
+        "master",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 12.1,
+        "master": 12.1,
+        "learning": 2.0
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -101,9 +112,12 @@
       "run_id": "team-1790955491569042237",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T15:38:14+00:00",
-      "pid": 496820,
-      "last_started_at": "2026-10-02T15:38:12+00:00"
+      "heartbeat_at": "2026-10-02T15:38:21+00:00",
+      "pid": 493344,
+      "last_started_at": "2026-10-02T15:38:12+00:00",
+      "child_pid": 496820,
+      "elapsed_seconds": 10.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_at": "2026-10-01T21:57:33+00:00",
@@ -138,24 +152,19 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_success_at": "2026-10-02T15:34:45+00:00",
+      "last_failure_at": "2026-10-02T09:11:13+00:00",
       "last_success_duration_seconds": 86.37,
       "last_failure_duration_seconds": 601.6,
-      "last_failure_at": "2026-10-02T09:11:13+00:00",
-      "run_id": "products-1790955197245008984",
-      "last_stage": "executing",
-      "state": "success",
-      "heartbeat_at": "2026-10-02T15:34:45+00:00",
-      "pid": 496807,
-      "last_started_at": "2026-10-02T15:33:19+00:00",
-      "child_pid": 496807,
-      "elapsed_seconds": 64.1,
-      "overlap_skips": 0,
-      "manager_published": true,
-      "manager_input_count": 34,
-      "manager_current_count": 12,
-      "manager_reason": "",
-      "duration_seconds": 86.37
+      "last_success_at": "2026-10-02T15:34:45+00:00",
+      "run_id": "products-1790955499591119123",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-02T15:38:21+00:00",
+      "pid": 493344,
+      "last_started_at": "2026-10-02T15:38:21+00:00",
+      "child_pid": 496823,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "learning": {
       "last_failure_duration_seconds": 601.2,
@@ -174,7 +183,7 @@
       "duration_seconds": 26.57
     }
   },
-  "updated_at": "2026-10-02T15:38:16+00:00",
+  "updated_at": "2026-10-02T15:38:21+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
