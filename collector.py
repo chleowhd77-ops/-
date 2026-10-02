@@ -17852,6 +17852,10 @@ def run_learning_job():
 def _build_fast_grading_snapshot():
     """Project all analysts from frozen records once; no historical N+1 queries."""
     started = time.monotonic()
+    from score_history_cache import prepare
+    with sqlite3.connect(_local_path('ai_predictions.db')) as preparation:
+        if not prepare(preparation):
+            return {'error':'compact_history_preparing', 'preparing':True}
     with sqlite3.connect(f"file:{_local_path('ai_predictions.db')}?mode=ro", uri=True) as conn:
         scorecard = build_scorecard(conn, evaluate_single_pick,
             _read_json('v3_learning_picks.json', {}), _read_json('manager_investment_picks.json', {}))
@@ -17905,6 +17909,9 @@ def run_products_job():
     dashboard_ok = upload_to_github("dashboard_data.json")
     product_stage('답안 게시 완료 · 채점 집계 진입')
     snapshot = _build_fast_grading_snapshot()
+    if snapshot.get('preparing'):
+        print('⏳ products 채점 답안목록 준비 중 · 픽 게시 완료 · 기존 성적표 유지', flush=True)
+        return bool(published and manager_ok and dashboard_ok)
     if not snapshot.get("error"):
         _atomic_write_json("grading_results.json", snapshot)
         grading_ok = upload_to_github("grading_results.json")
@@ -17932,6 +17939,9 @@ def run_score_job():
                              scoring_seconds=round(scoring_seconds, 2))
     print(f"⏱️ 결과 채점 {scoring_seconds:.1f}초 완료 · 누적 성적표 생성 시작")
     snapshot = _build_fast_grading_snapshot()
+    if snapshot.get('preparing'):
+        _update_collector_status('score', 'running', last_stage='compact_history_preparing')
+        return True
     if snapshot.get("error"):
         _update_collector_status("score", "running", last_stage="snapshot_failed")
         return False
@@ -18293,6 +18303,10 @@ def _pending_sort_key(job_name, now):
     from offline_mode import enabled as offline_enabled
     if job_name == 'learning' and offline_enabled(APP_DIR):
         return (-1, requested_at, 0)
+    # After one long DB turn, learning must receive the next free slot instead
+    # of losing to an equally old master request. No concurrent DB heavy worker.
+    if job_name == 'learning' and waited >= MASTER_PRIORITY_AGE_SECONDS:
+        return (-1, requested_at, 1)
     if job_name in {"master", "learning"} and waited >= MASTER_PRIORITY_AGE_SECONDS:
         return (0, requested_at, 0)
     if job_name == "world" and waited >= WORLD_PRIORITY_AGE_SECONDS:

@@ -262,7 +262,7 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
         rows = connection.execute(
             """
             SELECT result.market_key, result.model_probability, result.is_correct,
-                   snapshot.candidates_json, result.raw_pick, result.fair_probability,
+                   snapshot.id AS snapshot_id, result.raw_pick, result.fair_probability,
                    result.odd
             FROM prediction_candidate_results AS result
             JOIN prediction_analysis_snapshots AS snapshot
@@ -274,6 +274,21 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
             LIMIT 50000
             """
         ).fetchall()
+        # The same snapshot has many candidate results. Read and parse its
+        # candidate list once, never once per joined result row.
+        candidate_maps = {}
+        ids = sorted({int(row['snapshot_id']) for row in rows})
+        for start in range(0,len(ids),128):
+            batch=ids[start:start+128]
+            placeholders=','.join('?' for _ in batch)
+            for sid,payload in connection.execute(
+                f'SELECT id,candidates_json FROM prediction_analysis_snapshots WHERE id IN ({placeholders})',batch):
+                mapping={}
+                for candidate in _json(payload,[]):
+                    if isinstance(candidate,dict):
+                        key=(str(candidate.get('market_key') or ''),str(candidate.get('raw_pick') or ''))
+                        mapping.setdefault(key,{k:candidate[k] for k in ('market_key','model_probability','odd') if k in candidate})
+                candidate_maps[int(sid)]=mapping
     finally:
         connection.close()
 
@@ -281,8 +296,8 @@ def _load_history(database_path: str | Path) -> dict[str, Any]:
     buckets: dict[tuple[str, int], list[int]] = defaultdict(lambda: [0, 0])
     odds_buckets: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for row in rows:
-        candidates = _json(row["candidates_json"], [])
-        candidate = _candidate_from_snapshot(candidates, row)
+        candidate = candidate_maps.get(int(row['snapshot_id']),{}).get(
+            (str(row['market_key'] or ''),str(row['raw_pick'] or '')), {})
         market = str(candidate.get("market_key") or row["market_key"] or "")
         probability = _probability(
             candidate.get("model_probability", row["model_probability"])

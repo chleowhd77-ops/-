@@ -81,6 +81,8 @@ def deferred_payload_rows(conn, table, columns, payload_column, order, needed):
     Recheck after each yield: an earlier answer may fill this analyst's slot.
     No history is truncated; older rows remain eligible if newer ones lack an answer.
     """
+    from score_history_cache import resolved_table
+    table = resolved_table(conn, table)
     available = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
     if not available:
         return
