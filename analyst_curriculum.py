@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from learning_state import atomic_json, digest, now_iso
 
-VERSION = 'curriculum-2026-10-01-v1'
+VERSION = 'curriculum-2026-10-02-v2'
 LESSONS = {
     'identity': '양 팀·대회·경기시각 연결 및 자료 누락 원인',
     'strength': '경기 전 전력·홈원정·득실점·상대 수준',
@@ -136,8 +136,65 @@ def prepare(root):
     return report
 
 
+def examine(root, submission_path):
+    """Grade a versioned held-out submission, without training or modifying picks.
+
+    One selected question per fixture/market/line; a claimed training cutoff
+    must precede every exam kickoff. This validates the declaration, not the
+    provenance of an externally supplied model.
+    """
+    from learning_state import read_json
+    root=Path(root)
+    manifest=read_json(root/'learning_course_status.json')
+    submission=json.loads(Path(submission_path).read_text(encoding='utf-8'))
+    revision=manifest.get('revision')
+    if not revision or submission.get('revision')!=revision:
+        raise ValueError('문제집 버전 불일치')
+    if submission.get('engine') not in ('official','robot','v2','v3') or not submission.get('model_version'):
+        raise ValueError('분석가와 모델 버전 필수')
+    cutoff=float(submission.get('trained_through') or 0)
+    folder=root/'.learning_course'/revision
+    questions={r['question_id']:r for r in read_json(folder/'exam_questions.json',[])}
+    answers={r['question_id']:r for r in read_json(folder/'exam_answers.json',[])}
+    if not questions or not math.isfinite(cutoff) or cutoff<=0 or cutoff>=min(r['kickoff'] for r in questions.values()):
+        raise ValueError('시험 이전 학습 종료시각과 유효 시험 자료 필요')
+    groups=lambda r:(r['fixture_id'],r['inputs']['market_key'],r['inputs']['line'])
+    available={groups(r) for r in questions.values()}
+    seen=set();scores=[]
+    for pick in submission.get('picks',[]):
+        qid=pick.get('question_id')
+        if qid not in questions or qid not in answers:raise ValueError('시험 문제에 없는 답안')
+        row=questions[qid];key=groups(row)
+        if key in seen:raise ValueError('동일 경기·시장·기준점 중복 선택')
+        seen.add(key)
+        probability=float(pick['probability'])
+        if not math.isfinite(probability) or not 0<=probability<=1:raise ValueError('확률 범위 오류')
+        label=answers[qid]['answer'];odd=float(row['inputs']['odd'])
+        scores.append(dict(question_id=qid,market=key[1],hit=label,
+            brier=(probability-label)**2,unit_profit=odd*label-1))
+    def metrics(rows):
+        n=len(rows)
+        return dict(selections=n,accuracy=sum(r['hit'] for r in rows)/n if n else None,
+            brier=sum(r['brier'] for r in rows)/n if n else None,
+            unit_stake_roi=sum(r['unit_profit'] for r in rows)/n if n else None)
+    report=dict(revision=revision,engine=submission['engine'],model_version=submission['model_version'],
+        trained_through=cutoff,generated_at=now_iso(),status='GRADED' if scores else 'NO_ANSWERS',
+        available_market_cases=len(available),answered_market_cases=len(seen),
+        coverage=len(seen)/len(available) if available else 0,
+        overall=metrics(scores),by_market={k:metrics([r for r in scores if r['market']==k])
+            for k in ('1x2','totals','handicap')},
+        notice='학습 종료시각은 제출 선언값. 모델 생성 이력 별도 확인. 누락은 적중으로 계산하지 않음.',
+        mistakes=[r['question_id'] for r in scores if not r['hit']])
+    atomic_json(folder/('exam_report_'+submission['engine']+'_'+digest(submission)+'.json'),report)
+    return report
+
+
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--root',default='.')
+    parser.add_argument('--submission',help='별도 생성한 시험 답안 JSON; 없으면 문제집 준비만 실행')
     args=parser.parse_args()
-    prepare(args.root)
+    if args.submission:
+        print(json.dumps(examine(args.root,args.submission),ensure_ascii=False,indent=2))
+    else:
+        prepare(args.root)

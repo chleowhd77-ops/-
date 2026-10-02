@@ -107,6 +107,27 @@ def mark_grid(marks):
     return '<div role="group" aria-label="승무패 선택" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:100%;">'+''.join(cells)+'</div>'
 
 
+def saved_v2_quotes(card):
+    """Choose a complete quote set; never splice partial sets or use vote shares."""
+    import math
+    sets=[]
+    for field in ('display_candidates','robot_candidates'):
+        sets.append((field,{p.get('selection_side'):p.get('odd') for p in card.get(field) or []
+                           if p.get('market_key')=='1x2'}))
+    sets.append(('alphago_pick',(card.get('alphago_pick') or {}).get('odds') or {}))
+    match=card.get('match') or {}
+    sets.append(('match',dict(zip(('home','draw','away'),
+                                 (match.get('odd_h'),match.get('odd_d'),match.get('odd_a'))))))
+    for source,quotes in sets:
+        try:
+            values=[float(quotes[k]) for k in ('home','draw','away')]
+            if all(math.isfinite(x) and x>1 for x in values):
+                return values,source
+        except (KeyError,TypeError,ValueError):
+            pass
+    return [None,None,None],'missing'
+
+
 def refresh_saved_v2(card, root, toto=False):
     """Recompute only V2 from saved real 1X2 quotes; never fetch or invent odds."""
     from learning_state import before_kickoff, campaign_ready, CAMPAIGN, now_iso
@@ -114,20 +135,15 @@ def refresh_saved_v2(card, root, toto=False):
     match=card.get('match') or {}
     if not before_kickoff(match) or card.get('public_pick_block_reason'):
         return card
-    quotes={p.get('selection_side'):p.get('odd') for p in
-        (card.get('display_candidates') or card.get('robot_candidates') or [])
-        if p.get('market_key')=='1x2'}
-    if not quotes:
-        quotes=(card.get('alphago_pick') or {}).get('odds') or {}
-    if not quotes:
-        quotes=dict(zip(('home','draw','away'),(match.get('odd_h'),match.get('odd_d'),match.get('odd_a'))))
-    result=get_v2_prediction(*(quotes.get(k) for k in ('home','draw','away')))
+    quotes,quote_source=saved_v2_quotes(card)
+    result=get_v2_prediction(*quotes)
     if result.get('status')!='ready':
         card['v2_refresh_wait_reason']=result.get('reason','저장 배당·모델 확인 필요')
         return card
     if not before_kickoff(match):
         return card
     card['alphago_pick']=result
+    card['v2_quote_source']=quote_source
     card.setdefault('learning_models',{})['v2']=result['model_version']
     if campaign_ready(root):card['learning_campaign']=CAMPAIGN
     card['v2_reanalysed_at']=now_iso()

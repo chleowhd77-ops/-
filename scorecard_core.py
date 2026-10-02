@@ -240,6 +240,20 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             continue
         meta = {**from_prediction(p), 'match_id': mid, 'track': track}
         meta.update({k: pick[k] for k in ('home_team', 'away_team', 'kickoff_at', 'api_fixture_id') if pick.get(k)})
+        # Older ledgers used home/away. Resolve display identity only from a
+        # unique fixture and matching kickoff, never from fuzzy team names.
+        for field,alias in (('home_team','home'),('away_team','away')):
+            if not meta.get(field) and pick.get(alias):meta[field]=pick[alias]
+        if (not meta.get('home_team') or not meta.get('away_team')) and meta.get('api_fixture_id'):
+            matches=[r for r in predictions.values()
+                     if str(r.get('api_fixture_id'))==str(meta['api_fixture_id'])
+                     and epoch(meta.get('kickoff_at'),KST)>0
+                     and epoch(r.get('match_time'),KST)==epoch(meta.get('kickoff_at'),KST)]
+            pairs={(r.get('home_team'),r.get('away_team')) for r in matches}
+            if len(pairs)==1:
+                home,away=next(iter(pairs))
+                if (not meta.get('home_team') or meta['home_team']==home) and (not meta.get('away_team') or meta['away_team']==away):
+                    meta.update(home_team=home,away_team=away)
         if not meta.get('kickoff_at') and pick.get('is_correct') not in (0, 1):
             audit['v3_identity_or_time_missing'] += 1
             continue

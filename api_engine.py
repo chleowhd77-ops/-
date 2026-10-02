@@ -3886,11 +3886,18 @@ def fetch_overseas_odds_and_fixture_api(
                     odds_payload = odds_res.json() if odds_res.status_code == 200 else {}
                     odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
                     res_val["odds_response"] = odds_data
+                    res_val["odds_status"] = (
+                        "HTTP_" + str(odds_res.status_code) if odds_res.status_code != 200 else
+                        "PROVIDER_ERROR" if odds_payload.get("errors") else
+                        "PROVIDER_EMPTY" if not odds_data else "NO_COMPLETE_1X2")
+                    res_val["odds_cache_state"] = getattr(odds_res, 'headers', {}).get('X-DJ-Cache', '')
                     extracted = _extract_match_winner_odds(odds_data)
                     if extracted:
                         res_val.update(extracted)
                         res_val["odds_source"] = "overseas_median"
+                        res_val["odds_status"] = "READY"
                 except Exception as odds_error:
+                    res_val["odds_status"] = "REQUEST_ERROR"
                     print(f"⚠️ 해외배당 조회 실패({fix_id}): {odds_error}")
             if not (_API_CACHE_ONLY and odds_requested and not res_val.get('odds_source')):
                 set_db_cache(cache_key, res_val)

@@ -57,7 +57,7 @@ def result_signature(root):
                 counts.append((table,db.execute(f'SELECT COUNT(*),MAX(id) FROM {table} WHERE {where}').fetchone()))
     textbook = Path(root)/'master_training_data.csv'
     textbook_hash = hashlib.sha256(textbook.read_bytes()).hexdigest() if textbook.exists() else 'missing'
-    return digest(['R7.13.14', CAMPAIGN, rows, counts, textbook_hash])
+    return digest(['R7.13.15', CAMPAIGN, rows, counts, textbook_hash])
 
 
 def save_model(root, engine, value, binary=False):
@@ -195,6 +195,9 @@ def robot_validation_rows(root, source):
 
 def load_v2_rows(root):
     rows, excluded = {}, Counter()
+    archive_keys = {}
+    def identity(day, home, away):
+        return (day, ' '.join(str(home).casefold().split()), ' '.join(str(away).casefold().split()))
     textbook=Path(root)/'master_training_data.csv'
     if textbook.exists():
         with textbook.open(encoding='utf-8-sig') as stream:
@@ -208,6 +211,11 @@ def load_v2_rows(root):
                     if not date or date.timestamp()>=time.time() or r['FTR'] not in ('H','D','A') or not all(math.isfinite(x) and x>1 for x in odds):
                         raise ValueError()
                     key=(date.date().isoformat(),r['HomeTeam'],r['AwayTeam'])
+                    normalized=identity(*key)
+                    if normalized in archive_keys:
+                        excluded['duplicate_archive_fixture']+=1
+                        continue
+                    archive_keys[normalized]=key
                     rows[key]=dict(time=date.timestamp(),known=date.timestamp()+86400,odds=odds,label=r['FTR'],source='archive_B365',key=key)
                 except (KeyError,TypeError,ValueError): excluded['invalid_archive_row']+=1
     with sqlite3.connect(f'file:{Path(root)/"ai_predictions.db"}?mode=ro',uri=True) as db:
@@ -228,6 +236,13 @@ def load_v2_rows(root):
         fid=int(r['api_fixture_id'])
         if fid in fixtures:continue
         fixtures.add(fid)
+        # Only exact normalized names and date may deduplicate an archive row.
+        # No guessing across translated names, competitions or adjacent dates.
+        day=datetime.fromtimestamp(ko,timezone.utc).date().isoformat()
+        archive_key=archive_keys.get(identity(day,r['home_team'],r['away_team']))
+        if archive_key in rows:
+            del rows[archive_key]
+            excluded['archive_duplicate_replaced_by_verified_site_snapshot']+=1
         key=('fixture',fid)
         rows[key]=dict(time=ko,known=known,odds=odds,label='H' if h>a else 'A' if a>h else 'D',
                        source='site_snapshot_mixed_provider',key=key)
@@ -385,7 +400,9 @@ def run_one(root, on_status=None):
                  if ((engines.get(e) or {}).get('status') != 'ERROR'
                      or time.time()-epoch((engines.get(e) or {}).get('last_attempt_at')) > 1800)
                  and ((engines.get(e) or {}).get('reviewed_signature') != signature
-                      or (engines.get(e) or {}).get('status') in ('ERROR','PAUSED'))]
+                      or (engines.get(e) or {}).get('status') in ('ERROR','PAUSED')
+                      or (e=='v2' and ((engines.get(e) or {}).get('market_learning') or {}).get('status')=='ERROR'
+                          and time.time()-epoch((engines.get(e) or {}).get('last_attempt_at'))>1800))]
         if not pending:
             print('📚 학습 대기: 새 정산 자료 없음 · 기존 모델/중간 결과 보존',flush=True)
             return info
@@ -447,4 +464,5 @@ def run_one(root, on_status=None):
         atomic_json(root/'learning_status.json',info)
         label = '학습 일시 저장' if engines[engine]['status']=='PAUSED' else '학습 검토 종료'
         print(f"📚 {label} [{engine}] · {engines[engine]['status']} · {engines[engine].get('reason','')} · 경기전 1회 갱신 준비={info['refresh_ready']}",flush=True)
+        print(f"📚 학습 증빙 [{engine}] · 표본={engines[engine].get('training_samples',0)} · 모델={engines[engine].get('active_version','없음')} · 저장={bool(engines[engine].get('artifact'))}",flush=True)
         return info

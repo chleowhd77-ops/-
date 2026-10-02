@@ -11255,24 +11255,45 @@ def _needs_current_robot_refresh(item, kickoff, now, source="PROTO"):
 
 def _repair_toto_v2(item, match):
     from v2_ml_engine import get_v2_prediction
+    from scorecard_core import epoch
     if not isinstance(item, dict):
         return item
-    kickoff = _parse_kst_match_time(match.get("match_time"))
+    kickoff_epoch = epoch(match.get('match_time'), KST)
+    kickoff = datetime.fromtimestamp(kickoff_epoch, KST) if kickoff_epoch else None
     if not kickoff or datetime.now(KST) >= kickoff:
         return item
     if (item.get("alphago_pick") or {}).get("code") in {"H", "D", "A"}:
         return item
+    if item.get('public_pick_block_reason'):
+        return item
+    from analyst_products import refresh_saved_v2
+    refresh_saved_v2(item, APP_DIR, toto=True)
+    if (item.get('alphago_pick') or {}).get('status') == 'ready':
+        return item
     hi, ai, fixture = _collect_match_identity(match)
     if not hi.get("id") or not ai.get("id") or not fixture:
+        item['v2_collection_diagnostic']={'status':'IDENTITY_PENDING','checked_at':_utc_iso()}
         return item
     quotes = fetch_overseas_odds_and_fixture_api(hi["id"], ai["id"], 4,
                     match.get("match_time"), include_odds=True) or {}
     result = get_v2_prediction(*(quotes.get(k) for k in ("odd_h", "odd_d", "odd_a")))
+    item['v2_collection_diagnostic'] = {
+        'fixture_id':fixture,'returned_fixture_id':quotes.get('fixture_id'),
+        'status':quotes.get('odds_status') or result.get('source_code') or result.get('status'),
+        'cache_state':quotes.get('odds_cache_state'), 'checked_at':_utc_iso()}
+    if int(quotes.get('fixture_id') or 0) != int(fixture):
+        item['v2_collection_diagnostic']['status']='FIXTURE_MISMATCH_OR_MISSING'
+        return item
+    if datetime.now(KST) >= kickoff:
+        return item
     if result.get("code") in {"H", "D", "A"}:
         item["alphago_pick"] = result
+        item.setdefault('learning_models',{})['v2']=result.get('model_version')
         item["v2_recovered_at"] = _utc_iso()
         item.setdefault("analyst_toto14_marks", {})["v2"] = {
             "marks": [{"H":"승", "D":"무", "A":"패"}[result["code"]]], "available": True}
+    else:
+        print(f"📋 V2 배당 대기 · {match.get('home')} vs {match.get('away')} · fixture={fixture} · {item['v2_collection_diagnostic']['status']}",flush=True)
     return item
 
 
@@ -13487,6 +13508,7 @@ def build_dashboard_data():
         )
         if canonical_toto is not None:
             canonical_toto.update(learning.stamp(APP_DIR, "TOTO14"))
+            _repair_toto_v2(canonical_toto, m)
             canonical_toto["_policy_migration"] = policy_migration
             dashboard_toto14.append(canonical_toto)
             total_combinations *= max(1, len(canonical_toto.get("picks") or []))
@@ -17846,7 +17868,7 @@ def run_products_job():
     enriched = {str((c.get('match') or {}).get('id')):c for c in dashboard.get('proto',[])}
     for card in dashboard.get('top3',[]):
         source = enriched.get(str((card.get('match') or {}).get('id'))) or {}
-        for field in ('v2_market_pick','v2_market_candidates'):
+        for field in ('v2_market_pick','v2_market_candidates','alphago_pick','v2_reanalysed_at'):
             if field in source:card[field]=source[field]
     _freeze_displayed_products(dashboard)
     _atomic_write_json("dashboard_data.json", dashboard)
@@ -17878,7 +17900,7 @@ def run_score_job():
     _update_collector_status("score", "running", last_stage="grading_snapshot_building",
                              scoring_seconds=round(scoring_seconds, 2))
     print(f"⏱️ 결과 채점 {scoring_seconds:.1f}초 완료 · 누적 성적표 생성 시작")
-    snapshot = _build_grading_snapshot()
+    snapshot = _build_fast_grading_snapshot()
     if snapshot.get("error"):
         _update_collector_status("score", "running", last_stage="snapshot_failed")
         return False

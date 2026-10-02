@@ -42,7 +42,8 @@ def render_rows(rows, key):
         values.append({'경기': f"{row.get('home_team') or ''} vs {row.get('away_team') or ''}".strip()
                        if row.get('home_team') else f"경기 ID {row.get('match_id', '')}",
                        '시각': str(row.get('kickoff_at') or ''), '픽': str(row.get('raw_pick') or ''),
-                       '결과': str(row.get('actual_score') or ''), '채점': state})
+                       '결과': str(row.get('actual_score') or ''), '채점': state,
+                       '대기 사유': str(row.get('grading_wait_reason') or '') if hit not in (0,1) else ''})
     st.dataframe(values, use_container_width=True, hide_index=True)
     st.caption(f'{len(rows)}경기 중 {(page - 1) * 30 + 1}–{min(page * 30, len(rows))} · 누적 통계는 전체 기록 기준')
 
