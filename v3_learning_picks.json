@@ -1,2185 +1,9 @@
 {
   "customer_official_pick_changed": false,
   "frozen_pick_count": 259,
-  "generated_at": "2026-10-01T23:55:41+00:00",
+  "generated_at": "2026-10-02T00:04:00+00:00",
   "graded_pick_count": 170,
   "investment_candidates": {
-    "5870": {
-      "api_fixture_id": 1639973,
-      "away_team": "아이티",
-      "candidate_scores": [
-        {
-          "balanced_score": 0.241872,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": 0.0246,
-          "data_confidence": 0.785,
-          "edge": 0.1427,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.231782,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": null,
-          "independent_support_count": 2,
-          "is_qualified_underdog": true,
-          "is_true_underdog": true,
-          "label": "일반 승무패 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "1x2",
-          "market_rank": 2,
-          "model_probability": 0.374511,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "1x2",
-            "persistent": false,
-            "qualified": false,
-            "side": "home",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 3.75,
-          "official_goal_score": 0.374511,
-          "official_learned_probability": 0.374511,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.444611,
-            "low": 0.304411
-          },
-          "raw_model_probability": 0.372055,
-          "raw_pick": "도미니카공화국 승",
-          "recommendation_score": 0.5051,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": 0.121699,
-          "robust_ev": 1.325554,
-          "robust_probability": 0.353481,
-          "safe_score": 0.294,
-          "selected_as": [],
-          "selection_rank": 3,
-          "selection_reason": "통합 비교 순위 3위",
-          "selection_side": "home",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 3,
-          "support_signals": [
-            "홈·원정 분리 성적과 홈 어드밴티지",
-            "최근 경기력 지표 우위"
-          ],
-          "totals_base": null,
-          "v3_probability": 0.225996
-        },
-        {
-          "balanced_score": 0.093551,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": 0.0,
-          "data_confidence": 0.785,
-          "edge": 0.0077,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.24144,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": null,
-          "independent_support_count": 0,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "일반 승무패 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "1x2",
-          "market_rank": 3,
-          "model_probability": 0.249102,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "1x2",
-            "persistent": false,
-            "qualified": false,
-            "side": "draw",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 3.6,
-          "official_goal_score": 0.249102,
-          "official_learned_probability": 0.249102,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.319202,
-            "low": 0.179002
-          },
-          "raw_model_probability": 0.254023,
-          "raw_pick": "무승부",
-          "recommendation_score": 0.3406,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": -0.013368,
-          "robust_ev": 0.821059,
-          "robust_probability": 0.228072,
-          "safe_score": 0.1955,
-          "selected_as": [],
-          "selection_rank": 4,
-          "selection_reason": "통합 비교 순위 4위",
-          "selection_side": "draw",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 3,
-          "support_signals": [],
-          "totals_base": null,
-          "v3_probability": 0.237777
-        },
-        {
-          "balanced_score": 0.229616,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": -0.0246,
-          "data_confidence": 0.785,
-          "edge": -0.1504,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.526778,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": null,
-          "independent_support_count": 1,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "일반 승무패 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "1x2",
-          "market_rank": 1,
-          "model_probability": 0.376387,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "1x2",
-            "persistent": false,
-            "qualified": false,
-            "side": "away",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 1.65,
-          "official_goal_score": 0.376387,
-          "official_learned_probability": 0.376387,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.446487,
-            "low": 0.306287
-          },
-          "raw_model_probability": 0.373921,
-          "raw_pick": "아이티 승",
-          "recommendation_score": 0.428,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": -0.171421,
-          "robust_ev": 0.586339,
-          "robust_probability": 0.355357,
-          "safe_score": 0.2955,
-          "selected_as": [],
-          "selection_rank": 2,
-          "selection_reason": "통합 비교 순위 2위",
-          "selection_side": "away",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 3,
-          "support_signals": [
-            "상대 핵심 결장·선발 누수"
-          ],
-          "totals_base": null,
-          "v3_probability": 0.451505
-        },
-        {
-          "balanced_score": 0.513623,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": 0.0246,
-          "data_confidence": 0.785,
-          "edge": 0.1824,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.441223,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": 1.0,
-          "independent_support_count": 2,
-          "is_qualified_underdog": false,
-          "is_true_underdog": true,
-          "label": "핸디캡 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "handicap",
-          "market_rank": 1,
-          "model_probability": 0.623613,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "handicap",
-            "persistent": false,
-            "qualified": false,
-            "side": "home",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 1.97,
-          "official_goal_score": 0.623613,
-          "official_learned_probability": 0.623613,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.693713,
-            "low": 0.553513
-          },
-          "raw_model_probability": 0.626079,
-          "raw_pick": "[+1.0] 도미니카공화국 핸디승",
-          "recommendation_score": 0.6885,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": 0.16136,
-          "robust_ev": 1.187089,
-          "robust_probability": 0.602583,
-          "safe_score": 0.4895,
-          "selected_as": [],
-          "selection_rank": 5,
-          "selection_reason": "통합 비교 순위 5위",
-          "selection_side": "home",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 2,
-          "support_signals": [
-            "홈·원정 분리 성적과 홈 어드밴티지",
-            "최근 경기력 지표 우위"
-          ],
-          "totals_base": null,
-          "v3_probability": 0.495519
-        },
-        {
-          "balanced_score": 0.027165,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": 0.0,
-          "data_confidence": 0.785,
-          "edge": -0.0603,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.248345,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": 1.0,
-          "independent_support_count": 0,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "핸디캡 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "handicap",
-          "market_rank": 3,
-          "model_probability": 0.188061,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "handicap",
-            "persistent": false,
-            "qualified": false,
-            "side": "draw",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 3.5,
-          "official_goal_score": 0.188061,
-          "official_learned_probability": 0.188061,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.258161,
-            "low": 0.117961
-          },
-          "raw_model_probability": 0.186829,
-          "raw_pick": "[+1.0] 핸디무",
-          "recommendation_score": 0.2924,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": -0.081314,
-          "robust_ev": 0.584609,
-          "robust_probability": 0.167031,
-          "safe_score": 0.1476,
-          "selected_as": [],
-          "selection_rank": 8,
-          "selection_reason": "통합 비교 순위 8위",
-          "selection_side": "draw",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 2,
-          "support_signals": [],
-          "totals_base": null,
-          "v3_probability": 0.254227
-        },
-        {
-          "balanced_score": 0.027451,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": -0.0246,
-          "data_confidence": 0.785,
-          "edge": -0.1221,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.310432,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": 1.0,
-          "independent_support_count": 1,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "핸디캡 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "handicap",
-          "market_rank": 2,
-          "model_probability": 0.188326,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "handicap",
-            "persistent": false,
-            "qualified": false,
-            "side": "away",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 2.8,
-          "official_goal_score": 0.188326,
-          "official_learned_probability": 0.188326,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.258426,
-            "low": 0.118226
-          },
-          "raw_model_probability": 0.187092,
-          "raw_pick": "[+1.0] 도미니카공화국 핸디패",
-          "recommendation_score": 0.2926,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": -0.143136,
-          "robust_ev": 0.468429,
-          "robust_probability": 0.167296,
-          "safe_score": 0.1478,
-          "selected_as": [],
-          "selection_rank": 7,
-          "selection_reason": "통합 비교 순위 7위",
-          "selection_side": "away",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 2,
-          "support_signals": [
-            "상대 핵심 결장·선발 누수"
-          ],
-          "totals_base": null,
-          "v3_probability": 0.263092
-        },
-        {
-          "balanced_score": 0.047281,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": -0.07,
-          "data_confidence": 0.785,
-          "edge": -0.0789,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.396739,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": null,
-          "independent_support_count": 0,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "언더 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "totals",
-          "market_rank": 2,
-          "model_probability": 0.317825,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "totals",
-            "persistent": false,
-            "qualified": false,
-            "side": "under",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 2.22,
-          "official_goal_score": 0.317825,
-          "official_learned_probability": 0.317825,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.387925,
-            "low": 0.247725
-          },
-          "raw_model_probability": 0.319663,
-          "raw_pick": "언더 (U/O 2.5)",
-          "recommendation_score": 0.3858,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": -0.099944,
-          "robust_ev": 0.658885,
-          "robust_probability": 0.296795,
-          "safe_score": 0.2495,
-          "selected_as": [],
-          "selection_rank": 6,
-          "selection_reason": "통합 비교 순위 6위",
-          "selection_side": "under",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 1,
-          "support_signals": [],
-          "totals_base": 2.5,
-          "v3_probability": 0.470027
-        },
-        {
-          "balanced_score": 0.51061,
-          "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-          "context_alignment": 0.07,
-          "data_confidence": 0.785,
-          "edge": 0.0789,
-          "eligibility_reason": "",
-          "error_margin": 0.0701,
-          "fair_probability": 0.603261,
-          "forecast_model_version": "goals-v4-full-context-coherent-v1",
-          "goal_model_audit": {
-            "context_integration": {
-              "adjusted_expected_goals": {
-                "away": 1.5906,
-                "home": 1.936
-              },
-              "availability_rest_lineup": "embedded_once_in_penalty_plus_opponent_cross_effect",
-              "base_expected_goals": {
-                "away": 1.5626,
-                "home": 1.936
-              },
-              "components": [
-                {
-                  "away": 0.028,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "opponent_availability",
-                  "source": "confirmed injury/lineup/fatigue penalty cross-effect"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "survival_motivation",
-                  "source": "standings zone and season progress"
-                },
-                {
-                  "away": 0.0,
-                  "home": 0.0,
-                  "mode": "expected_goals",
-                  "name": "motivation_and_manager",
-                  "source": "title race/new manager/mid-table late-season state"
-                },
-                {
-                  "away": -0.0123,
-                  "draw": 0.0,
-                  "home": 0.0123,
-                  "mode": "wdl_log_weight",
-                  "name": "recent_points_form",
-                  "source": "bounded recent strength difference"
-                }
-              ],
-              "home_advantage": "embedded_once_in_venue_goal_model",
-              "neutral_components": [
-                {
-                  "name": "weather",
-                  "reason": "normal condition; no extra direction"
-                },
-                {
-                  "name": "head_to_head",
-                  "reason": "fewer than 3 verified meetings"
-                },
-                {
-                  "name": "league_rank",
-                  "reason": "rank unavailable"
-                },
-                {
-                  "name": "market_movement",
-                  "reason": "no verified directional move"
-                }
-              ],
-              "recent_goals_xg": "embedded_once_in_base_goal_model",
-              "side_alignment": {
-                "away": -0.0246,
-                "draw": 0.0,
-                "home": 0.0246
-              },
-              "version": "full-pre-match-context-v1",
-              "wdl_log_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ]
-            },
-            "expected_goals": {
-              "away": 1.5906,
-              "home": 1.936
-            },
-            "home_advantage_applied_once": true,
-            "joint_forecast": {
-              "calibration_active": true,
-              "calibration_version": "fixture-time-full-context-wdl-projection-v1",
-              "coherent_score_distribution": true,
-              "context_adjustment": [
-                0.0123,
-                0.0,
-                -0.0123
-              ],
-              "context_integration_active": true,
-              "final_market_probabilities": [
-                0.3745109063498907,
-                0.24910208568362627,
-                0.3763870079664835,
-                0.3178250278820692,
-                0.6821749721179303,
-                0.6236129920335162,
-                0.18806068440341003,
-                0.18832632356307302
-              ],
-              "forecast_model_version": "goals-v4-full-context-coherent-v1",
-              "market_blend": "wdl_only",
-              "movement_adjustment": [
-                0.0,
-                0.0,
-                0.0
-              ],
-              "movement_learning_active": false,
-              "movement_policy": {
-                "active": false,
-                "baseline_brier": null,
-                "cohort_fixtures": 22,
-                "corrected_brier": null,
-                "method": "chronological-league-bookmaker-movement-residual-v2",
-                "reason": "배당 변화 학습의 시간순 검증 표본 부족",
-                "validation_fixtures": 0
-              },
-              "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-              "raw_market_probabilities": [
-                0.37205548813591277,
-                0.25402349038936606,
-                0.37392102147472117,
-                0.3196633971891824,
-                0.6803366028108172,
-                0.6260789785252785,
-                0.18682856135571013,
-                0.18709246011901112
-              ],
-              "rho": -0.15,
-              "rho_source": "validated_fallback",
-              "validation_fixtures": 421,
-              "wdl_learning_samples": [
-                362,
-                490,
-                362
-              ],
-              "wdl_learning_weights": [
-                0.16622448979591836,
-                0.1696153846153846,
-                0.16622448979591836
-              ]
-            },
-            "league_prior": [
-              1.5,
-              1.2
-            ],
-            "market_in_goal_formula": false,
-            "model": "shrunk-venue-goals-v1",
-            "opponent_model": {
-              "active": false,
-              "parameters_fitted": false,
-              "reason": "경기·대회 신원 미확인",
-              "samples": 0
-            },
-            "parameters_fitted": false,
-            "prior_matches": 5,
-            "sides": {
-              "away": {
-                "availability_penalty": 0.0,
-                "clipped": false,
-                "recent_goal_rate": 1.4,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639936,
-                  1639951
-                ],
-                "venue": 1.616848,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              },
-              "home": {
-                "availability_penalty": 0.07999999999999996,
-                "clipped": false,
-                "recent_goal_rate": 2.0,
-                "recent_weight": 0.25,
-                "stats_fixture_ids": [
-                  1639934,
-                  1639954
-                ],
-                "venue": 2.139191,
-                "xg_inputs": [],
-                "xg_samples": 0,
-                "xg_weight": 0.0
-              }
-            },
-            "venue_goals": [
-              2.139190821256039,
-              1.6168478260869565
-            ]
-          },
-          "handicap_base": null,
-          "independent_support_count": 0,
-          "is_qualified_underdog": false,
-          "is_true_underdog": false,
-          "label": "오버 예측",
-          "learning_weight": 0.1696,
-          "market_history_samples": 603,
-          "market_history_scope": "global",
-          "market_hit_rate": 0.5336,
-          "market_key": "totals",
-          "market_rank": 1,
-          "model_probability": 0.682175,
-          "movement_features": {
-            "bookmaker_count": 0,
-            "bookmaker_set": "",
-            "cross_market_agreement": false,
-            "direction_match": false,
-            "market": "totals",
-            "persistent": false,
-            "qualified": false,
-            "side": "over",
-            "timing": "regular",
-            "underdog_move": false
-          },
-          "odd": 1.46,
-          "official_goal_score": 0.682175,
-          "official_learned_probability": 0.682175,
-          "official_learning_active": false,
-          "official_learning_axis": "",
-          "official_learning_baseline_accuracy": null,
-          "official_learning_correction": 0.0,
-          "official_learning_samples": 0,
-          "official_learning_validation_accuracy": null,
-          "official_score": 0.0,
-          "pick_policy_version": "chronological-candidate-learning-accuracy-v3",
-          "probability_interval": {
-            "high": 0.752275,
-            "low": 0.612075
-          },
-          "raw_model_probability": 0.680337,
-          "raw_pick": "오버 (U/O 2.5)",
-          "recommendation_score": 0.6916,
-          "robot_expected_goals": {},
-          "robot_goal_target_reached": false,
-          "robot_goal_validation_accuracy": null,
-          "robot_learning_revision": "",
-          "robot_model_active": false,
-          "robot_model_version": "",
-          "robot_probability": null,
-          "robot_score": 0.0,
-          "robot_training_samples": 0,
-          "robot_validation_fixtures": 0,
-          "robust_edge": 0.057884,
-          "robust_ev": 0.965272,
-          "robust_probability": 0.661145,
-          "safe_score": 0.5355,
-          "selected_as": [
-            "high_probability",
-            "robot_independent"
-          ],
-          "selection_rank": 1,
-          "selection_reason": "경기 전 전체 지표·전체 시장 통합 최종 추천픽",
-          "selection_side": "over",
-          "settlement": null,
-          "settlement_supported": true,
-          "sort_id": 1,
-          "support_signals": [],
-          "totals_base": 2.5,
-          "v3_probability": 0.605856
-        }
-      ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
-      "handicap_base": null,
-      "home_team": "도미니카공화국",
-      "kickoff_at": "26.10.02 (금) 09:00",
-      "label": "V3 학습픽 · 검증 중",
-      "learning_campaign": "R7.13.13-visible-learning-review",
-      "market_key": "totals",
-      "match_id": "5870",
-      "model_version": "v3-3c308c5b3936a42532a5",
-      "official_pick_changed": false,
-      "probability": 0.605856,
-      "raw_pick": "오버 (U/O 2.5)",
-      "reason": "종료 결과가 누적될 때마다 재학습한 V3 도전자 결과입니다.",
-      "schema_version": "official-meta-v3.web-learning-picks.v1",
-      "selection_side": "over",
-      "source_created_at": "2026-10-01 23:40:15",
-      "source_kind": "dashboard_card",
-      "source_snapshot_id": 9468,
-      "source_stage": "DASHBOARD_PREKICKOFF",
-      "status": "LEARNING_SHADOW",
-      "totals_base": 2.5
-    },
     "5882": {
       "api_fixture_id": 1490463,
       "away_team": "스포팅 캔자스시티",
@@ -4443,7 +2267,7 @@
           "v3_probability": 0.502881
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "시애틀 사운더스FC",
       "kickoff_at": "26.10.02 (금) 10:30",
@@ -6647,7 +4471,7 @@
           "v3_probability": 0.488095
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "니카라과",
       "kickoff_at": "26.10.02 (금) 11:00",
@@ -8806,7 +6630,7 @@
           "v3_probability": 0.537252
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "중국_여자",
       "kickoff_at": "26.10.02 (금) 15:00",
@@ -10995,7 +8819,7 @@
           "v3_probability": 0.520468
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "태국",
       "kickoff_at": "26.10.02 (금) 18:00",
@@ -13150,7 +10974,7 @@
           "v3_probability": 0.52438
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "베트남",
       "kickoff_at": "26.10.02 (금) 18:00",
@@ -15306,7 +13130,7 @@
           "v3_probability": 0.50064
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": 1.0,
       "home_team": "북한_여자",
       "kickoff_at": "26.10.02 (금) 19:30",
@@ -17465,7 +15289,7 @@
           "v3_probability": 0.42843
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "한국",
       "kickoff_at": "26.10.02 (금) 20:00",
@@ -19649,7 +17473,7 @@
           "v3_probability": 0.396487
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": -1.0,
       "home_team": "중국",
       "kickoff_at": "26.10.02 (금) 20:35",
@@ -21835,7 +19659,7 @@
           "v3_probability": 0.510407
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "카자흐스탄",
       "kickoff_at": "26.10.02 (금) 23:00",
@@ -24021,7 +21845,7 @@
           "v3_probability": 0.531864
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "프랑스",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -26177,7 +24001,7 @@
           "v3_probability": 0.531864
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "벨기에",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -28332,7 +26156,7 @@
           "v3_probability": 0.5232
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": -1.0,
       "home_team": "헝가리",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -30520,7 +28344,7 @@
           "v3_probability": 0.534275
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "폴란드",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -31859,7 +29683,7 @@
           "v3_probability": 0.407247
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "알비렉스 니가타",
       "kickoff_at": "26.10.03 (토) 14:00",
@@ -33199,7 +31023,7 @@
           "v3_probability": 0.282415
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "후지에다 MYFC",
       "kickoff_at": "26.10.03 (토) 14:00",
@@ -34547,7 +32371,7 @@
           "v3_probability": 0.568824
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "중국_남자",
       "kickoff_at": "26.10.03 (토) 15:00",
@@ -35887,7 +33711,7 @@
           "v3_probability": 0.403876
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "반포레 고후",
       "kickoff_at": "26.10.03 (토) 16:00",
@@ -37250,7 +35074,7 @@
           "v3_probability": 0.407247
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "FC마치다 젤비아",
       "kickoff_at": "26.10.03 (토) 16:00",
@@ -38590,7 +36414,7 @@
           "v3_probability": 0.51676
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "도치기 시티FC",
       "kickoff_at": "26.10.03 (토) 17:00",
@@ -39930,7 +37754,7 @@
           "v3_probability": 0.33989
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "오이타 트리니타",
       "kickoff_at": "26.10.03 (토) 17:00",
@@ -41298,7 +39122,7 @@
           "v3_probability": 0.566773
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "가시와 레이솔",
       "kickoff_at": "26.10.03 (토) 19:00",
@@ -42645,7 +40469,7 @@
           "v3_probability": 0.579356
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "한국_남자",
       "kickoff_at": "26.10.03 (토) 19:30",
@@ -44799,7 +42623,7 @@
           "v3_probability": 0.472099
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "핀란드",
       "kickoff_at": "26.10.03 (토) 22:00",
@@ -46956,7 +44780,7 @@
           "v3_probability": 0.545889
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "스페인",
       "kickoff_at": "26.10.04 (일) 03:45",
@@ -48297,7 +46121,7 @@
           "v3_probability": 0.579312
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "콘사도레 삿포로",
       "kickoff_at": "26.10.04 (일) 13:00",
@@ -49637,7 +47461,7 @@
           "v3_probability": 0.430206
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "반라우레 하치노헤FC",
       "kickoff_at": "26.10.04 (일) 13:00",
@@ -50976,7 +48800,7 @@
           "v3_probability": 0.240702
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "블라우블리츠 아키타",
       "kickoff_at": "26.10.04 (일) 14:00",
@@ -52315,7 +50139,7 @@
           "v3_probability": 0.563773
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "베갈타 센다이",
       "kickoff_at": "26.10.04 (일) 15:00",
@@ -53652,7 +51476,7 @@
           "v3_probability": 0.587524
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "테게바자로 미야자키",
       "kickoff_at": "26.10.04 (일) 19:00",
@@ -55020,7 +52844,7 @@
           "v3_probability": 0.322733
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "아제르바이잔",
       "kickoff_at": "26.10.04 (일) 22:00",
@@ -56383,7 +54207,7 @@
           "v3_probability": 0.228135
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "몰타",
       "kickoff_at": "26.10.05 (월) 01:00",
@@ -57753,7 +55577,7 @@
           "v3_probability": 0.587524
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "트리니다드 토바고",
       "kickoff_at": "26.10.05 (월) 07:00",
@@ -59122,7 +56946,7 @@
           "v3_probability": 0.657973
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "코스타리카",
       "kickoff_at": "26.10.05 (월) 09:00",
@@ -60491,7 +58315,7 @@
           "v3_probability": 0.568701
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "니카라과",
       "kickoff_at": "26.10.05 (월) 11:00",
@@ -61943,7 +59767,7 @@
           "v3_probability": 0.329153
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "에콰도르",
       "kickoff_at": "26.10.05 (월) 15:30",
@@ -63306,7 +61130,7 @@
           "v3_probability": 0.600301
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "일본",
       "kickoff_at": "26.10.05 (월) 19:30",
@@ -63369,7 +61193,7 @@
           "v3_probability": 0.471699
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "키프로스",
       "kickoff_at": "26.10.03 (토) 01:00",
@@ -63432,7 +61256,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "아이슬란",
       "kickoff_at": "26.10.04 (일) 01:00",
@@ -63495,7 +61319,7 @@
           "v3_probability": 0.471699
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "에스토니",
       "kickoff_at": "26.10.04 (일) 01:00",
@@ -63558,7 +61382,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "스페인",
       "kickoff_at": "26.10.04 (일) 03:45",
@@ -63621,7 +61445,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "스위스",
       "kickoff_at": "26.10.04 (일) 03:45",
@@ -63684,7 +61508,7 @@
           "v3_probability": 0.529839
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "북마케도",
       "kickoff_at": "26.10.04 (일) 03:45",
@@ -63747,7 +61571,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "우크라이",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -63810,7 +61634,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "프랑스",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -63873,7 +61697,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "벨기에",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -63936,7 +61760,7 @@
           "v3_probability": 0.290921
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "헝가리",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -63999,7 +61823,7 @@
           "v3_probability": 0.274901
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "폴란드",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -64062,7 +61886,7 @@
           "v3_probability": 0.529839
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "보스니아",
       "kickoff_at": "26.10.03 (토) 03:45",
@@ -64125,7 +61949,7 @@
           "v3_probability": 0.289847
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "핀란드",
       "kickoff_at": "26.10.03 (토) 22:00",
@@ -64188,7 +62012,7 @@
           "v3_probability": 0.64909
         }
       ],
-      "frozen_at": "2026-10-01T23:55:41+00:00",
+      "frozen_at": "2026-10-02T00:04:00+00:00",
       "handicap_base": null,
       "home_team": "크로아티",
       "kickoff_at": "26.10.04 (일) 01:00",
