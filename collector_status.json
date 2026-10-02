@@ -5,19 +5,24 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T23:41:16+00:00",
+      "heartbeat_at": "2026-10-02T23:41:46+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "products": 498669
+        "products": 498669,
+        "team": 498680
       },
       "pending_jobs": [
         "learning",
+        "live",
+        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1189.9,
-        "learning": 198.4
+        "score": 1220.4,
+        "learning": 228.9,
+        "live": 16.4,
+        "master": 14.4
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -103,15 +108,36 @@
     },
     "team": {
       "last_failure_duration_seconds": 261.8,
-      "last_success_duration_seconds": 8.28,
+      "last_success_duration_seconds": 22.24,
       "last_failure_at": "2026-10-01T23:16:38+00:00",
-      "last_success_at": "2026-10-02T23:37:03+00:00",
+      "last_success_at": "2026-10-02T23:42:04+00:00",
       "run_id": "team-1790984496371472073",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-02T23:41:41+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-02T23:42:04+00:00",
       "pid": 498680,
-      "last_started_at": "2026-10-02T23:41:41+00:00"
+      "last_started_at": "2026-10-02T23:41:41+00:00",
+      "child_pid": 498680,
+      "elapsed_seconds": 10.2,
+      "overlap_skips": 0,
+      "team_retry_processed": 1,
+      "team_retry_resolved": 300,
+      "team_retry_pending": 3,
+      "team_retry_due": 0,
+      "team_retry_seeded": 0,
+      "team_profile_card_updates": 0,
+      "data_prefetch_matches": 0,
+      "data_prefetch_teams": 0,
+      "data_prefetch_identity_missing": 0,
+      "data_prefetch_early_core_matches": 0,
+      "data_prefetch_deep_matches": 0,
+      "data_prefetch_core_newly_warmed": 0,
+      "data_prefetch_core_already_ready": 0,
+      "data_prefetch_early_horizon_hours": 72,
+      "data_prefetch_deep_horizon_hours": 30,
+      "data_prefetch_quota_paused": true,
+      "data_prefetch_errors": [],
+      "duration_seconds": 22.24
     },
     "backup": {
       "last_success_duration_seconds": 106.17,
@@ -153,11 +179,11 @@
       "run_id": "products-1790984374060377064",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T23:41:32+00:00",
+      "heartbeat_at": "2026-10-02T23:41:46+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T23:39:35+00:00",
       "child_pid": 498669,
-      "elapsed_seconds": 118.3,
+      "elapsed_seconds": 132.5,
       "overlap_skips": 1,
       "manager_published": true,
       "manager_input_count": 36,
@@ -182,7 +208,7 @@
       "last_error": "hard timeout after 601 seconds"
     }
   },
-  "updated_at": "2026-10-02T23:41:41+00:00",
+  "updated_at": "2026-10-02T23:42:04+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -348,7 +374,7 @@
         "metric": "provider_status_direct_verified",
         "purpose": "system",
         "endpoint": "/status",
-        "count": 57
+        "count": 58
       },
       {
         "metric": "cache_only_miss",
