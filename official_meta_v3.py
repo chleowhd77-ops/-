@@ -185,7 +185,6 @@ def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExamp
                 result.fair_probability, result.odd, result.is_correct,
                 result.actual_score, result.graded_at,
                 snapshot.stage AS snapshot_stage, snapshot.created_at,
-                snapshot.candidates_json, snapshot.decision_json,
                 prediction.match_time, prediction.api_fixture_id, prediction.actual_result
             FROM prediction_candidate_results AS result
             JOIN prediction_analysis_snapshots AS snapshot
@@ -239,13 +238,24 @@ def load_frozen_examples(database_path: str | Path) -> tuple[list[CandidateExamp
         if candidate_order > existing_order:
             best_snapshot_by_match[match_id] = key
 
+    # Candidate payloads are large. The join above must not duplicate them
+    # once per outcome. Read only the selected snapshot once per match.
+    snapshot_payloads = {}
+    selected_ids = [key[1] for key in best_snapshot_by_match.values()]
+    with sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True) as db:
+        for start in range(0,len(selected_ids),400):
+            batch = selected_ids[start:start+400]
+            marks = ','.join('?' for _ in batch)
+            snapshot_payloads.update({r[0]:r[1:] for r in db.execute(
+                f'SELECT id,candidates_json,decision_json FROM prediction_analysis_snapshots WHERE id IN ({marks})',batch)})
     examples: list[CandidateExample] = []
     fallback_baseline_count = 0
     for match_id, snapshot_key in sorted(best_snapshot_by_match.items(), key=lambda item: str(snapshots[item[1]][0]["created_at"])):
         grouped_rows = snapshots[snapshot_key]
         representative = grouped_rows[0]
-        candidates = _safe_json(representative["candidates_json"], [])
-        decision = _safe_json(representative["decision_json"], {})
+        payload = snapshot_payloads.get(snapshot_key[1], ("[]", "{}"))
+        candidates = _safe_json(payload[0], [])
+        decision = _safe_json(payload[1], {})
         baseline_key = _selected_baseline_key(decision)
         fallback_key: tuple[str, str] | None = None
         if baseline_key is None:

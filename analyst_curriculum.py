@@ -42,8 +42,12 @@ def load_exercises(root):
     examples, audit = load_frozen_examples(root/'ai_predictions.db')
     questions = []
     with sqlite3.connect(f'file:{root/"ai_predictions.db"}?mode=ro',uri=True) as db:
-        snapshots = {r[0]: json.loads(r[1] or '[]') for r in db.execute(
-            'SELECT id,candidates_json FROM prediction_analysis_snapshots')}
+        snapshots = {}
+        ids = sorted({ex.snapshot_id for ex in examples})
+        for start in range(0,len(ids),400):
+            batch=ids[start:start+400]; marks=','.join('?' for _ in batch)
+            snapshots.update({r[0]:json.loads(r[1] or '[]') for r in db.execute(
+                f'SELECT id,candidates_json FROM prediction_analysis_snapshots WHERE id IN ({marks})',batch)})
         identities = {str(r[0]):r[1:] for r in db.execute(
             'SELECT match_id,api_fixture_id,home_team,away_team FROM predictions')}
     rejected = Counter()
@@ -101,11 +105,11 @@ def temporal_split(rows):
     return splits,dict(tune_start=first,exam_start=second,excluded_late_results=excluded)
 
 
-def prepare(root):
+def prepare(root, exercises=None):
     root=Path(root)
     audit={}
     try:
-        rows,audit=load_exercises(root)
+        rows,audit=exercises if exercises is not None else load_exercises(root)
     except (sqlite3.Error,ValueError,RuntimeError) as error:
         rows=[];audit={'source_error':f'{type(error).__name__}: {error}'}
     splits,boundaries=temporal_split(rows)

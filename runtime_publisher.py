@@ -68,3 +68,54 @@ if __name__ == '__main__':
         })
     except Exception as error:
         raise SystemExit(f'데이터 게시 분리 준비 실패: {type(error).__name__}: {error}')
+
+
+class PublishedFeedCache:
+    """Serve the last successful feed while one background refresh runs.
+
+    No credentials or Streamlit state in worker threads. First-page loads can
+    prefetch independent feeds together; subsequent widget clicks never wait
+    on an expired remote feed.
+    """
+    def __init__(self, repo, headers=None, ttl=45):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        self.repo, self.headers, self.ttl = repo, headers, ttl
+        self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix='published-feed')
+        self.lock = threading.Lock()
+        self.entries = {}
+
+    def prefetch(self, filenames):
+        import time
+        with self.lock:
+            for filename in filenames:
+                entry = self.entries.setdefault(filename, {'data':None,'checked':0,'success':0,'future':None})
+                if entry['future'] is not None or time.monotonic()-entry['checked'] < self.ttl:
+                    continue
+                entry['checked'] = time.monotonic()
+                entry['future'] = self.pool.submit(read_published_json,self.repo,filename,self.headers)
+
+    def get(self, filename):
+        import time
+        from copy import deepcopy
+        from concurrent.futures import TimeoutError
+        # Consume a completed refresh before scheduling the next one.
+        with self.lock:
+            entry = self.entries.setdefault(filename, {'data':None,'checked':0,'success':0,'future':None})
+            future = entry['future']
+            if future is not None and future.done():
+                try: value = future.result()
+                except Exception: value = None
+                if value:
+                    entry['data'],entry['success'] = value,time.time()
+                entry['future'] = None
+        self.prefetch([filename])
+        with self.lock:
+            data, future = entry['data'],entry['future']
+        if data is None and future is not None:
+            try: data = future.result(timeout=6)
+            except (TimeoutError, Exception): data = None
+            if data:
+                with self.lock:
+                    entry['data'],entry['success'] = data,time.time()
+        return deepcopy(data) if data else {}

@@ -13,15 +13,16 @@ def features(row):
             'side':str(row['selection_side']),'market':str(row['market_key'])}
 
 
-def train(root):
+def train(root, exercises=None, notify=None):
     from sklearn.feature_extraction import DictVectorizer
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.pipeline import make_pipeline
     root=Path(root)
-    rows,audit=load_exercises(root)
+    rows,audit=exercises if exercises is not None else load_exercises(root)
     old=read_json(root/'v2_market_status.json')
     report=dict(version='v2-markets-v1',updated_at=now_iso(),markets=dict(old.get('markets') or {}),source_audit=audit)
     for market in ('totals','handicap'):
+        if notify: notify('V2 ' + market + ' 학습·시험')
         sample=[r for r in rows if r['inputs']['market_key']==market
             and r['inputs']['selection_side'] in (('over','under') if market=='totals' else ('home','draw','away'))]
         # Three-way integer handicap and half-goal totals avoid push/half-settlement mislabels.
@@ -79,6 +80,7 @@ def train(root):
             exam=dict(matches=len({key[0] for key in groups}),market_cases=len(groups),
                 accuracy=hits/len(groups),brier=brier,normalization='same-as-serving',**boundaries),
             scope='경기 전 해당 시장 배당·선택·기준점; 다른 분석가 확률 미사용')
+        atomic_json(root/'v2_market_status.json',report)
     atomic_json(root/'v2_market_status.json',report)
     return report
 

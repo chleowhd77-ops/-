@@ -66,8 +66,8 @@ def render_scorecard(data):
     cell = (cells.get(track) or {}).get(engine) or {}
     rows = cell.get('rows') or []
     st.markdown(f'#### {TRACK_LABELS[track]} · {ENGINE_LABELS[engine]}')
-    if track == 'manager' and engine in ('v2', 'v3'):
-        st.caption('관리자 화면에 표시한 비교 답안의 성적입니다. 고배당 투자후보 성적과 구분합니다.')
+    if track == 'manager':
+        st.caption('선택한 분석가의 관리자 투자픽 장부입니다. TOP3·프로토와 별도로 집계합니다.')
     if not rows:
         st.info('이 메뉴에서 이 분석가의 저장 답안이 아직 없습니다. 다른 메뉴의 픽을 대신 합산하지 않습니다.')
     else:
@@ -91,5 +91,9 @@ def render_scorecard(data):
         for name, label in labels.items():
             if name in audit:
                 st.caption(f'{label}: {audit[name]}')
+        missing = ((audit.get('missing_finished_answers') or {}).get(track) or {}).get(engine) or []
+        st.caption(f'종료 경기 중 해당 분석가의 검증된 답안 미연결: {len(missing)}건')
+        if missing:
+            st.dataframe(missing[:100],hide_index=True,use_container_width=True)
         st.caption('원본 수는 서로 겹칠 수 있으며 경기 수와 다릅니다. 연결 불가 원본도 삭제하지 않습니다.')
         st.caption(f"자료 생성: {data.get('generated_at') or '미확인'} · 처리 시간 {time.perf_counter() - started:.3f}초")

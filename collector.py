@@ -969,6 +969,7 @@ def _github_upload_is_retryable(response, detail):
         return True
     return status == 403 and (
         "timed out validating rule" in detail_text
+        or "the rule did not run because of a timeout" in detail_text
         or ("please try again" in detail_text and "validating rule" in detail_text)
     )
 
@@ -2865,6 +2866,10 @@ def validate_official_selection_policy(groups):
         "train_fixtures": len(training),
         "tuning_fixtures": len(tuning),
         "validation_fixtures": len(validation),
+        "tuning_improved": tuning_improved,
+        "tuning_changed_selections": tuning_best["changed_selections"],
+        "tuning_baseline_brier": tuning_baseline["brier"],
+        "tuning_brier": tuning_best["brier"],
         "tuning_baseline_accuracy": round(tuning_baseline["accuracy"], 8),
         "tuning_accuracy": round(tuning_best["accuracy"], 8),
         "baseline_accuracy": round(baseline["accuracy"], 8),
@@ -2879,7 +2884,10 @@ def validate_official_selection_policy(groups):
             f"시간순 미래 {len(validation)}경기에서 기존 "
             f"{baseline['accuracy'] * 100:.1f}% → 학습 {best['accuracy'] * 100:.1f}%"
             if improved else
-            f"시간순 미래 {len(validation)}경기에서 기존보다 개선되지 않아 현 공식 선택법 유지"
+            f"새 선택 정책 미적용: "
+            + ("중간 검증 개선 조건 미충족" if not tuning_improved else
+               "중간 검증 선택 변경 없음" if not tuning_best["changed_selections"] else
+               "최종 시험 선택 변경 없음" if not best["changed_selections"] else "최종 시험 개선 조건 미충족")
         ),
     })
     return policy
@@ -6925,6 +6933,8 @@ def _load_autonomous_robot_artifact(source="PROTO", serving_only=False, checkpoi
                     "signature": signature, "artifact": selected_artifact,
                 }
                 return selected_artifact
+        from operational_repairs import ensure_read_indexes
+        ensure_read_indexes(conn)
         examples = []
         compatible_schemas = tuple(ROBOT_COMPATIBLE_FEATURE_SCHEMAS)
         schema_marks = ",".join("?" for _ in compatible_schemas)
@@ -17826,6 +17836,9 @@ def _prepare_stored_learning_results():
 def run_learning_job():
     from learning_worker import run_one
     print("📚 저장 자료 학습 작업 진입 · 해외 API 호출 없음", flush=True)
+    from operational_repairs import ensure_read_indexes
+    with sqlite3.connect(_local_path('ai_predictions.db')) as conn:
+        ensure_read_indexes(conn)
     _prepare_stored_learning_results()
     run_one(APP_DIR, on_status=lambda: upload_to_github('learning_status.json'))
     return upload_to_github('learning_status.json')
@@ -17844,6 +17857,9 @@ def _build_fast_grading_snapshot():
         rows=[dict(zip(columns,row)) for row in conn.execute(
             'SELECT '+','.join(columns)+" FROM predictions WHERE actual_result IN ('FINISHED','PENDING') AND match_id NOT LIKE 'WORLD_%'")]
     print(f"✅ 저장 결과 채점 집계 · {time.monotonic()-started:.1f}초 · API 호출 없음", flush=True)
+    print("📋 채점 구간 소요 " + json.dumps(scorecard.get("audit",{}).get("stage_seconds",{}),ensure_ascii=False),flush=True)
+    missing=scorecard.get("audit",{}).get("missing_finished_answers",{})
+    print("📋 종료 경기 답안 미연결 " + json.dumps({t:{e:len(rows) for e,rows in cells.items()} for t,cells in missing.items()},ensure_ascii=False),flush=True)
     return dict(schema_version='grading-results.v1',scorecard_v2=scorecard,
         public_history_mode='all-frozen-prekickoff-records',public_score_version=PUBLIC_SCORE_VERSION,generated_at=_utc_iso(),
         source='stored-results-only',finished=[r for r in rows if r['actual_result']=='FINISHED'],

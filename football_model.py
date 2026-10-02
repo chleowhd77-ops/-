@@ -1278,21 +1278,38 @@ def _robot_expand_features(features, names, interactions):
 
 
 def _robot_feature_candidates(rows):
-    numeric = {}
+    numeric = set()
     for row in rows:
-        features = row.get("features") or {}
-        for key, value in features.items():
+        for key, value in (row.get("features") or {}).items():
             try:
-                number = float(value)
+                if math.isfinite(float(value)): numeric.add(str(key))
             except (TypeError, ValueError):
                 continue
-            if math.isfinite(number):
-                numeric.setdefault(str(key), []).append(number)
-    required = {"base_home_goals", "base_away_goals"}
-    # There is no human coverage gate. A field observed in one honest match is
-    # admitted immediately; absent values naturally become zero in the sparse
-    # design matrix and ridge regularization limits unstable first impressions.
-    return sorted(set(numeric) | required)
+    return sorted(numeric | {"base_home_goals", "base_away_goals"})
+
+
+def _robot_correlations(rows):
+    """One sparse pass; same observed-only Pearson definition as before."""
+    import numpy as np
+    observed = {}
+    for row in rows:
+        h, a = _finite_number(row.get('home_goals')), _finite_number(row.get('away_goals'))
+        for key,value in (row.get('features') or {}).items():
+            observed.setdefault(key, []).append((_finite_number(value),h,a))
+    result = {}
+    for key, values in observed.items():
+        if len(values)<2:
+            result[key] = 0.0
+            continue
+        matrix = np.asarray(values,dtype=float)
+        matrix -= matrix.mean(axis=0)
+        energy = (matrix*matrix).sum(axis=0)
+        scores = []
+        for side in (1,2):
+            denominator = math.sqrt(energy[0]*energy[side])
+            scores.append(abs(float(matrix[:,0] @ matrix[:,side])/denominator) if denominator>0 else 0.)
+        result[key] = max(scores)
+    return result
 
 
 def _robot_correlation(rows, key, target):
@@ -1889,14 +1906,8 @@ def train_autonomous_robot(examples, checkpoint=None):
     def model_layout(source_rows):
         """Derive every feature choice from the rows available at that time."""
         candidate_names = _robot_feature_candidates(source_rows)
-        ranked = sorted(
-            candidate_names,
-            key=lambda key: max(
-                abs(_robot_correlation(source_rows, key, "home_goals")),
-                abs(_robot_correlation(source_rows, key, "away_goals")),
-            ),
-            reverse=True,
-        )
+        correlations = _robot_correlations(source_rows)
+        ranked = sorted(candidate_names, key=lambda key: correlations.get(key,0.), reverse=True)
         for required in ("base_home_goals", "base_away_goals"):
             if required not in ranked:
                 ranked.append(required)

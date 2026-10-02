@@ -5,6 +5,8 @@ No model calls, network calls, or updates to historical picks/results belong her
 import json
 import math
 import re
+import time
+from itertools import chain
 from copy import deepcopy
 from collections import Counter
 from learning_state import CAMPAIGN, digest, revision_allowed, before_kickoff
@@ -60,6 +62,9 @@ def table_rows(conn, table, columns='*', order=''):
     # Call sites supply literal table/column names, never user input.
     if not conn.execute('SELECT 1 FROM sqlite_master WHERE type="table" AND name=?', (table,)).fetchone():
         return []
+    if isinstance(columns, (tuple, list)):
+        available = {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+        columns = ','.join(c for c in columns if c in available)
     cursor = conn.execute(f'SELECT {columns} FROM {table} {order}')
     names = [c[0] for c in cursor.description]
     return (dict(zip(names, row)) for row in cursor)
@@ -105,6 +110,13 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
     predictions = {str(r['match_id']): r for r in table_rows(conn, 'predictions',
         'match_id,home_team,away_team,match_time,is_toto14,api_fixture_id,actual_result,actual_score')}
     records, audit = {}, Counter()
+    timings = {}
+    stage_started = time.monotonic()
+    def stage(name):
+        nonlocal stage_started
+        now = time.monotonic()
+        timings[name] = round(now-stage_started, 3)
+        stage_started = now
     legacy_references = []
     manager_v2 = (manager or {}).get('schema_version') == 'dj-sports.manager-investment-ledger.v2'
     result_index = {}
@@ -158,7 +170,11 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             legacy_references.append({**data, 'record_kind':'legacy_analyst_reference'})
             continue
         add(data, row['engine'], data, row['captured_at'], 'product_receipt')
-    for row in table_rows(conn, 'toto14_prediction_freezes'):
+    stage('product_receipts')
+    # Current immutable ticket first; archived pre-kickoff answers recover only
+    # missing analysts. Never create a historical answer from today's model.
+    for row in chain(table_rows(conn, 'toto14_prediction_freezes'),
+                     table_rows(conn, 'toto14_prediction_freeze_snapshots', order='ORDER BY id DESC')):
         payload = obj(row.get('payload_json'))
         mid = str(row.get('match_id'))
         mid = mid if mid.startswith('TOTO14_') else 'TOTO14_' + mid
@@ -179,7 +195,11 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
                 add(meta, engine, {'raw_pick': raw}, row.get('frozen_at'), 'toto14_ticket')
 
     # Existing primary engine receipts take precedence over archive recovery.
-    for row in table_rows(conn, 'three_engine_pick_snapshots', order='ORDER BY captured_timestamp DESC,id DESC'):
+    stage('toto_freezes')
+    for row in table_rows(conn, 'three_engine_pick_snapshots',
+        ('source','match_id','home_team','away_team','kickoff_at','api_fixture_id','engine_key','engine_version',
+         'raw_pick','probability','odd','captured_at','actual_home_goals','actual_away_goals','is_correct'),
+        order='ORDER BY captured_timestamp DESC,id DESC'):
         if str(row.get('engine_version') or '').startswith('archive-'):
             continue  # Revalidate the original receipt instead of the old R7.13.6 migration.
         meta = {**row, 'track': source_track(row.get('source'))}
@@ -191,6 +211,7 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
 
     # Official publication snapshots have the exact published answer, not a
     # reconstructed best candidate. Avoid copying one analyst into another.
+    stage('engine_snapshots')
     for row in table_rows(conn, 'prediction_snapshots',
                           'id,match_id,prob_pick,prob_pick_prob,api_fixture_id,stage,created_at', 'ORDER BY id DESC'):
         p = predictions.get(str(row.get('match_id'))) or {}
@@ -205,19 +226,27 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
             'probability': number(row.get('prob_pick_prob')) / 100}, row.get('created_at'), 'published_snapshot')
 
     # Recover saved robot/V2 decisions independently even if official already exists.
+    stage('official_history')
     for row in table_rows(conn, 'prediction_analysis_snapshots',
-                          'id,match_id,stage,decision_json,created_at', 'ORDER BY id DESC'):
+                          'id,match_id,stage,created_at', 'ORDER BY id DESC'):
         p = predictions.get(str(row.get('match_id'))) or {}
         if not p or str(p.get('match_id')).startswith('WORLD_') or 'preview' in str(row.get('stage')).lower():
             continue
-        decision = obj(row.get('decision_json'))
+        track = from_prediction(p)['track']
+        if all((track,str(p['match_id']),e) in records for e in ('robot','v2')):
+            continue
+        payload = conn.execute('SELECT decision_json FROM prediction_analysis_snapshots WHERE id=?',(row['id'],)).fetchone()
+        decision = obj(payload[0] if payload else None)
         robot = obj(decision.get('robot_pick'))
         if robot.get('raw_pick'):
             add(from_prediction(p), 'robot', robot, row.get('created_at'), 'robot_decision')
         v2pick = v2_answer(decision.get('alphago_pick') or robot, p.get('home_team'), p.get('away_team'))
         if v2pick:
             add(from_prediction(p), 'v2', v2pick, row.get('created_at'), 'v2_decision')
-    for row in table_rows(conn, 'robot_learning_samples', order='ORDER BY captured_timestamp DESC,id DESC'):
+    stage('robot_v2_decisions')
+    for row in table_rows(conn, 'robot_learning_samples',
+        ('source','match_id','home_team','away_team','kickoff_at','api_fixture_id','captured_at','robot_pick_json'),
+        order='ORDER BY captured_timestamp DESC,id DESC'):
         meta = {**row, 'track': source_track(row.get('source'))}
         if manager_v2 and meta['track'] == 'manager':
             legacy_references.append({**row, 'record_kind':'legacy_analyst_reference'})
@@ -227,6 +256,7 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         v2pick = v2_answer(pick, row.get('home_team'), row.get('away_team'))
         if v2pick:
             add(meta, 'v2', v2pick, row.get('captured_at'), 'v2_learning_sample')
+    stage('robot_samples')
     # Independent V3 file already owns its grades; do not hide those behind a
     # current-version filter or pretend they are TOP3/manager publication receipts.
     for mid, pick in ((v3 or {}).get('picks') or {}).items():
@@ -262,6 +292,7 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         add(meta, 'v3', pick, pick.get('frozen_at'), 'v3_independent_ledger',
             pick.get('is_correct'), pick.get('actual_score', ''), trusted=pick.get('is_correct') in (0, 1))
 
+    stage('v3_ledger')
     legacy = list(legacy_references)
     for pick in ((manager or {}).get('picks') or {}).values():
         if not isinstance(pick, dict):
@@ -287,7 +318,18 @@ def build_scorecard(conn, evaluate, v3=None, manager=None):
         for mid, p in predictions.items() if not mid.startswith('WORLD_')
         for t in ['toto14' if p.get('is_toto14') else 'proto_world'])
     audit['stored_answers'] = len(records)
-    return project(list(records.values()), dict(audit), legacy)
+    stage('manager_ledger')
+    missing = {t:{e:[] for e in ENGINES} for t in ('proto_world','toto14')}
+    for mid,p in predictions.items():
+        if mid.startswith('WORLD_') or p.get('actual_result') != 'FINISHED': continue
+        track = from_prediction(p)['track']
+        for engine in ENGINES:
+            if (track,mid,engine) not in records:
+                missing[track][engine].append({'match_id':mid,'home_team':p.get('home_team'),
+                    'away_team':p.get('away_team'),'kickoff_at':p.get('match_time'),
+                    'reason':'경기 전 해당 분석가의 저장 답안 없음 또는 시각·신원 검증 불가'})
+    return project(list(records.values()), {**dict(audit),'stage_seconds':timings,
+        'missing_finished_answers':missing}, legacy)
 
 
 def v2_answer(pick, home, away):

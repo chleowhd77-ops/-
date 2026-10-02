@@ -118,10 +118,18 @@ UI_LIVE_SCORE_CACHE_SECONDS = 15
 # -----------------------------------------------------------------------------
 # 1. 초경량 데이터 로더
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=UI_DATA_CACHE_SECONDS, show_spinner=False)
+@st.cache_resource
+def _published_feed_cache():
+    from runtime_publisher import PublishedFeedCache
+    cache = PublishedFeedCache(GITHUB_REPO, NO_CACHE_HEADERS, UI_DATA_CACHE_SECONDS)
+    cache.prefetch(('dashboard_data.json','v3_learning_picks.json',
+        'manager_investment_picks.json','grading_results.json','live_scores.json','learning_status.json'))
+    return cache
+
+
 def _load_published_json(filename):
-    """Fetch one published JSON file once per short UI cache window."""
-    return read_published_json(GITHUB_REPO, filename, NO_CACHE_HEADERS)
+    """A cached screen remains usable during remote refresh or GitHub errors."""
+    return _published_feed_cache().get(filename)
 
 
 def load_dashboard_data():
@@ -1182,6 +1190,7 @@ if 'supporter_expires_at' not in st.session_state:
 if st_autorefresh is not None:
     st_autorefresh(interval=60 * 1000, key="live-score-refresh")
 
+st.sidebar.caption('화면 버전 R7.13.16')
 st.sidebar.markdown(
     """
     <div class="sidebar-brand">
@@ -3893,10 +3902,14 @@ def _render_learning_status():
             done=sum(c.get('learning_campaign')==status.get('campaign') for c in future)
             st.caption(f'{label} · 현재 화면의 경기 전 재분석 {done}/{len(future)}경기')
         st.caption('실패·표본 부족이면 기존 모델로 분석합니다. 시험 성적과 실제 고객 픽의 누적 채점은 별개입니다. 화면 버튼은 학습을 실행하지 않습니다.')
+        from operational_repairs import exam_rows
+        st.markdown('**시험 성적 요약 · 고객 채점과 별도**')
+        st.dataframe(exam_rows(entries),use_container_width=True,hide_index=True)
+        st.caption('공식 전 시장 선택 정책은 하나의 비교 시험입니다. 시장별 확률 보정 시험과 구분합니다.')
         for key,label in labels.items():
             item=entries.get(key) or {}
             st.markdown('**'+label+' 시험 상세**')
-            st.json({k:item[k] for k in ('exam','toto14_exam','exam_method','source_counts','source_notice','excluded','course','market_learning') if k in item},expanded=False)
+            st.json({k:item[k] for k in ('exam','last_completed_exam','toto14_exam','exam_method','source_counts','source_notice','excluded','course','market_learning') if k in item},expanded=False)
 
 
 @st.fragment

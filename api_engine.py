@@ -3345,7 +3345,7 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
     if not home_id or not away_id or int(home_id) == int(away_id):
         return None, "team_id_lookup_pending"
     date_str = match_dt.strftime("%Y-%m-%d")
-    key = f"fixture_pair_recovery_v2_{home_id}_{away_id}_{int(match_dt.timestamp())}"
+    key = f"fixture_pair_recovery_v3_{home_id}_{away_id}_{int(match_dt.timestamp())}"
     cached = get_db_cache(key, 0.2)
     if isinstance(cached, dict):
         return cached.get("fixture"), str(cached.get("reason") or "")
@@ -3370,6 +3370,7 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
             payload = response.json()
             if payload.get("errors"):
                 reason = "provider_pair_api_error"
+                lookup["pair_errors"] = payload.get("errors")
             else:
                 rows = payload.get("response") or []
                 lookup["pair_rows"] = len(rows)
@@ -3386,7 +3387,22 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
                             rows = team_payload.get("response") or []
                             lookup["team_date_rows"] = len(rows)
                         else:
+                            errors = team_payload.get('errors')
+                            lookup['team_schedule_errors'] = errors
                             reason = "provider_team_schedule_api_error"
+                            # Team queries can require season. Do not guess team
+                            # identity: accept only the exact pair/time below.
+                            if 'season' in json.dumps(errors).lower():
+                                for season in (match_dt.year, match_dt.year-1):
+                                    retry = api_get('/fixtures',params={'team':int(home_id),
+                                        'date':date_str,'timezone':'Asia/Seoul','season':season},
+                                        timeout=12,purpose='analysis')
+                                    if retry.status_code != 200: continue
+                                    retried = retry.json()
+                                    if retried.get('errors'): continue
+                                    rows = retried.get('response') or []
+                                    lookup['team_date_rows'] = len(rows)
+                                    if rows: break
                     else:
                         reason = f"provider_team_schedule_http_{team_response.status_code}"
                 exact = [row for row in rows if isinstance(row, dict)
@@ -3405,7 +3421,8 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
         reason = f"provider_pair_{type(error).__name__}"
     set_db_cache(key, {"fixture": fixture, "reason": reason, "lookup": lookup})
     print(f"[수집 복구] {home_id}-{away_id} {date_str} · {reason} · "
-          f"팀쌍 응답 {lookup['pair_rows']} / 팀별 일정 응답 {lookup['team_date_rows']}")
+          f"팀쌍 응답 {lookup['pair_rows']} / 팀별 일정 응답 {lookup['team_date_rows']} · "
+          f"API 오류 {lookup.get('team_schedule_errors') or lookup.get('pair_errors') or '없음'}")
     return fixture, reason
 
 
@@ -3830,7 +3847,7 @@ def fetch_overseas_odds_and_fixture_api(
     m_dt = parse_match_time(match_time_str)
     date_str = m_dt.strftime('%Y-%m-%d')
     odds_requested = bool(include_odds or os.getenv("ENABLE_OVERSEAS_ODDS", "0") == "1")
-    cache_key = f"odds_fixture_v13_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
+    cache_key = f"odds_fixture_v14_{home_id}_{away_id}_{date_str}_{int(odds_requested)}"
     cached_data = get_db_cache(cache_key, ttl_h)
     if cached_data and odds_requested and not all(float(cached_data.get(k) or 0) > 1 for k in ('odd_h','odd_d','odd_a')):
         cached_data = get_db_cache(cache_key, min(float(ttl_h), 0.2))
@@ -3887,6 +3904,7 @@ def fetch_overseas_odds_and_fixture_api(
                     odds_data = odds_payload.get("response", []) if not odds_payload.get("errors") else []
                     res_val["odds_response"] = odds_data
                     res_val["odds_status"] = (
+                        "SHARED_CACHE_PENDING" if getattr(odds_res,"headers",{}).get("X-DJ-Cache")=="miss-cache-only" else
                         "HTTP_" + str(odds_res.status_code) if odds_res.status_code != 200 else
                         "PROVIDER_ERROR" if odds_payload.get("errors") else
                         "PROVIDER_EMPTY" if not odds_data else "NO_COMPLETE_1X2")
@@ -3899,7 +3917,11 @@ def fetch_overseas_odds_and_fixture_api(
                 except Exception as odds_error:
                     res_val["odds_status"] = "REQUEST_ERROR"
                     print(f"⚠️ 해외배당 조회 실패({fix_id}): {odds_error}")
-            if not (_API_CACHE_ONLY and odds_requested and not res_val.get('odds_source')):
+            # A request error is not an odds result; do not mask a repaired
+            # shared request behind a twelve-minute outer negative cache.
+            transient = (res_val.get('odds_status') in ('SHARED_CACHE_PENDING','REQUEST_ERROR','PROVIDER_ERROR')
+                         or str(res_val.get('odds_status','')).startswith('HTTP_'))
+            if not transient and not (_API_CACHE_ONLY and odds_requested and not res_val.get('odds_source')):
                 set_db_cache(cache_key, res_val)
             return res_val
         print(f"⚠️ 두 팀이 정확히 일치하는 경기 ID 없음: {home_id} vs {away_id} ({date_str})")

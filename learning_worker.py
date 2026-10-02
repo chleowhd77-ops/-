@@ -57,7 +57,7 @@ def result_signature(root):
                 counts.append((table,db.execute(f'SELECT COUNT(*),MAX(id) FROM {table} WHERE {where}').fetchone()))
     textbook = Path(root)/'master_training_data.csv'
     textbook_hash = hashlib.sha256(textbook.read_bytes()).hexdigest() if textbook.exists() else 'missing'
-    return digest(['R7.13.15', CAMPAIGN, rows, counts, textbook_hash])
+    return digest(['R7.13.16', CAMPAIGN, rows, counts, textbook_hash])
 
 
 def save_model(root, engine, value, binary=False):
@@ -218,12 +218,16 @@ def load_v2_rows(root):
                     archive_keys[normalized]=key
                     rows[key]=dict(time=date.timestamp(),known=date.timestamp()+86400,odds=odds,label=r['FTR'],source='archive_B365',key=key)
                 except (KeyError,TypeError,ValueError): excluded['invalid_archive_row']+=1
+    progress('V2 저장 배당 조회 시작')
     with sqlite3.connect(f'file:{Path(root)/"ai_predictions.db"}?mode=ro',uri=True) as db:
         db.row_factory=sqlite3.Row
         snapshots=db.execute('''SELECT p.match_id,p.match_time,p.home_team,p.away_team,p.actual_score,
-            p.api_fixture_id,(SELECT MAX(graded_at) FROM prediction_candidate_results cr WHERE cr.match_id=p.match_id AND cr.is_correct IN (0,1)) AS known_at,s.odd_h,s.odd_d,s.odd_a,s.created_at,s.id,s.api_fixture_id AS snapshot_fixture
+            p.api_fixture_id,g.known_at,s.odd_h,s.odd_d,s.odd_a,s.created_at,s.id,s.api_fixture_id AS snapshot_fixture
             FROM predictions p JOIN prediction_snapshots s ON s.match_id=p.match_id
+            LEFT JOIN (SELECT match_id,MAX(graded_at) AS known_at FROM prediction_candidate_results
+                       WHERE is_correct IN (0,1) GROUP BY match_id) g ON g.match_id=p.match_id
             WHERE p.actual_result='FINISHED' ORDER BY s.id DESC''').fetchall()
+    progress(f'V2 저장 배당 {len(snapshots)}행 조회 완료')
     fixtures=set()
     for r in snapshots:
         ko=epoch(r['match_time'],KST);captured=epoch(r['created_at']);known=epoch(r['known_at'])
@@ -260,7 +264,9 @@ def deployed_binary(root, old):
 def train_v2(root, old):
     import pandas as pd
     from sklearn.ensemble import RandomForestClassifier
+    progress('V2 승무패 자료 읽기')
     rows,excluded=load_v2_rows(root)
+    progress(f'V2 유효 학습 자료 {len(rows)}경기 준비')
     if len(rows)<100:
         return dict(status='WAITING_DATA',reason='시간순 학습·시험용 유효 경기 100건 미만',training_samples=len(rows),excluded=excluded)
     incumbent=deployed_binary(root,old)
@@ -287,6 +293,7 @@ def train_v2(root, old):
                     brier=sum(sum(((float(p[classes.index(k)]) if k in classes else 0.0)-int(r['label']==k))**2 for k in ('H','D','A')) for p,r in zip(probs,part))/len(part))
     if len(train)<40 or not tune or len(final)<20 or len({r['label'] for r in train})<3:
         return dict(status='WAITING_DATA',training_samples=len(rows),reason='시간·클래스 분리 후 학습 또는 시험 표본 부족',excluded=excluded)
+    progress('V2 승무패 시간순 검증·시험')
     choices=[(leaf,score(fit(train,leaf),tune)) for leaf in (1,4,8)]
     leaf, _=max(choices,key=lambda x:(x[1]['accuracy'],-x[1]['brier']))
     baseline_leaf=int(old.get('parameters',{}).get('min_samples_leaf',1))
@@ -385,6 +392,9 @@ def run_one(root, on_status=None):
         info.update(schema_version='learning-status.v1',campaign=CAMPAIGN,
                     operating_mode='stored-data-only' if offline_enabled(root) else 'normal')
         engines=info.setdefault('engines',{})
+        from operational_repairs import ensure_read_indexes
+        with sqlite3.connect(root/'ai_predictions.db') as db:
+            ensure_read_indexes(db)
         signature=result_signature(root)
         interrupted=False
         for entry in engines.values():
@@ -435,15 +445,24 @@ def run_one(root, on_status=None):
             with threadpool_limits(limits=1), no_training_network(), training_root(root):
                 result=functions[engine](root,old)
                 if engine == 'v2':
-                    from analyst_curriculum import prepare
+                    # Persist the completed WDL result before slower independent courses.
+                    engines[engine] = {**old, **result, 'status':'TRAINING',
+                        'wdl_status':result.get('status'), 'last_attempt_at':started}
+                    atomic_json(root/'learning_status.json',info)
+                    from analyst_curriculum import prepare, load_exercises
                     from v2_market_learning import train
                     try:
-                        result['course'] = prepare(root)
-                        result['market_learning'] = train(root)
+                        progress('V2 핸디·언오버 시험 자료 읽기')
+                        exercises = load_exercises(root)
+                        progress(f'V2 확장 시험 자료 {len(exercises[0])}문항 준비')
+                        result['course'] = prepare(root, exercises=exercises)
+                        result['market_learning'] = train(root, exercises=exercises, notify=progress)
                     except Exception as error:
                         result['market_learning'] = {'status':'ERROR','reason':str(error)}
                         print(f'⚠️ V2 확장 학습 준비 실패: {type(error).__name__}: {error}',flush=True)
-            engines[engine]={**old,**result,'last_attempt_at':started,'last_review_at':now_iso(),
+            if result.get('exam',{}).get('status') == 'WAITING_PROSPECTIVE_EXAM' and old.get('exam',{}).get('status') != 'WAITING_PROSPECTIVE_EXAM':
+                result['last_completed_exam'] = old.get('exam')
+            engines[engine]={**old,**result,'stage':'검토 완료','last_attempt_at':started,'last_review_at':now_iso(),
                              'reviewed_signature':signature,'campaign_reviewed':CAMPAIGN}
             if result.get('status') == 'READY':
                 engines[engine]['last_success_at']=now_iso()
