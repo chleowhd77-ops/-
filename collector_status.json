@@ -5,23 +5,21 @@
       "supervisor_pid": 493344,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T12:25:21+00:00",
+      "heartbeat_at": "2026-10-02T12:26:21+00:00",
       "pid": 493344,
       "last_started_at": "2026-10-02T10:37:30+00:00",
       "active_jobs": {
-        "learning": 494575
+        "master": 494579
       },
       "pending_jobs": [
-        "live",
-        "master",
+        "learning",
         "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 758.9,
-        "live": 157.4,
-        "master": 157.4,
-        "products": 157.4
+        "score": 819.1,
+        "products": 217.6,
+        "learning": 32.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -66,16 +64,27 @@
       "duration_seconds": 68.43
     },
     "master": {
-      "last_success_at": "2026-10-02T12:21:54+00:00",
-      "last_success_duration_seconds": 61.26,
+      "last_success_at": "2026-10-02T12:26:24+00:00",
+      "last_success_duration_seconds": 36.13,
       "last_failure_at": "2026-09-30T05:30:04+00:00",
       "last_failure_duration_seconds": 900.9,
       "run_id": "master-1790943947514106894",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-02T12:25:48+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-02T12:26:24+00:00",
       "pid": 494579,
-      "last_started_at": "2026-10-02T12:25:48+00:00"
+      "last_started_at": "2026-10-02T12:25:48+00:00",
+      "child_pid": 494579,
+      "elapsed_seconds": 34.1,
+      "overlap_skips": 0,
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "manager_published": true,
+      "manager_input_count": 35,
+      "manager_current_count": 12,
+      "manager_reason": "",
+      "db_backup_requested": true,
+      "duration_seconds": 36.13
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -194,7 +203,7 @@
       "duration_seconds": 214.66
     }
   },
-  "updated_at": "2026-10-02T12:25:48+00:00",
+  "updated_at": "2026-10-02T12:26:24+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -378,7 +387,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 20
+        "count": 21
       }
     ],
     "accounting": "local-preflight-reservation-v2",
