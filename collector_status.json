@@ -5,7 +5,7 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-02T22:36:05+00:00",
+      "heartbeat_at": "2026-10-02T22:38:06+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
@@ -13,11 +13,15 @@
       },
       "pending_jobs": [
         "learning",
+        "live",
+        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 892.5,
-        "learning": 30.1
+        "score": 1013.3,
+        "learning": 150.9,
+        "live": 110.7,
+        "master": 110.7
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -108,10 +112,10 @@
       "last_failure_at": "2026-10-01T23:16:38+00:00",
       "run_id": "team-1790980579882072932",
       "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-02T22:36:34+00:00",
-      "pid": 498532,
-      "last_started_at": "2026-10-02T22:36:24+00:00",
+      "state": "running",
+      "heartbeat_at": "2026-10-02T22:36:35+00:00",
+      "pid": 498093,
+      "last_started_at": "2026-10-02T22:36:35+00:00",
       "team_retry_processed": 1,
       "team_retry_resolved": 300,
       "team_retry_pending": 3,
@@ -129,7 +133,10 @@
       "data_prefetch_deep_horizon_hours": 30,
       "data_prefetch_quota_paused": true,
       "data_prefetch_errors": [],
-      "duration_seconds": 10.23
+      "duration_seconds": 10.23,
+      "child_pid": 498532,
+      "elapsed_seconds": 16.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 106.17,
@@ -164,23 +171,24 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_success_duration_seconds": 168.33,
-      "last_success_at": "2026-10-02T22:04:05+00:00",
+      "last_success_duration_seconds": 222.15,
+      "last_success_at": "2026-10-02T22:38:36+00:00",
       "last_failure_at": "2026-10-02T09:11:13+00:00",
       "last_failure_duration_seconds": 601.6,
       "run_id": "products-1790980493622916055",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-02T22:36:15+00:00",
-      "pid": 498093,
+      "state": "success",
+      "heartbeat_at": "2026-10-02T22:38:36+00:00",
+      "pid": 498530,
       "last_started_at": "2026-10-02T22:34:54+00:00",
       "child_pid": 498530,
-      "elapsed_seconds": 82.2,
+      "elapsed_seconds": 192.9,
       "overlap_skips": 1,
       "manager_published": true,
       "manager_input_count": 35,
       "manager_current_count": 14,
-      "manager_reason": ""
+      "manager_reason": "",
+      "duration_seconds": 222.15
     },
     "learning": {
       "last_failure_duration_seconds": 600.3,
@@ -199,7 +207,7 @@
       "duration_seconds": 81.95
     }
   },
-  "updated_at": "2026-10-02T22:36:34+00:00",
+  "updated_at": "2026-10-02T22:38:36+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
