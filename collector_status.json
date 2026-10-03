@@ -29,15 +29,16 @@
     },
     "live": {
       "last_failure_duration_seconds": 6.0,
-      "last_success_at": "2026-10-03T02:56:39+00:00",
-      "last_success_duration_seconds": 5.24,
+      "last_success_at": "2026-10-03T02:58:52+00:00",
+      "last_success_duration_seconds": 4.68,
       "last_failure_at": "2026-10-01T23:55:39+00:00",
       "run_id": "live-1790996327291193220",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-03T02:58:48+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-03T02:58:52+00:00",
       "pid": 499376,
-      "last_started_at": "2026-10-03T02:58:48+00:00"
+      "last_started_at": "2026-10-03T02:58:48+00:00",
+      "duration_seconds": 4.68
     },
     "score": {
       "last_success_at": "2026-10-03T02:27:16+00:00",
@@ -206,7 +207,7 @@
       "duration_seconds": 120.77
     }
   },
-  "updated_at": "2026-10-03T02:58:48+00:00",
+  "updated_at": "2026-10-03T02:58:52+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -349,6 +350,12 @@
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
         "count": 3
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 2
       },
       {
         "metric": "cache_only_miss",
