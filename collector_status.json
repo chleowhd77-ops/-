@@ -5,19 +5,20 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-03T13:50:24+00:00",
+      "heartbeat_at": "2026-10-03T13:50:54+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "products": 501983
+        "products": 501983,
+        "team": 501989
       },
       "pending_jobs": [
         "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 34.1,
-        "master": 32.0
+        "score": 64.1,
+        "master": 62.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -103,16 +104,37 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_success_duration_seconds": 32.08,
+      "last_success_duration_seconds": 37.38,
       "last_failure_at": "2026-10-01T23:16:38+00:00",
       "last_failure_duration_seconds": 261.8,
-      "last_success_at": "2026-10-03T13:46:07+00:00",
+      "last_success_at": "2026-10-03T13:51:13+00:00",
       "run_id": "team-1791035434583351338",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-03T13:50:36+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-03T13:51:13+00:00",
       "pid": 501989,
-      "last_started_at": "2026-10-03T13:50:36+00:00"
+      "last_started_at": "2026-10-03T13:50:36+00:00",
+      "child_pid": 501989,
+      "elapsed_seconds": 20.0,
+      "overlap_skips": 0,
+      "team_retry_processed": 1,
+      "team_retry_resolved": 301,
+      "team_retry_pending": 2,
+      "team_retry_due": 0,
+      "team_retry_seeded": 0,
+      "team_profile_card_updates": 0,
+      "data_prefetch_matches": 50,
+      "data_prefetch_teams": 100,
+      "data_prefetch_identity_missing": 0,
+      "data_prefetch_early_core_matches": 21,
+      "data_prefetch_deep_matches": 29,
+      "data_prefetch_core_newly_warmed": 0,
+      "data_prefetch_core_already_ready": 50,
+      "data_prefetch_early_horizon_hours": 72,
+      "data_prefetch_deep_horizon_hours": 30,
+      "data_prefetch_quota_paused": false,
+      "data_prefetch_errors": [],
+      "duration_seconds": 37.38
     },
     "backup": {
       "last_success_at": "2026-10-03T09:59:31+00:00",
@@ -154,11 +176,11 @@
       "run_id": "products-1791035400542536633",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-03T13:50:28+00:00",
-      "pid": 501983,
+      "heartbeat_at": "2026-10-03T13:50:54+00:00",
+      "pid": 498093,
       "last_started_at": "2026-10-03T13:50:01+00:00",
       "child_pid": 501983,
-      "elapsed_seconds": 24.0,
+      "elapsed_seconds": 54.1,
       "overlap_skips": 0,
       "manager_published": true,
       "manager_input_count": 23,
@@ -179,29 +201,29 @@
       "duration_seconds": 3.25
     }
   },
-  "updated_at": "2026-10-03T13:50:36+00:00",
+  "updated_at": "2026-10-03T13:51:13+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 726
+        "calls": 729
       },
       {
         "purpose": "analysis",
         "endpoint": "/odds",
-        "calls": 488
+        "calls": 493
       },
       {
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "calls": 366
+        "calls": 367
       },
       {
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "calls": 366
+        "calls": 367
       },
       {
         "purpose": "analysis",
@@ -211,7 +233,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 251
+        "calls": 252
       },
       {
         "purpose": "live",
@@ -231,7 +253,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/headtohead",
-        "calls": 89
+        "calls": 90
       },
       {
         "purpose": "scoring",
@@ -249,31 +271,31 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 6197
+        "count": 6225
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 2380
+        "count": 2394
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 1315
+        "count": 1325
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topassists",
-        "count": 465
+        "count": 466
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/players/topscorers",
-        "count": 465
+        "count": 466
       },
       {
         "metric": "cache_only_miss",
@@ -369,13 +391,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-03",
     "reset_timezone": "UTC",
-    "local_calls": 3080,
-    "provider_remaining": 4420,
+    "local_calls": 3092,
+    "provider_remaining": 4408,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 2839,
+    "analysis_calls": 2851,
     "live_calls": 113,
     "scoring_calls": 128,
     "world_daily_limit": 4000,
