@@ -5,23 +5,21 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-03T06:31:59+00:00",
+      "heartbeat_at": "2026-10-03T06:32:29+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "master": 499880
+        "live": 499887
       },
       "pending_jobs": [
         "learning",
-        "live",
         "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1716.1,
-        "live": 211.1,
-        "products": 208.9,
-        "learning": 72.3
+        "score": 1746.2,
+        "products": 239.0,
+        "learning": 102.4
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -30,14 +28,18 @@
     "live": {
       "last_failure_at": "2026-10-01T23:55:39+00:00",
       "last_failure_duration_seconds": 6.0,
-      "last_success_duration_seconds": 6.54,
-      "last_success_at": "2026-10-03T06:23:52+00:00",
+      "last_success_duration_seconds": 5.71,
+      "last_success_at": "2026-10-03T06:32:30+00:00",
       "run_id": "live-1791009143393735565",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-03T06:32:25+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-03T06:32:30+00:00",
       "pid": 499887,
-      "last_started_at": "2026-10-03T06:32:25+00:00"
+      "last_started_at": "2026-10-03T06:32:25+00:00",
+      "child_pid": 499887,
+      "elapsed_seconds": 6.0,
+      "overlap_skips": 0,
+      "duration_seconds": 5.71
     },
     "score": {
       "last_failure_duration_seconds": 600.9,
@@ -206,7 +208,7 @@
       "duration_seconds": 117.27
     }
   },
-  "updated_at": "2026-10-03T06:32:25+00:00",
+  "updated_at": "2026-10-03T06:32:30+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -258,7 +260,7 @@
       {
         "purpose": "live",
         "endpoint": "/fixtures",
-        "calls": 30
+        "calls": 31
       },
       {
         "purpose": "analysis",
@@ -396,14 +398,14 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-03",
     "reset_timezone": "UTC",
-    "local_calls": 1634,
-    "provider_remaining": 5866,
+    "local_calls": 1635,
+    "provider_remaining": 5865,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
     "analysis_calls": 1570,
-    "live_calls": 30,
+    "live_calls": 31,
     "scoring_calls": 34,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
