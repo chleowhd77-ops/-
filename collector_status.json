@@ -5,29 +5,41 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-03T16:49:49+00:00",
+      "heartbeat_at": "2026-10-03T16:50:19+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "learning": 502641
+        "live": 502648
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "master",
+        "products",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 4.0,
+        "master": 2.0,
+        "products": 2.0
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
       "last_failure_at": "2026-10-01T23:55:39+00:00",
-      "last_success_at": "2026-10-03T16:46:41+00:00",
-      "last_success_duration_seconds": 4.81,
+      "last_success_at": "2026-10-03T16:50:21+00:00",
+      "last_success_duration_seconds": 4.85,
       "last_failure_duration_seconds": 6.0,
       "run_id": "live-1791046215293137507",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-03T16:50:16+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-03T16:50:21+00:00",
       "pid": 502648,
-      "last_started_at": "2026-10-03T16:50:16+00:00"
+      "last_started_at": "2026-10-03T16:50:16+00:00",
+      "child_pid": 502648,
+      "elapsed_seconds": 4.0,
+      "overlap_skips": 0,
+      "duration_seconds": 4.85
     },
     "score": {
       "last_failure_duration_seconds": 600.9,
@@ -196,7 +208,7 @@
       "duration_seconds": 42.33
     }
   },
-  "updated_at": "2026-10-03T16:50:16+00:00",
+  "updated_at": "2026-10-03T16:50:21+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -368,7 +380,7 @@
         "metric": "cache_hit",
         "purpose": "live",
         "endpoint": "/fixtures",
-        "count": 17
+        "count": 18
       },
       {
         "metric": "cache_only_miss",
