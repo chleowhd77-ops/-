@@ -5,20 +5,23 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T06:11:20+00:00",
+      "heartbeat_at": "2026-10-04T06:15:21+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "products": 505961,
-        "team": 505962
+        "products": 505961
       },
       "pending_jobs": [
         "learning",
+        "live",
+        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 746.6,
-        "learning": 203.5
+        "score": 988.1,
+        "learning": 445.0,
+        "live": 82.6,
+        "master": 82.5
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -170,18 +173,23 @@
     },
     "products": {
       "last_failure_duration_seconds": 601.6,
-      "last_success_at": "2026-10-04T05:47:01+00:00",
-      "last_success_duration_seconds": 376.8,
+      "last_success_at": "2026-10-04T06:15:51+00:00",
+      "last_success_duration_seconds": 296.61,
       "last_failure_at": "2026-10-02T09:11:13+00:00",
       "run_id": "products-1791094254181222793",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T06:11:20+00:00",
-      "pid": 498093,
+      "state": "success",
+      "heartbeat_at": "2026-10-04T06:15:51+00:00",
+      "pid": 505961,
       "last_started_at": "2026-10-04T06:10:54+00:00",
       "child_pid": 505961,
-      "elapsed_seconds": 26.0,
-      "overlap_skips": 0
+      "elapsed_seconds": 267.6,
+      "overlap_skips": 1,
+      "manager_published": true,
+      "manager_input_count": 13,
+      "manager_current_count": 13,
+      "manager_reason": "",
+      "duration_seconds": 296.61
     },
     "learning": {
       "last_failure_at": "2026-10-04T06:07:36+00:00",
@@ -201,7 +209,7 @@
       "last_error": "hard timeout after 600 seconds"
     }
   },
-  "updated_at": "2026-10-04T06:11:45+00:00",
+  "updated_at": "2026-10-04T06:15:51+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
