@@ -7146,6 +7146,15 @@ def save_autonomous_robot_sample(
             canonical_time = _parse_kst_match_time(canonical[1]) if canonical else None
             if canonical and (canonical[0]!='PENDING' or not canonical_time or now>=canonical_time):
                 return False
+        # A quote-only refresh must not replace already captured match context.
+        # Restore only absent sections for this exact fixture/version before now;
+        # preserve explicit unavailable values and the original section times.
+        from manager_evidence_recovery import recover_evidence
+        full_evidence, _ = recover_evidence(
+            conn, fixture_key, ROBOT_PICK_VERSION, kickoff_utc.timestamp(),
+            now.timestamp(), full_evidence)
+        evidence_json = json.dumps(full_evidence, ensure_ascii=False,
+                                   sort_keys=True, default=str)
         observation_fingerprint = hashlib.sha256(
             (feature_json + "\x1f" + evidence_json).encode("utf-8")
         ).hexdigest()

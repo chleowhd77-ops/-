@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
+from manager_evidence_recovery import recover_evidence
 
 ENGINES = ('official', 'robot_proto', 'v2', 'v3')
 KST = timezone(timedelta(hours=9))
@@ -122,7 +123,7 @@ def load_pool(root, now=None):
                     or epoch(row['match_time']) != kickoff):
                 excluded.append({'match_id': mid, 'reason': '화면과 DB의 경기·시각 불일치'})
                 continue
-            sample = db.execute('''SELECT id,api_fixture_id,home_team,away_team,kickoff_timestamp,
+            sample = db.execute('''SELECT id,fixture_key,robot_pick_version,api_fixture_id,home_team,away_team,kickoff_timestamp,
                 captured_timestamp,full_evidence_json FROM robot_learning_samples
                 WHERE match_id=? AND source='PROTO' AND api_fixture_id=?
                   AND kickoff_timestamp=? AND captured_timestamp>0
@@ -151,11 +152,15 @@ def load_pool(root, now=None):
             if not isinstance(evidence, dict) or not evidence or not offered or not 0 < captured.timestamp() <= now < kickoff:
                 excluded.append({'match_id': mid, 'reason': '실제 배당·원자료·기록 시각 확인 필요'})
                 continue
+            evidence, recovery = recover_evidence(
+                db, sample['fixture_key'], sample['robot_pick_version'], kickoff,
+                min(sample['captured_timestamp'], now), evidence)
             identity = {'match_id': mid, 'fixture_id': row['api_fixture_id'],
                         'home': row['home_team'], 'away': row['away_team'], 'kickoff': kickoff}
             pool.append({'case_id': digest(identity), 'identity': identity,
                          'evidence': clean(evidence), 'options': offered,
                          'source': {'sample_id': sample['id'], 'snapshot_id': snapshot['id'],
+                                    'evidence_recovery': recovery,
                                     'evidence_captured_at': sample['captured_timestamp'],
                                     'odds_captured_at': captured.timestamp(),
                                     'analysis_version': snapshot['analysis_version'],
