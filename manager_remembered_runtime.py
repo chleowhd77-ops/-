@@ -31,10 +31,12 @@ INSTRUCTION = '''당신은 packet의 analyst에 지정된 독립적인 축구 �
 자신의 보존된 정답 분석, 매회 오답과 수정 분석, 복기를 기억하고 새 경기에서 참고하세요.
 기억은 경험이며 고정 규칙이 아닙니다. 분석 방식과 적용 여부는 스스로 판단하세요.
 과거 반복 시험의 정답은 미래 적중률 증거가 아닙니다. 자료 밖 사실·배당·성과를 만들지 마세요.
-mode=candidates: 프로토라이브 시작 전 경기 원자료가 분할 전달됩니다. 원자료를 검토하고,
-자신 있는 관리자 투자 후보만 picks에 제안하세요. 자신 없는 경기는 제외할 수 있습니다.
+mode=candidates: 프로토라이브 시작 전 경기 원자료가 분할 전달됩니다.
+이 단계에서는 전달된 모든 경기를 분석하고 경기마다 픽 하나와 분석 이유를 picks에 남기세요.
+자신감이 낮거나 자료가 애매하다는 이유로 경기를 제외하지 말고 그 불확실성을 이유에 적으세요.
+자료 검토는 최종 투자픽 선정이 아닙니다. 최종 선정 개수 제한을 이 단계에 적용하지 마세요.
 배당이 높은 투자픽을 추구하지만 배당만으로 고르지 마세요. 제시된 승무패·3방향 핸디캡 중에서
-선택하며 오버·언더는 제외합니다. 경기마다 최대 한 선택. 모든 후보를 억지로 채우지 마세요.
+선택하며 오버·언더는 제외합니다. 분석 방식과 판단은 스스로 결정하세요.
 mode=portfolio: 앞서 당신이 작성한 전체 후보와 이유를 함께 비교하여 자신 있는 픽을
 maximum_selections 이하로 최종 선택하세요. 충분히 자신 있는 경기가 없으면 빈 목록도 가능합니다.
 제공된 후보의 case_id, selected_id를 사용하세요. 순서는 자신의 우선순위입니다.
@@ -103,7 +105,7 @@ class Author:
         sys.path.insert(0,str(Path(release)/'windows/work/pro-subscription'))
         from analyst_codex_generator import CodexSubscriptionGenerator
         settings = {'codex_command':str(Path.home()/'.local/bin/codex'),
-                    'abort_on_network_loss':True,'max_output_bytes':8*1024*1024}
+                    'pause_on_network_loss':True,'max_output_bytes':8*1024*1024}
         self.client = CodexSubscriptionGenerator(settings)
         self.state = Path(state)
         self.checked = False
@@ -301,7 +303,7 @@ def run_selection(state, root, release, engine, cycle_path, author):
         write(folder/'completed.json',{'reason':'추가 후보 없음 또는 기존 자신픽 10개 유지','frozen':[]})
         return
     memory=append_live_memory(load_memory(release,engine,pool),state,engine,pool)
-    base={'mode':'candidates','analyst':engine,'memory':memory,'maximum_selections':slots}
+    base={'mode':'candidates','analyst':engine,'memory':memory,'review_scope':'all_provided_questions'}
     # Fixed packets are retained across restarts; no fresh request after a partial failure.
     packets_path=folder/'packets.json'
     if packets_path.exists():
@@ -312,8 +314,12 @@ def run_selection(state, root, release, engine, cycle_path, author):
     for index,packet in enumerate(packets):
         print(f'{LABELS[engine]} 원자료 검토 {index+1}/{len(packets)}',flush=True)
         response=author.ask(folder,f'candidates-{index:03d}',packet)
-        proposals+=validate_picks(response,packet['questions'],min(slots,len(packet['questions'])))
-    if len(packets)>1 and proposals:
+        reviewed=validate_picks(response,packet['questions'],len(packet['questions']))
+        if len(reviewed)!=len(packet['questions']):
+            raise ValueError('자료 검토 답안에 누락된 경기가 있습니다. 기록 보존 후 중단하며 자동 재요청하지 않습니다')
+        proposals+=reviewed
+    reviewed_count=len(proposals)
+    if proposals:
         # Only their own proposed choices, not teacher scores, determine the shortlist.
         by_id={q['case_id']:q for q in pool}
         finalists=[{'proposal':p,'identity':by_id[p['case_id']]['identity'],
@@ -324,7 +330,8 @@ def run_selection(state, root, release, engine, cycle_path, author):
         proposals=validate_picks(response,pool,slots,proposals)
     current=load_pool(root)['pool']
     frozen=freeze_picks(state,engine,proposals,pool,cycle_path.parent.name,current)
-    write(folder/'completed.json',{'frozen':frozen,'finished_at':stamp(),'proposed_count':len(proposals)})
+    write(folder/'completed.json',{'frozen':frozen,'finished_at':stamp(),
+                                  'reviewed_count':reviewed_count,'proposed_count':len(proposals)})
 
 
 def public_payload(state):
@@ -420,11 +427,11 @@ def main():
                 'excluded':inputs['excluded'],'AI_requests':0,'web_active':False,'analysts':{}}
             for e in ENGINES:
                 memory=load_memory(args.release,e,inputs['pool'])
-                packets=split_packets({'mode':'candidates','analyst':e,'memory':memory,'maximum_selections':10},
+                packets=split_packets({'mode':'candidates','analyst':e,'memory':memory,'review_scope':'all_provided_questions'},
                                       'questions',inputs['pool'])
                 report['analysts'][e]={'correct_memories':len(memory['successful_memory']),
                     'wrong_case_memories':len(memory['error_memory']), 'input_batches':len(packets),
-                    'selection_calls_up_to':len(packets)+(len(packets)>1)}
+                    'selection_calls_up_to':len(packets)+bool(packets)}
             write(state/'readiness.json',report); print(json.dumps(report,ensure_ascii=False)); return
         if not args.run: raise SystemExit('--check 또는 --run을 지정하세요')
         if (state/'PAUSED.json').exists():
