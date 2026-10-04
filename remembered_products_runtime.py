@@ -14,6 +14,7 @@ from manager_memory_inputs import digest, epoch, load_memory, read
 from remembered_products_inputs import load_inputs
 from remembered_products_contract import ENGINES, PUBLIC_KEYS, LABELS, VERSION, validate, probability, settle
 from remembered_products_transport import Author, TransportFailure, write, optional, split_packets, stamp
+from remembered_products_budget import save_repacked
 
 
 def memory_for(release, manager_state, state, engine, questions):
@@ -47,12 +48,13 @@ def analyze(root, state, manager_state, release, engine, author, inputs):
         plan={'questions':questions,'packets':batches,'memory':mem,'created_at':stamp()}
         plan_path=plans/digest([VERSION,questions])/'plan.json'; write(plan_path,plan)
     folder=plan_path.parent
+    plan=save_repacked(folder,plan)
     answers=[]
     for i,packet in enumerate(plan['packets']):
         if not any(q['identity']['kickoff']>time.time() for q in packet['questions']):
             continue
         print(f'{LABELS[engine]} 공개픽 전체 자료 분석 {i+1}/{len(plan["packets"])}',flush=True)
-        response=author.ask(folder,f'analysis-{i:03d}',packet)
+        response=author.ask(folder,plan['packet_names'][i],packet)
         answers.extend(validate(response,packet['questions']))
     by_id={p['case_id']:p for p in answers}
     groups={}
