@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import sqlite3
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Event, Lock
 import sys
 import time
 from datetime import datetime, timezone
@@ -139,22 +141,55 @@ def analyze(root, state, manager_state, release, engine, author, inputs,
     return False
 
 
-def run_predictions(root, state, manager_state, release, author, inputs):
-    def ready(): publish(root,state,load_inputs(root))
+def run_predictions(root, state, manager_state, release, author, inputs, author_factory=None):
+    # One captured input pool shared by all four independent workers. Each owns
+    # its memory, plan, request receipts and CLI client; publication is serialized.
+    write(state/'common_inputs.json',inputs)
+    publish_lock=Lock(); failure_lock=Lock(); stop=Event()
+    failures=[]; publication_failure=[]
+    def ready():
+        with publish_lock:
+            if publication_failure: raise publication_failure[0]
+            try: publish(root,state,load_inputs(root))
+            except Exception as exc:
+                publication_failure.append(exc)
+                raise
     # An interrupted prior run may have saved answers for several analysts.
     # Publish all of these before waiting for the first new inference.
     for engine in ENGINES:
         analyze(root,state,manager_state,release,engine,author,inputs,
                 cache_only=True,existing_only=True,on_progress=ready)
     ready()
-    active=list(ENGINES)
-    while active:
-        following=[]
-        for engine in active:
-            if analyze(root,state,manager_state,release,engine,author,inputs,
-                       max_requests=1,on_progress=ready): following.append(engine)
-        ready()
-        active=following
+    factory=author_factory or (lambda engine:Author(release,manager_state))
+    clients={engine:factory(engine) for engine in ENGINES}
+    class IndependentAuthor:
+        def __init__(self,client): self.client=client
+        def ask(self,folder,name,packet):
+            cached=cached_response(folder,name,packet)
+            if cached is not None: return cached
+            if stop.is_set(): raise ValueError('다른 분석 요청 오류 확인 중. 새 요청 중단')
+            return self.client.ask(folder,name,packet)
+    def worker(engine):
+        try:
+            print(f'{LABELS[engine]} 독립 동시 분석 시작',flush=True)
+            analyze(root,state,manager_state,release,engine,IndependentAuthor(clients[engine]),inputs,
+                    on_progress=ready)
+            ready()
+            print(f'{LABELS[engine]} 독립 동시 분석 완료',flush=True)
+        except Exception as exc:
+            with failure_lock:
+                if not failures: failures.append(exc)
+                stop.set()
+            raise
+    print('공통 경기자료 준비 완료 · 네 분석가 동시 실행 · 완료 답안 재사용',flush=True)
+    # A failed request stops subsequent calls. Already-paid in-flight requests
+    # finish and save receipts; none are force-killed or automatically retried.
+    with ThreadPoolExecutor(max_workers=len(ENGINES),thread_name_prefix='analyst') as executor:
+        futures=[executor.submit(worker,engine) for engine in ENGINES]
+        for future in as_completed(futures):
+            try: future.result()
+            except Exception: pass
+    if failures: raise failures[0]
 
 
 def grade(root, state):
