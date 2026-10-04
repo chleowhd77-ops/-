@@ -5,23 +5,23 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T10:11:32+00:00",
+      "heartbeat_at": "2026-10-04T10:12:03+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "score": 506503
+        "backup": 506505
       },
       "pending_jobs": [
-        "backup",
+        "learning",
         "live",
         "master",
         "products"
       ],
       "pending_wait_seconds": {
-        "backup": 1825.5,
-        "live": 104.1,
-        "master": 100.1,
-        "products": 96.1
+        "live": 134.2,
+        "master": 130.2,
+        "products": 126.2,
+        "learning": 4.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -139,14 +139,24 @@
       "duration_seconds": 21.16
     },
     "backup": {
-      "last_success_at": "2026-10-04T04:22:56+00:00",
-      "last_success_duration_seconds": 159.4,
+      "last_success_at": "2026-10-04T10:12:15+00:00",
+      "last_success_duration_seconds": 39.25,
       "run_id": "backup-1791108694900142170",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T10:11:36+00:00",
+      "last_stage": "backup_deferred",
+      "state": "success",
+      "heartbeat_at": "2026-10-04T10:12:15+00:00",
       "pid": 506505,
-      "last_started_at": "2026-10-04T10:11:36+00:00"
+      "last_started_at": "2026-10-04T10:11:36+00:00",
+      "child_pid": 506505,
+      "elapsed_seconds": 28.0,
+      "overlap_skips": 0,
+      "db_backup_ok": false,
+      "requested_sources": [
+        "master",
+        "score",
+        "world"
+      ],
+      "duration_seconds": 39.25
     },
     "recovery": {
       "last_success_duration_seconds": 7.91,
@@ -197,7 +207,7 @@
       "duration_seconds": 27.01
     }
   },
-  "updated_at": "2026-10-04T10:11:36+00:00",
+  "updated_at": "2026-10-04T10:12:15+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
