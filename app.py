@@ -1910,6 +1910,8 @@ if not _is_current_robot_public_snapshot(grading_snapshot):
 prediction_results_data = load_prediction_results(grading_snapshot)
 scorecard_data = published_scorecard(grading_snapshot, v3_learning_picks, manager_investment_data)
 scorecard_data = remembered_ui.overlay_scorecard(scorecard_data, remembered_products)
+from scorecard_campaign import with_manager_answers
+scorecard_data = with_manager_answers(scorecard_data, _load_published_json('manager_remembered_picks.json') or {})
 _startup_notice.empty()
 print('[DJ WEB R7.13.13] Published feeds ready', flush=True)
 
@@ -4415,8 +4417,6 @@ with main_tab3:
     top3_source = dashboard_data.get("top3", [])
     top3_engine = "official"
     if remembered_products.get("schema_version") == remembered_ui.VERSION:
-        from scorecard_ui import select_buttons
-        top3_engine = select_buttons("remembered-top3-analyst", remembered_ui.LABELS, "official")
         top3_source = remembered_ui.top3_cards(dashboard_data, remembered_products, top3_engine)
     top3_list = [
         item for item in top3_source

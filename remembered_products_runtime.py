@@ -17,6 +17,7 @@ from remembered_products_inputs import load_inputs
 from remembered_products_contract import ENGINES, PUBLIC_KEYS, LABELS, VERSION, INSTRUCTION, SCHEMA, validate, probability, settle
 from remembered_products_transport import Author, TransportFailure, write, optional, split_packets, stamp
 from remembered_products_budget import save_repacked
+from remembered_single_ticket import delivery_key, effective_records, prepare_existing, select_single
 
 
 def memory_for(release, manager_state, state, engine, questions):
@@ -32,7 +33,8 @@ def memory_for(release, manager_state, state, engine, questions):
 
 
 def records(state, engine):
-    return [read(p) for p in sorted((state/'picks'/engine).glob('*.json'))]
+    originals = [read(p) for p in sorted((state/'picks'/engine).glob('*.json'))]
+    return effective_records(state, engine, originals)
 
 
 def cached_response(folder, name, packet):
@@ -144,15 +146,8 @@ def analyze(root, state, manager_state, release, engine, author, inputs,
     for rid,qs in groups.items():
         if min(q['identity']['kickoff'] for q in qs)<=time.time(): continue
         if not all(q['case_id'] in by_id for q in qs): continue
-        prior=[by_id[q['case_id']] for q in qs]
-        name,packet=ticket_request(folder,engine,plan,rid,qs,prior)
-        response=cached_response(folder,name,packet)
-        if response is None:
-            if cache_only or (max_requests is not None and requests>=max_requests):
-                unfinished=True; continue
-            print(f'{LABELS[engine]} 승무패14 최종 마킹 · {rid}회차',flush=True)
-            response=author.ask(folder,name,packet); requests+=1
-        ticket_answers={p['case_id']:p for p in validate(response,qs,ticket=True,prior=prior)}
+        if len(qs) != 14: continue
+        ticket_answers={q['case_id']:select_single(q,by_id[q['case_id']]) for q in qs}
         save_ready(root,state,engine,folder,qs,ticket_answers,on_progress)
     if unfinished: return True
     saved=[q['case_id'] for q in plan['questions'] if (state/'picks'/engine/(q['case_id']+'.json')).exists()]
@@ -221,7 +216,7 @@ def grade(root, state):
         db.row_factory=sqlite3.Row; db.execute('PRAGMA query_only=ON')
         for engine in ENGINES:
             for p in records(state,engine):
-                identity=p['identity']; cid=p['case_id']; key=engine+':'+cid
+                identity=p['identity']; cid=p['case_id']; key=delivery_key(engine,p)
                 target=state/'grades'/engine/(cid+'.json')
                 if target.exists() or key not in delivered or not epoch(delivered[key]['confirmed_at'])<identity['kickoff']<=time.time(): continue
                 row=db.execute('''SELECT * FROM predictions WHERE match_id=? AND actual_result='FINISHED'
@@ -267,12 +262,13 @@ def public_rows(state):
     rows=[]; delivered=optional(state/'delivery.json',{})
     for engine in ENGINES:
         for p in records(state,engine):
-            cid=p['case_id']; delivery=delivered.get(engine+':'+cid)
+            cid=p['case_id']; delivery=delivered.get(delivery_key(engine,p))
             # Unconfirmed future records are staged publicly; UI waits for the receipt.
             if not delivery and p['identity']['kickoff']<=time.time(): continue
             g=optional(state/'grades'/engine/(cid+'.json'),{})
             r=optional(state/'reviews'/engine/(cid+'.json'),{})
             rows.append({'case_id':cid,'engine':PUBLIC_KEYS[engine],'identity':p['identity'],
+                'delivery_key':delivery_key(engine,p),
                 'product':p['product'],'round_id':p['round_id'],'number':p['number'],
                 'options':p['options'],'probability':probability(p['answer']),
                 'reason':p['answer']['reason'],'frozen_at':p['frozen_at'],'model_version':VERSION,
@@ -341,7 +337,7 @@ def publish(root, state, inputs):
         for row in rows:
             if epoch(receipt['confirmed_at'])>=row['identity']['kickoff']: continue
             engine='robot_proto' if row['engine']=='robot' else row['engine']
-            key=engine+':'+row['case_id']
+            key=row.get('delivery_key') or engine+':'+row['case_id']
             if key not in delivery: delivery[key]=receipt; changed=True
             if row['case_id'] in ranks[row['engine']] and key not in top_history:
                 top_history[key]=receipt; changed=True
@@ -358,6 +354,7 @@ def main():
     parser.add_argument('--root',type=Path,default=Path('/home/ubuntu'))
     parser.add_argument('--release',type=Path,required=True)
     parser.add_argument('--check',action='store_true')
+    parser.add_argument('--single-ticket-only',action='store_true')
     args=parser.parse_args(); root=args.root
     manager_state=root/'dj-manager-memory/runtime'
     state=root/'dj-public-products/runtime'; state.mkdir(parents=True,exist_ok=True)
@@ -381,6 +378,11 @@ def main():
         if any((s/'PAUSED.json').exists() for s in (state,manager_state)):
             print('중단 기록 있음 · 새 AI 요청 없음',flush=True); return
         try:
+            prepare_existing(state,inputs,ENGINES,write,stamp)
+            if args.single_ticket_only:
+                publish(root,state,inputs)
+                print('1,000원 단통 적용 · 기존 분석 재사용 · 새 AI 요청 0회',flush=True)
+                return
             author=Author(args.release,manager_state)
             grade(root,state)
             run_predictions(root,state,manager_state,args.release,author,inputs)

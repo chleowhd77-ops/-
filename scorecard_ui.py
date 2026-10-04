@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from html import escape
 import streamlit as st
 from scorecard_core import ENGINES, TRACKS, KST, epoch, summary
+from scorecard_campaign import START, campaign_rows, totals
 
 ENGINE_LABELS = dict(zip(ENGINES, ('① Codex 공식픽', '② 자율 로봇픽', '③ V2 알파고', '④ V3 학습픽')))
 TRACK_LABELS = dict(zip(TRACKS, ('관리자픽', 'TOP3', '프로토 LIVE', '승무패14')))
@@ -52,30 +53,34 @@ def render_rows(rows, key):
 def render_scorecard(data):
     started = time.perf_counter()
     st.subheader('채점 노트')
-    st.caption('분석가별 · 메뉴별 저장 답안과 실제 결과를 누적 집계합니다.')
+    st.caption('분석가별 · 메뉴별 AI 분석 성적을 새로 집계합니다. 이전 기록도 그대로 보관합니다.')
     engine = select_buttons('grade-engine-v7', ENGINE_LABELS, 'official')
     track = select_buttons('grade-track-v7', {k: v + ' 채점' for k, v in TRACK_LABELS.items()}, 'proto_world')
     if data.get('audit', {}).get('collector_update_pending'):
         st.warning('화면 수정은 적용됐습니다. 서버의 새 채점 자료는 아직 도착하지 않아 기존 기록을 표시합니다.')
     cells = data.get('tracks') or {}
+    scope = st.radio('집계 기록', ['새 AI 집계', '전체 누적'], horizontal=True, key='grade-campaign-20261005')
+    st.caption('새 AI 집계: 2026.10.05 07:03:06 한국 시간 이후 시작 경기 · 미채점은 0.0%로 표시')
     for col, name in zip(st.columns(4), TRACKS):
-        total = ((cells.get(name) or {}).get(engine) or {}).get('summary') or {}
+        metric_rows = ((cells.get(name) or {}).get(engine) or {}).get('rows') or []
+        if scope == '새 AI 집계':
+            metric_rows = campaign_rows(metric_rows, name)
+        total = totals(metric_rows)
         n, hits = int(total.get('graded') or 0), int(total.get('correct') or 0)
-        value = f'{hits / n * 100:.1f}%' if n else '미채점' if total.get('stored') else '저장 답안 없음'
+        value = f'{hits / n * 100:.1f}%' if n else '0.0%'
         col.metric(TRACK_LABELS[name], value)
         col.caption(f"{hits}/{n} 적중 · 대기 {int(total.get('pending') or 0)}건")
     cell = (cells.get(track) or {}).get(engine) or {}
     rows = cell.get('rows') or []
+    if scope == '새 AI 집계':
+        rows = campaign_rows(rows, track)
     st.markdown(f'#### {TRACK_LABELS[track]} · {ENGINE_LABELS[engine]}')
     active = ((data.get('active_models') or {}).get(track) or {}).get(engine)
     if active and active != 'legacy-unverified':
         current = [r for r in rows if r.get('model_version') == active]
-        totals = summary([r for r in current if r.get('settlement') != 'REFUND'])
-        st.caption(f"현재 적용 모델: {active} · 이 버전 저장 {len(current)}건 / 채점 {totals['graded']}건 / 적중 {totals['correct']}건 / 대기 {totals['pending']}건")
-        scope = st.radio('모델 기록', ['전체 누적','현재 적용 모델'],horizontal=True,key=f'grade-model-{track}-{engine}')
-        if scope == '현재 적용 모델':
-            rows = current
-        st.caption('상단 적중률은 전체 누적입니다. 버전 기록이 없는 과거 픽은 현재 모델 성적으로 간주하지 않습니다.')
+        current_totals = summary([r for r in current if r.get('settlement') != 'REFUND'])
+        st.caption(f"현재 적용 모델: {active} · 이 버전 저장 {len(current)}건 / 채점 {current_totals['graded']}건 / 적중 {current_totals['correct']}건 / 대기 {current_totals['pending']}건")
+        st.caption('상단 적중률과 아래 기록은 같은 집계 기준입니다. 전체 누적을 선택하면 이전 기록을 볼 수 있습니다.')
     if track == 'manager':
         st.caption('선택한 분석가의 관리자 투자픽 장부입니다. TOP3·프로토와 별도로 집계합니다.')
     if not rows:
