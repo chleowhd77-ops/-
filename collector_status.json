@@ -5,14 +5,22 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T12:19:46+00:00",
+      "heartbeat_at": "2026-10-04T12:21:16+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "score": 507798
+        "products": 507824
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "learning",
+        "master",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 74.1,
+        "master": 70.1,
+        "learning": 64.1
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -160,15 +168,23 @@
     },
     "products": {
       "last_failure_duration_seconds": 601.6,
-      "last_success_at": "2026-10-04T12:16:53+00:00",
-      "last_success_duration_seconds": 79.84,
+      "last_success_at": "2026-10-04T12:21:42+00:00",
+      "last_success_duration_seconds": 91.05,
       "last_failure_at": "2026-10-02T09:11:13+00:00",
       "run_id": "products-1791116410762630770",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T12:20:11+00:00",
+      "last_stage": "executing",
+      "state": "success",
+      "heartbeat_at": "2026-10-04T12:21:42+00:00",
       "pid": 507824,
-      "last_started_at": "2026-10-04T12:20:11+00:00"
+      "last_started_at": "2026-10-04T12:20:11+00:00",
+      "child_pid": 507824,
+      "elapsed_seconds": 66.1,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 14,
+      "manager_current_count": 12,
+      "manager_reason": "",
+      "duration_seconds": 91.05
     },
     "learning": {
       "last_success_duration_seconds": 27.87,
@@ -187,7 +203,7 @@
       "duration_seconds": 27.87
     }
   },
-  "updated_at": "2026-10-04T12:20:11+00:00",
+  "updated_at": "2026-10-04T12:21:42+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
