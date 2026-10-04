@@ -5,22 +5,25 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T09:42:55+00:00",
+      "heartbeat_at": "2026-10-04T09:45:56+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "products": 506422,
-        "team": 506424
+        "products": 506422
       },
       "pending_jobs": [
         "backup",
         "learning",
+        "live",
+        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 192.5,
-        "learning": 184.5,
-        "backup": 108.4
+        "score": 373.5,
+        "learning": 365.5,
+        "backup": 289.4,
+        "live": 72.6,
+        "master": 68.5
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -170,23 +173,24 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_success_at": "2026-10-04T09:27:47+00:00",
+      "last_success_at": "2026-10-04T09:45:58+00:00",
       "last_failure_at": "2026-10-02T09:11:13+00:00",
       "last_failure_duration_seconds": 601.6,
-      "last_success_duration_seconds": 422.56,
+      "last_success_duration_seconds": 320.1,
       "run_id": "products-1791106837364440816",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T09:42:55+00:00",
-      "pid": 498093,
+      "state": "success",
+      "heartbeat_at": "2026-10-04T09:45:58+00:00",
+      "pid": 506422,
       "last_started_at": "2026-10-04T09:40:38+00:00",
       "child_pid": 506422,
-      "elapsed_seconds": 138.3,
-      "overlap_skips": 0,
+      "elapsed_seconds": 319.3,
+      "overlap_skips": 1,
       "manager_published": true,
       "manager_input_count": 13,
       "manager_current_count": 13,
-      "manager_reason": ""
+      "manager_reason": "",
+      "duration_seconds": 320.1
     },
     "learning": {
       "last_failure_at": "2026-10-04T09:20:32+00:00",
@@ -205,7 +209,7 @@
       "duration_seconds": 100.23
     }
   },
-  "updated_at": "2026-10-04T09:43:01+00:00",
+  "updated_at": "2026-10-04T09:45:58+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
