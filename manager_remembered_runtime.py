@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 
 from manager_memory_inputs import ENGINES, digest, epoch, load_memory, load_pool, read
+from remembered_products_packing import wire_text
 
 VERSION = 'remembered-manager-v1'
 LABELS = {'official':'공식픽','robot_proto':'자율로봇','v2':'V2','v3':'V3'}
@@ -86,12 +87,12 @@ def split_packets(base, field, records):
     batches, batch = [], []
     for record in records:
         candidate = dict(base, **{field:batch+[record]})
-        if len(INSTRUCTION+json.dumps(candidate,ensure_ascii=False,separators=(',',':'))) > MAX_CHARS:
+        if len(wire_text(INSTRUCTION,candidate)) > MAX_CHARS:
             if not batch:
                 raise ValueError('기억과 한 경기의 원자료가 전송 한도를 넘음. 원문 유지 후 중단')
             batches.append(dict(base,**{field:batch})); batch=[]
             candidate = dict(base, **{field:[record]})
-            if len(INSTRUCTION+json.dumps(candidate,ensure_ascii=False,separators=(',',':'))) > MAX_CHARS:
+            if len(wire_text(INSTRUCTION,candidate)) > MAX_CHARS:
                 raise ValueError('기억과 한 경기의 원자료가 전송 한도를 넘음. 원문 유지 후 중단')
         batch.append(record)
     if batch:
@@ -124,7 +125,7 @@ class Author:
             raise ValueError('이전 요청 완료 여부 확인 필요. 자동으로 재요청하지 않습니다')
         if (self.state/'PAUSED.json').exists():
             raise ValueError('중단 상태. 직접 재개 필요')
-        text=INSTRUCTION+json.dumps(packet,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+        text=wire_text(INSTRUCTION,packet)
         if len(text)>MAX_CHARS:
             raise ValueError('요청 용량 한도 초과. 원문 유지 후 중단')
         if not self.checked:
