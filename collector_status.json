@@ -5,19 +5,21 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T12:49:52+00:00",
+      "heartbeat_at": "2026-10-04T12:50:22+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "master": 507975
+        "live": 507981
       },
       "pending_jobs": [
         "learning",
+        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 887.6,
-        "learning": 94.3
+        "score": 917.6,
+        "learning": 124.4,
+        "products": 6.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -25,15 +27,19 @@
     },
     "live": {
       "last_failure_duration_seconds": 6.0,
-      "last_success_at": "2026-10-04T12:47:51+00:00",
-      "last_success_duration_seconds": 4.28,
+      "last_success_at": "2026-10-04T12:50:23+00:00",
+      "last_success_duration_seconds": 3.99,
       "last_failure_at": "2026-10-01T23:55:39+00:00",
       "run_id": "live-1791118218399563992",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T12:50:19+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-04T12:50:23+00:00",
       "pid": 507981,
-      "last_started_at": "2026-10-04T12:50:19+00:00"
+      "last_started_at": "2026-10-04T12:50:19+00:00",
+      "child_pid": 507981,
+      "elapsed_seconds": 4.0,
+      "overlap_skips": 0,
+      "duration_seconds": 3.99
     },
     "score": {
       "last_success_duration_seconds": 95.32,
@@ -200,7 +206,7 @@
       "duration_seconds": 187.4
     }
   },
-  "updated_at": "2026-10-04T12:50:19+00:00",
+  "updated_at": "2026-10-04T12:50:23+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -348,7 +354,7 @@
         "metric": "cache_hit",
         "purpose": "live",
         "endpoint": "/fixtures",
-        "count": 4
+        "count": 5
       },
       {
         "metric": "cache_hit",
