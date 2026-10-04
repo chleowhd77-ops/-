@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from manager_memory_inputs import digest, epoch, load_memory, read
 from remembered_products_inputs import load_inputs
-from remembered_products_contract import ENGINES, PUBLIC_KEYS, LABELS, VERSION, validate, probability, settle
+from remembered_products_contract import ENGINES, PUBLIC_KEYS, LABELS, VERSION, INSTRUCTION, SCHEMA, validate, probability, settle
 from remembered_products_transport import Author, TransportFailure, write, optional, split_packets, stamp
 from remembered_products_budget import save_repacked
 
@@ -33,7 +33,44 @@ def records(state, engine):
     return [read(p) for p in sorted((state/'picks'/engine).glob('*.json'))]
 
 
-def analyze(root, state, manager_state, release, engine, author, inputs):
+def cached_response(folder, name, packet):
+    path=folder/(name+'.answer.json')
+    if not path.exists(): return None
+    saved=read(path)
+    if saved.get('request_id')!=digest([VERSION,INSTRUCTION,SCHEMA,packet]):
+        raise ValueError('저장된 요청과 현재 입력이 다릅니다')
+    return saved['response']
+
+
+def save_ready(root, state, engine, folder, questions, answers, on_progress=None):
+    current=load_inputs(root)
+    eligible={q['case_id'] for product in ('proto','toto14') for q in current[product]}
+    groups={}
+    for q in questions:
+        if q['product']=='toto14': groups.setdefault(q['round_id'],[]).append(q)
+    saved=[]
+    for q in questions:
+        cid=q['case_id']
+        if cid not in answers or cid not in eligible or q['identity']['kickoff']<=time.time(): continue
+        if q['product']=='toto14' and (len(groups[q['round_id']])!=14 or any(
+            x['case_id'] not in eligible or x['case_id'] not in answers or x['identity']['kickoff']<=time.time()
+            for x in groups[q['round_id']])): continue
+        target=state/'picks'/engine/(cid+'.json')
+        if target.exists(): continue
+        answer=answers[cid]
+        options=[o for o in q['options'] if o['option_id'] in answer['selected_ids']]
+        write(target,{'case_id':cid,'engine':engine,'identity':q['identity'],'product':q['product'],
+            'round_id':q['round_id'],'number':q['number'],'question':q,'answer':answer,'options':options,
+            'model_version':VERSION,'frozen_at':stamp(),'cycle':folder.name})
+        saved.append(cid)
+    if saved:
+        print(f'{LABELS[engine]} 완료 답안 즉시 저장 {len(saved)}경기',flush=True)
+        if on_progress: on_progress()
+    return saved
+
+
+def analyze(root, state, manager_state, release, engine, author, inputs,
+            max_requests=None, cache_only=False, existing_only=False, on_progress=None):
     own=records(state,engine); known={p['case_id'] for p in own}
     pool=[q for product in ('proto','toto14') for q in inputs[product]]
     plans=state/'cycles'/engine
@@ -41,21 +78,39 @@ def analyze(root, state, manager_state, release, engine, author, inputs):
     if pending:
         plan_path=pending[0]; plan=read(plan_path)
     else:
+        if existing_only: return False
         questions=[q for q in pool if q['case_id'] not in known]
-        if not questions: return
+        if not questions: return False
+        questions.sort(key=lambda q:q['identity']['kickoff'])
         mem=memory_for(release,manager_state,state,engine,pool)
         batches=split_packets({'mode':'analyze','analyst':engine,'memory':mem},'questions',questions)
         plan={'questions':questions,'packets':batches,'memory':mem,'created_at':stamp()}
         plan_path=plans/digest([VERSION,questions])/'plan.json'; write(plan_path,plan)
     folder=plan_path.parent
     plan=save_repacked(folder,plan)
-    answers=[]
+    answers=[]; waiting=[]; requests=0
+    # Recover every completed batch before issuing any new paid request.
     for i,packet in enumerate(plan['packets']):
+        response=cached_response(folder,plan['packet_names'][i],packet)
+        if response is not None:
+            answers.extend(validate(response,packet['questions']))
+        else: waiting.append((i,packet))
+    proto=[q for q in plan['questions'] if q['product']=='proto']
+    save_ready(root,state,engine,folder,proto,{p['case_id']:p for p in answers},on_progress)
+    # Reorder transport calls only; original packets/cache identities stay exact.
+    waiting.sort(key=lambda entry:min((q['identity']['kickoff'] for q in entry[1]['questions']
+                                     if q['identity']['kickoff']>time.time()),default=float('inf')))
+    unfinished=False
+    for i,packet in waiting:
         if not any(q['identity']['kickoff']>time.time() for q in packet['questions']):
             continue
+        if cache_only or (max_requests is not None and requests>=max_requests):
+            unfinished=True; continue
         print(f'{LABELS[engine]} 공개픽 전체 자료 분석 {i+1}/{len(plan["packets"])}',flush=True)
         response=author.ask(folder,plan['packet_names'][i],packet)
+        requests+=1
         answers.extend(validate(response,packet['questions']))
+        save_ready(root,state,engine,folder,proto,{p['case_id']:p for p in answers},on_progress)
     by_id={p['case_id']:p for p in answers}
     groups={}
     for q in plan['questions']:
@@ -67,28 +122,39 @@ def analyze(root, state, manager_state, release, engine, author, inputs):
         packet={'mode':'ticket','analyst':engine,'memory':plan['memory'],
                 'questions':[{k:v for k,v in q.items() if k!='evidence'} for q in qs],
                 'own_analyses':prior,'maximum_combinations':8}
-        print(f'{LABELS[engine]} 승무패14 최종 마킹 · {rid}회차',flush=True)
-        response=author.ask(folder,'ticket-'+digest(rid)[:16],packet)
-        by_id.update({p['case_id']:p for p in validate(response,qs,ticket=True,prior=prior)})
-    current=load_inputs(root)
-    eligible={q['case_id'] for product in ('proto','toto14') for q in current[product]}
-    saved=[]
-    for q in plan['questions']:
-        cid=q['case_id']
-        if cid not in by_id or cid not in eligible or q['identity']['kickoff']<=time.time(): continue
-        # A Toto allocation is valid as a complete round only, frozen at its first kickoff.
-        if q['product']=='toto14' and any(x['case_id'] not in eligible for x in groups[q['round_id']]): continue
-        target=state/'picks'/engine/(cid+'.json')
-        if target.exists(): continue
-        answer=by_id[cid]
-        options=[o for o in q['options'] if o['option_id'] in answer['selected_ids']]
-        original={'case_id':cid,'engine':engine,'identity':q['identity'],'product':q['product'],
-            'round_id':q['round_id'],'number':q['number'],'question':q,'answer':answer,'options':options,
-            'model_version':VERSION,'frozen_at':stamp(),'cycle':folder.name}
-        write(target,original); saved.append(cid)
+        name='ticket-'+digest(rid)[:16]
+        response=cached_response(folder,name,packet)
+        if response is None:
+            if cache_only or (max_requests is not None and requests>=max_requests):
+                unfinished=True; continue
+            print(f'{LABELS[engine]} 승무패14 최종 마킹 · {rid}회차',flush=True)
+            response=author.ask(folder,name,packet); requests+=1
+        ticket_answers={p['case_id']:p for p in validate(response,qs,ticket=True,prior=prior)}
+        save_ready(root,state,engine,folder,qs,ticket_answers,on_progress)
+    if unfinished: return True
+    saved=[q['case_id'] for q in plan['questions'] if (state/'picks'/engine/(q['case_id']+'.json')).exists()]
     write(folder/'completed.json',{'saved':saved,'finished_at':stamp(),
         'reviewed':len(answers),'expired_or_unlinked':len(plan['questions'])-len(saved)})
     print(f'{LABELS[engine]} 공개픽 저장 {len(saved)}경기',flush=True)
+    return False
+
+
+def run_predictions(root, state, manager_state, release, author, inputs):
+    def ready(): publish(root,state,load_inputs(root))
+    # An interrupted prior run may have saved answers for several analysts.
+    # Publish all of these before waiting for the first new inference.
+    for engine in ENGINES:
+        analyze(root,state,manager_state,release,engine,author,inputs,
+                cache_only=True,existing_only=True,on_progress=ready)
+    ready()
+    active=list(ENGINES)
+    while active:
+        following=[]
+        for engine in active:
+            if analyze(root,state,manager_state,release,engine,author,inputs,
+                       max_requests=1,on_progress=ready): following.append(engine)
+        ready()
+        active=following
 
 
 def grade(root, state):
@@ -196,6 +262,15 @@ def publish(root, state, inputs):
     top_history=optional(state/'top3_history.json',{})
     for phase in range(2):
         rows=public_rows(state); ranks=top3(rows,time.time())
+        # Partial PROTO delivery must not turn every provisional leader into a
+        # graded TOP3 pick. Keep the existing selection until coverage is ready.
+        required={q['case_id'] for q in inputs['proto'] if q['identity']['kickoff']>time.time()}
+        previous=optional(root/'remembered_products.json',{}).get('top3',{})
+        for engine in PUBLIC_KEYS.values():
+            available={r['case_id'] for r in rows if r['engine']==engine and r['product']=='proto'
+                       and r['identity']['kickoff']>time.time()}
+            if not required<=available:
+                ranks[engine]=[cid for cid in previous.get(engine,[]) if cid in available]
         payload={'schema_version':VERSION,'generated_at':stamp(),'rows':rows,'top3':ranks,
             'top3_history':top_history,'coverage':{'eligible_proto':len(inputs['proto']),
                 'eligible_toto14':len(inputs['toto14']),'excluded':inputs['excluded']},
@@ -250,10 +325,11 @@ def main():
         try:
             author=Author(args.release,manager_state)
             grade(root,state)
+            run_predictions(root,state,manager_state,args.release,author,inputs)
+            # New match delivery must not wait behind post-match reflections.
             for engine in ENGINES:
                 review(state,manager_state,args.release,engine,author)
-                analyze(root,state,manager_state,args.release,engine,author,inputs)
-                publish(root,state,load_inputs(root))
+            publish(root,state,load_inputs(root))
             write(state/'last_completed.json',{'completed_at':stamp(),'version':VERSION})
         except Exception as exc:
             pause={'at':stamp(),'source':'remembered-public-products','reason':str(exc),'automatic_retry':False}
