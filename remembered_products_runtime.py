@@ -45,6 +45,10 @@ def cached_response(folder, name, packet):
 
 
 def save_ready(root, state, engine, folder, questions, answers, on_progress=None):
+    # A cache-only pass or an already saved batch needs no new database snapshot.
+    if not any(q['case_id'] in answers and q['identity']['kickoff']>time.time()
+               and not (state/'picks'/engine/(q['case_id']+'.json')).exists() for q in questions):
+        return []
     current=load_inputs(root)
     eligible={q['case_id'] for product in ('proto','toto14') for q in current[product]}
     groups={}
@@ -67,8 +71,26 @@ def save_ready(root, state, engine, folder, questions, answers, on_progress=None
         saved.append(cid)
     if saved:
         print(f'{LABELS[engine]} 완료 답안 즉시 저장 {len(saved)}경기',flush=True)
-        if on_progress: on_progress()
+        if on_progress: on_progress(current)
     return saved
+
+
+def ticket_request(folder, engine, plan, rid, questions, prior):
+    """Reuse old receipts exactly; new allocation calls need completed analyses only."""
+    old_name='ticket-'+digest(rid)[:16]
+    old_packet={'mode':'ticket','analyst':engine,'memory':plan['memory'],
+                'questions':[{k:v for k,v in q.items() if k!='evidence'} for q in questions],
+                'own_analyses':prior,'maximum_combinations':8}
+    if (folder/(old_name+'.answer.json')).exists():
+        return old_name,old_packet
+    if (folder/(old_name+'.pending.json')).exists():
+        raise ValueError('기존 승무패 요청 완료 여부 확인 필요. 새 요청하지 않습니다')
+    # Memory and full evidence were already used to generate every probability.
+    # This call allocates extra marks; validation forbids changing those probabilities.
+    packet={'mode':'ticket','analyst':engine,
+            'questions':[{k:v for k,v in q.items() if k not in ('evidence','source')} for q in questions],
+            'own_analyses':prior,'maximum_combinations':8}
+    return 'ticket-allocation-v1-'+digest(rid)[:16],packet
 
 
 def analyze(root, state, manager_state, release, engine, author, inputs,
@@ -86,7 +108,9 @@ def analyze(root, state, manager_state, release, engine, author, inputs,
         questions.sort(key=lambda q:q['identity']['kickoff'])
         mem=memory_for(release,manager_state,state,engine,pool)
         batches=split_packets({'mode':'analyze','analyst':engine,'memory':mem},'questions',questions)
-        plan={'questions':questions,'packets':batches,'memory':mem,'created_at':stamp()}
+        plan={'questions':questions,'packets':batches,'memory':mem,'created_at':stamp(),
+              'packing_version':'shared-json-v1',
+              'packet_names':['compact-'+digest(p)[:24] for p in batches]}
         plan_path=plans/digest([VERSION,questions])/'plan.json'; write(plan_path,plan)
     folder=plan_path.parent
     plan=save_repacked(folder,plan)
@@ -121,10 +145,7 @@ def analyze(root, state, manager_state, release, engine, author, inputs,
         if min(q['identity']['kickoff'] for q in qs)<=time.time(): continue
         if not all(q['case_id'] in by_id for q in qs): continue
         prior=[by_id[q['case_id']] for q in qs]
-        packet={'mode':'ticket','analyst':engine,'memory':plan['memory'],
-                'questions':[{k:v for k,v in q.items() if k!='evidence'} for q in qs],
-                'own_analyses':prior,'maximum_combinations':8}
-        name='ticket-'+digest(rid)[:16]
+        name,packet=ticket_request(folder,engine,plan,rid,qs,prior)
         response=cached_response(folder,name,packet)
         if response is None:
             if cache_only or (max_requests is not None and requests>=max_requests):
@@ -147,10 +168,12 @@ def run_predictions(root, state, manager_state, release, author, inputs, author_
     write(state/'common_inputs.json',inputs)
     publish_lock=Lock(); failure_lock=Lock(); stop=Event()
     failures=[]; publication_failure=[]
-    def ready():
+    def ready(current=None):
         with publish_lock:
             if publication_failure: raise publication_failure[0]
-            try: publish(root,state,load_inputs(root))
+            # Reuse the snapshot that just validated saved picks, rather than
+            # reconstructing every fixture's full evidence for the same publication.
+            try: publish(root,state,current if current is not None else load_inputs(root))
             except Exception as exc:
                 publication_failure.append(exc)
                 raise
