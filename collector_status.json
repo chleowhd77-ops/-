@@ -5,24 +5,25 @@
       "supervisor_pid": 517271,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T20:32:38+00:00",
+      "heartbeat_at": "2026-10-04T20:34:44+00:00",
       "pid": 517271,
       "last_started_at": "2026-10-04T14:33:42+00:00",
       "active_jobs": {
-        "master": 526860,
-        "team": 526867
+        "master": 526860
       },
       "pending_jobs": [
+        "backup",
         "learning",
         "live",
         "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "live": 691.4,
-        "products": 664.4,
-        "score": 88.2,
-        "learning": 16.1
+        "live": 817.2,
+        "products": 790.2,
+        "score": 214.0,
+        "learning": 141.9,
+        "backup": 60.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -70,21 +71,29 @@
       "duration_seconds": 317.66
     },
     "master": {
-      "last_success_duration_seconds": 202.2,
-      "last_success_at": "2026-10-04T20:16:51+00:00",
+      "last_success_duration_seconds": 259.63,
+      "last_success_at": "2026-10-04T20:35:09+00:00",
       "last_failure_duration_seconds": 900.1,
       "last_failure_at": "2026-10-04T18:40:02+00:00",
       "run_id": "master-1791145845984432579",
-      "last_stage": "proto_checkpoint_published",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T20:32:38+00:00",
-      "pid": 517271,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-04T20:35:09+00:00",
+      "pid": 526860,
       "last_started_at": "2026-10-04T20:30:49+00:00",
       "child_pid": 526860,
-      "elapsed_seconds": 112.4,
+      "elapsed_seconds": 238.3,
       "overlap_skips": 1,
       "proto_checkpoint_analyzed": 1,
-      "proto_checkpoint_deferred": 0
+      "proto_checkpoint_deferred": 0,
+      "manager_published": true,
+      "manager_input_count": 5,
+      "manager_current_count": 8,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 259.63
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -203,7 +212,7 @@
       "duration_seconds": 119.94
     }
   },
-  "updated_at": "2026-10-04T20:32:50+00:00",
+  "updated_at": "2026-10-04T20:35:09+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
