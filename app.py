@@ -3918,6 +3918,11 @@ def _render_admin_analysts():
         return
     label = _analyst_button_menu('admin-analyst-view')
     engine = dict(zip(ANALYST_MENU, ('official', 'robot', 'v2', 'v3')))[label]
+    remembered = _load_published_json('manager_remembered_picks.json')
+    if isinstance(remembered, dict) and remembered.get('schema_version') == 'remembered-manager-v1':
+        from manager_remembered_ui import render
+        render(st, remembered, engine)
+        return
     _render_manager_investment_portfolio(manager_engine_payload(manager_investment_data, engine))
 
 
