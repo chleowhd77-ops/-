@@ -37,7 +37,7 @@ def render_rows(rows, key):
     for row in batch:
         hit = row.get('is_correct')
         ko = epoch(row.get('kickoff_at'), KST)
-        state = '적중' if hit == 1 else '미적중' if hit == 0 else (
+        state = '환급' if row.get('settlement') == 'REFUND' else '적중' if hit == 1 else '미적중' if hit == 0 else (
             '시작 전' if ko > time.time() else '결과 연결 대기' if ko else '경기 정보 연결 대기')
         values.append({'경기': f"{row.get('home_team') or ''} vs {row.get('away_team') or ''}".strip()
                        if row.get('home_team') else f"경기 ID {row.get('match_id', '')}",
@@ -70,7 +70,7 @@ def render_scorecard(data):
     active = ((data.get('active_models') or {}).get(track) or {}).get(engine)
     if active and active != 'legacy-unverified':
         current = [r for r in rows if r.get('model_version') == active]
-        totals = summary(current)
+        totals = summary([r for r in current if r.get('settlement') != 'REFUND'])
         st.caption(f"현재 적용 모델: {active} · 이 버전 저장 {len(current)}건 / 채점 {totals['graded']}건 / 적중 {totals['correct']}건 / 대기 {totals['pending']}건")
         scope = st.radio('모델 기록', ['전체 누적','현재 적용 모델'],horizontal=True,key=f'grade-model-{track}-{engine}')
         if scope == '현재 적용 모델':
@@ -82,10 +82,19 @@ def render_scorecard(data):
         st.info('이 메뉴에서 이 분석가의 저장 답안이 아직 없습니다. 다른 메뉴의 픽을 대신 합산하지 않습니다.')
     else:
         view = st.radio('기록', ['채점 완료', '채점 대기'], horizontal=True, key=f'grade-state-{track}-{engine}')
-        selected = [r for r in rows if (r.get('is_correct') in (0, 1)) == (view == '채점 완료')]
+        selected = [r for r in rows if (r.get('is_correct') in (0, 1) or r.get('settlement') == 'REFUND') == (view == '채점 완료')]
         render_rows(selected, f'grade-rows-{track}-{engine}-{view}')
         if not selected:
             st.caption('해당 상태의 기록이 없습니다.')
+    reviewed = [r for r in rows if r.get('review')]
+    if reviewed:
+        with st.expander('이 분석가의 실전 복기'):
+            for r in reviewed[:30]:
+                st.write(f"{r.get('home_team')} vs {r.get('away_team')} · {r.get('raw_pick')}")
+                st.write(r['review'])
+    if cell.get('superseded_rows'):
+        with st.expander('시작 전 교체된 이전 답안 · 현재 성적에서 제외'):
+            render_rows(cell['superseded_rows'], f'grade-old-{track}-{engine}')
     legacy = data.get('manager_legacy') or []
     if track == 'manager' and legacy:
         with st.expander('기존 별도 투자 장부 · 분석가 미지정 기록 보존'):

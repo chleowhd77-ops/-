@@ -74,7 +74,7 @@ def manager_engine_payload(payload, engine):
 
 def toto_marks(item, engine):
     stored = ((item.get('analyst_toto14_marks') or {}).get(engine) or {}).get('marks') or []
-    if stored:
+    if stored or item.get('_remembered_active'):
         return [x for x in stored if x in ('승','무','패')]
     match = item.get('match') or {}
     if engine == 'v2':

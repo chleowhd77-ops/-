@@ -16,6 +16,7 @@ from runtime_publisher import read_published_json
 from scorecard_core import published_scorecard
 from analyst_products import manager_engine_payload, toto_ticket_for_engine, mark_grid, toto_marks
 from scorecard_ui import render_scorecard, select_buttons
+import remembered_products_ui as remembered_ui
 from api_engine import (
     ANALYSIS_VERSION, SYSTEM_VERSION, choose_analysis_fallback,
     PUBLIC_SCORE_VERSION, ROBOT_PICK_VERSION, extract_robot_pick,
@@ -1842,6 +1843,7 @@ v3_learning_picks = load_v3_learning_picks()
 manager_investment_data = load_manager_investment_picks()
 world_dashboard_data = load_world_dashboard_data()
 live_scores_data = load_live_scores()
+remembered_products = _load_published_json("remembered_products.json") or {}
 if isinstance(dashboard_data, dict):
     # 수집기가 새 버전으로 교체되기 전 남아 있는 캐시에도 같은 안전망을 적용한다.
     for collection_name in ("proto", "top3", "toto14"):
@@ -1873,6 +1875,7 @@ if isinstance(dashboard_data, dict):
                     item.setdefault('v3_learning_pick', dict(v3_pick))
                 else:
                     item["v3_learning_pick"] = dict(v3_pick)
+dashboard_data = remembered_ui.overlay(dashboard_data, remembered_products)
 if isinstance(world_dashboard_data, dict):
     for item in world_dashboard_data.get("matches", []) or []:
         if not isinstance(item, dict):
@@ -1906,6 +1909,7 @@ if not _is_current_robot_public_snapshot(grading_snapshot):
         }
 prediction_results_data = load_prediction_results(grading_snapshot)
 scorecard_data = published_scorecard(grading_snapshot, v3_learning_picks, manager_investment_data)
+scorecard_data = remembered_ui.overlay_scorecard(scorecard_data, remembered_products)
 _startup_notice.empty()
 print('[DJ WEB R7.13.13] Published feeds ready', flush=True)
 
@@ -2349,6 +2353,8 @@ def _world_live_item(world_item, proto_by_fixture):
 
 def _with_analysis_pick(item):
     """Fill legacy empty cards only after real pre-kickoff analysis exists."""
+    if isinstance(item, dict) and item.get("_remembered_active"):
+        return item
     if not isinstance(item, dict):
         return item
     stage = str(item.get("analysis_stage") or item.get("latest_analysis_stage") or "").strip().casefold()
@@ -3404,6 +3410,8 @@ def _toto_analyst_pick_display(item, analyst_key, home_team="", away_team=""):
     item = item if isinstance(item, dict) else {}
     engine = dict(zip(ANALYST_MENU, ('official', 'robot', 'v2', 'v3'))).get(analyst_key)
     marks = toto_marks(item, engine) if engine else []
+    if item.get("_remembered_active") and not marks:
+        return "분석 대기"
     if marks:
         return ' / '.join({'승':f'{home_team or "홈팀"} 승', '무':'무승부', '패':f'{away_team or "원정팀"} 승'}[mark] for mark in marks)
     if analyst_key == "① Codex 공식픽":
@@ -3459,6 +3467,8 @@ def generate_pred_boxes(
     home_team="", analysis_item=None,
 ):
     """Show the public pick and the administrator's official/robot comparison."""
+    if isinstance(analysis_item, dict) and analysis_item.get("_remembered_active"):
+        return remembered_ui.boxes(analysis_item)
     viewer_role = globals().get("active_role", "")
     if not viewer_role:
         try:
@@ -4211,6 +4221,7 @@ def _render_toto14_tab():
         total_combinations = toto14_meta["total_combinations"]
         single_pick_count = toto14_meta["single_pick_count"]
         double_pick_count = toto14_meta["double_pick_count"]
+        triple_pick_count = sum(len(_toto_analyst_marks(item, toto14_analyst_view)) == 3 for item in toto14_list)
         total_price = toto14_meta["budget"]
         max_budget = toto14_meta["max_budget"]
         cap_exceeded_by_frozen = toto14_meta["cost_cap_exceeded_by_frozen"]
@@ -4218,7 +4229,7 @@ def _render_toto14_tab():
         unavailable_pick_count = toto14_meta["unavailable_pick_count"]
         combination_label = "최종" if ticket_complete else "현재 계산"
         
-        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>{escape(toto14_analyst_view)} · 단일마킹 우선 · 필요한 복수마킹만</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
+        summary_html = f"<div style='background: #111827; border: 1px solid #1E293B; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;'><span style='color: #94A3B8; font-size: 14px; font-weight: 700; display: block; margin-bottom: 5px;'>{escape(toto14_analyst_view)} · 단일마킹 우선 · 필요한 복수마킹만</span><span style='color: #F8FAFC; font-size: 16px; font-weight: 700; display: block; margin-bottom: 8px;'>단통 <span style='color:#10B981;'>{single_pick_count}</span>경기 + 투마킹 <span style='color:#EF4444;'>{double_pick_count}</span>경기 + 삼마킹 <span style='color:#F59E0B;'>{triple_pick_count}</span>경기</span><span style='color: #F8FAFC; font-size: 24px; font-weight: 900; display: block;'>{combination_label} <span style='color: #00F2FE;'>{total_combinations}</span> 조합 / 예상 구매 금액: <span style='color: #10B981;'>{total_price:,}</span> 원</span></div>"
         st.markdown(summary_html, unsafe_allow_html=True)
         if not ticket_complete:
             warning_text = (
@@ -4290,6 +4301,12 @@ def _render_toto14_tab():
                 item, toto14_analyst_view, str(m.get("home") or ""), str(m.get("away") or "")
             )
             analyst_marks_html = _render_toto14_picks_html(analyst_marks)
+            if item.get('_remembered_active'):
+                engine = dict(zip(ANALYST_MENU, ('official','robot','v2','v3')))[toto14_analyst_view]
+                row = (item.get('_remembered_answers') or {}).get(engine)
+                if row:
+                    analyst_marks_html += ("<details style='margin-top:14px;color:#b8c8dd'><summary>분석가의 선택 이유</summary><p>"
+                        + escape(row['reason']) + "</p></details>")
             if not analyst_marks:
                 analyst_marks_html += "<div style='color:#F59E0B;margin-top:8px;'>분석 대기</div>"
             html_code = (
@@ -4320,82 +4337,86 @@ with main_tab2:
 # [TAB 3] 오늘의 TOP 3
 # -----------------------------------------------------------------------------
 with main_tab3:
-    st.markdown("""
-    <div class='section-intro'>
-        <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
-    </div>
-    """, unsafe_allow_html=True)
-    honey_combo = dashboard_data.get("honey_two_pick") or {}
-    combo_rows = honey_combo.get("picks") or []
-    can_view_honey_combo = active_role in {ROLE_SUPPORTER, ROLE_ADMIN}
-    if len(combo_rows) == 2 and can_view_honey_combo:
-        combo_lines = "".join(
-            "<div style='padding:5px 0;color:#E2E8F0;'>"
-            f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))} · "
-            f"<b style='color:#F59E0B'>{escape(_human_pick_label(row.get('pick'), row.get('home')))}</b> "
-            f"({float(row.get('probability') or 0)*100:.1f}% / {float(row.get('odd') or 0):.2f}배)</div>"
-            for row in combo_rows
-        )
-        st.markdown(
-            "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;margin-bottom:18px;'>"
-            "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🍯 꿀 2픽 조합</div>"
-            + combo_lines
-            + f"<div style='margin-top:7px;color:#94A3B8;font-size:12px;'>두 경기 모두 개별 최종픽의 꿀픽 기준 통과 · 조합 배당 {float(honey_combo.get('combined_odd') or 0):.2f}배</div>"
-            "</div>", unsafe_allow_html=True,
-        )
-    elif len(combo_rows) == 2:
-        st.markdown(
-            "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;"
-            "margin-bottom:18px;text-align:center;'>"
-            "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🔒 후원회원 꿀 2픽</div>"
-            "<div style='color:#94A3B8;font-size:13px;'>기본 추천 3픽 외 추가 조합은 "
-            "후원회원에게만 공개됩니다.</div></div>",
-            unsafe_allow_html=True,
-        )
-    top3_list = [
-        item for item in dashboard_data.get("top3", [])
-        if _recommendation_is_upcoming(item)
-    ]
-    if top3_list:
-        displayed_top3 = 0
-        for idx, item in enumerate(top3_list, 1):
-            if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
-                continue
+    if remembered_products.get("schema_version") == remembered_ui.VERSION:
+        remembered_ui.render_top3(st, dashboard_data, remembered_products)
+        _render_back_to_top()
+    else:
+        st.markdown("""
+        <div class='section-intro'>
+            <div><h2>오늘의 추천 3픽</h2><p>확률·배당 가치·데이터 신뢰도를 함께 검토한 오늘의 우선 분석입니다.</p></div>
+        </div>
+        """, unsafe_allow_html=True)
+        honey_combo = dashboard_data.get("honey_two_pick") or {}
+        combo_rows = honey_combo.get("picks") or []
+        can_view_honey_combo = active_role in {ROLE_SUPPORTER, ROLE_ADMIN}
+        if len(combo_rows) == 2 and can_view_honey_combo:
+            combo_lines = "".join(
+                "<div style='padding:5px 0;color:#E2E8F0;'>"
+                f"{escape(str(row.get('home') or ''))} vs {escape(str(row.get('away') or ''))} · "
+                f"<b style='color:#F59E0B'>{escape(_human_pick_label(row.get('pick'), row.get('home')))}</b> "
+                f"({float(row.get('probability') or 0)*100:.1f}% / {float(row.get('odd') or 0):.2f}배)</div>"
+                for row in combo_rows
+            )
+            st.markdown(
+                "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;margin-bottom:18px;'>"
+                "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🍯 꿀 2픽 조합</div>"
+                + combo_lines
+                + f"<div style='margin-top:7px;color:#94A3B8;font-size:12px;'>두 경기 모두 개별 최종픽의 꿀픽 기준 통과 · 조합 배당 {float(honey_combo.get('combined_odd') or 0):.2f}배</div>"
+                "</div>", unsafe_allow_html=True,
+            )
+        elif len(combo_rows) == 2:
+            st.markdown(
+                "<div class='match-card' style='border-color:#F59E0B;padding:16px 18px;"
+                "margin-bottom:18px;text-align:center;'>"
+                "<div style='font-weight:900;color:#F59E0B;margin-bottom:6px;'>🔒 후원회원 꿀 2픽</div>"
+                "<div style='color:#94A3B8;font-size:13px;'>기본 추천 3픽 외 추가 조합은 "
+                "후원회원에게만 공개됩니다.</div></div>",
+                unsafe_allow_html=True,
+            )
+        top3_list = [
+            item for item in dashboard_data.get("top3", [])
+            if _recommendation_is_upcoming(item)
+        ]
+        if top3_list:
+            displayed_top3 = 0
+            for idx, item in enumerate(top3_list, 1):
+                if item.get("final_match_time", "") == "시간 미정" or item.get("match", {}).get("match_time", "") == "시간 미정":
+                    continue
                 
-            displayed_top3 += 1
-            m = item['match']
-            logo_h_tag = render_logo_html(item.get("home_logo"))
-            logo_a_tag = render_logo_html(item.get("away_logo"))
-            dynamic_top3_boxes = generate_pred_boxes(
-                item.get('ev_sorted_picks', []),
-                is_top3_tab=True,
-                pick_categories=_pick_categories(item),
-                home_team=m.get('home', ''),
-                analysis_item=item,
-            )
-            top3_odds_source = str(
-                item.get("odds_source") or m.get("odds_source") or "betman"
-            )
-            top3_source_label = {
-                "overseas_fallback": "해외배당 임시 추천 픽",
-                "model_only": "팀 데이터 모델 선픽",
-            }.get(top3_odds_source, "최고 가치 추천 픽")
-            html_code = (
-                f"<div class='match-card top3-glow'>"
-                f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} {top3_source_label} • {m.get('league','')}{_analysis_data_quality_html(item)}</div>"
-                f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
-                f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
-                f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
-                f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
-                f"{_top3_strategy_html(item)}"
-                f"{_detail_html(item)}"
-                f"</div>"
-            )
-            st.markdown(html_code, unsafe_allow_html=True)
-        if displayed_top3 == 0: st.info("현재 배팅 가능한 추천 분석 경기가 없습니다.")
-    else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
+                displayed_top3 += 1
+                m = item['match']
+                logo_h_tag = render_logo_html(item.get("home_logo"))
+                logo_a_tag = render_logo_html(item.get("away_logo"))
+                dynamic_top3_boxes = generate_pred_boxes(
+                    item.get('ev_sorted_picks', []),
+                    is_top3_tab=True,
+                    pick_categories=_pick_categories(item),
+                    home_team=m.get('home', ''),
+                    analysis_item=item,
+                )
+                top3_odds_source = str(
+                    item.get("odds_source") or m.get("odds_source") or "betman"
+                )
+                top3_source_label = {
+                    "overseas_fallback": "해외배당 임시 추천 픽",
+                    "model_only": "팀 데이터 모델 선픽",
+                }.get(top3_odds_source, "최고 가치 추천 픽")
+                html_code = (
+                    f"<div class='match-card top3-glow'>"
+                    f"<div class='league-title' style='color:#00F2FE;'># {displayed_top3} {top3_source_label} • {m.get('league','')}{_analysis_data_quality_html(item)}</div>"
+                    f"<div class='vs-row'><div class='team-box home'><div class='team-info-wrapper'><div class='team-name-text'>{m.get('home','')}</div><div class='team-form-text'>{item.get('home_form','')}</div>{item.get('h_rank_html','')}</div>{logo_h_tag}</div>"
+                    f"<div class='center-time-box'><span class='match-time-text' style='color:#00F2FE;'>{item.get('final_match_time', '')}</span></div>"
+                    f"<div class='team-box away'>{logo_a_tag}<div class='team-info-wrapper'><div class='team-name-text'>{m.get('away','')}</div><div class='team-form-text'>{item.get('away_form','')}</div>{item.get('a_rank_html','')}</div></div></div>"
+                    f"<div class='pred-grid' style='margin-top:20px;'>{dynamic_top3_boxes}</div>"
+                    f"{_top3_strategy_html(item)}"
+                    f"{_detail_html(item)}"
+                    f"</div>"
+                )
+                st.markdown(html_code, unsafe_allow_html=True)
+            if displayed_top3 == 0: st.info("현재 배팅 가능한 추천 분석 경기가 없습니다.")
+        else: st.info("현재 배팅 가능한 분석 경기가 없습니다.")
 
-    _render_back_to_top()
+        _render_back_to_top()
 
 # -----------------------------------------------------------------------------
 # [TAB 4] 🔥 AI 리포트
