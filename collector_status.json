@@ -5,14 +5,22 @@
       "supervisor_pid": 498093,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T11:24:41+00:00",
+      "heartbeat_at": "2026-10-04T11:26:11+00:00",
       "pid": 498093,
       "last_started_at": "2026-10-02T21:41:01+00:00",
       "active_jobs": {
-        "learning": 506713
+        "products": 506715
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "learning",
+        "master",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 74.1,
+        "master": 70.1,
+        "learning": 4.0
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -161,14 +169,22 @@
     "products": {
       "last_failure_duration_seconds": 601.6,
       "last_failure_at": "2026-10-02T09:11:13+00:00",
-      "last_success_at": "2026-10-04T11:21:23+00:00",
-      "last_success_duration_seconds": 78.28,
+      "last_success_at": "2026-10-04T11:26:21+00:00",
+      "last_success_duration_seconds": 75.5,
       "run_id": "products-1791113105209028408",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-04T11:25:05+00:00",
+      "last_stage": "executing",
+      "state": "success",
+      "heartbeat_at": "2026-10-04T11:26:21+00:00",
       "pid": 506715,
-      "last_started_at": "2026-10-04T11:25:05+00:00"
+      "last_started_at": "2026-10-04T11:25:05+00:00",
+      "child_pid": 506715,
+      "elapsed_seconds": 66.1,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 14,
+      "manager_current_count": 11,
+      "manager_reason": "",
+      "duration_seconds": 75.5
     },
     "learning": {
       "last_success_duration_seconds": 25.92,
@@ -187,7 +203,7 @@
       "duration_seconds": 25.92
     }
   },
-  "updated_at": "2026-10-04T11:25:05+00:00",
+  "updated_at": "2026-10-04T11:26:21+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
