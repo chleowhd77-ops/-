@@ -10,6 +10,11 @@ from manager_memory_inputs import digest, read
 from remembered_products_contract import VERSION, INSTRUCTION, SCHEMA
 from remembered_products_packing import wire_text
 MAX_CHARS = 780_000
+SHORT_OUTPUT = '''출력 분량 지시: 원자료와 자신의 기억은 전체 검토하고 모든 선택지의 확률은 그대로 작성하세요.
+mode=analyze 또는 ticket에서는 각 reason을 한국어 최대 2문장, 공백 포함 160자 이내로 작성하세요.
+핵심 선택 근거와 중요한 자료 부족만 남기고 전적 나열, 확률 재설명, 반복 문구는 생략하세요.
+summary는 1문장 80자 이내로 작성하세요. mode=review의 복기 내용은 이 분량 제한을 적용하지 않습니다.
+이는 출력 길이만 바꾸며 픽 선정 기준이나 자료 검토 범위를 바꾸지 않습니다.\n'''
 class TransportFailure(RuntimeError):
     pass
 def stamp():
@@ -80,12 +85,17 @@ class Author:
         text=wire_text(INSTRUCTION,packet)
         if len(text)>MAX_CHARS:
             raise ValueError('요청 용량 한도 초과. 원문 유지 후 중단')
+        # Presentation-only policy. Keep original cache identity so completed work
+        # is never billed again merely to shorten its explanation. No hard output
+        # truncation: the complete probability JSON must remain intact.
+        text = SHORT_OUTPUT + text
         if not self.checked:
             try:
                 self.client.check(); self.checked=True
             except Exception as exc:
                 raise TransportFailure('구독 연결 확인 실패: '+type(exc).__name__) from exc
-        write(folder/(name+'.packet.json'),{'request_id':identity,'packet':packet})
+        write(folder/(name+'.packet.json'),{'request_id':identity,'packet':packet,
+            'output_style':'concise-v1','output_instruction':SHORT_OUTPUT})
         write(pending,{'request_id':identity,'started_at':stamp()})
         # Durable output files survive an interrupted process for manual recovery.
         schema=folder/(name+'.schema.json'); output=folder/(name+'.output.json')
