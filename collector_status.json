@@ -5,14 +5,25 @@
       "supervisor_pid": 517271,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T15:13:19+00:00",
+      "heartbeat_at": "2026-10-04T15:13:49+00:00",
       "pid": 517271,
       "last_started_at": "2026-10-04T14:33:42+00:00",
       "active_jobs": {
-        "score": 519808
+        "live": 519809,
+        "team": 519810
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "learning",
+        "master",
+        "products",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 2.0,
+        "master": 2.0,
+        "products": 2.0,
+        "learning": 0.0
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -25,9 +36,12 @@
       "run_id": "live-1791126827117429631",
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T15:13:48+00:00",
-      "pid": 519809,
-      "last_started_at": "2026-10-04T15:13:48+00:00"
+      "heartbeat_at": "2026-10-04T15:13:49+00:00",
+      "pid": 517271,
+      "last_started_at": "2026-10-04T15:13:48+00:00",
+      "child_pid": 519809,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "score": {
       "last_success_duration_seconds": 86.73,
@@ -98,11 +112,14 @@
       "last_failure_at": "2026-10-01T23:16:38+00:00",
       "last_success_at": "2026-10-04T15:09:04+00:00",
       "run_id": "team-1791126827131184468",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-04T15:13:48+00:00",
+      "heartbeat_at": "2026-10-04T15:13:50+00:00",
       "pid": 519810,
-      "last_started_at": "2026-10-04T15:13:48+00:00"
+      "last_started_at": "2026-10-04T15:13:48+00:00",
+      "child_pid": 519810,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_at": "2026-10-04T10:12:15+00:00",
@@ -173,7 +190,7 @@
       "duration_seconds": 28.1
     }
   },
-  "updated_at": "2026-10-04T15:13:48+00:00",
+  "updated_at": "2026-10-04T15:13:50+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
