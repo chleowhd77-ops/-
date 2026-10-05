@@ -5,38 +5,39 @@
       "supervisor_pid": 531112,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-05T03:37:41+00:00",
+      "heartbeat_at": "2026-10-05T03:38:11+00:00",
       "pid": 531112,
       "last_started_at": "2026-10-05T00:54:25+00:00",
       "active_jobs": {
-        "products": 539691,
-        "team": 539699
+        "live": 539700
       },
       "pending_jobs": [
-        "live",
         "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1528.1,
-        "live": 62.4,
-        "master": 18.2
+        "score": 1558.1,
+        "master": 48.3
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-10-05T03:34:32+00:00",
+      "last_success_at": "2026-10-05T03:38:12+00:00",
       "last_failure_duration_seconds": 6.0,
       "last_failure_at": "2026-10-01T23:55:39+00:00",
-      "last_success_duration_seconds": 4.69,
+      "last_success_duration_seconds": 5.95,
       "run_id": "live-1791171485083594674",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-05T03:38:08+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-05T03:38:12+00:00",
       "pid": 539700,
-      "last_started_at": "2026-10-05T03:38:06+00:00"
+      "last_started_at": "2026-10-05T03:38:06+00:00",
+      "child_pid": 539700,
+      "elapsed_seconds": 6.0,
+      "overlap_skips": 0,
+      "duration_seconds": 5.95
     },
     "score": {
       "last_failure_at": "2026-10-05T02:20:33+00:00",
@@ -201,7 +202,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-05T03:38:09+00:00",
+  "updated_at": "2026-10-05T03:38:12+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -328,16 +329,16 @@
         "count": 4
       },
       {
+        "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 2
+      },
+      {
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
         "count": 2
-      },
-      {
-        "metric": "cache_hit",
-        "purpose": "live",
-        "endpoint": "/fixtures",
-        "count": 1
       },
       {
         "metric": "cache_only_miss",
