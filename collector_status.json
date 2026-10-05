@@ -5,20 +5,23 @@
       "supervisor_pid": 540444,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-05T10:20:17+00:00",
+      "heartbeat_at": "2026-10-05T10:24:18+00:00",
       "pid": 540444,
       "last_started_at": "2026-10-05T04:15:31+00:00",
       "active_jobs": {
-        "backup": 545537,
-        "team": 545539
+        "backup": 545537
       },
       "pending_jobs": [
+        "live",
         "master",
-        "products"
+        "products",
+        "score"
       ],
       "pending_wait_seconds": {
-        "master": 44.1,
-        "products": 42.1
+        "master": 284.4,
+        "products": 282.4,
+        "live": 122.1,
+        "score": 122.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -139,17 +142,24 @@
       "duration_seconds": 33.23
     },
     "backup": {
-      "last_success_at": "2026-10-04T21:25:01+00:00",
-      "last_success_duration_seconds": 157.44,
+      "last_success_at": "2026-10-05T10:24:34+00:00",
+      "last_success_duration_seconds": 337.56,
       "run_id": "backup-1791195535484757272",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-05T10:20:17+00:00",
-      "pid": 540444,
+      "last_stage": "backup_deferred",
+      "state": "success",
+      "heartbeat_at": "2026-10-05T10:24:34+00:00",
+      "pid": 545537,
       "last_started_at": "2026-10-05T10:18:56+00:00",
       "child_pid": 545537,
-      "elapsed_seconds": 82.2,
-      "overlap_skips": 0
+      "elapsed_seconds": 322.5,
+      "overlap_skips": 0,
+      "db_backup_ok": false,
+      "requested_sources": [
+        "master",
+        "score",
+        "world"
+      ],
+      "duration_seconds": 337.56
     },
     "recovery": {
       "last_success_duration_seconds": 7.91,
@@ -199,7 +209,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-05T10:20:22+00:00",
+  "updated_at": "2026-10-05T10:24:34+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
