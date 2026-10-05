@@ -18,6 +18,8 @@ import sqlite3
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from datetime import datetime, timezone
 
 from manager_memory_inputs import ENGINES, digest, epoch, load_pool, read
@@ -134,6 +136,8 @@ class Author:
             return saved['response']
         if pending.exists():
             raise ValueError('이전 요청 완료 여부 확인 필요. 자동으로 재요청하지 않습니다')
+        if getattr(self,'stop_new_requests',None) is not None and self.stop_new_requests.is_set():
+            raise ValueError('다른 분석가 오류로 추가 요청 중단. 완료 답안은 보존합니다')
         if (self.state/'PAUSED.json').exists():
             raise ValueError('중단 상태. 직접 재개 필요')
         packet=prepare_packet(packet)
@@ -144,6 +148,8 @@ class Author:
         print(f"{LABELS.get(packet.get('analyst'), '분석가')} 요청 준비: {packet.get('mode')} / {len(text)}자 / 관련 기억 {len(packet.get('memory',{}).get('records',[]))}건",flush=True)
         if not self.checked:
             self.client.check(); self.checked=True
+        if getattr(self,'stop_new_requests',None) is not None and self.stop_new_requests.is_set():
+            raise ValueError('다른 분석가 오류로 추가 요청 중단. 완료 답안은 보존합니다')
         write(folder/(name+'.packet.json'),{'request_id':identity,'packet':packet})
         write(pending,{'request_id':identity,'started_at':stamp()})
         # Durable output files survive an interrupted process for manual recovery.
@@ -341,8 +347,9 @@ def freeze_picks(state, engine, picks, pool, cycle, current_pool):
     return frozen
 
 
-def run_selection(state, root, release, engine, cycle_path, author):
-    cycle=read(cycle_path); folder=cycle_path.parent/engine
+def run_selection(state, root, release, engine, cycle_path, author, common_cycle=None):
+    cycle=common_cycle if common_cycle is not None else read(cycle_path)
+    folder=cycle_path.parent/engine
     if (folder/'completed.json').exists(): return
     raw_pool=cycle['inputs']['pool']
     own_active=[read(p) for p in (Path(state)/'picks'/engine).glob('*.json')
@@ -456,6 +463,40 @@ def publish_payload(root, state):
     write(Path(state)/'published.json',{'digest':public_digest,'published_at':stamp()})
 
 
+def run_analysts(state, root, release, cycle_path, author_factory=None):
+    """One common source snapshot; four independent analysts; one publisher."""
+    common_cycle=read(cycle_path) if cycle_path is not None else None
+    stop_new_requests=Event()
+    publication_lock=Lock()
+    failures=[]
+    # Construct clients before threads: their CLI import modifies sys.path.
+    authors={e:(author_factory(e) if author_factory else Author(release,state)) for e in ENGINES}
+    for author in authors.values():author.stop_new_requests=stop_new_requests
+    def run(engine):
+        try:
+            print(f'{LABELS[engine]} 독립 동시 분석 시작',flush=True)
+            review_new(state,release,engine,authors[engine])
+            if cycle_path is not None:
+                run_selection(state,root,release,engine,cycle_path,authors[engine],common_cycle)
+            with publication_lock:publish_payload(root,state)
+            print(f'{LABELS[engine]} 독립 동시 분석 완료',flush=True)
+        except Exception as error:
+            with publication_lock:
+                if not failures:
+                    failures.append(error)
+                    stop_new_requests.set()
+                    write(Path(state)/'PAUSED.json',{'paused_at':stamp(),'reason':str(error),'automatic_retry':False})
+            raise
+    print('공통 경기자료 준비 완료 · 네 분석가 동시 실행 · 완료 답안 재사용',flush=True)
+    # Wait for outstanding calls to save their answers even if another fails.
+    with ThreadPoolExecutor(max_workers=len(ENGINES)) as pool:
+        futures=[pool.submit(run,e) for e in ENGINES]
+        for future in futures:
+            try:future.result()
+            except Exception:pass
+    if failures:raise failures[0]
+
+
 def main():
     import fcntl
     parser=argparse.ArgumentParser()
@@ -490,10 +531,7 @@ def main():
         if not (state/'ACTIVATED.json').exists():
             raise SystemExit('아직 활성화하지 않은 준비 상태입니다')
         try:
-            author=Author(args.release,state)
             grade(state,args.root)
-            for engine in ENGINES:
-                review_new(state,args.release,engine,author)
             pending=[p for p in sorted((state/'cycles').glob('*/inputs.json'))
                      if not all((p.parent/e/'completed.json').exists() for e in ENGINES)]
             if pending:
@@ -505,12 +543,10 @@ def main():
                     seen.update(q['case_id'] for q in read(p)['inputs']['pool'])
                 inputs['pool']=[q for q in inputs['pool'] if q['case_id'] not in seen]
                 if not inputs['pool']:
-                    publish_payload(args.root,state); return
+                    run_analysts(state,args.root,args.release,None); return
                 cycle_path=state/'cycles'/digest(inputs['pool'])/'inputs.json'
                 write(cycle_path,{'inputs':inputs,'created_at':stamp()})
-            for engine in ENGINES:
-                run_selection(state,args.root,args.release,engine,cycle_path,author)
-                publish_payload(args.root,state)
+            run_analysts(state,args.root,args.release,cycle_path)
         except Exception as error:
             write(state/'PAUSED.json',{'paused_at':stamp(),'reason':str(error),
                                       'automatic_retry':False})
