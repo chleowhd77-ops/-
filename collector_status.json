@@ -5,18 +5,19 @@
       "supervisor_pid": 540444,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-05T17:31:32+00:00",
+      "heartbeat_at": "2026-10-05T17:33:02+00:00",
       "pid": 540444,
       "last_started_at": "2026-10-05T04:15:31+00:00",
       "active_jobs": {
-        "master": 547728,
-        "team": 547729
+        "products": 547739
       },
       "pending_jobs": [
-        "products"
+        "live",
+        "score"
       ],
       "pending_wait_seconds": {
-        "products": 72.1
+        "live": 2.0,
+        "score": 2.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -166,16 +167,25 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_failure_at": "2026-10-05T01:31:20+00:00",
+      "last_failure_at": "2026-10-05T17:33:16+00:00",
       "last_success_at": "2026-10-05T17:28:04+00:00",
-      "last_failure_duration_seconds": 601.6,
+      "last_failure_duration_seconds": 88.81,
       "last_success_duration_seconds": 86.85,
       "run_id": "products-1791221506063517063",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-05T17:31:47+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-05T17:33:16+00:00",
       "pid": 547739,
-      "last_started_at": "2026-10-05T17:31:47+00:00"
+      "last_started_at": "2026-10-05T17:31:47+00:00",
+      "child_pid": 547739,
+      "elapsed_seconds": 76.1,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 25,
+      "manager_current_count": 13,
+      "manager_reason": "",
+      "duration_seconds": 88.81,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -193,7 +203,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-05T17:31:47+00:00",
+  "updated_at": "2026-10-05T17:33:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
