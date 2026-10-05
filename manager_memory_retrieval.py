@@ -9,7 +9,7 @@ import json
 import re
 import unicodedata
 
-POLICY = 'related-memory-v1'
+POLICY = 'ai-match-reviews-v1'
 MAX_MEMORY_CHARS = 12_000
 MAX_RECORDS = 4
 
@@ -56,13 +56,20 @@ def record_view(kind, record):
 
 def related_memory(memory, analyst, questions, mode):
     if memory.get('retrieval_policy')==POLICY:
+        if any(r.get('source')!='live_pick_reviews' for r in memory.get('records',[])):
+            raise ValueError('AI 실경기 복기 외의 기억은 사용할 수 없습니다')
         if memory.get('analyst')!=analyst or len(serial(memory))>MAX_MEMORY_CHARS:
             raise ValueError('관련 기억의 분석가 또는 용량 확인 필요')
         return copy.deepcopy(memory)
+    if memory.get('retrieval_policy')=='related-memory-v1':
+        # Old saved packets may contain pre-AI school results. Never forward them.
+        views=[r['record'] for r in memory.get('records',[]) if r.get('source')=='live_pick_reviews']
+        memory={'analyst':memory.get('analyst'), 'live_pick_reviews':[
+            dict(v,original={'answer':v.get('original_answer'),'option':v.get('original_option')}) for v in views]}
     if memory.get('analyst',analyst)!=analyst:
         raise ValueError('다른 분석가의 기억은 전달하지 않습니다')
     result={'retrieval_policy':POLICY,'analyst':analyst,
-            'scope':'원본은 보관되어 있습니다. 아래는 현재 경기 이름과 일치하는 관련 기록 일부이며 전체 기억이 아닙니다.',
+            'scope':'AI가 직접 낸 실경기 픽과 결과의 관련 복기만 참고합니다. AI 연결 전 학습 기록은 사용하지 않습니다.',
             'records':[]}
     if mode!='candidates':
         result['scope']=('이미 작성한 자기 후보와 이유로 최종 선정합니다. 과거 기억을 재전송하지 않습니다.'
@@ -73,7 +80,7 @@ def related_memory(memory, analyst, questions, mode):
     excluded={str(identity(q).get('fixture_id')) for q in questions}
     excluded_cases={q.get('case_id') for q in questions}
     ranked=[]
-    for kind in ('error_memory','live_pick_reviews','successful_memory'):
+    for kind in ('live_pick_reviews',):
         for record in memory.get(kind,[]):
             if record.get('analyst',analyst)!=analyst: continue
             rid=identity(record)

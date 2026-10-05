@@ -20,7 +20,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-from manager_memory_inputs import ENGINES, digest, epoch, load_memory, load_pool, read
+from manager_memory_inputs import ENGINES, digest, epoch, load_pool, read
 from remembered_products_packing import wire_text
 from manager_memory_retrieval import prepare_packet
 
@@ -119,7 +119,17 @@ class Author:
         pending = folder/(name+'.pending.json')
         if answer_path.exists():
             saved=read(answer_path)
-            if saved['request_id'] not in (identity,digest([VERSION,INSTRUCTION,SCHEMA,prepare_packet(packet)])):
+            valid_ids={identity,digest([VERSION,INSTRUCTION,SCHEMA,prepare_packet(packet)])}
+            receipt_path=folder/(name+'.packet.json')
+            if receipt_path.exists():
+                receipt=read(receipt_path); old=receipt['packet']
+                # A changed memory policy must not bill the same question again.
+                # Verify the historical receipt hash and all non-memory inputs.
+                if ({k:v for k,v in old.items() if k!='memory'} ==
+                        {k:v for k,v in packet.items() if k!='memory'} and
+                        receipt['request_id']==digest([VERSION,INSTRUCTION,SCHEMA,old])):
+                    valid_ids.add(receipt['request_id'])
+            if saved['request_id'] not in valid_ids:
                 raise ValueError('저장된 요청과 현재 입력이 다릅니다')
             return saved['response']
         if pending.exists():
@@ -177,8 +187,9 @@ def ask_saved_or_partitioned(author, folder, name, packet):
     folder=Path(folder)
     if any((folder/(name+suffix)).exists() for suffix in ('.answer.json','.pending.json')):
         return author.ask(folder,name,packet)
+    existing_plan=folder/(name+'-related-v1')/'packets.json'
     prepared=prepare_packet(packet)
-    if len(wire_text(INSTRUCTION,prepared))<=MAX_CHARS:
+    if not existing_plan.exists() and len(wire_text(INSTRUCTION,prepared))<=MAX_CHARS:
         return author.ask(folder,name,prepared)
     field={'candidates':'questions','review':'records'}.get(packet.get('mode'))
     if field is None:
@@ -189,7 +200,12 @@ def ask_saved_or_partitioned(author, folder, name, packet):
     subfolder=folder/(name+'-related-v1')
     plan=subfolder/'packets.json'
     if plan.exists():
-        if read(plan)!=parts: raise ValueError('저장된 분할 요청과 입력이 다릅니다')
+        saved_parts=read(plan)
+        if ([q for part in saved_parts for q in part[field]] != packet[field] or
+                any({k:v for k,v in part.items() if k not in ('memory',field)} !=
+                    {k:v for k,v in packet.items() if k not in ('memory',field)} for part in saved_parts)):
+            raise ValueError('저장된 분할 요청과 입력이 다릅니다')
+        parts=saved_parts
     else: write(plan,parts)
     result={'summary':'','picks':[],'reflections':[]}
     summaries=[]
@@ -337,7 +353,7 @@ def run_selection(state, root, release, engine, cycle_path, author):
     if not pool or not slots:
         write(folder/'completed.json',{'reason':'추가 후보 없음 또는 기존 자신픽 10개 유지','frozen':[]})
         return
-    memory=append_live_memory(load_memory(release,engine,pool),state,engine,pool)
+    memory=append_live_memory({'analyst':engine},state,engine,pool)
     base={'mode':'candidates','analyst':engine,'memory':memory,'review_scope':'all_provided_questions'}
     # Fixed packets are retained across restarts; no fresh request after a partial failure.
     packets_path=folder/'packets.json'
@@ -461,11 +477,11 @@ def main():
             inputs=load_pool(args.root); report={'eligible_matches':len(inputs['pool']),
                 'excluded':inputs['excluded'],'AI_requests':0,'web_active':False,'analysts':{}}
             for e in ENGINES:
-                memory=load_memory(args.release,e,inputs['pool'])
+                memory=append_live_memory({'analyst':e},state,e,inputs['pool'])
                 packets=split_packets({'mode':'candidates','analyst':e,'memory':memory,'review_scope':'all_provided_questions'},
                                       'questions',inputs['pool'])
-                report['analysts'][e]={'correct_memories':len(memory['successful_memory']),
-                    'wrong_case_memories':len(memory['error_memory']), 'input_batches':len(packets),
+                report['analysts'][e]={'ai_match_reviews':len(memory['live_pick_reviews']),
+                    'legacy_memories':0, 'input_batches':len(packets),
                     'selection_calls_up_to':len(packets)+bool(packets)}
             write(state/'readiness.json',report); print(json.dumps(report,ensure_ascii=False)); return
         if not args.run: raise SystemExit('--check 또는 --run을 지정하세요')
