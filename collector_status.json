@@ -5,20 +5,21 @@
       "supervisor_pid": 540444,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-06T05:39:42+00:00",
+      "heartbeat_at": "2026-10-06T05:43:13+00:00",
       "pid": 540444,
       "last_started_at": "2026-10-05T04:15:31+00:00",
       "active_jobs": {
-        "master": 551281,
-        "team": 551284
+        "products": 551286
       },
       "pending_jobs": [
         "live",
-        "products"
+        "master",
+        "score"
       ],
       "pending_wait_seconds": {
-        "products": 402.7,
-        "live": 232.1
+        "live": 142.4,
+        "score": 138.4,
+        "master": 12.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -168,16 +169,24 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_success_duration_seconds": 212.95,
+      "last_success_duration_seconds": 193.83,
       "last_failure_duration_seconds": 92.1,
-      "last_success_at": "2026-10-06T05:31:48+00:00",
+      "last_success_at": "2026-10-06T05:43:16+00:00",
       "last_failure_at": "2026-10-05T17:33:18+00:00",
       "run_id": "products-1791265200934656981",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-06T05:40:02+00:00",
+      "last_stage": "executing",
+      "state": "success",
+      "heartbeat_at": "2026-10-06T05:43:16+00:00",
       "pid": 551286,
-      "last_started_at": "2026-10-06T05:40:02+00:00"
+      "last_started_at": "2026-10-06T05:40:02+00:00",
+      "child_pid": 551286,
+      "elapsed_seconds": 192.6,
+      "overlap_skips": 1,
+      "manager_published": true,
+      "manager_input_count": 17,
+      "manager_current_count": 11,
+      "manager_reason": "",
+      "duration_seconds": 193.83
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -195,7 +204,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-06T05:40:02+00:00",
+  "updated_at": "2026-10-06T05:43:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
