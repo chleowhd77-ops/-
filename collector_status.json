@@ -5,21 +5,18 @@
       "supervisor_pid": 559898,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-06T22:44:19+00:00",
+      "heartbeat_at": "2026-10-06T22:44:49+00:00",
       "pid": 559898,
       "last_started_at": "2026-10-06T11:26:52+00:00",
       "active_jobs": {
-        "master": 580879
+        "team": 580880,
+        "products": 580882
       },
       "pending_jobs": [
-        "live",
-        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "live": 602.8,
-        "products": 602.7,
-        "score": 0.1
+        "score": 30.5
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -105,15 +102,36 @@
     },
     "team": {
       "last_failure_duration_seconds": 600.0,
-      "last_success_at": "2026-10-06T22:40:09+00:00",
-      "last_success_duration_seconds": 37.57,
+      "last_success_at": "2026-10-06T22:45:19+00:00",
+      "last_success_duration_seconds": 46.48,
       "last_failure_at": "2026-10-06T08:14:31+00:00",
       "run_id": "team-1791326669243864302",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-06T22:44:35+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-06T22:45:19+00:00",
       "pid": 580880,
-      "last_started_at": "2026-10-06T22:44:32+00:00"
+      "last_started_at": "2026-10-06T22:44:32+00:00",
+      "child_pid": 580880,
+      "elapsed_seconds": 20.2,
+      "overlap_skips": 0,
+      "team_retry_processed": 0,
+      "team_retry_resolved": 320,
+      "team_retry_pending": 4,
+      "team_retry_due": 0,
+      "team_retry_seeded": 2,
+      "team_profile_card_updates": 0,
+      "data_prefetch_matches": 26,
+      "data_prefetch_teams": 50,
+      "data_prefetch_identity_missing": 1,
+      "data_prefetch_early_core_matches": 14,
+      "data_prefetch_deep_matches": 12,
+      "data_prefetch_core_newly_warmed": 0,
+      "data_prefetch_core_already_ready": 25,
+      "data_prefetch_early_horizon_hours": 72,
+      "data_prefetch_deep_horizon_hours": 30,
+      "data_prefetch_quota_paused": false,
+      "data_prefetch_errors": [],
+      "duration_seconds": 46.48
     },
     "backup": {
       "last_success_duration_seconds": 849.67,
@@ -153,11 +171,14 @@
       "last_success_duration_seconds": 191.44,
       "last_failure_duration_seconds": 92.1,
       "run_id": "products-1791326683544997975",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-06T22:44:44+00:00",
-      "pid": 580882,
-      "last_started_at": "2026-10-06T22:44:44+00:00"
+      "heartbeat_at": "2026-10-06T22:44:49+00:00",
+      "pid": 559898,
+      "last_started_at": "2026-10-06T22:44:44+00:00",
+      "child_pid": 580882,
+      "elapsed_seconds": 6.0,
+      "overlap_skips": 0
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -175,7 +196,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-06T22:44:44+00:00",
+  "updated_at": "2026-10-06T22:45:19+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -192,7 +213,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 328
+        "calls": 332
       },
       {
         "purpose": "live",
@@ -245,19 +266,19 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/standings",
-        "count": 7142
+        "count": 7164
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/statistics",
-        "count": 3631
+        "count": 3641
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 3363
+        "count": 3371
       },
       {
         "metric": "cache_only_miss",
@@ -347,13 +368,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-06",
     "reset_timezone": "UTC",
-    "local_calls": 3588,
-    "provider_remaining": 3912,
+    "local_calls": 3592,
+    "provider_remaining": 3908,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 3043,
+    "analysis_calls": 3047,
     "live_calls": 258,
     "scoring_calls": 287,
     "world_daily_limit": 4000,
