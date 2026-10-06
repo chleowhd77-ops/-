@@ -5,18 +5,21 @@
       "supervisor_pid": 540444,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-06T02:09:04+00:00",
+      "heartbeat_at": "2026-10-06T02:10:34+00:00",
       "pid": 540444,
       "last_started_at": "2026-10-05T04:15:31+00:00",
       "active_jobs": {
-        "products": 549557,
-        "team": 549560
+        "products": 549557
       },
       "pending_jobs": [
-        "master"
+        "live",
+        "master",
+        "score"
       ],
       "pending_wait_seconds": {
-        "master": 110.7
+        "master": 200.9,
+        "live": 24.1,
+        "score": 24.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -166,23 +169,24 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_success_duration_seconds": 310.59,
+      "last_success_duration_seconds": 219.07,
       "last_failure_duration_seconds": 92.1,
       "last_failure_at": "2026-10-05T17:33:18+00:00",
-      "last_success_at": "2026-10-06T01:58:25+00:00",
+      "last_success_at": "2026-10-06T02:10:43+00:00",
       "run_id": "products-1791252423453510298",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-06T02:09:03+00:00",
-      "pid": 540444,
+      "state": "success",
+      "heartbeat_at": "2026-10-06T02:10:43+00:00",
+      "pid": 549557,
       "last_started_at": "2026-10-06T02:07:04+00:00",
       "child_pid": 549557,
-      "elapsed_seconds": 120.5,
+      "elapsed_seconds": 210.9,
       "overlap_skips": 1,
       "manager_published": true,
       "manager_input_count": 17,
       "manager_current_count": 11,
-      "manager_reason": ""
+      "manager_reason": "",
+      "duration_seconds": 219.07
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -200,7 +204,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-06T02:09:06+00:00",
+  "updated_at": "2026-10-06T02:10:43+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
