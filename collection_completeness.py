@@ -35,10 +35,9 @@ def inspect(dossier):
             received = (isinstance(value, dict) and value.get('confirmed') is True
                         and sum(isinstance(v, list) and len(v) >= 11 for v in value.values()) >= 2)
         else:
-            received = bool(value)
+            received = bool(value) or evidence.get('league_key_players_available') is True
         sections[field] = 'received' if received else 'empty_or_pending'
         if ((field in ('standings','league_key_players') and not dossier.get('deep_refresh_due'))
-                or (field == 'injuries' and hours > 24)
                 or (field == 'lineups' and hours > 2)):
             if not received:
                 sections[field] = 'not_due'

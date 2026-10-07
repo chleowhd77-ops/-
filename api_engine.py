@@ -700,20 +700,29 @@ def _cache_only_miss_response(path):
 
 def _recovery_db():
     conn = _runtime_connect()
-    conn.execute('''CREATE TABLE IF NOT EXISTS data_recovery_queue (
+    conn.execute("""CREATE TABLE IF NOT EXISTS data_recovery_queue (
         key TEXT PRIMARY KEY, path TEXT, params_json TEXT, attempts INTEGER DEFAULT 0,
-        next_attempt REAL DEFAULT 0, reason TEXT, updated_at REAL)''')
+        next_attempt REAL DEFAULT 0, reason TEXT, updated_at REAL,
+        priority INTEGER NOT NULL DEFAULT 0)""")
+    if 'priority' not in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')}:
+        try:
+            conn.execute('ALTER TABLE data_recovery_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 0')
+        except sqlite3.OperationalError:
+            if 'priority' not in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')}:
+                conn.close()
+                raise
+    conn.commit()
     return conn
 
 
-def _queue_data_recovery(path, params, reason='cache_only_miss'):
-    # Serving workers request collection; they never turn a miss into fake data.
+def _queue_data_recovery(path, params, reason='cache_only_miss', priority=None):
     key = json.dumps([path, params], sort_keys=True, ensure_ascii=True)
     with _recovery_db() as conn:
-        conn.execute('''INSERT INTO data_recovery_queue
-            (key,path,params_json,reason,updated_at) VALUES (?,?,?,?,?)
-            ON CONFLICT(key) DO UPDATE SET updated_at=excluded.updated_at''',
-            (key,path,json.dumps(params),reason,time.time()))
+        conn.execute("""INSERT INTO data_recovery_queue
+            (key,path,params_json,reason,updated_at,priority) VALUES (?,?,?,?,?,?)
+            ON CONFLICT(key) DO UPDATE SET updated_at=excluded.updated_at,
+            priority=CASE WHEN ? IS NULL THEN priority ELSE MIN(priority,excluded.priority) END""",
+            (key,path,json.dumps(params),reason,time.time(),int(priority or 0),priority))
     conn.close()
 
 
@@ -721,9 +730,9 @@ def process_data_recovery_queue(limit=12):
     """Collector-only bounded recovery of exact requests missed by analysts."""
     conn = _recovery_db()
     try:
-        rows = conn.execute('''SELECT key,path,params_json,attempts FROM data_recovery_queue
-            WHERE next_attempt<=? ORDER BY CASE WHEN path LIKE '/fixtures%' THEN 0
-            WHEN path='/odds' THEN 1 ELSE 2 END, next_attempt,updated_at LIMIT ?''',
+        priority = 'priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '(0+0)'
+        rows = conn.execute(f"""SELECT key,path,params_json,attempts FROM data_recovery_queue
+            WHERE next_attempt<=? ORDER BY {priority},next_attempt,updated_at,key LIMIT ?""",
             (time.time(),int(limit))).fetchall()
     finally:
         conn.close()
@@ -735,7 +744,13 @@ def process_data_recovery_queue(limit=12):
                 response = api_get(path, params=json.loads(raw), timeout=12, purpose='analysis')
             payload = response.json() if response.status_code == 200 else {}
             valid_empty = path in {'/injuries','/fixtures/headtohead'} or (path == '/fixtures' and bool(json.loads(raw).get('next')))
-            if response.status_code == 200 and not payload.get('errors') and (payload.get('response') or valid_empty):
+            observed = bool(payload.get('response'))
+            if path == '/fixtures/statistics':
+                observed = any(any(s.get('value') is not None for s in r.get('statistics') or [])
+                               for r in payload.get('response') or [] if isinstance(r,dict))
+            if response.status_code == 200 and not payload.get('errors') and (observed or valid_empty):
+                if path == '/fixtures/statistics' and json.loads(raw).get('fixture'):
+                    set_db_cache('completed_fixture_stats_v1_'+str(json.loads(raw)['fixture']), payload['response'])
                 done += 1
                 reason = 'received' if payload.get('response') else 'confirmed_empty_'+path.strip('/').replace('/','_')
                 with _recovery_db() as conn:
@@ -3305,7 +3320,7 @@ def _fetch_date_fixtures_api(date_str, ttl_h=2, purpose="analysis"):
     """한 날짜 경기표를 한 번만 받아 팀 신원·경기 ID가 함께 사용한다."""
     cache_key = f"fixtures_by_date_v2_{date_str}"
     cached = get_db_cache(cache_key, min(max(float(ttl_h or 0), 0.2), 2))
-    if cached is not None:
+    if cached or (cached == [] and get_db_cache(cache_key, 5/60) is not None):
         return cached
     try:
         response = api_get(
@@ -3379,7 +3394,11 @@ def _recover_pair_fixture(home_id, away_id, match_dt):
             else:
                 rows = payload.get("response") or []
                 lookup["pair_rows"] = len(rows)
-                if not rows:
+                if not any(int(((r.get('teams') or {}).get('home') or {}).get('id') or 0)==int(home_id)
+                           and int(((r.get('teams') or {}).get('away') or {}).get('id') or 0)==int(away_id)
+                           and int((r.get('fixture') or {}).get('id') or 0)>0
+                           and abs(float((r.get('fixture') or {}).get('timestamp') or 0)-match_dt.timestamp())<=3*3600
+                           for r in rows if isinstance(r,dict)):
                     # The H2H feed may lag the scheduled-fixtures endpoint.
                     # Query the actual home team's date board once, sharing
                     # its positive/negative result through this same cache.
@@ -3548,6 +3567,8 @@ def resolve_match_team_pair(
                 if (
                     min(best[1], best[2]) >= 0.72
                     and best[1] + best[2] >= 1.52
+                    and best[3] <= 3.0
+                    and (not league_name or best[7] >= 0.70)
                     and not ambiguous
                 ):
                     selected = best
@@ -4312,7 +4333,7 @@ def fetch_team_standing_api(team_id, ttl_h, target_league_id=None, target_season
     cache_key = (f"standing_v7_{team_id}_{target_league_id}_{target_season}"
                  if target_league_id else f"standing_v5_survival_{team_id}")
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data:
+    if isinstance(cached_data, dict) and 0 < int(cached_data.get('rank') or 0) < 99:
         return cached_data
     try:
         year = int(target_season or datetime.now().year)
@@ -4345,19 +4366,22 @@ def fetch_team_standing_api(team_id, ttl_h, target_league_id=None, target_season
                 break
     except Exception:
         pass
-    set_db_cache(cache_key, default_res)
+    # Never persist an unknown rank as if a failed/cache-only call were a table.
     return default_res
 
 def fetch_league_key_players(league_id, season):
     if not league_id or not season: return {}
     cache_key = f"keyplayers_v4_{league_id}_{season}"
     cached_data = get_db_cache(cache_key, 168)
-    if cached_data: return cached_data
+    if cached_data is not None and get_db_cache(f'keyplayers_status_v1_{league_id}_{season}',168): return cached_data
     
     key_players = {}
     try:
         res_s = api_get("/players/topscorers", params={"league": league_id, "season": season}, timeout=5)
-        data_s = res_s.json().get("response", [])
+        payload_s = res_s.json() if res_s.status_code == 200 else {}
+        if res_s.status_code != 200 or payload_s.get('errors'):
+            return {}
+        data_s = payload_s.get('response') or []
         for p in data_s:
             name = p.get("player", {}).get("name", "")
             stats = (p.get("statistics") or [{}])[0]
@@ -4367,7 +4391,10 @@ def fetch_league_key_players(league_id, season):
                 key_players[name] = {"goals": goals, "assists": 0, "team_id": team_id}
             
         res_a = api_get("/players/topassists", params={"league": league_id, "season": season}, timeout=5)
-        data_a = res_a.json().get("response", [])
+        payload_a = res_a.json() if res_a.status_code == 200 else {}
+        if res_a.status_code != 200 or payload_a.get('errors'):
+            return {}
+        data_a = payload_a.get('response') or []
         for p in data_a:
             name = p.get("player", {}).get("name", "")
             stats = (p.get("statistics") or [{}])[0]
@@ -4382,6 +4409,7 @@ def fetch_league_key_players(league_id, season):
                 key_players[name]["team_id"] = key_players[name].get("team_id") or team_id
             
         set_db_cache(cache_key, key_players)
+        set_db_cache(f'keyplayers_status_v1_{league_id}_{season}', {'available':True})
         return key_players
     except: return {}
 
@@ -4421,12 +4449,12 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
     if not team_id: return default_res
     cache_key = f"inj_v6_all_names_{team_id}_{league_id}_{season}_{int(fixture_id or 0)}"
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data is not None: return cached_data
+    if isinstance(cached_data, dict) and cached_data.get('available') is True: return cached_data
     # 당일 API가 소진돼도 직전 정상 부상자 자료를 버리지 않는다.
     stale_data = get_db_cache(cache_key, max(72, ttl_h))
 
     def stale_or_default():
-        if isinstance(stale_data, dict):
+        if isinstance(stale_data, dict) and stale_data.get('available') is True:
             preserved = dict(stale_data)
             preserved["available"] = True
             preserved["source"] = "stale_cache"
@@ -4510,14 +4538,17 @@ def fetch_team_injuries_api(team_id, league_id, season, ttl_h, fixture_id=0):
         return stale_or_default()
 
 def fetch_new_manager_status(team_id, ttl_h):
-    default_res = {"is_new_manager": False, "days_since_hired": 999}
+    default_res = {"is_new_manager": False, "days_since_hired": 999, "available":False}
     if not team_id: return default_res
     cache_key = f"coach_v4_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data: return cached_data
+    if cached_data and cached_data.get('available') is True: return cached_data
     try:
         res = api_get("/coachs", params={"team": team_id}, timeout=5)
-        data = res.json().get("response", [])
+        payload = res.json() if res.status_code == 200 else {}
+        if res.status_code != 200 or payload.get('errors'):
+            return default_res
+        data = payload.get('response') or []
         if data:
             for coach in data:
                 career = coach.get("career", [])
@@ -4528,7 +4559,7 @@ def fetch_new_manager_status(team_id, ttl_h):
                             start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                             days_since = (datetime.now(timezone.utc) - start_dt).days
                             is_new = days_since <= 21 
-                            res_val = {"is_new_manager": is_new, "days_since_hired": days_since}
+                            res_val = {"is_new_manager": is_new, "days_since_hired": days_since, "available":True}
                             set_db_cache(cache_key, res_val)
                             return res_val
         return default_res
@@ -4665,7 +4696,8 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
     if not team_id: return default_res
     cache_key = f"recent_stats_v3_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data: return cached_data
+    # Rebuild from shared raw responses. A partial aggregate must not mask a
+    # newly recovered fixture for the remainder of a 12/24-hour cache TTL.
     try:
         fixtures = fetch_team_recent_fixtures_api(team_id, ttl_h)[-2:]
         values = {key: [] for key in ("possession", "shots_on_goal", "corners", "yellow_cards", "xg", "xga")}

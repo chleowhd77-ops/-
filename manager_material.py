@@ -26,6 +26,7 @@ def evidence_value(evidence):
     for side in ('home','away'):
         stats = (value.get('recent_match_stats') or {}).get(side)
         if isinstance(stats,dict): stats.pop('observed_at',None)
+    value.pop('_shared_collection', None)
     return value
 
 
@@ -35,6 +36,7 @@ def question_value(question):
     recovery = source.get('evidence_recovery')
     if isinstance(recovery,dict) and 'restored_sections' in recovery:
         recovery['restored_sections'] = _without_origin_numbers(recovery['restored_sections'])
+    source.pop('shared_material', None)
     value['source'] = source
     if 'evidence' in value: value['evidence'] = evidence_value(value['evidence'])
     return value

@@ -1919,12 +1919,12 @@ def fetch_team_squad_cached(team_id):
     if not team_id:
         return []
     team_id = int(team_id)
-    if team_id in SQUAD_CACHE:
+    if SQUAD_CACHE.get(team_id):
         return SQUAD_CACHE[team_id]
 
     cache_key = f"team_squad_v2_{team_id}"
     cached_players = get_db_cache(cache_key, SQUAD_CACHE_TTL_HOURS)
-    if isinstance(cached_players, list):
+    if isinstance(cached_players, list) and cached_players:
         SQUAD_CACHE[team_id] = cached_players
         return cached_players
 
@@ -1934,7 +1934,7 @@ def fetch_team_squad_cached(team_id):
     retry_guard = get_db_cache(
         f"{cache_key}_retry_guard", FIXTURE_IDENTITY_RETRY_HOURS
     )
-    if retry_guard is not None:
+    if retry_guard is not None and not MASTER_CACHE_ONLY_SERVING:
         players = stale_players if isinstance(stale_players, list) else []
         SQUAD_CACHE[team_id] = players
         return players
@@ -1950,12 +1950,15 @@ def fetch_team_squad_cached(team_id):
                     else []
                 )
                 players = players if isinstance(players, list) else []
-                SQUAD_CACHE[team_id] = players
-                set_db_cache(cache_key, players)
-                return players
+                if players:
+                    SQUAD_CACHE[team_id] = players
+                    set_db_cache(cache_key, players)
+                    return players
     except Exception:
         pass
-    set_db_cache(f"{cache_key}_retry_guard", {"failed": True})
+    # A serving cache miss is a request for the collector, not a provider failure.
+    if not MASTER_CACHE_ONLY_SERVING:
+        set_db_cache(f"{cache_key}_retry_guard", {"failed": True})
     players = stale_players if isinstance(stale_players, list) else []
     SQUAD_CACHE[team_id] = players
     return players
@@ -12504,6 +12507,8 @@ def build_dashboard_data():
             ),
         )
         api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
+        os_data = _complete_shared_fixture_metadata(
+            m, api_fixture_id, home_info.get('id'), away_info.get('id'), os_data)
         model_only_verified_pair = bool(
             analysis_odds_source == "model_only"
             and home_id > 0
@@ -13591,6 +13596,8 @@ def build_dashboard_data():
          
         os_data = fetch_overseas_odds_and_fixture_api(home_info.get("id"), away_info.get("id"), odds_ttl, m.get("match_time") or "시간 미정", include_odds=True)
         api_fixture_id = int((os_data or {}).get("fixture_id") or identity_fixture or 0)
+        os_data = _complete_shared_fixture_metadata(
+            m, api_fixture_id, home_info.get('id'), away_info.get('id'), os_data)
         if api_fixture_id <= 0:
             queue_team_identity_retry(
                 home_team, away_team, match_time,
@@ -17575,8 +17582,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
 
     This job resolves all future matches on the published PROTO/TOTO14 tickets
     into a shared, slow-changing team dossier (identity, form source and H2H).
-    From T-30 it additionally refreshes volatile/detailed evidence (market,
-    standings, squad, injuries and lineup).  Official, robot, V2 and V3 then
+    When a ticket appears it refreshes available detailed evidence (market,
+    standings, squad and injuries); official lineups retain their publication window.  Official, robot, V2 and V3 then
     read the same evidence without four independent overseas-data jobs.
     """
     now = datetime.now(KST)
@@ -17640,7 +17647,9 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         home_name = str(match.get("home") or "").strip()
         away_name = str(match.get("away") or "").strip()
         hours_to_kickoff = (kickoff - now).total_seconds() / 3600.0
-        deep_refresh_due = hours_to_kickoff <= DATA_PREFETCH_HORIZON_HOURS
+        # Collect published information when the ticket appears. Only official
+        # starting lineups have a later publication window.
+        deep_refresh_due = True
         # The same official fixture can appear in PROTO and TOTO14.  Prefetch
         # its provider evidence once, then let every analyst reuse it.
         key = (
@@ -17689,9 +17698,9 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                             or season or 0
                         )
                     if home_id and away_id:
-                        # Date-fixture identity data already gives the early
-                        # pass the correct pair/logo/competition.  Do not spend
-                        # a volatile odds request until the normal T-30 refresh.
+                        # Identity supplies the correct pair and competition.
+                        # Reuse ticket odds; fetch provider odds only if missing
+                        # or needed by the shared TOTO14 fixture.
                         if deep_refresh_due or "TOTO14" in entry.get("shared_sources", []):
                             need_overseas_odds = not _valid_three_way_odds([
                                 match.get("odd_h"), match.get("odd_d"), match.get("odd_a")
@@ -17715,9 +17724,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         )
                     continue
 
-                # From T-72, warm the common team record once.  These helpers
-                # share the recent-fixtures cache, so this is normally one
-                # provider request per distinct team plus one H2H request.
+                # Warm each ticket's common team record. These helpers reuse
+                # the same recent-fixtures cache across analyst engines.
                 team_evidence = {}
                 for team_id in (home_id, away_id):
                     team_evidence[str(team_id)] = {
@@ -17732,13 +17740,18 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                             "next_fixture": fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
                             "recent_stats": fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
                         })
-                        fetch_team_squad_cached(team_id)
+                        team_evidence[str(team_id)]['squad'] = fetch_team_squad_cached(team_id)
+                        from collection_history import plan
+                        import api_engine as shared_api
+                        team_evidence[str(team_id)]['recent_statistics'] = plan(
+                            team_id, team_evidence[str(team_id)]['recent_fixtures'],
+                            get_db_cache, set_db_cache, shared_api._queue_data_recovery,
+                            shared_api._runtime_connect)
                         team_evidence[str(team_id)]["manager"] = fetch_new_manager_status(team_id, 24)
                     teams_warmed += 1
 
-                # Standings/key-player information changes often enough to
-                # wait for the normal T-30 refresh.  Core history is already
-                # available to all analyst engines from the early pass.
+                # Collect available standings and key-player information now,
+                # sharing provider caches across all analyst engines.
                 standings_evidence = {}
                 key_players = []
                 if deep_refresh_due and league_id and season:
@@ -17749,11 +17762,13 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         "away": fetch_team_standing_api(away_id, 12, league_id, season),
                     }
                     key_players = fetch_league_key_players(league_id, season)
+                key_players_available = bool(league_id and season and get_db_cache(
+                    f'keyplayers_status_v1_{league_id}_{season}',168))
                 h2h_evidence = fetch_fixture_details_api(home_id, away_id, 24)
                 injury_evidence = {}
                 lineup_evidence = {}
 
-                if deep_refresh_due and fixture_id and hours_to_kickoff <= 24:
+                if deep_refresh_due and fixture_id:
                     injury_ttl = 3 if hours_to_kickoff <= 3 else 8
                     injury_evidence = {
                         "home": fetch_team_injuries_api(home_id, league_id, season, injury_ttl, fixture_id),
@@ -17773,6 +17788,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         "teams": team_evidence,
                         "standings": standings_evidence,
                         "league_key_players": key_players,
+                        "league_key_players_available": key_players_available,
                         "h2h": h2h_evidence,
                         "injuries": injury_evidence,
                         "lineups": lineup_evidence,
@@ -17813,7 +17829,8 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
 def run_team_identity_job():
     """Prefetch shared evidence, then repair unresolved team profiles."""
     from api_engine import process_data_recovery_queue
-    process_data_recovery_queue(limit=12)
+    recovery = process_data_recovery_queue(limit=12)
+    print(f"[수집 복구 주기] 요청 {recovery.get('requested',0)}건 / 수신 {recovery.get('received',0)}건", flush=True)
     prefetch = _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT)
     seeded_cards = _queue_incomplete_dashboard_team_profiles()
     summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
@@ -18641,6 +18658,28 @@ def _exit_one_shot_worker(exit_code):
     finally:
         os._exit(int(exit_code))
 
+
+
+
+def _complete_shared_fixture_metadata(match, fixture_id, home_id, away_id, metadata):
+    """Reuse competition metadata only for the exact verified shared fixture."""
+    result = dict(metadata or {})
+    shared = _load_shared_fixture_dossier(match)
+    try:
+        kickoff = _parse_kst_match_time(match.get('match_time') or match.get('time'))
+        captured = datetime.fromisoformat(str(shared.get('kickoff_at')).replace('Z','+00:00'))
+        if (not kickoff or captured.tzinfo is None or captured.timestamp() != kickoff.timestamp()
+                or not fixture_id or int(shared.get('fixture_id') or 0) != int(fixture_id)
+                or int((shared.get('home') or {}).get('id') or 0) != int(home_id)
+                or int((shared.get('away') or {}).get('id') or 0) != int(away_id)
+                or home_id == away_id):
+            return result
+        for field in ('league_id','season'):
+            if not result.get(field) and shared.get(field):
+                result[field] = shared[field]
+    except (TypeError,ValueError,AttributeError):
+        pass
+    return result
 
 if __name__ == "__main__":
     code = main()
