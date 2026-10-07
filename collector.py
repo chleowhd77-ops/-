@@ -11807,6 +11807,9 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
         or (candidate.get("robot_pick") or {}).get("v2_ai_pick") == "NO_ODDS"
     )
 
+    dossier = _load_shared_fixture_dossier(match) if require_current_stage else {}
+    material_changed = bool(dossier.get('material_digest') and
+                            candidate.get('shared_material_digest') != dossier['material_digest'])
     # The odds-source label is not an evidence-completion stage.  R7.12.31
     # compared e.g. ``model-only-preview`` directly with ``regular`` and
     # therefore treated the same already-analysed card as stale on every
@@ -11823,8 +11826,24 @@ def _resumable_proto_item(match, previous=None, require_current_stage=False):
     )
     stage_refresh_needed = stored_evidence_stage != target_stage
     refresh_now = datetime.now(KST)
+    # A visible customer pick does not prove that its shared raw material exists.
+    shared_storage_missing = False
+    if require_current_stage:
+        from manager_evidence_storage import proto_storage_ready
+        try:
+            shared_storage_missing = not proto_storage_ready(
+                _local_path("ai_predictions.db"), match,
+                int(candidate.get("api_fixture_id") or 0),
+                match_dt.timestamp(), datetime.now(KST).timestamp())
+        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+            shared_storage_missing = True
+            print(f"수집 원자료 확인 실패 · {match.get('home')} vs {match.get('away')} · {type(error).__name__}", flush=True)
+        if shared_storage_missing:
+            print(f"공유 원자료/배당 누락 재수집 · {match.get('home')} vs {match.get('away')}", flush=True)
     if require_current_stage and (
-        stage_refresh_needed
+        shared_storage_missing
+        or material_changed
+        or stage_refresh_needed
         or (temporary_odds_stage and betman_odds_ready)
         or (missing_v2_odds and betman_odds_ready)
         or _needs_current_analysis_refresh(
@@ -13303,6 +13322,7 @@ def build_dashboard_data():
             "odds_source": analysis_odds_source,
             "betman_odds_pending": bool(m.get("betman_odds_pending")),
             "data_coverage": data_coverage,
+            "shared_material_digest": _load_shared_fixture_dossier(m).get("material_digest"),
             "lineup_confirmed": bool(lineup_confirmed),
             "lineup_learning": lineup_learning,
             "probability_error_margin": highest_prob_pick.get("error_margin"),
@@ -17494,11 +17514,17 @@ def _store_shared_fixture_dossier(match, *, sources, home_info, away_info,
         "league_id": int(league_id or 0),
         "season": int(season or 0),
         "kickoff_at": kickoff.isoformat() if isinstance(kickoff, datetime) else "",
-        "core_ready": True,
-        "deep_refresh_ready": bool(deep_refresh_due),
+        "deep_refresh_due": bool(deep_refresh_due),
         "evidence": evidence if isinstance(evidence, dict) else {},
         "warmed_at": datetime.now(KST).isoformat(),
     }
+    from collection_completeness import inspect
+    coverage = inspect(payload)
+    payload.update(coverage)
+    payload['deep_refresh_ready'] = bool(deep_refresh_due) and not coverage['missing_sections']
+    if coverage['missing_sections']:
+        print(f"[수집 자료 점검] {match.get('home')} vs {match.get('away')} · "
+              f"미수신 {','.join(coverage['missing_sections'])}", flush=True)
     return set_db_cache(_shared_dossier_key(match), payload)
 
 
@@ -17508,11 +17534,16 @@ def _prefetch_core_is_ready(source, match):
         DATA_PREFETCH_COMPLETION_TTL_HOURS,
     )
     dossier = _load_shared_fixture_dossier(match)
+    from collection_completeness import inspect
     return (isinstance(marker, dict) and bool(marker.get("core_ready"))
+            and inspect(dossier)['core_ready']
             and _fixture_identity_id(dossier.get("fixture_id")) > 0)
 
 
 def _mark_prefetch_core_ready(source, match, *, home_id, away_id, kickoff):
+    dossier = _load_shared_fixture_dossier(match)
+    if not dossier.get('core_ready'):
+        return False
     return set_db_cache(
         _prefetch_core_marker_key(source, match),
         {
@@ -17813,7 +17844,7 @@ def run_team_identity_job():
     )
     if prefetch.get("processed"):
         print(
-            "⚡ 분석자료 선수집 완료: "
+            "⚡ 분석자료 선수집 실행: "
             f"경기 {prefetch.get('processed', 0)}건 / "
             f"팀 캐시 {prefetch.get('teams_warmed', 0)}건 / "
             f"신규 공용자료 {prefetch.get('core_newly_warmed', 0)}건 / "
@@ -17945,6 +17976,12 @@ def run_products_job():
 def run_score_job():
     score_started = time.monotonic()
     success = auto_score_matches()
+    # Manager settlement is independent of large public history building and AI transport.
+    try:
+        from manager_settlement import from_activation
+        from_activation(APP_DIR)
+    except Exception as error:
+        print(f"[관리자 채점 게시 대기] {type(error).__name__}: {error}", flush=True)
     if not success:
         return False
     scoring_seconds = time.monotonic() - score_started

@@ -525,7 +525,7 @@ def _request_cache_ttl(path, params, payload=None):
         return API_PROVIDER_STATUS_TTL_SECONDS
     # 팀/경기표의 정상 HTTP 빈 응답은 공급사 색인 지연일 수 있다. 하루 동안
     # 실패로 굳히지 않고 5분 뒤 영구 재시도 대기열이 다시 확인하게 한다.
-    if path in {"/teams", "/fixtures"} and isinstance(response_rows, list) and not response_rows:
+    if path in {"/teams", "/fixtures", "/fixtures/statistics", "/players/squads", "/coachs", "/standings"} and isinstance(response_rows, list) and not response_rows:
         return 300
     if path in {"/fixtures/statistics","/players/squads","/coachs","/teams"}:
         return 86400
@@ -533,7 +533,7 @@ def _request_cache_ttl(path, params, payload=None):
         return 21600
     if path == "/fixtures" and params.get("next"):
         return 3600
-    return 240  # Scores/events/lineups/odds remain fresh within the 5-minute job.
+    return 240
 
 
 def _claim_request_cache(key):
@@ -734,15 +734,17 @@ def process_data_recovery_queue(limit=12):
             with api_cache_only_context(False):
                 response = api_get(path, params=json.loads(raw), timeout=12, purpose='analysis')
             payload = response.json() if response.status_code == 200 else {}
-            if response.status_code == 200 and not payload.get('errors'):
+            valid_empty = path in {'/injuries','/fixtures/headtohead'} or (path == '/fixtures' and bool(json.loads(raw).get('next')))
+            if response.status_code == 200 and not payload.get('errors') and (payload.get('response') or valid_empty):
                 done += 1
-                reason = 'received' if payload.get('response') else 'provider_empty'
+                reason = 'received' if payload.get('response') else 'confirmed_empty_'+path.strip('/').replace('/','_')
                 with _recovery_db() as conn:
                     conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
                 conn.close()
                 print(f'[자료 복구] {path} · {reason}',flush=True)
                 continue
-            reason = f'provider_http_{response.status_code}' if response.status_code != 200 else 'provider_api_error'
+            reason = (f'provider_http_{response.status_code}' if response.status_code != 200
+                      else 'provider_api_error' if payload.get('errors') else 'provider_empty_pending')
         except (ApiQuotaUnavailable, ApiRateLimited):
             break
         except Exception as error:
@@ -750,7 +752,7 @@ def process_data_recovery_queue(limit=12):
         with _recovery_db() as conn:
             conn.execute('''UPDATE data_recovery_queue SET attempts=attempts+1,
                 next_attempt=?,reason=? WHERE key=?''',
-                (time.time()+min(1800,60*2**min(attempts,5)),reason,key))
+                (time.time()+max(300,min(1800,60*2**min(attempts,5))),reason,key))
         conn.close()
         print(f'[자료 복구 대기] {path} · {reason}',flush=True)
     return {'requested':len(rows),'received':done}
@@ -860,6 +862,9 @@ def api_get(path, params=None, timeout=7, purpose=None):
                     key, payload, _request_cache_ttl(path, params, payload)
                 )
                 saved = True
+                if (isinstance(payload.get('response'), list) and not payload['response']
+                        and path in {'/teams','/fixtures','/fixtures/statistics','/players/squads','/coachs','/standings','/fixtures/lineups','/odds'}):
+                    _queue_data_recovery(path, params, 'provider_empty_pending')
             return response
     except ApiQuotaUnavailable:
         _show_api_quota_notice("라이브·채점 예산 보호 또는 사용량 기록 확인 필요")
@@ -3967,15 +3972,18 @@ def fetch_fixture_details_api(home_id, away_id, ttl_h):
         "weighted_a_wins": 0.0, "weight_total": 0.0,
         "home_venue_h_wins": 0, "home_venue_draws": 0,
         "home_venue_a_wins": 0, "home_venue_total": 0,
-        "weighting": "two-year-half-life",
+        "weighting": "two-year-half-life", "available": False,
     }
     if not home_id or not away_id: return default_res
     cache_key = f"app_h2h_v2_{home_id}_{away_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
-    if cached_data: return cached_data
+    if cached_data and (cached_data.get("available") or cached_data.get("total",0)>0): return cached_data
     try:
         response = api_get("/fixtures/headtohead", params={"h2h": f"{home_id}-{away_id}"}, timeout=5)
-        matches = response.json().get("response", [])
+        payload = response.json() if response.status_code == 200 else {}
+        if response.status_code != 200 or payload.get("errors"):
+            return default_res
+        matches = payload.get("response", [])
         selected = matches[:10]
         timestamps = [
             int((m.get("fixture") or {}).get("timestamp") or 0)
@@ -4021,7 +4029,7 @@ def fetch_fixture_details_api(home_id, away_id, ttl_h):
         res_val = {
             "match_time": None, "last_h2h_date": last_h2h_date,
             "h_wins": h_wins, "draws": draws, "a_wins": a_wins,
-            "total": len(selected),
+            "total": len(selected), "available": True,
             "weighted_h_wins": round(weighted_h, 6),
             "weighted_draws": round(weighted_draw, 6),
             "weighted_a_wins": round(weighted_a, 6),
@@ -4652,6 +4660,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
         "yellow_cards": 1.5, "sample_size": 0, "xg": None,
         "xg_sample_size": 0, "xga": None, "xga_sample_size": 0,
         "field_samples": {}, "source_fixture_ids": [],
+        "data_status": "unavailable", "default_values_are_observations": False,
     }
     if not team_id: return default_res
     cache_key = f"recent_stats_v3_{team_id}"
@@ -4705,6 +4714,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
                        source_fixture_ids=sorted(set(source_ids)),
                        observed_at=datetime.now(timezone.utc).isoformat())
         if res_val["sample_size"]:
+            res_val["data_status"] = "observed"
             set_db_cache(cache_key, res_val)
         return res_val
     except: pass

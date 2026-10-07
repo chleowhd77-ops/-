@@ -32,9 +32,11 @@ CARD_STYLE = '''<style>
 def card_html(row, index):
     home, away, pick = (escape(str(row[key])) for key in ('home', 'away', 'raw_pick'))
     market = {'1x2': '승무패', 'handicap': '핸디캡'}.get(row.get('market_key'), '선택한 픽')
+    result = escape(str(row.get('result_label') or ('적중' if row.get('is_correct')==1 else '미적중' if row.get('is_correct')==0 else '결과 대기')))
+    score = escape(str(row.get('actual_score') or ''))
     return (
         '<div class="dj-invest-card"><div class="dj-invest-top">'
-        f'<span class="dj-invest-tag">투자픽 {index:02d} · {market}</span>'
+        f'<span class="dj-invest-tag">투자픽 {index:02d} · {market} · {result} {score}</span>'
         f'<span>경기 시작 · {local_time(row["kickoff_at"])} · 한국 시간</span></div>'
         f'<div class="dj-invest-teams">{home}<span class="dj-invest-vs">VS</span>{away}</div>'
         '<div class="dj-invest-main"><div><div class="dj-invest-label">선택한 픽</div>'
@@ -55,17 +57,23 @@ def render(st, payload, engine):
             if kickoff.tzinfo is None: raise ValueError('missing timezone')
         except (ValueError,KeyError):
             continue
-        (future if kickoff>now and r.get('status')!='FINISHED' else past).append(r)
+        until=r.get('display_until')
+        try:
+            expiry=datetime.fromisoformat(until.replace('Z','+00:00')) if until else None
+        except (ValueError, TypeError):
+            expiry=None
+        # Missing end confirmation is retained, never guessed from kickoff.
+        (past if expiry and expiry<=now else future).append(r)
     st.markdown(CARD_STYLE, unsafe_allow_html=True)
     st.subheader(f"{labels.get(engine,engine)} 관리자 투자픽")
-    st.caption('시작 전 경기에서 분석가가 고른 자신 있는 픽 · 최대 10경기')
+    st.caption('분석가가 고른 픽 · 경기 시작 후에도 표시 · 묶음의 마지막 경기 종료 확인 후 2시간 유지')
     st.caption('업데이트 · '+local_time(payload.get('generated_at'))+' · 한국 시간')
     if payload.get('paused'):
         st.info('분석 작업이 일시중지 상태입니다. 이미 저장된 픽은 보존됩니다.')
     info=(payload.get('engines') or {}).get(engine,{})
     count=info.get('graded_count',0)
     cols=st.columns(3)
-    cols[0].metric('시작 전 투자픽', f'{len(future)}경기')
+    cols[0].metric('표시 중 투자픽', f'{len(future)}경기')
     cols[1].metric('실전 적중 / 채점', f'{info.get("hit_count",0)} / {count}' if count else '결과 대기')
     cols[2].metric('최장 연속 적중', f'{info.get("longest_wins",0)}경기' if count else '결과 대기')
     if count:
@@ -84,7 +92,7 @@ def render(st, payload, engine):
     st.caption('선택 당시 배당이며 현재 판매 배당은 달라질 수 있습니다.')
     st.caption('실전 성적은 모의시험과 분리합니다. 손익은 경기당 1단위 비교 기준이며 실제 투자금이 아닙니다.')
     if not future:
-        st.info('현재 저장된 시작 전 자신픽이 없습니다. 분석 진행 상태와 자료 수신을 확인 중입니다.')
+        st.info('현재 표시할 저장 픽이 없습니다. 분석 진행 상태와 자료 수신을 확인 중입니다.')
     with st.expander(f'지난 픽·채점·복기 {len(past)}건'):
         for row in sorted(past,key=lambda r:r['kickoff_at'],reverse=True):
             grade='적중' if row.get('is_correct')==1 else '미적중' if row.get('is_correct')==0 else '결과 대기'
