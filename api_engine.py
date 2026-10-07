@@ -729,7 +729,7 @@ def _queue_data_recovery(path, params, reason='cache_only_miss', priority=None):
 def process_data_recovery_queue(limit=12):
     """Fair collector recovery; distinguish provider coverage from actual data."""
     from collection_recovery import (select, advance, identity, valid_statistics,
-        parse_coverage, coverage_key, retry_reason, delay, accept_bulk, bulk_key)
+        parse_coverage, coverage_key, retry_reason, delay, accept_bulk, bulk_key, blocked_reason)
     conn = _recovery_db()
     try:
         rows, position = select(conn, limit, time.time())
@@ -759,6 +759,14 @@ def process_data_recovery_queue(limit=12):
                     conn=_recovery_db()
                     try: bulk=accept_bulk(conn,params,payload,set_db_cache)
                     finally: conn.close()
+                    if bulk['cache_failed']:
+                        with _recovery_db() as conn:
+                            conn.execute('UPDATE data_recovery_queue SET attempts=attempts+1,next_attempt=?,reason=?,updated_at=? WHERE key=?',
+                                (time.time()+300,'bulk_statistics_cache_write_failed',time.time(),key))
+                        conn.close()
+                        done += int(bulk['received']>0)
+                        print(f"[수집 통계 묶음] 요청 {bulk['requested']}경기 / 신원확인 {bulk['verified']}경기 / 원본수신 {bulk['received']}경기 / 저장실패 {bulk['cache_failed']}경기 · 실패 요청 유지",flush=True)
+                        continue
                     set_db_cache(bulk_key(params),{'observed_at':time.time(),**bulk})
                     if bulk['verified']:
                         with _recovery_db() as conn:
@@ -786,9 +794,11 @@ def process_data_recovery_queue(limit=12):
                 observed = checked_coverage is not None
             if response.status_code == 200 and not payload.get('errors') and (observed or valid_empty):
                 if path == '/fixtures/statistics' and params.get('fixture'):
-                    set_db_cache('completed_fixture_stats_v1_'+str(params['fixture']), payload['response'])
+                    if set_db_cache('completed_fixture_stats_v1_'+str(params['fixture']), payload['response']) is not True:
+                        raise RuntimeError('statistics_cache_write_failed')
                 if checked_coverage is not None:
-                    set_db_cache(coverage_key(params['id'],params['season']), checked_coverage)
+                    if set_db_cache(coverage_key(params['id'],params['season']), checked_coverage) is not True:
+                        raise RuntimeError('coverage_cache_write_failed')
                     print(f"[수집 제공범위] league={params['id']} season={params['season']} · 경기통계={checked_coverage['coverage'].get('fixtures',{}).get('statistics_fixtures','미확인')} · 실제 경기 자료 수신과 구분",flush=True)
                 done += 1
                 reason = 'received' if payload.get('response') else 'confirmed_empty_'+path.strip('/').replace('/','_')
@@ -800,10 +810,11 @@ def process_data_recovery_queue(limit=12):
             reason, coverage = retry_reason(path,params,payload,response.status_code,source,get_db_cache)
             if path=='/fixtures/statistics' and payload.get('response') and not payload.get('errors'):
                 reason='statistics_team_missing_or_invalid'
-        except (ApiQuotaUnavailable, ApiRateLimited):
+        except (ApiQuotaUnavailable, ApiRateLimited) as error:
+            print(f'[수집 요청 차단] {path} · {type(error).__name__} · 원인={blocked_reason(error)}',flush=True)
             break
         except Exception as error:
-            reason = type(error).__name__
+            reason = str(error) if str(error) in ('statistics_cache_write_failed','coverage_cache_write_failed') else blocked_reason(error)
         with _recovery_db() as conn:
             conn.execute('''UPDATE data_recovery_queue SET attempts=attempts+1,
                 next_attempt=?,reason=?,updated_at=? WHERE key=?''',
@@ -4751,7 +4762,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
         "data_status": "unavailable", "default_values_are_observations": False,
     }
     if not team_id: return default_res
-    from collection_recovery import valid_statistics, retry_pending
+    from collection_recovery import valid_statistics, retry_pending, blocked_reason
     cache_key = f"recent_stats_v3_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     # Rebuild from shared raw responses. A partial aggregate must not mask a
@@ -4820,7 +4831,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
             set_db_cache(cache_key, res_val)
         return res_val
     except Exception as error:
-        print(f'[수집 통계 오류] team={team_id} · {type(error).__name__}', flush=True)
+        print(f'[수집 통계 오류] team={team_id} · {type(error).__name__} · 원인={blocked_reason(error)}', flush=True)
     return default_res
 
 

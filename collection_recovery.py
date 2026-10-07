@@ -173,6 +173,27 @@ def bulk_key(params):
     return 'fixture_statistics_bulk_probe_v1_'+hashlib.sha256(str(params['ids']).encode()).hexdigest()[:24]
 
 
+def blocked_reason(error):
+    """Expose safe ledger/lock causes without printing credentials or payloads."""
+    known={'Daily reserve protected':'daily_reserve_protected',
+           'World-football API safety budget reached':'world_budget_protected',
+           'Cache/ledger unavailable; no request sent':'cache_ledger_unavailable',
+           'Usage ledger unavailable; no request sent':'usage_ledger_unavailable',
+           'Cannot initialize usage ledger; no request sent':'usage_ledger_init_failed'}
+    result=known.get(str(error),type(error).__name__);seen=set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error,sqlite3.Error):
+            message=str(error).lower()
+            for word,label in (('locked','runtime_db_locked'),('busy','runtime_db_busy'),
+                               ('readonly','runtime_db_readonly'),('read-only','runtime_db_readonly'),
+                               ('unable to open','runtime_db_open_failed'),('malformed','runtime_db_malformed')):
+                if word in message:return label
+            return 'runtime_db_error'
+        error=error.__cause__ or error.__context__
+    return result
+
+
 def accept_bulk(conn, params, payload, set_cache):
     """Save only actual embedded statistics from the exact registered fixtures.
 
@@ -181,7 +202,9 @@ def accept_bulk(conn, params, payload, set_cache):
     """
     wanted={int(v) for v in str(params['ids']).split('-')}
     if not wanted or len(wanted)>20:raise ValueError('bulk_statistics_ids_invalid')
-    verified,received=set(),set()
+    if conn.in_transaction:
+        raise ValueError('bulk_statistics_requires_idle_connection')
+    verified,received=set(),set();cache_failed=0;delete_keys=[]
     for row in payload.get('response') or []:
         if not isinstance(row,dict):continue
         f=row.get('fixture') or {};fid=int(f.get('id') or 0)
@@ -194,9 +217,16 @@ def accept_bulk(conn, params, payload, set_cache):
         verified.add(fid)
         rows=row.get('statistics') or []
         if not valid_statistics(rows,source):continue
-        set_cache('completed_fixture_stats_v1_'+str(fid),rows)
+        # set_cache writes through another connection to this same DB. Do all
+        # callback writes before taking the queue DELETE transaction; otherwise
+        # the second callback waits for the lock this function itself holds.
+        if set_cache('completed_fixture_stats_v1_'+str(fid),rows) is not True:
+            cache_failed+=1
+            continue
         key=json.dumps(['/fixtures/statistics',{'fixture':fid}],sort_keys=True,ensure_ascii=True)
-        conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
+        delete_keys.append((key,))
         received.add(fid)
+    conn.executemany('DELETE FROM data_recovery_queue WHERE key=?',delete_keys)
     conn.commit()
-    return {'requested':len(wanted),'verified':len(verified),'received':len(received)}
+    return {'requested':len(wanted),'verified':len(verified),'received':len(received),
+            'cache_failed':cache_failed}
