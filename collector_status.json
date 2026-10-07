@@ -1,40 +1,42 @@
 {
   "jobs": {
     "scheduler": {
-      "run_id": "scheduler-1791376792161116729",
-      "supervisor_pid": 588852,
+      "run_id": "scheduler-1791380840812552045",
+      "supervisor_pid": 589811,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-07T13:46:29+00:00",
-      "pid": 588852,
-      "last_started_at": "2026-10-07T12:39:52+00:00",
+      "heartbeat_at": "2026-10-07T13:47:20+00:00",
+      "pid": 589811,
+      "last_started_at": "2026-10-07T13:47:20+00:00",
       "active_jobs": {
-        "products": 589624
+        "live": 589833,
+        "team": 589834
       },
       "pending_jobs": [
         "master",
+        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 90.1,
-        "master": 90.1
+        "master": 0.0,
+        "products": 0.0,
+        "score": 0.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-10-07T13:45:06+00:00",
       "last_success_duration_seconds": 4.82,
       "last_failure_at": "2026-10-06T06:51:50+00:00",
       "last_failure_duration_seconds": 181.0,
-      "run_id": "live-1791380699042610876",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-07T13:45:06+00:00",
-      "pid": 589622,
-      "last_started_at": "2026-10-07T13:45:01+00:00",
-      "duration_seconds": 4.82
+      "last_success_at": "2026-10-07T13:45:06+00:00",
+      "run_id": "live-1791380840833260336",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-07T13:47:22+00:00",
+      "pid": 589833,
+      "last_started_at": "2026-10-07T13:47:22+00:00"
     },
     "score": {
       "last_success_at": "2026-10-07T13:44:29+00:00",
@@ -67,11 +69,14 @@
       "last_failure_at": "2026-10-06T17:42:51+00:00",
       "last_failure_duration_seconds": 900.6,
       "run_id": "master-1791380817221978346",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-07T13:46:58+00:00",
+      "heartbeat_at": "2026-10-07T13:47:00+00:00",
       "pid": 589628,
-      "last_started_at": "2026-10-07T13:46:58+00:00"
+      "last_started_at": "2026-10-07T13:46:58+00:00",
+      "child_pid": 589628,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -89,37 +94,16 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_failure_at": "2026-10-06T08:14:31+00:00",
-      "last_success_at": "2026-10-07T13:46:08+00:00",
       "last_failure_duration_seconds": 600.0,
+      "last_success_at": "2026-10-07T13:46:08+00:00",
+      "last_failure_at": "2026-10-06T08:14:31+00:00",
       "last_success_duration_seconds": 67.14,
-      "run_id": "team-1791380699057954337",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-07T13:46:08+00:00",
-      "pid": 589623,
-      "last_started_at": "2026-10-07T13:45:01+00:00",
-      "child_pid": 589623,
-      "elapsed_seconds": 60.1,
-      "overlap_skips": 0,
-      "team_retry_processed": 1,
-      "team_retry_resolved": 321,
-      "team_retry_pending": 6,
-      "team_retry_due": 0,
-      "team_retry_seeded": 3,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 25,
-      "data_prefetch_teams": 44,
-      "data_prefetch_identity_missing": 3,
-      "data_prefetch_early_core_matches": 0,
-      "data_prefetch_deep_matches": 25,
-      "data_prefetch_core_newly_warmed": 0,
-      "data_prefetch_core_already_ready": 22,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 67.14
+      "run_id": "team-1791380840847032482",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-07T13:47:22+00:00",
+      "pid": 589834,
+      "last_started_at": "2026-10-07T13:47:22+00:00"
     },
     "backup": {
       "last_success_at": "2026-10-07T06:10:02+00:00",
@@ -189,7 +173,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-07T13:46:58+00:00",
+  "updated_at": "2026-10-07T13:47:22+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
