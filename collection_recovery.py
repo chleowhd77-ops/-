@@ -95,9 +95,10 @@ def flag(value):
 def select(conn, limit, now):
     """Same total request budget; every fourth eligible slot progresses history.
 
-    Current identity/material remains the majority. Fresh league coverage and
-    newest missing historical fixtures no longer wait behind repeated empties.
-    The cursor survives runs with limit=1 as well as normal batches of 12.
+    Current identity/material remains the majority. History slots rotate among
+    coverage, bulk statistics and individual/other requests. A long coverage
+    queue cannot consume every history slot before any bulk request runs.
+    The 12-step cursor survives one-request runs and partial/quota-limited runs.
     """
     schema(conn);limit=max(0,int(limit))
     cols='q.key,q.path,q.params_json,q.attempts'
@@ -109,21 +110,32 @@ def select(conn, limit, now):
         COALESCE(s.kickoff,0) DESC,q.next_attempt,q.updated_at,q.key LIMIT ?'''
     # Compatibility with queues created before priority was introduced.
     priority='q.priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '0'
-    groups=[list(conn.execute(base.format(condition=priority+'<=0'),(now,limit))),
-            list(conn.execute(base.format(condition=priority+'>0'),(now,limit)))]
+    core=list(conn.execute(base.format(condition=priority+'<=0'),(now,limit)))
+    kind="CASE WHEN q.path='/leagues' THEN 0 WHEN q.path='/fixtures' AND json_extract(q.params_json,'$.ids') IS NOT NULL THEN 1 ELSE 2 END"
+    history=[list(conn.execute(base.format(condition=f'{priority}>0 AND ({kind})={k}'),(now,limit)))
+             for k in range(3)]
     saved=conn.execute('SELECT position FROM collection_recovery_cursor WHERE name="request"').fetchone()
     position=int(saved[0]) if saved else 0;chosen=[]
     for slot in range(limit):
-        group=1 if (position+slot)%4==3 else 0
-        if not groups[group]:group=1-group
-        if not groups[group]:break
-        chosen.append(groups[group].pop(0))
+        sequence=(position+slot)%12
+        use_history=sequence%4==3 or not core
+        if use_history and any(history):
+            # Normal 12-request runs offer one slot to each history kind.
+            # When core is empty, fallback slots also rotate instead of
+            # draining all coverage before doing a single bulk request.
+            preferred=(sequence//4+sequence%4)%3
+            category=next(k for k in ((preferred+i)%3 for i in range(3)) if history[k])
+            chosen.append(history[category].pop(0))
+        elif core:
+            chosen.append(core.pop(0))
+        else:
+            break
     return chosen,position
 
 
 def advance(conn, position, attempted):
     conn.execute('''INSERT INTO collection_recovery_cursor VALUES('request',?)
-        ON CONFLICT(name) DO UPDATE SET position=excluded.position''',((position+attempted)%4,))
+        ON CONFLICT(name) DO UPDATE SET position=excluded.position''',((position+attempted)%12,))
     conn.commit()
 
 
