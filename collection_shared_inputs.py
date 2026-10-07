@@ -124,7 +124,8 @@ def merge(root, identity, current, now, base_captured_at=0):
                                   'sections': copy.deepcopy(dossier.get('sections') or {}),
                                   'missing_sections': copy.deepcopy(dossier.get('missing_sections') or []),
                                   'recent_statistics_progress': {
-                                      side: {'requested_count': int((((raw.get('teams') or {}).get(str(team_id)) or {}).get('recent_statistics') or {}).get('requested_count') or 0)}
+                                      side: {'requested_count': int((((raw.get('teams') or {}).get(str(team_id)) or {}).get('recent_statistics') or {}).get('requested_count') or 0),
+                                             'request_reports': copy.deepcopy(((((raw.get('teams') or {}).get(str(team_id)) or {}).get('recent_statistics') or {}).get('request_reports') or []))}
                                       for side, team_id in ids.items()}}
     return result, {'used': True, 'captured_at': captured,
                     'applied_sections': applied, 'policy': 'exact-shared-material-v21'}

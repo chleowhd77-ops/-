@@ -17532,6 +17532,16 @@ def _store_shared_fixture_dossier(match, *, sources, home_info, away_info,
     if coverage['missing_sections']:
         print(f"[수집 자료 점검] {match.get('home')} vs {match.get('away')} · "
               f"미수신 {','.join(coverage['missing_sections'])}", flush=True)
+    for side in ('home','away'):
+        team_id = int((payload.get(side) or {}).get('id') or 0)
+        team = ((payload.get('evidence') or {}).get('teams') or {}).get(str(team_id)) or {}
+        history = team.get('recent_statistics') or {}
+        if history.get('requested_count'):
+            stats = team.get('recent_stats') or {}
+            requested = set(stats.get('requested_fixture_ids') or [])
+            reports = [r for r in history.get('request_reports') or [] if not requested or r.get('fixture_id') in requested]
+            causes = sorted(set(r.get('reason') or 'queued' for r in reports))
+            print(f"[수집 통계 진행] {match.get('home') if side=='home' else match.get('away')} · 원본 {len(history.get('received') or [])}/{history['requested_count']} · 최근2경기 표본 {stats.get('sample_size',0)} · 대기사유 {','.join(causes) or '-'}",flush=True)
     return set_db_cache(_shared_dossier_key(match), payload)
 
 

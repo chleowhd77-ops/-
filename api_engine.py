@@ -525,9 +525,9 @@ def _request_cache_ttl(path, params, payload=None):
         return API_PROVIDER_STATUS_TTL_SECONDS
     # 팀/경기표의 정상 HTTP 빈 응답은 공급사 색인 지연일 수 있다. 하루 동안
     # 실패로 굳히지 않고 5분 뒤 영구 재시도 대기열이 다시 확인하게 한다.
-    if path in {"/teams", "/fixtures", "/fixtures/statistics", "/players/squads", "/coachs", "/standings"} and isinstance(response_rows, list) and not response_rows:
+    if path in {"/teams", "/fixtures", "/fixtures/statistics", "/players/squads", "/coachs", "/standings", "/leagues"} and isinstance(response_rows, list) and not response_rows:
         return 300
-    if path in {"/fixtures/statistics","/players/squads","/coachs","/teams"}:
+    if path in {"/fixtures/statistics","/players/squads","/coachs","/teams","/leagues"}:
         return 86400
     if path == "/standings" or (path == "/fixtures" and params.get("last")):
         return 21600
@@ -727,50 +727,96 @@ def _queue_data_recovery(path, params, reason='cache_only_miss', priority=None):
 
 
 def process_data_recovery_queue(limit=12):
-    """Collector-only bounded recovery of exact requests missed by analysts."""
+    """Fair collector recovery; distinguish provider coverage from actual data."""
+    from collection_recovery import (select, advance, identity, valid_statistics,
+        parse_coverage, coverage_key, retry_reason, delay, accept_bulk, bulk_key)
     conn = _recovery_db()
     try:
-        priority = 'priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '(0+0)'
-        rows = conn.execute(f"""SELECT key,path,params_json,attempts FROM data_recovery_queue
-            WHERE next_attempt<=? ORDER BY {priority},next_attempt,updated_at,key LIMIT ?""",
-            (time.time(),int(limit))).fetchall()
+        rows, position = select(conn, limit, time.time())
+        sources = {key: identity(conn, json.loads(raw).get('fixture'))
+                   for key,path,raw,attempts in rows
+                   if path == '/fixtures/statistics' and json.loads(raw).get('fixture')}
     finally:
         conn.close()
-    done = 0
+    done = attempted = 0
     for key,path,raw,attempts in rows:
-        reason = 'unknown'
+        params = json.loads(raw); source = sources.get(key) or {}
+        reason = 'unknown'; coverage = None
+        if path=='/fixtures/statistics' and params.get('fixture'):
+            existing=get_db_cache('completed_fixture_stats_v1_'+str(params['fixture']),24*30)
+            if valid_statistics(existing,source):
+                with _recovery_db() as conn:
+                    conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
+                conn.close()
+                continue  # An earlier bulk response in this same batch filled it.
         try:
             with api_cache_only_context(False):
-                response = api_get(path, params=json.loads(raw), timeout=12, purpose='analysis')
+                response = api_get(path, params=params, timeout=12, purpose='analysis')
+            attempted += 1
             payload = response.json() if response.status_code == 200 else {}
-            valid_empty = path in {'/injuries','/fixtures/headtohead'} or (path == '/fixtures' and bool(json.loads(raw).get('next')))
+            if path=='/fixtures' and params.get('ids'):
+                if response.status_code==200 and not payload.get('errors'):
+                    conn=_recovery_db()
+                    try: bulk=accept_bulk(conn,params,payload,set_db_cache)
+                    finally: conn.close()
+                    set_db_cache(bulk_key(params),{'observed_at':time.time(),**bulk})
+                    if bulk['verified']:
+                        with _recovery_db() as conn:
+                            conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
+                        conn.close()
+                        done += int(bulk['received']>0)
+                        print(f"[수집 통계 묶음] 요청 {bulk['requested']}경기 / 신원확인 {bulk['verified']}경기 / 원본수신 {bulk['received']}경기 · 개별 미수신 요청 유지",flush=True)
+                        continue
+                reason='bulk_statistics_probe_failed'
+                # A rejected/empty bulk endpoint never prevents exact individual
+                # requests. Keep this probe at a six-hour retry interval.
+                with _recovery_db() as conn:
+                    conn.execute('UPDATE data_recovery_queue SET attempts=attempts+1,next_attempt=?,reason=?,updated_at=? WHERE key=?',
+                        (time.time()+6*3600,reason,time.time(),key))
+                conn.close()
+                print('[수집 통계 묶음] 묶음 조회 미수신 · 개별 통계 복구 계속 · HTTP '+str(response.status_code),flush=True)
+                continue
+            valid_empty = path in {'/injuries','/fixtures/headtohead'} or (path == '/fixtures' and bool(params.get('next')))
             observed = bool(payload.get('response'))
+            checked_coverage = None
             if path == '/fixtures/statistics':
-                observed = any(any(s.get('value') is not None for s in r.get('statistics') or [])
-                               for r in payload.get('response') or [] if isinstance(r,dict))
+                observed = valid_statistics(payload.get('response'), source)
+            elif path == '/leagues':
+                checked_coverage = parse_coverage(payload, params.get('id'), params.get('season'))
+                observed = checked_coverage is not None
             if response.status_code == 200 and not payload.get('errors') and (observed or valid_empty):
-                if path == '/fixtures/statistics' and json.loads(raw).get('fixture'):
-                    set_db_cache('completed_fixture_stats_v1_'+str(json.loads(raw)['fixture']), payload['response'])
+                if path == '/fixtures/statistics' and params.get('fixture'):
+                    set_db_cache('completed_fixture_stats_v1_'+str(params['fixture']), payload['response'])
+                if checked_coverage is not None:
+                    set_db_cache(coverage_key(params['id'],params['season']), checked_coverage)
+                    print(f"[수집 제공범위] league={params['id']} season={params['season']} · 경기통계={checked_coverage['coverage'].get('fixtures',{}).get('statistics_fixtures','미확인')} · 실제 경기 자료 수신과 구분",flush=True)
                 done += 1
                 reason = 'received' if payload.get('response') else 'confirmed_empty_'+path.strip('/').replace('/','_')
                 with _recovery_db() as conn:
                     conn.execute('DELETE FROM data_recovery_queue WHERE key=?',(key,))
                 conn.close()
-                print(f'[자료 복구] {path} · {reason}',flush=True)
+                print(f"[자료 복구] {path} · {reason} · fixture={params.get('fixture','-')}",flush=True)
                 continue
-            reason = (f'provider_http_{response.status_code}' if response.status_code != 200
-                      else 'provider_api_error' if payload.get('errors') else 'provider_empty_pending')
+            reason, coverage = retry_reason(path,params,payload,response.status_code,source,get_db_cache)
+            if path=='/fixtures/statistics' and payload.get('response') and not payload.get('errors'):
+                reason='statistics_team_missing_or_invalid'
         except (ApiQuotaUnavailable, ApiRateLimited):
             break
         except Exception as error:
             reason = type(error).__name__
         with _recovery_db() as conn:
             conn.execute('''UPDATE data_recovery_queue SET attempts=attempts+1,
-                next_attempt=?,reason=? WHERE key=?''',
-                (time.time()+max(300,min(1800,60*2**min(attempts,5))),reason,key))
+                next_attempt=?,reason=?,updated_at=? WHERE key=?''',
+                (time.time()+delay(attempts,reason),reason,time.time(),key))
         conn.close()
-        print(f'[자료 복구 대기] {path} · {reason}',flush=True)
-    return {'requested':len(rows),'received':done}
+        details = (f" · fixture={params.get('fixture')} · team={source.get('home_id','?')}-{source.get('away_id','?')}"
+                   f" · league={source.get('league_id','?')}/{source.get('season','?')}"
+                   f" · 공급사 통계제공={coverage if coverage is not None else '미확인'}") if path=='/fixtures/statistics' else ''
+        print(f'[자료 복구 대기] {path} · {reason}{details}',flush=True)
+    conn = _recovery_db()
+    try: advance(conn, position, attempted)
+    finally: conn.close()
+    return {'requested':attempted,'received':done,'scheduled':len(rows)}
 
 
 def _release_request_cache_lease(key):
@@ -878,7 +924,7 @@ def api_get(path, params=None, timeout=7, purpose=None):
                 )
                 saved = True
                 if (isinstance(payload.get('response'), list) and not payload['response']
-                        and path in {'/teams','/fixtures','/fixtures/statistics','/players/squads','/coachs','/standings','/fixtures/lineups','/odds'}):
+                        and path in {'/teams','/fixtures','/fixtures/statistics','/players/squads','/coachs','/standings','/fixtures/lineups','/odds','/leagues'}):
                     _queue_data_recovery(path, params, 'provider_empty_pending')
             return response
     except ApiQuotaUnavailable:
@@ -4705,6 +4751,7 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
         "data_status": "unavailable", "default_values_are_observations": False,
     }
     if not team_id: return default_res
+    from collection_recovery import valid_statistics, retry_pending
     cache_key = f"recent_stats_v3_{team_id}"
     cached_data = get_db_cache(cache_key, ttl_h)
     # Rebuild from shared raw responses. A partial aggregate must not mask a
@@ -4720,14 +4767,25 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
             fix_id = f["fixture"]["id"]
             fixture_cache_key = f"completed_fixture_stats_v1_{fix_id}"
             stats_data = get_db_cache(fixture_cache_key, 24 * 30)
-            if stats_data is None:
+            source = {'home_id': int((f.get('teams',{}).get('home') or {}).get('id') or 0),
+                      'away_id': int((f.get('teams',{}).get('away') or {}).get('id') or 0),
+                      'requested_teams': [int(team_id)]}
+            if not valid_statistics(stats_data, source, team_id):
+                # The queue owns retries once a request is waiting. Analyst/cache
+                # readers cannot bypass the cooldown and repeat the same empty call.
+                if retry_pending(fix_id, _runtime_connect):
+                    continue
                 stat_res = api_get("/fixtures/statistics", params={"fixture": fix_id}, timeout=5)
                 payload = stat_res.json() if stat_res.status_code == 200 else {}
                 if not payload or payload.get("errors"):
                     continue
                 stats_data = payload.get("response", [])
-                if stats_data and any(t.get("statistics") for t in stats_data):
+                if valid_statistics(stats_data, source, team_id):
                     set_db_cache(fixture_cache_key, stats_data)
+                else:
+                    _queue_data_recovery('/fixtures/statistics', {'fixture': fix_id},
+                                         reason='statistics_team_missing_or_invalid' if stats_data else 'provider_empty_pending', priority=0)
+                    continue
             for team_stat in stats_data:
                 own = str(team_stat.get("team", {}).get("id")) == str(team_id)
                 parsed = {}
@@ -4755,12 +4813,14 @@ def fetch_recent_team_stats_api(team_id, ttl_h):
                        xga_sample_size=len(values["xga"]),
                        field_samples={key: len(samples) for key, samples in values.items()},
                        source_fixture_ids=sorted(set(source_ids)),
+                       requested_fixture_ids=[int(f["fixture"]["id"]) for f in fixtures],
                        observed_at=datetime.now(timezone.utc).isoformat())
         if res_val["sample_size"]:
             res_val["data_status"] = "observed"
             set_db_cache(cache_key, res_val)
         return res_val
-    except: pass
+    except Exception as error:
+        print(f'[수집 통계 오류] team={team_id} · {type(error).__name__}', flush=True)
     return default_res
 
 

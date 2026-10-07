@@ -48,4 +48,6 @@ def dossier_value(evidence):
         if not isinstance(team,dict): continue
         for field in ('recent_stats','recent_metrics'):
             if isinstance(team.get(field),dict): team[field].pop('observed_at',None)
+        history = team.get('recent_statistics')
+        if isinstance(history,dict):history.pop('request_reports',None)
     return value
