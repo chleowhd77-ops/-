@@ -2117,6 +2117,9 @@ def _team_search_candidates(translated_name, saved_name=None):
         if len(value) >= 3 and value.casefold() not in {item.casefold() for item in candidates}:
             candidates.append(value)
 
+    from collection_team_names import search_names
+    for official_name in search_names(translated_name):
+        add(official_name)
     add(saved_name)
     add(translated_name)
     # New Betman spellings often arrive only as Hangul.  Keep a deterministic
@@ -2476,6 +2479,10 @@ def _team_id_from_resolved_logo(team_name):
 
 def _resolve_translated_team_name(team_name):
     """베트맨의 띄어쓰기/축약 차이를 기존 한영 사전에 안전하게 연결한다."""
+    from collection_team_names import translated
+    official_name = translated(team_name)
+    if official_name:
+        return official_name
     national_name = _national_team_english_name(team_name)
     if national_name:
         return national_name
@@ -3246,6 +3253,10 @@ def _team_name_match_score(local_name, api_name):
         return bool(re.search(r'여자|여성|women|female|ladies|(?:^|[\s_])w(?:$|[\s_])', str(value or '').casefold()))
     if womens(local_name) != womens(api_name):
         return -1.0
+    from collection_team_names import specific_pair_score
+    specific = specific_pair_score(local_name, api_name)
+    if specific is not None:
+        return specific
     translated = _resolve_translated_team_name(local_name)
     national_name = _national_team_english_name(local_name)
     api_key = _romanized_team_key(api_name)
