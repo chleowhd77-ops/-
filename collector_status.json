@@ -5,19 +5,17 @@
       "supervisor_pid": 585081,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-07T12:33:40+00:00",
+      "heartbeat_at": "2026-10-07T12:34:40+00:00",
       "pid": 585081,
       "last_started_at": "2026-10-07T10:36:57+00:00",
       "active_jobs": {
-        "products": 588276
+        "master": 588281
       },
       "pending_jobs": [
-        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 90.1,
-        "master": 90.1
+        "score": 150.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -63,15 +61,28 @@
     },
     "master": {
       "last_failure_at": "2026-10-06T17:42:51+00:00",
-      "last_success_at": "2026-10-07T12:29:44+00:00",
+      "last_success_at": "2026-10-07T12:34:59+00:00",
       "last_failure_duration_seconds": 900.6,
-      "last_success_duration_seconds": 56.86,
+      "last_success_duration_seconds": 57.23,
       "run_id": "master-1791376440538543127",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-07T12:34:02+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-07T12:34:59+00:00",
       "pid": 588281,
-      "last_started_at": "2026-10-07T12:34:02+00:00"
+      "last_started_at": "2026-10-07T12:34:02+00:00",
+      "child_pid": 588281,
+      "elapsed_seconds": 40.0,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 0,
+      "proto_checkpoint_deferred": 2,
+      "manager_published": true,
+      "manager_input_count": 9,
+      "manager_current_count": 6,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 57.23
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -189,7 +200,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-07T12:34:02+00:00",
+  "updated_at": "2026-10-07T12:34:59+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -271,7 +282,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 367
+        "count": 368
       },
       {
         "metric": "cache_only_miss",
@@ -289,13 +300,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 161
+        "count": 163
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 72
+        "count": 78
       },
       {
         "metric": "cache_only_miss",
