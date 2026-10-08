@@ -5,21 +5,20 @@
       "supervisor_pid": 596380,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-08T03:19:52+00:00",
+      "heartbeat_at": "2026-10-08T03:20:22+00:00",
       "pid": 596380,
       "last_started_at": "2026-10-07T17:40:53+00:00",
       "active_jobs": {
-        "products": 609826
+        "team": 609833,
+        "live": 609839
       },
       "pending_jobs": [
-        "live",
         "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 620.4,
-        "live": 18.1,
-        "master": 10.1
+        "score": 650.6,
+        "master": 40.3
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -27,15 +26,19 @@
     },
     "live": {
       "last_failure_duration_seconds": 181.0,
-      "last_success_at": "2026-10-08T03:15:44+00:00",
-      "last_success_duration_seconds": 9.68,
+      "last_success_at": "2026-10-08T03:20:25+00:00",
+      "last_success_duration_seconds": 3.24,
       "last_failure_at": "2026-10-06T06:51:50+00:00",
       "run_id": "live-1791429620832821420",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-08T03:20:22+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-08T03:20:25+00:00",
       "pid": 609839,
-      "last_started_at": "2026-10-08T03:20:22+00:00"
+      "last_started_at": "2026-10-08T03:20:22+00:00",
+      "child_pid": 609839,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0,
+      "duration_seconds": 3.24
     },
     "score": {
       "last_failure_at": "2026-10-07T21:39:49+00:00",
@@ -110,9 +113,12 @@
       "run_id": "team-1791429606719925946",
       "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-08T03:20:13+00:00",
-      "pid": 609833,
-      "last_started_at": "2026-10-08T03:20:11+00:00"
+      "heartbeat_at": "2026-10-08T03:20:22+00:00",
+      "pid": 596380,
+      "last_started_at": "2026-10-08T03:20:11+00:00",
+      "child_pid": 609833,
+      "elapsed_seconds": 16.1,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 1031.74,
@@ -182,7 +188,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-08T03:20:22+00:00",
+  "updated_at": "2026-10-08T03:20:25+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -278,7 +284,7 @@
         "metric": "cache_hit",
         "purpose": "live",
         "endpoint": "/fixtures",
-        "count": 1
+        "count": 2
       }
     ],
     "accounting": "local-preflight-reservation-v2",
