@@ -5,19 +5,19 @@
       "supervisor_pid": 596380,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-08T11:50:43+00:00",
+      "heartbeat_at": "2026-10-08T11:51:44+00:00",
       "pid": 596380,
       "last_started_at": "2026-10-07T17:40:53+00:00",
       "active_jobs": {
-        "products": 612456
+        "master": 612462
       },
       "pending_jobs": [
-        "master",
+        "live",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 298.7,
-        "master": 238.3
+        "score": 358.8,
+        "live": 58.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -63,15 +63,28 @@
     },
     "master": {
       "last_failure_duration_seconds": 908.3,
-      "last_success_duration_seconds": 51.78,
+      "last_success_duration_seconds": 53.26,
       "last_failure_at": "2026-10-07T21:29:09+00:00",
-      "last_success_at": "2026-10-08T11:44:46+00:00",
+      "last_success_at": "2026-10-08T11:52:00+00:00",
       "run_id": "master-1791460265855524487",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-08T11:51:07+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-08T11:52:00+00:00",
       "pid": 612462,
-      "last_started_at": "2026-10-08T11:51:07+00:00"
+      "last_started_at": "2026-10-08T11:51:07+00:00",
+      "child_pid": 612462,
+      "elapsed_seconds": 40.2,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 0,
+      "proto_checkpoint_deferred": 1,
+      "manager_published": true,
+      "manager_input_count": 10,
+      "manager_current_count": 8,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 53.26
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -89,37 +102,16 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_failure_duration_seconds": 601.3,
-      "last_failure_at": "2026-10-07T17:29:14+00:00",
-      "last_success_duration_seconds": 67.73,
       "last_success_at": "2026-10-08T11:48:07+00:00",
-      "run_id": "team-1791460015592725874",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-08T11:48:07+00:00",
-      "pid": 612448,
-      "last_started_at": "2026-10-08T11:47:00+00:00",
-      "child_pid": 612448,
-      "elapsed_seconds": 48.1,
-      "overlap_skips": 0,
-      "team_retry_processed": 0,
-      "team_retry_resolved": 322,
-      "team_retry_pending": 5,
-      "team_retry_due": 0,
-      "team_retry_seeded": 2,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 25,
-      "data_prefetch_teams": 46,
-      "data_prefetch_identity_missing": 2,
-      "data_prefetch_early_core_matches": 0,
-      "data_prefetch_deep_matches": 25,
-      "data_prefetch_core_newly_warmed": 0,
-      "data_prefetch_core_already_ready": 23,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 67.73
+      "last_failure_at": "2026-10-07T17:29:14+00:00",
+      "last_failure_duration_seconds": 601.3,
+      "last_success_duration_seconds": 67.73,
+      "run_id": "team-1791460316052236178",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-08T11:51:58+00:00",
+      "pid": 612466,
+      "last_started_at": "2026-10-08T11:51:58+00:00"
     },
     "backup": {
       "last_success_duration_seconds": 278.74,
@@ -189,7 +181,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-08T11:51:07+00:00",
+  "updated_at": "2026-10-08T11:52:00+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -260,7 +252,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 121
+        "count": 123
       },
       {
         "metric": "cache_only_miss",
