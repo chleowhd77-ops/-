@@ -5,22 +5,20 @@
       "supervisor_pid": 618100,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-09T17:47:01+00:00",
+      "heartbeat_at": "2026-10-09T17:48:05+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T03:00:03+00:00",
       "active_jobs": {
         "team": 627666,
-        "live": 627689
+        "master": 627690
       },
       "pending_jobs": [
-        "master",
         "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1436.7,
-        "master": 519.4,
-        "products": 2.1
+        "score": 1497.3,
+        "products": 62.7
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -67,11 +65,14 @@
       "last_failure_duration_seconds": 900.8,
       "last_success_at": "2026-10-09T14:09:32+00:00",
       "run_id": "master-1791568041774571780",
-      "last_stage": "initializing",
+      "last_stage": "executing",
       "state": "running",
-      "heartbeat_at": "2026-10-09T17:47:22+00:00",
-      "pid": 627690,
-      "last_started_at": "2026-10-09T17:47:22+00:00"
+      "heartbeat_at": "2026-10-09T17:48:23+00:00",
+      "pid": 618100,
+      "last_started_at": "2026-10-09T17:47:22+00:00",
+      "child_pid": 627690,
+      "elapsed_seconds": 61.8,
+      "overlap_skips": 1
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -89,19 +90,21 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_failure_duration_seconds": 600.3,
+      "last_failure_duration_seconds": 601.6,
       "last_success_at": "2026-10-09T17:27:39+00:00",
       "last_success_duration_seconds": 571.09,
-      "last_failure_at": "2026-10-09T17:38:08+00:00",
+      "last_failure_at": "2026-10-09T17:48:23+00:00",
       "run_id": "team-1791567501742930012",
       "last_stage": "prefetch_current_matches",
-      "state": "running",
-      "heartbeat_at": "2026-10-09T17:47:01+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-10-09T17:48:23+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T17:38:27+00:00",
       "child_pid": 627666,
-      "elapsed_seconds": 519.6,
-      "overlap_skips": 1
+      "elapsed_seconds": 601.5,
+      "overlap_skips": 2,
+      "duration_seconds": 601.6,
+      "last_error": "hard timeout after 601 seconds"
     },
     "backup": {
       "last_success_duration_seconds": 1065.61,
@@ -168,7 +171,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-09T17:47:22+00:00",
+  "updated_at": "2026-10-09T17:48:23+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
