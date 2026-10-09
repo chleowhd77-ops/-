@@ -17597,6 +17597,7 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
     read the same evidence without four independent overseas-data jobs.
     """
     now = datetime.now(KST)
+    from collection_request_schedule import morning_cutoff, morning_ttl
     betman = _read_json("betman_data.json", {}) or {}
     candidates = _ticket_prefetch_entries(betman, now)
 
@@ -17620,6 +17621,12 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         match = entry.get("match") or {}
         hours_to_kickoff = max(0.0, (kickoff - now).total_seconds() / 3600.0)
         core_ready = _prefetch_core_is_ready(entry.get("source"), match)
+        if morning_cutoff() is not None:
+            refreshed = get_db_cache(_shared_dossier_key(match), morning_ttl(24))
+            # A completed pass goes behind untouched fixtures in the new round.
+            # Partial responses remain visibly partial; they do not monopolize
+            # the first batch while other fixtures have never been visited.
+            return (1 if refreshed is not None else 0), kickoff
         # The closest fixtures must keep receiving volatile lineup/market
         # refreshes.  After that, choose never-warmed fixtures before revisiting
         # an already prepared dossier, which gives every scheduled fixture a
@@ -17683,10 +17690,13 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
 
             with api_purpose_context(purpose):
                 if entry.get("source") in {"PROTO", "TOTO14"}:
-                    home_info, away_info, identity_fixture = resolve_match_team_pair(
+                    from collection_request_schedule import resolve_cached_pair
+                    import api_engine as scheduling_api
+                    home_info, away_info, identity_fixture = resolve_cached_pair(
                         home_name, away_name,
-                        match.get("match_time") or match.get("time") or "",
-                        ttl_h=2, league_name=match.get("league") or "",
+                        match.get("match_time") or match.get("time") or "", 2,
+                        match.get("league") or "", resolve_match_team_pair,
+                        get_db_cache, set_db_cache, scheduling_api.API_RUNTIME_DB,
                     )
                     home_id = int((home_info or {}).get("id") or 0)
                     away_id = int((away_info or {}).get("id") or 0)
@@ -17695,6 +17705,9 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                         if isinstance(identity_fixture, dict) else (identity_fixture or 0)
                     )
                     if isinstance(identity_fixture, dict):
+                        from collection_request_schedule import remember_fixture
+                        if not remember_fixture(identity_fixture, get_db_cache, set_db_cache):
+                            print('[수집 일정 확인 대기] 실제 경기표 일정 저장을 다음 주기에 재확인합니다.', flush=True)
                         fixture_id = int(
                             (identity_fixture.get("fixture") or {}).get("id")
                             or fixture_id or 0
@@ -17739,16 +17752,16 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
                 team_evidence = {}
                 for team_id in (home_id, away_id):
                     team_evidence[str(team_id)] = {
-                        "recent_fixtures": fetch_team_recent_fixtures_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
-                        "form": fetch_team_form_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
-                        "long_term": fetch_team_long_term_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
-                        "recent_metrics": fetch_team_recent_form_metrics(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
-                        "last_match": fetch_team_last_match_date_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                        "recent_fixtures": fetch_team_recent_fixtures_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
+                        "form": fetch_team_form_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
+                        "long_term": fetch_team_long_term_stats_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
+                        "recent_metrics": fetch_team_recent_form_metrics(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
+                        "last_match": fetch_team_last_match_date_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
                     }
                     if deep_refresh_due:
                         team_evidence[str(team_id)].update({
-                            "next_fixture": fetch_team_next_fixture_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
-                            "recent_stats": fetch_recent_team_stats_api(team_id, DATA_PREFETCH_TEAM_TTL_HOURS),
+                            "next_fixture": fetch_team_next_fixture_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
+                            "recent_stats": fetch_recent_team_stats_api(team_id, morning_ttl(DATA_PREFETCH_TEAM_TTL_HOURS)),
                         })
                         team_evidence[str(team_id)]['squad'] = fetch_team_squad_cached(team_id)
                         from collection_history import plan
@@ -17821,7 +17834,12 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
         except Exception as error:
             errors.append(f"{entry.get('source')}:{type(error).__name__}:{error}")
 
+    total_targets = len({(str((row[2].get('match') or {}).get('home') or '').strip().casefold(),
+                          str((row[2].get('match') or {}).get('away') or '').strip().casefold(),
+                          row[0].isoformat()) for row in candidates})
+    print(f'[새 경기 자료 수집 확인] 대상 {total_targets}경기 / 이번 점검 {processed}경기 / 기본자료 신규 {core_newly_warmed}경기 / 기본자료 확보 경기 재확인 {core_already_ready}경기 / 팀 연결 대기 {identities_missing}경기', flush=True)
     return {
+        "total_targets": total_targets,
         "processed": processed,
         "teams_warmed": teams_warmed,
         "identities_missing": identities_missing,
@@ -17839,9 +17857,12 @@ def _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT):
 def run_team_identity_job():
     """Prefetch shared evidence, then repair unresolved team profiles."""
     from api_engine import process_data_recovery_queue
+    _update_collector_status('team', 'running', last_stage='prefetch_current_matches')
+    print('[수집 순서] 새 경기 공통자료 먼저 수집 · 과거 실패 자료는 뒤에서 제한 복구', flush=True)
+    prefetch = _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT)
+    _update_collector_status('team', 'running', last_stage='bounded_material_recovery')
     recovery = process_data_recovery_queue(limit=12)
     print(f"[수집 복구 주기] 요청 {recovery.get('requested',0)}건 / 수신 {recovery.get('received',0)}건", flush=True)
-    prefetch = _prefetch_upcoming_analysis_inputs(limit=DATA_PREFETCH_MATCH_LIMIT)
     seeded_cards = _queue_incomplete_dashboard_team_profiles()
     summary = process_team_identity_retry_queue(limit=TEAM_IDENTITY_RETRY_BATCH)
     repaired_cards = _refresh_dashboard_team_profiles()
@@ -17858,6 +17879,7 @@ def run_team_identity_job():
         team_retry_seeded=int(seeded_cards),
         team_profile_card_updates=int(repaired_cards),
         data_prefetch_matches=int(prefetch.get("processed") or 0),
+        data_prefetch_total_targets=int(prefetch.get("total_targets") or 0),
         data_prefetch_teams=int(prefetch.get("teams_warmed") or 0),
         data_prefetch_identity_missing=int(prefetch.get("identities_missing") or 0),
         data_prefetch_early_core_matches=int(prefetch.get("early_core_matches") or 0),

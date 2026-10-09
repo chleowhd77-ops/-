@@ -541,7 +541,9 @@ def _claim_request_cache(key):
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT body,expires,lease FROM request_cache WHERE key=?",(key,)).fetchone()
-        if row and row[0] is not None and row[1] > time.time():
+        from collection_request_schedule import request_cache_fresh_enough
+        if (row and row[0] is not None and row[1] > time.time()
+                and request_cache_fresh_enough(key, row[0], row[1], _request_cache_ttl)):
             res = requests.Response()
             res.status_code, res._content, res.encoding = 200,row[0].encode("utf-8"),"utf-8"
             res.headers["X-DJ-Cache"] = "hit"
@@ -882,6 +884,17 @@ def api_get(path, params=None, timeout=7, purpose=None):
     if cached is not None:
         _record_runtime_metric(day, "cache_hit", purpose, path)
         return cached
+    if path == '/fixtures/lineups':
+        from collection_request_schedule import lineup_wait_reason
+        try:
+            waiting = lineup_wait_reason(API_RUNTIME_DB, params.get('fixture'))
+        except (OSError, sqlite3.Error, ValueError, TypeError) as error:
+            _release_request_cache_lease(key)
+            raise ApiQuotaUnavailable('Lineup scheduling unavailable; no request sent') from error
+        if waiting:
+            _release_request_cache_lease(key)
+            _record_runtime_metric(day, 'lineup_scheduled_wait', purpose, path)
+            raise ApiRateLimited('Lineup publication window or retry pending; reuse available material')
     from offline_mode import enabled as offline_enabled
     if _API_CACHE_ONLY or offline_enabled():
         _release_request_cache_lease(key)
@@ -4166,7 +4179,8 @@ def fetch_team_recent_fixtures_api(team_id, ttl_h):
     if not team_id:
         return []
     cache_key = f"recent_fixtures_v2_{team_id}"
-    cached_data = get_db_cache(cache_key, ttl_h)
+    from collection_request_schedule import morning_ttl
+    cached_data = get_db_cache(cache_key, morning_ttl(ttl_h))
     if cached_data is not None:
         return cached_data
     # 일시적인 API 장애 때 웹의 전적이 사라지지 않도록 마지막 정상본을 보존한다.

@@ -101,18 +101,20 @@ def select(conn, limit, now):
     The 12-step cursor survives one-request runs and partial/quota-limited runs.
     """
     schema(conn);limit=max(0,int(limit))
+    from collection_request_schedule import scheduling_sql
+    raw_priority='q.priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '0'
+    eligible, priority = scheduling_sql(conn, now, raw_priority)
     cols='q.key,q.path,q.params_json,q.attempts'
     base=f'''SELECT {cols} FROM data_recovery_queue q
         LEFT JOIN collection_stat_sources s ON q.path='/fixtures/statistics'
         AND s.fixture_id=CAST(json_extract(q.params_json,'$.fixture') AS INTEGER)
-        WHERE q.next_attempt<=? AND {{condition}} ORDER BY
+        WHERE {eligible} AND {{condition}} ORDER BY
         q.attempts, CASE WHEN q.path='/leagues' THEN 0 WHEN q.path='/fixtures' AND json_extract(q.params_json,'$.ids') IS NOT NULL THEN 1 ELSE 2 END,
         COALESCE(s.kickoff,0) DESC,q.next_attempt,q.updated_at,q.key LIMIT ?'''
     # Compatibility with queues created before priority was introduced.
-    priority='q.priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '0'
-    core=list(conn.execute(base.format(condition=priority+'<=0'),(now,limit)))
+    core=list(conn.execute(base.format(condition=priority+'<=0'),(limit,)))
     kind="CASE WHEN q.path='/leagues' THEN 0 WHEN q.path='/fixtures' AND json_extract(q.params_json,'$.ids') IS NOT NULL THEN 1 ELSE 2 END"
-    history=[list(conn.execute(base.format(condition=f'{priority}>0 AND ({kind})={k}'),(now,limit)))
+    history=[list(conn.execute(base.format(condition=f'{priority}>0 AND ({kind})={k}'),(limit,)))
              for k in range(3)]
     saved=conn.execute('SELECT position FROM collection_recovery_cursor WHERE name="request"').fetchone()
     position=int(saved[0]) if saved else 0;chosen=[]
