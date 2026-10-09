@@ -12,7 +12,7 @@ import sqlite3
 import time
 from threading import RLock
 
-POLICY = 'current-ticket-recovery-v32'
+POLICY = 'current-ticket-recovery-v32-1'
 _MEMO = {}
 _MEMO_LOCK = RLock()
 NEGATIVE = {'provider_empty_pending', 'provider_coverage_false_fixture_pending',
@@ -63,7 +63,7 @@ def build_scope(conn, now=None, root=None):
     data = json.loads(path.read_text(encoding='utf-8-sig'))
     if not isinstance(data, dict) or not isinstance(data.get('proto_matches'), list):
         raise ValueError('current ticket format unavailable')
-    result = {'current': {}, 'teams': {}, 'pairs': set(), 'leagues': set(), 'stats': {}, 'critical': {}, 'unresolved': 0}
+    result = {'current': {}, 'teams': {}, 'pairs': set(), 'leagues': set(), 'stats': {}, 'critical': {}, 'unresolved': 0, 'legacy_current': set()}
     pairs = {}
     # First visit: the validated pair is cached before the full dossier exists.
     for pair_row in conn.execute('''SELECT json_extract(cache_value,'$.inputs'),
@@ -93,23 +93,31 @@ def build_scope(conn, now=None, root=None):
             row = conn.execute('''SELECT json_extract(cache_value,'$.home.id'),
                 json_extract(cache_value,'$.away.id'),json_extract(cache_value,'$.fixture_id'),
                 json_extract(cache_value,'$.kickoff_at'),json_extract(cache_value,'$.league_id'),
-                json_extract(cache_value,'$.season') FROM general_cache WHERE cache_key=?''', (key,)).fetchone()
+                json_extract(cache_value,'$.season'),json_extract(cache_value,'$.home.verified_pair'),
+                json_extract(cache_value,'$.away.verified_pair') FROM general_cache WHERE cache_key=?''', (key,)).fetchone()
             if not row or not row[2]:
                 p = pairs.get((str(match['home']).strip().casefold(), str(match['away']).strip().casefold(), ko, str(match.get('league') or '').strip()))
                 if p:
-                    row = (p[0], p[1], p[2], p[3], p[4], p[5])
+                    row = (p[0], p[1], p[2], p[3], p[4], p[5], 1, 1)
             if not row:
                 result['unresolved'] += 1
                 continue
-            h, a, fid, saved_ko, league, season = row
+            h, a, fid, saved_ko, league, season, home_verified, away_verified = row
             h, a, fid = int(h or 0), int(a or 0), int(fid or 0)
-            window = cache(conn, 'collection_fixture_window_v1_' + str(fid)) or {}
-            if (not h or not a or h == a or not fid or epoch(saved_ko) != ko
-                    or (window.get('home_id'), window.get('away_id'), window.get('kickoff')) != (h, a, ko)):
+            window = cache(conn, 'collection_fixture_window_v1_' + str(fid))
+            # Older exact-ticket dossiers already contain validated team pairs.
+            # A missing new window is compatible; a present conflicting one is not.
+            # Do not fabricate provider kickoff records from the ticket target time.
+            verified = ((window.get('home_id'), window.get('away_id'), window.get('kickoff')) == (h, a, ko)
+                        if isinstance(window, dict) else
+                        window is None and home_verified == 1 and away_verified == 1)
+            if not h or not a or h == a or not fid or epoch(saved_ko) != ko or not verified:
                 result['unresolved'] += 1
                 continue
             target = key + ':' + str(int(ko))
             result['current'][fid] = ko
+            if window is None:
+                result['legacy_current'].add(fid)
             result['pairs'].add((h,a))
             if league and season:
                 result['leagues'].add((int(league), int(season)))
@@ -240,6 +248,11 @@ def recovery_scope(conn, now):
             else: deny('bulk_outside_scope_or_observed_empty')
         elif path == '/leagues':
             allow = (int(p.get('id') or 0), int(p.get('season') or 0)) in current['leagues']
+        elif path == '/fixtures/lineups':
+            fid = int(p.get('fixture') or 0)
+            allow = fid in current['current'] and 0 < current['current'][fid]-now <= 2*3600
+            if not allow:
+                deny('lineup_outside_current_t120'); continue
         elif p.get('fixture'):
             allow = int(p['fixture']) in current['current']
         elif p.get('team'):
@@ -254,18 +267,23 @@ def recovery_scope(conn, now):
         elif path not in ('/fixtures/statistics', '/fixtures'):
             deny('no_verified_current_ticket_link')
     count = conn.execute('SELECT COUNT(*) FROM recovery_allowed_v32').fetchone()[0]
-    print('[복구 범위 V32] 현재 경기', len(current['current']), '/ 대상 요청', count,
+    print('[복구 범위 V32.1] 현재 경기', len(current['current']), '/ 대상 요청', count,
           '/ 대기 사유', json.dumps(counts, ensure_ascii=False), '/ 미연결 경기', current['unresolved'], flush=True)
     return changed
 
 
 def network_wait(database, path, params, purpose, now=None):
-    if purpose != 'analysis' or not (path == '/fixtures/statistics' or path == '/fixtures' and params.get('ids')):
+    if purpose != 'analysis' or not (path in ('/fixtures/statistics', '/fixtures/lineups') or path == '/fixtures' and params.get('ids')):
         return None
     now = time.time() if now is None else now
     conn = sqlite3.connect(database, timeout=3)
     try:
         current = scope(conn, now)
+        if path == '/fixtures/lineups':
+            kickoff = current['current'].get(int(params.get('fixture') or 0))
+            if kickoff is None:
+                return 'lineup_no_verified_current_ticket'
+            return None if 0 < kickoff-now <= 2*3600 else 'lineup_wait_until_current_t120'
         ids = [int(params['fixture'])] if path == '/fixtures/statistics' else [int(v) for v in str(params['ids']).split('-')]
         for fid in ids:
             wait, target = stat_decision(conn, fid, current, now, bulk=path == '/fixtures')
