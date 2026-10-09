@@ -104,6 +104,13 @@ def select(conn, limit, now):
     from collection_request_schedule import scheduling_sql
     raw_priority='q.priority' if 'priority' in {r[1] for r in conn.execute('PRAGMA table_info(data_recovery_queue)')} else '0'
     eligible, priority = scheduling_sql(conn, now, raw_priority)
+    from collection_recovery_scope_v32 import recovery_scope
+    try:
+        scoped_raw = recovery_scope(conn, now)
+    except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, AttributeError) as error:
+        print('[복구 범위 확인 대기 V32] '+type(error).__name__+' · 배경 복구 요청 없음 · 현재 경기 수집 유지', flush=True)
+        return [], 0
+    eligible = '(' + eligible + ' OR EXISTS(SELECT 1 FROM recovery_final_due_v32 d WHERE d.key=q.key)) AND EXISTS(SELECT 1 FROM recovery_allowed_v32 a WHERE a.key=q.key)'
     cols='q.key,q.path,q.params_json,q.attempts'
     base=f'''SELECT {cols} FROM data_recovery_queue q
         LEFT JOIN collection_stat_sources s ON q.path='/fixtures/statistics'
@@ -132,7 +139,7 @@ def select(conn, limit, now):
             chosen.append(core.pop(0))
         else:
             break
-    return chosen,position
+    return [(k,p,scoped_raw.get(k,r),a) for k,p,r,a in chosen],position
 
 
 def advance(conn, position, attempted):
@@ -144,6 +151,12 @@ def advance(conn, position, attempted):
 def retry_pending(fid, connect):
     conn=connect()
     try:
+        from collection_recovery_scope_v32 import retry_override
+        try:
+            override = retry_override(conn, fid, time.time())
+        except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, AttributeError):
+            return True  # Scope unavailable: reuse existing raw material, no new request.
+        if override is not None:return override
         key=json.dumps(['/fixtures/statistics',{'fixture':int(fid)}],sort_keys=True,ensure_ascii=True)
         try:row=conn.execute('SELECT next_attempt FROM data_recovery_queue WHERE key=?',(key,)).fetchone()
         except sqlite3.OperationalError:return False

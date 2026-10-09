@@ -813,6 +813,9 @@ def process_data_recovery_queue(limit=12):
             if path=='/fixtures/statistics' and payload.get('response') and not payload.get('errors'):
                 reason='statistics_team_missing_or_invalid'
         except (ApiQuotaUnavailable, ApiRateLimited) as error:
+            if getattr(error, 'collection_scope_wait_v32', False):
+                print(f'[복구 중복 대기 V32] {path} · 현재 범위 또는 빈 응답 대기 · 다음 요청 계속', flush=True)
+                continue
             print(f'[수집 요청 차단] {path} · {type(error).__name__} · 원인={blocked_reason(error)}',flush=True)
             break
         except Exception as error:
@@ -901,6 +904,18 @@ def api_get(path, params=None, timeout=7, purpose=None):
         _record_runtime_metric(day, "cache_only_miss", purpose, path)
         _queue_data_recovery(path, params)
         return _cache_only_miss_response(path)
+    from collection_recovery_scope_v32 import network_wait, note_response
+    try:
+        waiting = network_wait(API_RUNTIME_DB, path, params, purpose)
+    except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, AttributeError) as error:
+        _release_request_cache_lease(key)
+        raise ApiQuotaUnavailable('Recovery scope unavailable; no request sent') from error
+    if waiting:
+        _release_request_cache_lease(key)
+        _record_runtime_metric(day, 'recovery_scope_wait_v32', purpose, path)
+        error = ApiRateLimited('Current ticket recovery waiting: '+waiting)
+        error.collection_scope_wait_v32 = True
+        raise error
     saved = False
     try:
         for attempt in range(API_RATE_LIMIT_RETRIES+1):
@@ -947,6 +962,10 @@ def api_get(path, params=None, timeout=7, purpose=None):
                     key, payload, _request_cache_ttl(path, params, payload)
                 )
                 saved = True
+                try:
+                    note_response(API_RUNTIME_DB, path, params, payload, purpose)
+                except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, AttributeError) as error:
+                    print('[복구 응답 기록 대기 V32] '+type(error).__name__+' · 원본 응답 및 기존 재시도 기록 유지', flush=True)
                 if (isinstance(payload.get('response'), list) and not payload['response']
                         and path in {'/teams','/fixtures','/fixtures/statistics','/players/squads','/coachs','/standings','/fixtures/lineups','/odds','/leagues'}):
                     _queue_data_recovery(path, params, 'provider_empty_pending')
