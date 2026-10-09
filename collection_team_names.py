@@ -9,6 +9,14 @@ import re
 CLUBS = {
     # Confirmed against the stored API date board, 2026-10-10, China Super League.
     # Names are hints only; IDs, opponents, league and kickoff remain validated.
+    # Ordered pairs/times confirmed from the cached China Super League date board.
+    '칭다오시하이안': ('Qingdao Youth Island',),
+    '다롄잉보': ('Dalian Zhixing',),
+    '충칭퉁량룽': ('Chongqing Tongliang Long',),
+    '산둥타이산': ('Shandong Luneng',),
+    '랴오닝티렌': ('Shenyang Urban',),
+    '랴오닝테런': ('Shenyang Urban',),
+    '우한싼전': ('Wuhan Three Towns',),
     '상하이선화': ('Shanghai Shenhua',),
     '윈난위쿤': ('Yunnan Yukun',),
     '청두룽청': ('Chengdu Better City',),
@@ -17,10 +25,10 @@ CLUBS = {
     '선전신펑청FC': ('Shenzhen Peng City', 'Sichuan Jiuniu'),
     '허난FC': ('Henan FC',),
     '허난': ('Henan FC',),
-    '저장FC': ('Zhejiang FC',),
-    '저장': ('Zhejiang FC',),
-    '상하이하이강': ('Shanghai Port',),
-    '상하이하이강FC': ('Shanghai Port',),
+    '저장FC': ('Zhejiang FC', 'Hangzhou Greentown'),
+    '저장': ('Zhejiang FC', 'Hangzhou Greentown'),
+    '상하이하이강': ('Shanghai Port', 'SHANGHAI SIPG'),
+    '상하이하이강FC': ('Shanghai Port', 'SHANGHAI SIPG'),
 }
 SOURCES = (
     'https://www.cityfootballgroup.com/clubs/shenzhen-peng-city',
@@ -43,7 +51,10 @@ def specific_pair_score(local, provider):
     # because the older generic name matcher considers a shared city a match.
     names = search_names(local)
     if names and names[0] in ('Shenzhen Peng City', 'Shanghai Shenhua',
-                             'Yunnan Yukun', 'Chengdu Better City', 'Tianjin Teda'):
+                             'Yunnan Yukun', 'Chengdu Better City', 'Tianjin Teda',
+                             'Zhejiang FC', 'Shanghai Port', 'Qingdao Youth Island',
+                             'Dalian Zhixing', 'Chongqing Tongliang Long',
+                             'Shandong Luneng', 'Shenyang Urban', 'Wuhan Three Towns'):
         candidate = key(provider)
         accepted = {key(n+suffix) for n in names for suffix in ('', ' FC', ' Football Club')}
         return 1.0 if candidate in accepted else -1.0
