@@ -7,6 +7,9 @@ Every accepted fixture still requires the original ordered IDs/time/league check
 import re
 
 CLUBS = {
+    # Exact ordered pair verified in the stored 2026-10-10 La Liga board.
+    '알라베스': ('Alaves',),
+    'AT마드': ('Atletico Madrid',),
     # Confirmed against the stored API date board, 2026-10-10, China Super League.
     # Names are hints only; IDs, opponents, league and kickoff remain validated.
     # Ordered pairs/times confirmed from the cached China Super League date board.
@@ -54,7 +57,8 @@ def specific_pair_score(local, provider):
                              'Yunnan Yukun', 'Chengdu Better City', 'Tianjin Teda',
                              'Zhejiang FC', 'Shanghai Port', 'Qingdao Youth Island',
                              'Dalian Zhixing', 'Chongqing Tongliang Long',
-                             'Shandong Luneng', 'Shenyang Urban', 'Wuhan Three Towns'):
+                             'Shandong Luneng', 'Shenyang Urban', 'Wuhan Three Towns',
+                             'Alaves', 'Atletico Madrid'):
         candidate = key(provider)
         accepted = {key(n+suffix) for n in names for suffix in ('', ' FC', ' Football Club')}
         return 1.0 if candidate in accepted else -1.0
