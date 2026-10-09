@@ -2812,19 +2812,13 @@ def process_team_identity_retry_queue(limit=4):
     """Retry forever across service restarts, while bounding only one cycle."""
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat(timespec="seconds")
+    from collection_retry_guard import due_rows, retry_report
     conn = _runtime_connect()
     try:
-        rows = conn.execute(
-            """
-            SELECT retry_key,home_name,away_name,match_time,league_name,attempts
-            FROM team_identity_retry_queue
-            WHERE status!='RESOLVED' AND (next_retry_at IS NULL OR next_retry_at<=?)
-            ORDER BY COALESCE(next_retry_at,''),updated_at,retry_key LIMIT ?
-            """,
-            (now_iso, max(1, int(limit or 1))),
-        ).fetchall()
+        rows, queue_summary = due_rows(conn, now, limit)
     finally:
         conn.close()
+    print(f"[팀 재시도] 이번 대상 {len(rows)}건 · 하루 지난 기록 {queue_summary['past_due_retained']}건 보존/제외", flush=True)
 
     processed = resolved = 0
     for retry_key, home_name, away_name, match_time, league_name, prior_attempts in rows:
@@ -2884,7 +2878,13 @@ def process_team_identity_retry_queue(limit=4):
             conn.commit()
         finally:
             conn.close()
-    return {"processed": processed, "resolved": resolved, **get_team_identity_retry_status()}
+    totals = get_team_identity_retry_status()
+    conn = _runtime_connect()
+    try:
+        _, queue_summary = due_rows(conn, datetime.now(timezone.utc), 1)
+    finally:
+        conn.close()
+    return retry_report(processed, resolved, totals, queue_summary)
 
 
 def _latin_team_key(value):

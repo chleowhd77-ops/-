@@ -7,6 +7,12 @@ Every accepted fixture still requires the original ordered IDs/time/league check
 import re
 
 CLUBS = {
+    # Confirmed against the stored API date board, 2026-10-10, China Super League.
+    # Names are hints only; IDs, opponents, league and kickoff remain validated.
+    '상하이선화': ('Shanghai Shenhua',),
+    '윈난위쿤': ('Yunnan Yukun',),
+    '청두룽청': ('Chengdu Better City',),
+    '텐진진먼후': ('Tianjin Teda',),
     '선전신펑청': ('Shenzhen Peng City', 'Sichuan Jiuniu'),
     '선전신펑청FC': ('Shenzhen Peng City', 'Sichuan Jiuniu'),
     '허난FC': ('Henan FC',),
@@ -36,7 +42,8 @@ def specific_pair_score(local, provider):
     # Shenzhen FC is a different club. Never accept it as Peng City merely
     # because the older generic name matcher considers a shared city a match.
     names = search_names(local)
-    if names and names[0] == 'Shenzhen Peng City':
+    if names and names[0] in ('Shenzhen Peng City', 'Shanghai Shenhua',
+                             'Yunnan Yukun', 'Chengdu Better City', 'Tianjin Teda'):
         candidate = key(provider)
         accepted = {key(n+suffix) for n in names for suffix in ('', ' FC', ' Football Club')}
         return 1.0 if candidate in accepted else -1.0
