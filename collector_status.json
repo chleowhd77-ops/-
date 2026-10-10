@@ -5,11 +5,12 @@
       "supervisor_pid": 618100,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-10T19:27:49+00:00",
+      "heartbeat_at": "2026-10-10T19:31:22+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T03:00:03+00:00",
       "active_jobs": {
-        "score": 651414
+        "score": 651414,
+        "team": 651422
       },
       "pending_jobs": [
         "live",
@@ -17,9 +18,9 @@
         "products"
       ],
       "pending_wait_seconds": {
-        "live": 2436.3,
-        "products": 1226.3,
-        "master": 298.0
+        "live": 2648.8,
+        "products": 1438.8,
+        "master": 510.5
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -43,23 +44,27 @@
     },
     "score": {
       "last_success_at": "2026-10-10T17:48:22+00:00",
-      "last_failure_at": "2026-10-10T18:40:43+00:00",
-      "last_failure_duration_seconds": 620.9,
+      "last_failure_at": "2026-10-10T19:31:42+00:00",
+      "last_failure_duration_seconds": 600.1,
       "last_success_duration_seconds": 576.16,
       "run_id": "score-1791660099713954314",
-      "last_stage": "grading_snapshot_building",
-      "state": "running",
-      "heartbeat_at": "2026-10-10T19:27:52+00:00",
+      "last_stage": "grading_published",
+      "state": "failed",
+      "heartbeat_at": "2026-10-10T19:31:42+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-10T19:21:48+00:00",
       "child_pid": 651414,
-      "elapsed_seconds": 372.0,
+      "elapsed_seconds": 582.0,
       "overlap_skips": 2,
       "due_count": 12,
       "graded_count": 1,
       "result_error_count": 0,
       "results_state": "checked",
-      "scoring_seconds": 244.73
+      "scoring_seconds": 244.73,
+      "grading_published_at": "2026-10-10T19:29:13+00:00",
+      "grading_snapshot_seconds": 198.3,
+      "duration_seconds": 600.1,
+      "last_error": "hard timeout after 600 seconds"
     },
     "master": {
       "last_success_at": "2026-10-10T15:00:50+00:00",
@@ -101,11 +106,14 @@
       "last_success_at": "2026-10-10T18:04:20+00:00",
       "last_success_duration_seconds": 358.65,
       "run_id": "team-1791660471775091350",
-      "last_stage": "initializing",
+      "last_stage": "prefetch_current_matches",
       "state": "running",
-      "heartbeat_at": "2026-10-10T19:27:57+00:00",
-      "pid": 651422,
-      "last_started_at": "2026-10-10T19:27:57+00:00"
+      "heartbeat_at": "2026-10-10T19:31:22+00:00",
+      "pid": 618100,
+      "last_started_at": "2026-10-10T19:27:57+00:00",
+      "child_pid": 651422,
+      "elapsed_seconds": 210.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 716.02,
@@ -175,14 +183,14 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-10T19:27:57+00:00",
+  "updated_at": "2026-10-10T19:31:42+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 832
+        "calls": 833
       },
       {
         "purpose": "analysis",
@@ -222,7 +230,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures/lineups",
-        "calls": 86
+        "calls": 88
       },
       {
         "purpose": "live",
@@ -237,7 +245,7 @@
       {
         "purpose": "scoring",
         "endpoint": "/fixtures",
-        "calls": 50
+        "calls": 54
       }
     ],
     "runtime_metrics": [
@@ -365,15 +373,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-10",
     "reset_timezone": "UTC",
-    "local_calls": 3044,
-    "provider_remaining": 4456,
+    "local_calls": 3052,
+    "provider_remaining": 4448,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 2824,
+    "analysis_calls": 2826,
     "live_calls": 84,
-    "scoring_calls": 136,
+    "scoring_calls": 142,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
