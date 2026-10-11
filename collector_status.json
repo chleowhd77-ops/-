@@ -25,16 +25,17 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_duration_seconds": 6.49,
+      "last_success_duration_seconds": 6.24,
       "last_failure_at": "2026-10-10T06:12:34+00:00",
       "last_failure_duration_seconds": 182.0,
-      "last_success_at": "2026-10-11T06:43:47+00:00",
+      "last_success_at": "2026-10-11T06:46:22+00:00",
       "run_id": "live-1791701174225476388",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-11T06:46:16+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-11T06:46:22+00:00",
       "pid": 662505,
-      "last_started_at": "2026-10-11T06:46:16+00:00"
+      "last_started_at": "2026-10-11T06:46:16+00:00",
+      "duration_seconds": 6.24
     },
     "score": {
       "last_failure_at": "2026-10-11T05:35:15+00:00",
@@ -184,7 +185,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-11T06:46:16+00:00",
+  "updated_at": "2026-10-11T06:46:22+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -211,7 +212,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/injuries",
-        "calls": 38
+        "calls": 40
       },
       {
         "purpose": "analysis",
@@ -305,6 +306,12 @@
         "count": 4
       },
       {
+        "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 2
+      },
+      {
         "metric": "recovery_scope_wait_v32",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
@@ -326,13 +333,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-11",
     "reset_timezone": "UTC",
-    "local_calls": 712,
-    "provider_remaining": 3087,
+    "local_calls": 714,
+    "provider_remaining": 3085,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 647,
+    "analysis_calls": 649,
     "live_calls": 26,
     "scoring_calls": 39,
     "world_daily_limit": 4000,
