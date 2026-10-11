@@ -5,20 +5,21 @@
       "supervisor_pid": 618100,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-11T23:17:58+00:00",
+      "heartbeat_at": "2026-10-11T23:21:30+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T03:00:03+00:00",
       "active_jobs": {
-        "team": 728318,
         "master": 728330
       },
       "pending_jobs": [
         "live",
+        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1524.6,
-        "live": 620.0
+        "score": 1736.0,
+        "live": 831.4,
+        "products": 209.3
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -56,18 +57,28 @@
     },
     "master": {
       "last_failure_duration_seconds": 902.0,
-      "last_success_at": "2026-10-11T10:03:07+00:00",
-      "last_success_duration_seconds": 136.16,
+      "last_success_at": "2026-10-11T23:21:31+00:00",
+      "last_success_duration_seconds": 254.8,
       "last_failure_at": "2026-10-11T23:06:20+00:00",
       "run_id": "master-1791760632558842407",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-11T23:17:58+00:00",
-      "pid": 618100,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-11T23:21:31+00:00",
+      "pid": 728330,
       "last_started_at": "2026-10-11T23:17:16+00:00",
       "child_pid": 728330,
-      "elapsed_seconds": 43.4,
-      "overlap_skips": 1
+      "elapsed_seconds": 257.7,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 3,
+      "proto_checkpoint_deferred": 45,
+      "manager_published": true,
+      "manager_input_count": 1,
+      "manager_current_count": 2,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 254.8
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -91,12 +102,12 @@
       "last_failure_duration_seconds": 600.7,
       "run_id": "team-1791760435750084791",
       "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-11T23:18:24+00:00",
-      "pid": 728318,
-      "last_started_at": "2026-10-11T23:14:10+00:00",
+      "state": "running",
+      "heartbeat_at": "2026-10-11T23:18:29+00:00",
+      "pid": 618100,
+      "last_started_at": "2026-10-11T23:18:29+00:00",
       "child_pid": 728318,
-      "elapsed_seconds": 238.8,
+      "elapsed_seconds": 271.9,
       "overlap_skips": 1,
       "team_retry_processed": 0,
       "team_retry_resolved": 0,
@@ -187,7 +198,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-11T23:18:24+00:00",
+  "updated_at": "2026-10-11T23:21:31+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -257,7 +268,13 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 289
+        "count": 304
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/fixtures",
+        "count": 112
       },
       {
         "metric": "cache_hit",
@@ -268,14 +285,8 @@
       {
         "metric": "cache_only_miss",
         "purpose": "analysis",
-        "endpoint": "/fixtures",
-        "count": 73
-      },
-      {
-        "metric": "cache_only_miss",
-        "purpose": "analysis",
         "endpoint": "/injuries",
-        "count": 62
+        "count": 66
       },
       {
         "metric": "cache_hit",
@@ -326,10 +337,28 @@
         "count": 5
       },
       {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/coachs",
+        "count": 4
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/fixtures/headtohead",
+        "count": 4
+      },
+      {
         "metric": "cache_hit",
         "purpose": "scoring",
         "endpoint": "/fixtures",
         "count": 2
+      },
+      {
+        "metric": "cache_only_miss",
+        "purpose": "analysis",
+        "endpoint": "/players/squads",
+        "count": 1
       },
       {
         "metric": "singleflight_block",
