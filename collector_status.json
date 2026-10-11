@@ -5,11 +5,12 @@
       "supervisor_pid": 618100,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-11T05:45:09+00:00",
+      "heartbeat_at": "2026-10-11T05:50:09+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T03:00:03+00:00",
       "active_jobs": {
-        "master": 656732
+        "master": 656732,
+        "team": 657056
       },
       "pending_jobs": [
         "live",
@@ -17,9 +18,9 @@
         "score"
       ],
       "pending_wait_seconds": {
-        "live": 1503.1,
-        "products": 1393.5,
-        "score": 298.7
+        "live": 1804.0,
+        "products": 1694.4,
+        "score": 599.6
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -64,19 +65,23 @@
       "last_error": "hard timeout after 600 seconds"
     },
     "master": {
-      "last_failure_duration_seconds": 901.8,
-      "last_failure_at": "2026-10-11T05:07:58+00:00",
+      "last_failure_duration_seconds": 900.2,
+      "last_failure_at": "2026-10-11T05:50:24+00:00",
       "last_success_duration_seconds": 365.06,
       "last_success_at": "2026-10-11T05:25:13+00:00",
       "run_id": "master-1791696923425499288",
-      "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-11T05:45:08+00:00",
+      "last_stage": "proto_checkpoint_published",
+      "state": "failed",
+      "heartbeat_at": "2026-10-11T05:50:24+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-11T05:35:24+00:00",
       "child_pid": 656732,
-      "elapsed_seconds": 585.5,
-      "overlap_skips": 2
+      "elapsed_seconds": 879.3,
+      "overlap_skips": 3,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 20,
+      "duration_seconds": 900.2,
+      "last_error": "hard timeout after 900 seconds"
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -99,11 +104,14 @@
       "last_failure_duration_seconds": 601.6,
       "last_success_at": "2026-10-11T05:44:38+00:00",
       "run_id": "team-1791697511165810917",
-      "last_stage": "initializing",
+      "last_stage": "prefetch_current_matches",
       "state": "running",
-      "heartbeat_at": "2026-10-11T05:45:17+00:00",
-      "pid": 657056,
-      "last_started_at": "2026-10-11T05:45:17+00:00"
+      "heartbeat_at": "2026-10-11T05:50:13+00:00",
+      "pid": 618100,
+      "last_started_at": "2026-10-11T05:45:17+00:00",
+      "child_pid": 657056,
+      "elapsed_seconds": 301.4,
+      "overlap_skips": 1
     },
     "backup": {
       "last_success_at": "2026-10-11T03:51:40+00:00",
@@ -174,14 +182,14 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-11T05:45:17+00:00",
+  "updated_at": "2026-10-11T05:50:24+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "calls": 139
+        "calls": 140
       },
       {
         "purpose": "analysis",
@@ -191,7 +199,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 101
+        "calls": 103
       },
       {
         "purpose": "analysis",
@@ -206,7 +214,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/teams",
-        "calls": 29
+        "calls": 30
       },
       {
         "purpose": "analysis",
@@ -244,7 +252,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 132
+        "count": 136
       },
       {
         "metric": "cache_hit",
@@ -298,13 +306,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-11",
     "reset_timezone": "UTC",
-    "local_calls": 588,
-    "provider_remaining": 3211,
+    "local_calls": 592,
+    "provider_remaining": 3207,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 544,
+    "analysis_calls": 548,
     "live_calls": 15,
     "scoring_calls": 29,
     "world_daily_limit": 4000,
