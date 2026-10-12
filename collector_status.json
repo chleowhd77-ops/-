@@ -5,7 +5,7 @@
       "supervisor_pid": 618100,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-12T09:42:20+00:00",
+      "heartbeat_at": "2026-10-12T09:42:50+00:00",
       "pid": 618100,
       "last_started_at": "2026-10-09T03:00:03+00:00",
       "active_jobs": {
@@ -13,10 +13,14 @@
         "team": 731943
       },
       "pending_jobs": [
-        "live"
+        "live",
+        "master",
+        "products"
       ],
       "pending_wait_seconds": {
-        "live": 0.0
+        "live": 30.1,
+        "master": 28.0,
+        "products": 28.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -36,24 +40,29 @@
       "duration_seconds": 4.38
     },
     "score": {
-      "last_success_at": "2026-10-12T09:32:27+00:00",
+      "last_success_at": "2026-10-12T09:42:51+00:00",
       "last_failure_at": "2026-10-12T06:00:50+00:00",
       "last_failure_duration_seconds": 601.8,
-      "last_success_duration_seconds": 100.69,
+      "last_success_duration_seconds": 99.27,
       "run_id": "score-1791798070625503847",
-      "last_stage": "grading_snapshot_building",
-      "state": "running",
-      "heartbeat_at": "2026-10-12T09:42:20+00:00",
-      "pid": 618100,
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-12T09:42:51+00:00",
+      "pid": 731939,
       "last_started_at": "2026-10-12T09:41:12+00:00",
       "child_pid": 731939,
-      "elapsed_seconds": 70.1,
+      "elapsed_seconds": 100.1,
       "overlap_skips": 1,
       "due_count": 0,
       "graded_count": 0,
       "result_error_count": 0,
       "results_state": "checked",
-      "scoring_seconds": 48.45
+      "scoring_seconds": 48.45,
+      "grading_published_at": "2026-10-12T09:42:47+00:00",
+      "grading_snapshot_seconds": 44.65,
+      "db_backup_requested": true,
+      "score_total_seconds": 97.7,
+      "duration_seconds": 99.27
     },
     "master": {
       "last_success_at": "2026-10-12T09:41:08+00:00",
@@ -101,11 +110,14 @@
       "last_failure_duration_seconds": 600.8,
       "last_success_at": "2026-10-12T09:38:45+00:00",
       "run_id": "team-1791798140785602669",
-      "last_stage": "initializing",
+      "last_stage": "prefetch_current_matches",
       "state": "running",
-      "heartbeat_at": "2026-10-12T09:42:22+00:00",
-      "pid": 731943,
-      "last_started_at": "2026-10-12T09:42:22+00:00"
+      "heartbeat_at": "2026-10-12T09:42:50+00:00",
+      "pid": 618100,
+      "last_started_at": "2026-10-12T09:42:22+00:00",
+      "child_pid": 731943,
+      "elapsed_seconds": 30.1,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 137.07,
@@ -175,7 +187,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-12T09:42:22+00:00",
+  "updated_at": "2026-10-12T09:42:51+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -205,14 +217,14 @@
         "calls": 66
       },
       {
+        "purpose": "scoring",
+        "endpoint": "/fixtures/lineups",
+        "calls": 64
+      },
+      {
         "purpose": "analysis",
         "endpoint": "/standings",
         "calls": 63
-      },
-      {
-        "purpose": "scoring",
-        "endpoint": "/fixtures/lineups",
-        "calls": 62
       },
       {
         "purpose": "analysis",
@@ -257,7 +269,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 105
+        "count": 107
       },
       {
         "metric": "cache_hit",
@@ -287,7 +299,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/teams",
-        "count": 18
+        "count": 19
       },
       {
         "metric": "cache_hit",
@@ -323,15 +335,15 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-12",
     "reset_timezone": "UTC",
-    "local_calls": 1645,
-    "provider_remaining": 3127,
+    "local_calls": 1647,
+    "provider_remaining": 3125,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
     "analysis_calls": 1499,
     "live_calls": 53,
-    "scoring_calls": 93,
+    "scoring_calls": 95,
     "world_daily_limit": 4000,
     "world_min_remaining": 1000,
     "quota_exhausted": false
