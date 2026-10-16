@@ -5,14 +5,23 @@
       "supervisor_pid": 152624,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-16T19:10:15+00:00",
+      "heartbeat_at": "2026-10-16T19:11:16+00:00",
       "pid": 152624,
       "last_started_at": "2026-10-16T17:40:53+00:00",
       "active_jobs": {
-        "master": 157107
+        "master": 157107,
+        "team": 157110
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "live",
+        "products",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "live": 4.2,
+        "score": 2.1,
+        "products": 2.1
+      },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -64,14 +73,20 @@
       "last_success_at": "2026-10-16T19:02:35+00:00",
       "last_failure_duration_seconds": 900.3,
       "run_id": "master-1792177813513190137",
-      "last_stage": "initializing",
+      "last_stage": "toto14_policy_loading",
       "state": "running",
-      "heartbeat_at": "2026-10-16T19:10:15+00:00",
+      "heartbeat_at": "2026-10-16T19:11:16+00:00",
       "pid": 152624,
       "last_started_at": "2026-10-16T19:10:15+00:00",
       "child_pid": 157107,
-      "elapsed_seconds": 2.0,
-      "overlap_skips": 0
+      "elapsed_seconds": 62.5,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 22,
+      "manager_published": true,
+      "manager_input_count": 99,
+      "manager_current_count": 23,
+      "manager_reason": ""
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -89,38 +104,19 @@
       "overlap_skips": 2
     },
     "team": {
-      "last_success_duration_seconds": 133.22,
       "last_failure_at": "2026-10-12T15:23:41+00:00",
-      "last_failure_duration_seconds": 613.0,
       "last_success_at": "2026-10-16T19:08:27+00:00",
-      "run_id": "team-1792177572441608188",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-16T19:08:27+00:00",
-      "pid": 157085,
-      "last_started_at": "2026-10-16T19:06:13+00:00",
-      "child_pid": 157085,
-      "elapsed_seconds": 122.4,
-      "overlap_skips": 0,
-      "team_retry_processed": 0,
-      "team_retry_resolved": 0,
-      "team_retry_pending": 8,
-      "team_retry_due": 0,
-      "team_retry_seeded": 4,
-      "team_profile_card_updates": 0,
-      "data_prefetch_matches": 50,
-      "data_prefetch_total_targets": 132,
-      "data_prefetch_teams": 92,
-      "data_prefetch_identity_missing": 4,
-      "data_prefetch_early_core_matches": 0,
-      "data_prefetch_deep_matches": 50,
-      "data_prefetch_core_newly_warmed": 0,
-      "data_prefetch_core_already_ready": 46,
-      "data_prefetch_early_horizon_hours": 72,
-      "data_prefetch_deep_horizon_hours": 30,
-      "data_prefetch_quota_paused": false,
-      "data_prefetch_errors": [],
-      "duration_seconds": 133.22
+      "last_success_duration_seconds": 133.22,
+      "last_failure_duration_seconds": 613.0,
+      "run_id": "team-1792177873946431532",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-16T19:11:16+00:00",
+      "pid": 152624,
+      "last_started_at": "2026-10-16T19:11:15+00:00",
+      "child_pid": 157110,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 137.07,
@@ -191,7 +187,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-16T19:10:15+00:00",
+  "updated_at": "2026-10-16T19:11:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
