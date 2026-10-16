@@ -5,18 +5,14 @@
       "supervisor_pid": 152624,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-16T19:09:45+00:00",
+      "heartbeat_at": "2026-10-16T19:10:15+00:00",
       "pid": 152624,
       "last_started_at": "2026-10-16T17:40:53+00:00",
       "active_jobs": {
-        "products": 157099
+        "master": 157107
       },
-      "pending_jobs": [
-        "master"
-      ],
-      "pending_wait_seconds": {
-        "master": 212.6
-      },
+      "pending_jobs": [],
+      "pending_wait_seconds": {},
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
@@ -63,29 +59,19 @@
       "duration_seconds": 124.97
     },
     "master": {
+      "last_success_duration_seconds": 144.58,
       "last_failure_at": "2026-10-12T15:04:21+00:00",
       "last_success_at": "2026-10-16T19:02:35+00:00",
-      "last_success_duration_seconds": 144.58,
       "last_failure_duration_seconds": 900.3,
-      "run_id": "master-1792177208574558059",
-      "last_stage": "complete",
-      "state": "success",
-      "heartbeat_at": "2026-10-16T19:02:35+00:00",
-      "pid": 157056,
-      "last_started_at": "2026-10-16T19:00:11+00:00",
-      "child_pid": 157056,
-      "elapsed_seconds": 124.7,
-      "overlap_skips": 1,
-      "proto_checkpoint_analyzed": 1,
-      "proto_checkpoint_deferred": 20,
-      "manager_published": true,
-      "manager_input_count": 99,
-      "manager_current_count": 23,
-      "manager_reason": "",
-      "toto14_index": 14,
-      "toto14_total": 14,
-      "db_backup_requested": true,
-      "duration_seconds": 144.58
+      "run_id": "master-1792177813513190137",
+      "last_stage": "initializing",
+      "state": "running",
+      "heartbeat_at": "2026-10-16T19:10:15+00:00",
+      "pid": 152624,
+      "last_started_at": "2026-10-16T19:10:15+00:00",
+      "child_pid": 157107,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -171,13 +157,13 @@
     "products": {
       "last_success_duration_seconds": 103.1,
       "last_success_at": "2026-10-16T18:28:41+00:00",
-      "last_failure_duration_seconds": 137.78,
-      "last_failure_at": "2026-10-16T19:10:09+00:00",
+      "last_failure_duration_seconds": 142.2,
+      "last_failure_at": "2026-10-16T19:10:13+00:00",
       "run_id": "products-1792177670773909343",
       "last_stage": "executing",
       "state": "failed",
-      "heartbeat_at": "2026-10-16T19:10:09+00:00",
-      "pid": 157099,
+      "heartbeat_at": "2026-10-16T19:10:13+00:00",
+      "pid": 152624,
       "last_started_at": "2026-10-16T19:07:51+00:00",
       "child_pid": 157099,
       "elapsed_seconds": 114.2,
@@ -186,8 +172,8 @@
       "manager_input_count": 99,
       "manager_current_count": 23,
       "manager_reason": "",
-      "duration_seconds": 137.78,
-      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
+      "duration_seconds": 142.2,
+      "last_error": "worker exited with code 1"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -205,7 +191,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-16T19:10:09+00:00",
+  "updated_at": "2026-10-16T19:10:15+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
