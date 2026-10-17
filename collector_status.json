@@ -5,22 +5,22 @@
       "supervisor_pid": 152624,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-17T10:45:06+00:00",
+      "heartbeat_at": "2026-10-17T10:53:14+00:00",
       "pid": 152624,
       "last_started_at": "2026-10-16T17:40:53+00:00",
       "active_jobs": {
-        "score": 168112,
-        "team": 168137
+        "team": 168137,
+        "master": 168143
       },
       "pending_jobs": [
         "live",
-        "master",
-        "products"
+        "products",
+        "score"
       ],
       "pending_wait_seconds": {
-        "live": 1287.9,
-        "products": 1285.3,
-        "master": 385.2
+        "live": 1775.9,
+        "products": 1773.4,
+        "score": 269.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
@@ -70,11 +70,16 @@
       "last_success_at": "2026-10-17T07:56:28+00:00",
       "last_failure_at": "2026-10-17T10:34:58+00:00",
       "run_id": "master-1792233918837114552",
-      "last_stage": "initializing",
+      "last_stage": "proto_checkpoint_published",
       "state": "running",
-      "heartbeat_at": "2026-10-17T10:45:27+00:00",
-      "pid": 168143,
-      "last_started_at": "2026-10-17T10:45:27+00:00"
+      "heartbeat_at": "2026-10-17T10:53:14+00:00",
+      "pid": 152624,
+      "last_started_at": "2026-10-17T10:45:27+00:00",
+      "child_pid": 168143,
+      "elapsed_seconds": 475.8,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 21
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -93,18 +98,20 @@
     },
     "team": {
       "last_success_at": "2026-10-17T06:28:22+00:00",
-      "last_failure_duration_seconds": 600.4,
+      "last_failure_duration_seconds": 601.2,
       "last_success_duration_seconds": 543.59,
-      "last_failure_at": "2026-10-17T10:39:31+00:00",
+      "last_failure_at": "2026-10-17T10:53:51+00:00",
       "run_id": "team-1792233828693872014",
       "last_stage": "prefetch_current_matches",
-      "state": "running",
-      "heartbeat_at": "2026-10-17T10:45:06+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-10-17T10:53:51+00:00",
       "pid": 152624,
       "last_started_at": "2026-10-17T10:43:56+00:00",
       "child_pid": 168137,
-      "elapsed_seconds": 76.9,
-      "overlap_skips": 0
+      "elapsed_seconds": 595.6,
+      "overlap_skips": 2,
+      "duration_seconds": 601.2,
+      "last_error": "hard timeout after 601 seconds"
     },
     "backup": {
       "last_success_at": "2026-10-17T06:16:36+00:00",
@@ -175,14 +182,14 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-17T10:45:27+00:00",
+  "updated_at": "2026-10-17T10:53:51+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "calls": 272
+        "calls": 280
       },
       {
         "purpose": "analysis",
@@ -202,7 +209,7 @@
       {
         "purpose": "analysis",
         "endpoint": "/fixtures/headtohead",
-        "calls": 103
+        "calls": 105
       },
       {
         "purpose": "analysis",
@@ -245,7 +252,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 297
+        "count": 301
       },
       {
         "metric": "cache_only_miss",
@@ -269,7 +276,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 29
+        "count": 30
       },
       {
         "metric": "cache_only_miss",
@@ -323,13 +330,13 @@
     "accounting": "local-preflight-reservation-v2",
     "usage_day": "2026-10-17",
     "reset_timezone": "UTC",
-    "local_calls": 984,
-    "provider_remaining": 6516,
+    "local_calls": 994,
+    "provider_remaining": 6506,
     "analysis_soft_limit": 6000,
     "daily_limit": 7500,
     "live_reserve": 1500,
     "world_calls": 0,
-    "analysis_calls": 909,
+    "analysis_calls": 919,
     "live_calls": 23,
     "scoring_calls": 52,
     "world_daily_limit": 4000,
