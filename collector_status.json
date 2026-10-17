@@ -27,16 +27,17 @@
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_success_at": "2026-10-17T17:44:56+00:00",
+      "last_success_at": "2026-10-17T17:47:16+00:00",
       "last_failure_duration_seconds": 180.6,
       "last_failure_at": "2026-10-17T07:59:33+00:00",
-      "last_success_duration_seconds": 7.93,
+      "last_success_duration_seconds": 14.39,
       "run_id": "live-1792259219726289443",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-17T17:47:02+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-17T17:47:16+00:00",
       "pid": 169806,
-      "last_started_at": "2026-10-17T17:47:02+00:00"
+      "last_started_at": "2026-10-17T17:47:02+00:00",
+      "duration_seconds": 14.39
     },
     "score": {
       "last_success_at": "2026-10-17T17:38:01+00:00",
@@ -187,7 +188,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-17T17:47:02+00:00",
+  "updated_at": "2026-10-17T17:47:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -287,7 +288,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 23
+        "count": 24
       },
       {
         "metric": "cache_only_miss",
@@ -330,6 +331,12 @@
         "purpose": "analysis",
         "endpoint": "/fixtures",
         "count": 5
+      },
+      {
+        "metric": "cache_hit",
+        "purpose": "live",
+        "endpoint": "/fixtures",
+        "count": 2
       },
       {
         "metric": "cache_only_miss",
