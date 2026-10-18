@@ -5,23 +5,21 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-18T13:53:41+00:00",
+      "heartbeat_at": "2026-10-18T13:54:11+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "products": 186332
+        "live": 186340
       },
       "pending_jobs": [
-        "live",
         "master",
         "score",
         "team"
       ],
       "pending_wait_seconds": {
-        "score": 1594.8,
-        "team": 385.3,
-        "live": 88.2,
-        "master": 84.2
+        "score": 1625.1,
+        "team": 415.6,
+        "master": 114.5
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -30,14 +28,18 @@
     "live": {
       "last_failure_at": "2026-10-18T00:22:05+00:00",
       "last_failure_duration_seconds": 139.6,
-      "last_success_at": "2026-10-18T13:51:39+00:00",
-      "last_success_duration_seconds": 9.45,
+      "last_success_at": "2026-10-18T13:54:14+00:00",
+      "last_success_duration_seconds": 10.12,
       "run_id": "live-1792331641449173099",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-18T13:54:04+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-18T13:54:14+00:00",
       "pid": 186340,
-      "last_started_at": "2026-10-18T13:54:04+00:00"
+      "last_started_at": "2026-10-18T13:54:04+00:00",
+      "child_pid": 186340,
+      "elapsed_seconds": 10.0,
+      "overlap_skips": 0,
+      "duration_seconds": 10.12
     },
     "score": {
       "last_success_duration_seconds": 291.51,
@@ -207,7 +209,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-18T13:54:04+00:00",
+  "updated_at": "2026-10-18T13:54:14+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -319,7 +321,7 @@
         "metric": "cache_hit",
         "purpose": "live",
         "endpoint": "/fixtures",
-        "count": 7
+        "count": 8
       },
       {
         "metric": "cache_hit",
