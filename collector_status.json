@@ -5,7 +5,7 @@
       "supervisor_pid": 168527,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-18T00:19:50+00:00",
+      "heartbeat_at": "2026-10-18T00:21:33+00:00",
       "pid": 168527,
       "last_started_at": "2026-10-17T12:32:33+00:00",
       "active_jobs": {
@@ -17,24 +17,29 @@
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 2287.9,
-        "products": 750.0
+        "score": 2390.9,
+        "products": 853.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 2,
       "min_available_memory_mb": 180
     },
     "live": {
-      "last_failure_duration_seconds": 180.6,
+      "last_failure_duration_seconds": 122.39,
       "last_success_at": "2026-10-17T23:40:38+00:00",
-      "last_failure_at": "2026-10-17T07:59:33+00:00",
+      "last_failure_at": "2026-10-18T00:21:55+00:00",
       "last_success_duration_seconds": 12.99,
       "run_id": "live-1792282785748904007",
       "last_stage": "executing",
-      "state": "running",
-      "heartbeat_at": "2026-10-18T00:19:53+00:00",
+      "state": "failed",
+      "heartbeat_at": "2026-10-18T00:21:55+00:00",
       "pid": 171832,
-      "last_started_at": "2026-10-18T00:19:52+00:00"
+      "last_started_at": "2026-10-18T00:19:52+00:00",
+      "child_pid": 171832,
+      "elapsed_seconds": 107.2,
+      "overlap_skips": 0,
+      "duration_seconds": 122.39,
+      "last_error": "RuntimeError: live 작업이 정상 결과를 게시하지 못함"
     },
     "score": {
       "last_failure_at": "2026-10-17T23:39:58+00:00",
@@ -104,11 +109,14 @@
       "last_failure_duration_seconds": 601.7,
       "last_failure_at": "2026-10-18T00:18:58+00:00",
       "run_id": "team-1792282763232644813",
-      "last_stage": "initializing",
+      "last_stage": "prefetch_current_matches",
       "state": "running",
-      "heartbeat_at": "2026-10-18T00:19:52+00:00",
-      "pid": 171831,
-      "last_started_at": "2026-10-18T00:19:52+00:00"
+      "heartbeat_at": "2026-10-18T00:21:33+00:00",
+      "pid": 168527,
+      "last_started_at": "2026-10-18T00:19:52+00:00",
+      "child_pid": 171831,
+      "elapsed_seconds": 129.5,
+      "overlap_skips": 0
     },
     "backup": {
       "last_success_duration_seconds": 70.15,
@@ -179,7 +187,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-18T00:19:53+00:00",
+  "updated_at": "2026-10-18T00:21:55+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -229,14 +237,14 @@
       {
         "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/odds",
+        "endpoint": "/coachs",
         "count": 3
       },
       {
         "metric": "cache_hit",
         "purpose": "analysis",
-        "endpoint": "/coachs",
-        "count": 2
+        "endpoint": "/odds",
+        "count": 3
       },
       {
         "metric": "cache_only_miss",
