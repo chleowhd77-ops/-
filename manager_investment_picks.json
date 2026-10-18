@@ -1,13 +1,15 @@
 {
-  "current_pending_count": 0,
+  "current_pending_count": 1,
   "customer_official_pick_changed": false,
   "engine_version": "manager-investment-four-analysts-v3",
   "engines": {
     "official": {
-      "candidate_rejections": {},
+      "candidate_rejections": {
+        "보수 기대값·시장 대비 확률 기준 미충족": 8
+      },
       "frozen_pick_count": 54,
-      "input_candidate_count": 0,
-      "input_snapshot_count": 0,
+      "input_candidate_count": 8,
+      "input_snapshot_count": 1,
       "newly_frozen_picks": 0,
       "performance": {
         "core": {
@@ -37,10 +39,12 @@
       }
     },
     "robot": {
-      "candidate_rejections": {},
+      "candidate_rejections": {
+        "보수 기대값·시장 대비 확률 기준 미충족": 8
+      },
       "frozen_pick_count": 95,
-      "input_candidate_count": 0,
-      "input_snapshot_count": 0,
+      "input_candidate_count": 8,
+      "input_snapshot_count": 1,
       "newly_frozen_picks": 0,
       "performance": {
         "core": {
@@ -70,11 +74,13 @@
       }
     },
     "v2": {
-      "candidate_rejections": {},
-      "frozen_pick_count": 59,
-      "input_candidate_count": 0,
-      "input_snapshot_count": 0,
-      "newly_frozen_picks": 0,
+      "candidate_rejections": {
+        "보수 기대값·시장 대비 확률 기준 미충족": 2
+      },
+      "frozen_pick_count": 60,
+      "input_candidate_count": 3,
+      "input_snapshot_count": 1,
+      "newly_frozen_picks": 1,
       "performance": {
         "core": {
           "frozen_count": 0,
@@ -85,7 +91,7 @@
           "unit_roi": null
         },
         "overall": {
-          "frozen_count": 59,
+          "frozen_count": 60,
           "graded_count": 58,
           "hit_count": 13,
           "hit_rate": 0.224138,
@@ -93,7 +99,7 @@
           "unit_roi": -0.05431
         },
         "value": {
-          "frozen_count": 59,
+          "frozen_count": 60,
           "graded_count": 58,
           "hit_count": 13,
           "hit_rate": 0.224138,
@@ -103,7 +109,9 @@
       }
     },
     "v3": {
-      "candidate_rejections": {},
+      "candidate_rejections": {
+        "V3 독립 후보 생성 대기": 1
+      },
       "frozen_pick_count": 43,
       "input_candidate_count": 0,
       "input_snapshot_count": 0,
@@ -136,14 +144,14 @@
       }
     }
   },
-  "frozen_pick_count": 264,
-  "generated_at": "2026-10-18T23:00:55+00:00",
+  "frozen_pick_count": 265,
+  "generated_at": "2026-10-18T23:02:33+00:00",
   "graded_pick_count": 263,
   "history_rows": 13536,
-  "input_candidate_count": 0,
-  "input_snapshot_count": 0,
+  "input_candidate_count": 8,
+  "input_snapshot_count": 1,
   "mode": "administrator_only_independent_investment_ledger",
-  "newly_frozen_picks": 0,
+  "newly_frozen_picks": 1,
   "performance": {
     "core": {
       "frozen_count": 13,
@@ -154,7 +162,7 @@
       "unit_roi": -0.330769
     },
     "overall": {
-      "frozen_count": 264,
+      "frozen_count": 265,
       "graded_count": 263,
       "hit_count": 51,
       "hit_rate": 0.193916,
@@ -162,7 +170,7 @@
       "unit_roi": -0.227567
     },
     "value": {
-      "frozen_count": 251,
+      "frozen_count": 252,
       "graded_count": 250,
       "hit_count": 47,
       "hit_rate": 0.188,
@@ -20529,6 +20537,41 @@
       "status": "PENDING",
       "tier": "고배당 가치"
     },
+    "v2:9475": {
+      "analysis_version": "V7.13.0-proto-toto14-shared-dossier-season",
+      "analyst_label": "V2 알파고",
+      "away": "비야레알",
+      "calibrated_probability": 0.331705,
+      "calibration_samples": 6620,
+      "conservative_ev": 0.18272,
+      "conservative_probability": 0.29568,
+      "data_confidence": 0.92,
+      "engine_key": "v2",
+      "engine_version": "manager-investment-four-analysts-v3",
+      "frozen_at": "2026-10-18T23:02:33+00:00",
+      "home": "리버풀",
+      "kickoff_at": "2026-10-21T04:00+09:00",
+      "learning_campaign": "",
+      "manager_score": 0.286288,
+      "market_edge": 0.078156,
+      "market_key": "1x2",
+      "market_reference_probability": 0.217524,
+      "match_id": "9475",
+      "model_version": "legacy-v2-fallback",
+      "odd": 4.0,
+      "odds_bucket_samples": 3778,
+      "probability": 0.32,
+      "product": "manager_investment",
+      "raw_pick": "무승부",
+      "reason": "시작 전 저장 후보의 보정 확률·보수 기대값·시장 대비 우위를 모두 통과한 관리자 전용 선택입니다.",
+      "schema_version": "dj-sports.manager-investment-ledger.v2",
+      "selection_axis": "own_model_value",
+      "selection_side": "draw",
+      "source_created_at": "2026-10-18 23:02:24",
+      "source_snapshot_id": 39986,
+      "status": "PENDING",
+      "tier": "고배당 가치"
+    },
     "v3:5699": {
       "actual_score": "2:5",
       "analysis_version": "V7.13.0-proto-toto14-shared-dossier-season",
@@ -22692,6 +22735,10 @@
   "settlement_pending": [
     {
       "match_id": "9327",
+      "reason": "결과 API 또는 후보 결과 연결 대기"
+    },
+    {
+      "match_id": "9475",
       "reason": "결과 API 또는 후보 결과 연결 대기"
     }
   ],
