@@ -5,21 +5,19 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-19T23:11:15+00:00",
+      "heartbeat_at": "2026-10-19T23:12:15+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "live": 290660
+        "products": 290661
       },
       "pending_jobs": [
         "master",
-        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 28.0,
-        "master": 28.0,
-        "products": 28.0
+        "score": 88.2,
+        "master": 88.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -173,16 +171,25 @@
       "duration_seconds": 7.91
     },
     "products": {
-      "last_failure_at": "2026-10-19T23:08:28+00:00",
+      "last_failure_at": "2026-10-19T23:12:38+00:00",
       "last_success_at": "2026-10-19T05:44:54+00:00",
-      "last_failure_duration_seconds": 86.1,
+      "last_failure_duration_seconds": 78.1,
       "last_success_duration_seconds": 158.82,
       "run_id": "products-1792451479710446415",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-19T23:11:20+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-19T23:12:38+00:00",
       "pid": 290661,
-      "last_started_at": "2026-10-19T23:11:20+00:00"
+      "last_started_at": "2026-10-19T23:11:20+00:00",
+      "child_pid": 290661,
+      "elapsed_seconds": 56.1,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 19,
+      "manager_current_count": 19,
+      "manager_reason": "",
+      "duration_seconds": 78.1,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -200,7 +207,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-19T23:11:20+00:00",
+  "updated_at": "2026-10-19T23:12:38+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
