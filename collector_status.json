@@ -5,23 +5,23 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-19T11:43:40+00:00",
+      "heartbeat_at": "2026-10-19T11:48:12+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "products": 240066
+        "master": 240273
       },
       "pending_jobs": [
         "live",
-        "master",
+        "products",
         "score",
         "team"
       ],
       "pending_wait_seconds": {
-        "team": 1295.1,
-        "score": 1019.0,
-        "live": 114.9,
-        "master": 78.7
+        "team": 1566.9,
+        "score": 1290.8,
+        "live": 84.7,
+        "products": 48.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -66,16 +66,29 @@
       "duration_seconds": 392.05
     },
     "master": {
-      "last_success_at": "2026-10-19T11:12:32+00:00",
-      "last_success_duration_seconds": 320.62,
+      "last_success_at": "2026-10-19T11:48:16+00:00",
+      "last_success_duration_seconds": 258.83,
       "last_failure_at": "2026-10-19T11:39:43+00:00",
       "last_failure_duration_seconds": 901.0,
       "run_id": "master-1792410236444193763",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-19T11:43:57+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-19T11:48:16+00:00",
       "pid": 240273,
-      "last_started_at": "2026-10-19T11:43:57+00:00"
+      "last_started_at": "2026-10-19T11:43:57+00:00",
+      "child_pid": 240273,
+      "elapsed_seconds": 255.6,
+      "overlap_skips": 1,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 30,
+      "manager_published": true,
+      "manager_input_count": 22,
+      "manager_current_count": 18,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 258.83
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -195,7 +208,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-19T11:43:57+00:00",
+  "updated_at": "2026-10-19T11:48:16+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -265,7 +278,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/odds",
-        "count": 208
+        "count": 222
       },
       {
         "metric": "cache_hit",
@@ -277,7 +290,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 44
+        "count": 45
       },
       {
         "metric": "cache_hit",
