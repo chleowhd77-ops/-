@@ -5,19 +5,17 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-19T02:20:52+00:00",
+      "heartbeat_at": "2026-10-19T02:21:52+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "products": 212055
+        "master": 212065
       },
       "pending_jobs": [
-        "master",
         "team"
       ],
       "pending_wait_seconds": {
-        "master": 86.1,
-        "team": 86.1
+        "team": 146.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -62,16 +60,29 @@
       "duration_seconds": 88.06
     },
     "master": {
-      "last_success_duration_seconds": 77.91,
+      "last_success_duration_seconds": 73.13,
       "last_failure_at": "2026-10-18T12:32:15+00:00",
-      "last_success_at": "2026-10-19T02:17:07+00:00",
+      "last_success_at": "2026-10-19T02:22:13+00:00",
       "last_failure_duration_seconds": 901.3,
       "run_id": "master-1792376458516583087",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-19T02:21:00+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-19T02:22:13+00:00",
       "pid": 212065,
-      "last_started_at": "2026-10-19T02:21:00+00:00"
+      "last_started_at": "2026-10-19T02:21:00+00:00",
+      "child_pid": 212065,
+      "elapsed_seconds": 54.1,
+      "overlap_skips": 0,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 33,
+      "manager_published": true,
+      "manager_input_count": 1,
+      "manager_current_count": 1,
+      "manager_reason": "",
+      "toto14_index": 14,
+      "toto14_total": 14,
+      "db_backup_requested": true,
+      "duration_seconds": 73.13
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -190,7 +201,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-19T02:21:00+00:00",
+  "updated_at": "2026-10-19T02:22:13+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -279,7 +290,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 12
+        "count": 13
       },
       {
         "metric": "recovery_scope_wait_v32",
