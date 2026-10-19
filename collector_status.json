@@ -5,23 +5,19 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-19T14:08:45+00:00",
+      "heartbeat_at": "2026-10-19T14:11:45+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "master": 248329
+        "products": 248440
       },
       "pending_jobs": [
-        "live",
-        "products",
         "score",
         "team"
       ],
       "pending_wait_seconds": {
-        "live": 686.9,
-        "team": 644.6,
-        "products": 343.6,
-        "score": 84.6
+        "team": 825.1,
+        "score": 265.1
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -173,15 +169,24 @@
     },
     "products": {
       "last_success_at": "2026-10-19T05:44:54+00:00",
-      "last_failure_at": "2026-10-19T13:58:24+00:00",
-      "last_failure_duration_seconds": 174.7,
+      "last_failure_at": "2026-10-19T14:12:11+00:00",
+      "last_failure_duration_seconds": 177.46,
       "last_success_duration_seconds": 158.82,
       "run_id": "products-1792418953276295779",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-19T14:09:14+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-19T14:12:11+00:00",
       "pid": 248440,
-      "last_started_at": "2026-10-19T14:09:14+00:00"
+      "last_started_at": "2026-10-19T14:09:14+00:00",
+      "child_pid": 248440,
+      "elapsed_seconds": 152.4,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 22,
+      "manager_current_count": 19,
+      "manager_reason": "",
+      "duration_seconds": 177.46,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -199,7 +204,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-19T14:09:14+00:00",
+  "updated_at": "2026-10-19T14:12:11+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
