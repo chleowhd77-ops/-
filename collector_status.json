@@ -5,23 +5,23 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-19T11:24:17+00:00",
+      "heartbeat_at": "2026-10-19T11:39:36+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "score": 236442
+        "master": 237623
       },
       "pending_jobs": [
         "live",
-        "master",
         "products",
+        "score",
         "team"
       ],
       "pending_wait_seconds": {
-        "live": 463.7,
-        "master": 435.7,
-        "products": 433.7,
-        "team": 132.7
+        "live": 1382.6,
+        "products": 1352.5,
+        "team": 1051.5,
+        "score": 775.4
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -66,16 +66,27 @@
       "duration_seconds": 392.05
     },
     "master": {
-      "last_failure_duration_seconds": 901.5,
-      "last_failure_at": "2026-10-19T09:03:14+00:00",
+      "last_failure_duration_seconds": 901.0,
+      "last_failure_at": "2026-10-19T11:39:43+00:00",
       "last_success_at": "2026-10-19T11:12:32+00:00",
       "last_success_duration_seconds": 320.62,
       "run_id": "master-1792409081829534178",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-19T11:24:44+00:00",
-      "pid": 237623,
-      "last_started_at": "2026-10-19T11:24:44+00:00"
+      "last_stage": "toto14_policy_loading",
+      "state": "failed",
+      "heartbeat_at": "2026-10-19T11:39:43+00:00",
+      "pid": 177496,
+      "last_started_at": "2026-10-19T11:24:44+00:00",
+      "child_pid": 237623,
+      "elapsed_seconds": 887.6,
+      "overlap_skips": 3,
+      "proto_checkpoint_analyzed": 1,
+      "proto_checkpoint_deferred": 30,
+      "manager_published": true,
+      "manager_input_count": 22,
+      "manager_current_count": 18,
+      "manager_reason": "",
+      "duration_seconds": 901.0,
+      "last_error": "hard timeout after 901 seconds"
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -195,7 +206,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-19T11:24:44+00:00",
+  "updated_at": "2026-10-19T11:39:43+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -277,7 +288,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/coachs",
-        "count": 43
+        "count": 44
       },
       {
         "metric": "cache_hit",
