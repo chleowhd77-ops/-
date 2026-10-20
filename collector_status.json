@@ -5,19 +5,21 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T13:04:19+00:00",
+      "heartbeat_at": "2026-10-20T13:06:50+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
         "products": 303318
       },
       "pending_jobs": [
+        "master",
         "score",
         "team"
       ],
       "pending_wait_seconds": {
-        "team": 494.1,
-        "score": 305.5
+        "team": 644.6,
+        "score": 455.9,
+        "master": 42.3
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -169,15 +171,24 @@
     },
     "products": {
       "last_success_duration_seconds": 158.82,
-      "last_failure_at": "2026-10-20T12:35:01+00:00",
-      "last_failure_duration_seconds": 284.8,
+      "last_failure_at": "2026-10-20T13:06:56+00:00",
+      "last_failure_duration_seconds": 155.51,
       "last_success_at": "2026-10-19T05:44:54+00:00",
       "run_id": "products-1792501459625517705",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T13:04:20+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-20T13:06:56+00:00",
       "pid": 303318,
-      "last_started_at": "2026-10-20T13:04:20+00:00"
+      "last_started_at": "2026-10-20T13:04:20+00:00",
+      "child_pid": 303318,
+      "elapsed_seconds": 150.4,
+      "overlap_skips": 1,
+      "manager_published": true,
+      "manager_input_count": 19,
+      "manager_current_count": 21,
+      "manager_reason": "",
+      "duration_seconds": 155.51,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -195,7 +206,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T13:04:20+00:00",
+  "updated_at": "2026-10-20T13:06:56+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
