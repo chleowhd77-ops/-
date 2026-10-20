@@ -5,25 +5,23 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T06:29:03+00:00",
+      "heartbeat_at": "2026-10-20T06:29:33+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "team": 292057
+        "live": 292063
       },
       "pending_jobs": [
         "backup",
-        "live",
         "master",
         "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1603.6,
-        "backup": 1330.9,
-        "live": 98.1,
-        "master": 98.1,
-        "products": 98.1
+        "score": 1633.7,
+        "backup": 1360.9,
+        "master": 128.2,
+        "products": 128.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -32,14 +30,18 @@
     "live": {
       "last_failure_at": "2026-10-18T00:22:05+00:00",
       "last_failure_duration_seconds": 139.6,
-      "last_success_duration_seconds": 3.22,
-      "last_success_at": "2026-10-20T06:24:44+00:00",
+      "last_success_duration_seconds": 2.67,
+      "last_success_at": "2026-10-20T06:29:35+00:00",
       "run_id": "live-1792477771911842963",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T06:29:32+00:00",
+      "last_stage": "complete",
+      "state": "success",
+      "heartbeat_at": "2026-10-20T06:29:35+00:00",
       "pid": 292063,
-      "last_started_at": "2026-10-20T06:29:32+00:00"
+      "last_started_at": "2026-10-20T06:29:32+00:00",
+      "child_pid": 292063,
+      "elapsed_seconds": 2.0,
+      "overlap_skips": 0,
+      "duration_seconds": 2.67
     },
     "score": {
       "last_failure_duration_seconds": 600.6,
@@ -206,7 +208,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T06:29:32+00:00",
+  "updated_at": "2026-10-20T06:29:35+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -295,7 +297,7 @@
         "metric": "cache_hit",
         "purpose": "live",
         "endpoint": "/fixtures",
-        "count": 12
+        "count": 13
       },
       {
         "metric": "cache_hit",
