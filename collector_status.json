@@ -5,21 +5,19 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T03:38:17+00:00",
+      "heartbeat_at": "2026-10-20T03:40:47+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "live": 291553
+        "products": 291554
       },
       "pending_jobs": [
         "master",
-        "products",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 392.4,
-        "master": 90.3,
-        "products": 90.3
+        "score": 542.7,
+        "master": 240.7
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -171,15 +169,24 @@
     },
     "products": {
       "last_success_duration_seconds": 158.82,
-      "last_failure_at": "2026-10-20T03:36:30+00:00",
-      "last_failure_duration_seconds": 144.5,
+      "last_failure_at": "2026-10-20T03:40:56+00:00",
+      "last_failure_duration_seconds": 154.53,
       "last_success_at": "2026-10-19T05:44:54+00:00",
       "run_id": "products-1792467501531162702",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T03:38:22+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-20T03:40:56+00:00",
       "pid": 291554,
-      "last_started_at": "2026-10-20T03:38:22+00:00"
+      "last_started_at": "2026-10-20T03:38:22+00:00",
+      "child_pid": 291554,
+      "elapsed_seconds": 146.3,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 19,
+      "manager_current_count": 20,
+      "manager_reason": "",
+      "duration_seconds": 154.53,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -197,7 +204,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T03:38:22+00:00",
+  "updated_at": "2026-10-20T03:40:56+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
