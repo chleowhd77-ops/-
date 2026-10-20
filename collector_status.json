@@ -5,19 +5,17 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T17:28:27+00:00",
+      "heartbeat_at": "2026-10-20T17:28:57+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "products": 317361
+        "master": 317362
       },
       "pending_jobs": [
-        "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 194.7,
-        "master": 80.2
+        "score": 225.0
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -59,16 +57,21 @@
       "last_error": "worker exited with code 1"
     },
     "master": {
-      "last_failure_at": "2026-10-20T17:26:10+00:00",
+      "last_failure_at": "2026-10-20T17:29:12+00:00",
       "last_success_at": "2026-10-20T16:56:12+00:00",
       "last_success_duration_seconds": 261.73,
-      "last_failure_duration_seconds": 64.2,
+      "last_failure_duration_seconds": 34.24,
       "run_id": "master-1792517317352739332",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T17:28:38+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-20T17:29:12+00:00",
       "pid": 317362,
-      "last_started_at": "2026-10-20T17:28:38+00:00"
+      "last_started_at": "2026-10-20T17:28:38+00:00",
+      "child_pid": 317362,
+      "elapsed_seconds": 20.0,
+      "overlap_skips": 0,
+      "duration_seconds": 34.24,
+      "last_error": "RuntimeError: master 작업이 정상 결과를 게시하지 못함"
     },
     "world": {
       "last_failure_duration_seconds": 1200.2,
@@ -179,7 +182,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T17:28:38+00:00",
+  "updated_at": "2026-10-20T17:29:12+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
@@ -267,7 +270,7 @@
         "metric": "cache_only_miss",
         "purpose": "analysis",
         "endpoint": "/fixtures",
-        "count": 83
+        "count": 84
       },
       {
         "metric": "cache_hit",
@@ -279,7 +282,7 @@
         "metric": "cache_hit",
         "purpose": "analysis",
         "endpoint": "/fixtures/lineups",
-        "count": 21
+        "count": 22
       },
       {
         "metric": "cache_only_miss",
