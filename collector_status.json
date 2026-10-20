@@ -5,19 +5,21 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T12:05:36+00:00",
+      "heartbeat_at": "2026-10-20T12:08:06+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
         "products": 293982
       },
       "pending_jobs": [
+        "backup",
         "master",
         "score"
       ],
       "pending_wait_seconds": {
-        "score": 1614.6,
-        "master": 108.3
+        "score": 1764.9,
+        "master": 258.6,
+        "backup": 72.2
       },
       "offline_learning": false,
       "max_concurrent_workers": 1,
@@ -166,15 +168,24 @@
     },
     "products": {
       "last_success_at": "2026-10-19T05:44:54+00:00",
-      "last_failure_duration_seconds": 154.3,
-      "last_failure_at": "2026-10-20T12:03:39+00:00",
+      "last_failure_duration_seconds": 152.91,
+      "last_failure_at": "2026-10-20T12:08:10+00:00",
       "last_success_duration_seconds": 158.82,
       "run_id": "products-1792497936346598003",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T12:05:37+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-20T12:08:10+00:00",
       "pid": 293982,
-      "last_started_at": "2026-10-20T12:05:37+00:00"
+      "last_started_at": "2026-10-20T12:05:37+00:00",
+      "child_pid": 293982,
+      "elapsed_seconds": 150.3,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 19,
+      "manager_current_count": 21,
+      "manager_reason": "",
+      "duration_seconds": 152.91,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -192,7 +203,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T12:05:37+00:00",
+  "updated_at": "2026-10-20T12:08:10+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
