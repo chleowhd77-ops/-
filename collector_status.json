@@ -5,14 +5,20 @@
       "supervisor_pid": 177496,
       "last_stage": "initializing",
       "state": "running",
-      "heartbeat_at": "2026-10-20T00:36:03+00:00",
+      "heartbeat_at": "2026-10-20T00:37:34+00:00",
       "pid": 177496,
       "last_started_at": "2026-10-18T12:06:46+00:00",
       "active_jobs": {
-        "team": 290973
+        "products": 290978
       },
-      "pending_jobs": [],
-      "pending_wait_seconds": {},
+      "pending_jobs": [
+        "master",
+        "score"
+      ],
+      "pending_wait_seconds": {
+        "score": 88.1,
+        "master": 88.1
+      },
       "offline_learning": false,
       "max_concurrent_workers": 1,
       "min_available_memory_mb": 180
@@ -160,15 +166,24 @@
     },
     "products": {
       "last_success_at": "2026-10-19T05:44:54+00:00",
-      "last_failure_duration_seconds": 84.2,
-      "last_failure_at": "2026-10-20T00:33:17+00:00",
+      "last_failure_duration_seconds": 79.19,
+      "last_failure_at": "2026-10-20T00:37:52+00:00",
       "last_success_duration_seconds": 158.82,
       "run_id": "products-1792456592032241155",
-      "last_stage": "initializing",
-      "state": "running",
-      "heartbeat_at": "2026-10-20T00:36:32+00:00",
+      "last_stage": "executing",
+      "state": "failed",
+      "heartbeat_at": "2026-10-20T00:37:52+00:00",
       "pid": 290978,
-      "last_started_at": "2026-10-20T00:36:32+00:00"
+      "last_started_at": "2026-10-20T00:36:32+00:00",
+      "child_pid": 290978,
+      "elapsed_seconds": 62.1,
+      "overlap_skips": 0,
+      "manager_published": true,
+      "manager_input_count": 19,
+      "manager_current_count": 20,
+      "manager_reason": "",
+      "duration_seconds": 79.19,
+      "last_error": "RuntimeError: products 작업이 정상 결과를 게시하지 못함"
     },
     "learning": {
       "last_success_duration_seconds": 130.64,
@@ -186,7 +201,7 @@
       "overlap_skips": 0
     }
   },
-  "updated_at": "2026-10-20T00:36:32+00:00",
+  "updated_at": "2026-10-20T00:37:52+00:00",
   "version": 2,
   "api_usage": {
     "top_endpoints": [
